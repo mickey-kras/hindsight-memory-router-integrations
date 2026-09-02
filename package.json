@@ -1,0 +1,49 @@
+{
+  "name": "@mickey-kras/hindsight-memory-router-openclaw",
+  "version": "0.11.1-router.1",
+  "description": "Per-agent OpenClaw memory routing plugin for hindsight-memory-router (forks vectorize-io/hindsight OpenClaw integration v0.11.1)",
+  "main": "dist/plugin.js",
+  "types": "dist/plugin.d.ts",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./dist/plugin.js"
+    ]
+  },
+  "keywords": [
+    "openclaw",
+    "memory",
+    "hindsight",
+    "memory-router",
+    "per-agent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mickey-kras/hindsight-memory-router-openclaw.git"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "UPSTREAM_VERSION"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
+  },
+  "dependencies": {
+    "@vectorize-io/hindsight-agent-sdk": "0.1.0",
+    "@vectorize-io/hindsight-client": "0.8.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
