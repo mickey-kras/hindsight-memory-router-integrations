@@ -72,7 +72,7 @@ export interface PluginConfig {
   bankMission?: string;
   /**
    * Mission for the Retain operation. Steers what gets extracted as facts.
-   * Stamped on first bank use.
+   * Stamped onto the bank's `retain_mission` field on first use.
    */
   retainMission?: string;
   /**
