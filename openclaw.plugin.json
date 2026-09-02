@@ -1,0 +1,155 @@
+{
+  "id": "hindsight-memory-router",
+  "name": "Hindsight Memory Router",
+  "kind": "memory",
+  "configContracts": {
+    "secretInputs": {
+      "paths": [
+        {
+          "path": "agents.*.token",
+          "expected": "string"
+        }
+      ]
+    }
+  },
+  "contracts": {
+    "tools": [
+      "agent_knowledge_list_pages",
+      "agent_knowledge_get_page",
+      "agent_knowledge_create_page",
+      "agent_knowledge_update_page",
+      "agent_knowledge_delete_page",
+      "agent_knowledge_recall",
+      "agent_knowledge_ingest"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "routerUrl": {
+        "type": "string",
+        "description": "Memory Router base URL. HTTPS only; certificate verification is mandatory; no credentials in the URL."
+      },
+      "agents": {
+        "type": "object",
+        "description": "Per-agent routing: token (SecretRef), writeBank, recallBanks. Keyed by trusted OpenClaw agent ID. Unknown agents fail closed; there is no global fallback token.",
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "token": {
+              "type": ["string", "object"],
+              "description": "Memory Router token (mr_<key-id>_<secret>). Set via SecretRef, e.g. { \"source\": \"exec\", \"provider\": \"op\", \"id\": \"memory-router-main\" }."
+            },
+            "writeBank": {
+              "type": "string",
+              "description": "Default write bank for auto-retain and knowledge-tool writes."
+            },
+            "recallBanks": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Banks auto-recall and the recall tool fan out to. Empty means no recall."
+            }
+          },
+          "required": ["token", "writeBank"]
+        }
+      },
+      "autoRecall": {
+        "type": "boolean",
+        "description": "Recall memories on every prompt and inject them as context.",
+        "default": true
+      },
+      "autoRetain": {
+        "type": "boolean",
+        "description": "Retain conversation transcripts on agent_end/session_end.",
+        "default": true
+      },
+      "recallTimeoutMs": {
+        "type": "number",
+        "description": "Shared timeout across all recall banks.",
+        "default": 5000
+      },
+      "recallMaxTokens": {
+        "type": "number",
+        "description": "Shared recall context token budget across all banks.",
+        "default": 1024
+      },
+      "recallBudget": {
+        "type": "string",
+        "enum": ["low", "mid", "high"],
+        "description": "Hindsight recall budget passed through per bank."
+      },
+      "recallTypes": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Memory types to recall (world, experience, observation)."
+      },
+      "preferObservations": {
+        "type": "boolean",
+        "description": "Prefer consolidated observations in recall results."
+      },
+      "recallTopK": {
+        "type": "number",
+        "description": "Cap on injected memories after multi-bank merge and ranking."
+      },
+      "recallPromptPreamble": {
+        "type": "string",
+        "description": "Preamble prepended to the injected hindsight_memories block."
+      },
+      "recallInjectionPosition": {
+        "type": "string",
+        "enum": ["user", "prepend", "append"],
+        "description": "Where recalled memories are injected (user context, or system prompt prepend/append).",
+        "default": "user"
+      },
+      "retainTags": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Tags applied to every retained document."
+      },
+      "retainContext": {
+        "type": "string",
+        "description": "Interpretation guidance sent via the retain API context field."
+      },
+      "retainSource": {
+        "type": "string",
+        "description": "Source value written into retained document metadata.",
+        "default": "openclaw"
+      },
+      "enableKnowledgeTools": {
+        "type": "boolean",
+        "description": "Register agent_knowledge_* tools. They use the same identity and routing rules as auto-recall/retain.",
+        "default": true
+      },
+      "queueDir": {
+        "type": "string",
+        "description": "Directory for per-agent retain queue files (hindsight-retain-queue.<agent>.jsonl)."
+      },
+      "retainQueueFlushIntervalMs": {
+        "type": "number",
+        "description": "Queue replay cadence.",
+        "default": 30000
+      },
+      "retainQueueMaxAgeMs": {
+        "type": "number",
+        "description": "Max age of queued retains (-1 keeps forever).",
+        "default": -1
+      },
+      "ignoreSessionPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Session-key glob patterns excluded from retain."
+      },
+      "statelessSessionPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Session-key glob patterns treated as stateless (no retain)."
+      },
+      "excludeProviders": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Message providers excluded from retain."
+      }
+    },
+    "required": ["routerUrl", "agents"]
+  }
+}
