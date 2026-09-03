@@ -1,17 +1,4 @@
-/**
- * AgentCredentialResolver boundary.
- *
- * Maps a trusted OpenClaw `ctx.agentId` to that agent's Memory Router
- * credentials. This is the ONLY component allowed to turn an agent identity
- * into a token. Identity always comes from the OpenClaw runtime context;
- * never from prompts, model output, tool arguments, tags, or user content.
- *
- * Fail-closed rules:
- * - missing/unknown agentId -> UnknownAgentError
- * - missing token -> CredentialResolutionError
- * - token still an unresolved SecretRef object -> CredentialResolutionError
- * - no global fallback token exists anywhere in this layer
- */
+/** Maps trusted OpenClaw agent IDs to tokens and routes. No fallback identity. */
 
 export interface AgentConfig {
   /** Resolved bearer token string (SecretRef already resolved by OpenClaw). */
@@ -57,6 +44,7 @@ export class CredentialResolutionError extends Error {
       | "invalid-token"
       | "missing-write-bank"
       | "invalid-bank"
+      | "missing-route"
   ) {
     super(`credential resolution failed: ${reason}`);
     this.name = "CredentialResolutionError";
@@ -81,6 +69,22 @@ export class AgentCredentialResolver {
 
   constructor(config: RouterPluginConfig) {
     this.agents = config.agents ?? {};
+  }
+
+  /** Validate configured routes at startup; unresolved secrets fail closed. */
+  validateConfiguredAgents(): void {
+    const agentIds = Object.keys(this.agents);
+    if (agentIds.length === 0) {
+      throw new UnknownAgentError(undefined);
+    }
+    for (const agentId of agentIds) {
+      this.resolve(agentId);
+      const writeBank = this.resolveOptionalWriteBank(agentId);
+      const recallBanks = this.resolveRecallBanks(agentId);
+      if (writeBank === null && recallBanks.length === 0) {
+        throw new CredentialResolutionError("missing-route");
+      }
+    }
   }
 
   /** Whether a routing entry exists for this agent ID. */
@@ -115,10 +119,19 @@ export class AgentCredentialResolver {
 
   /** Resolve the agent's single default write bank. */
   resolveWriteBank(agentId: string): string {
+    const bank = this.resolveOptionalWriteBank(agentId);
+    if (bank === null) {
+      throw new CredentialResolutionError("missing-write-bank");
+    }
+    return bank;
+  }
+
+  /** Resolve an optional write bank. Null is valid for read-only agents. */
+  resolveOptionalWriteBank(agentId: string): string | null {
     const entry = this.requireEntry(agentId);
     const bank = entry.writeBank;
     if (bank === undefined || bank === null || bank === "") {
-      throw new CredentialResolutionError("missing-write-bank");
+      return null;
     }
     if (typeof bank !== "string" || !BANK_ID_PATTERN.test(bank) || bank === "." || bank === "..") {
       throw new CredentialResolutionError("invalid-bank");

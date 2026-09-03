@@ -139,6 +139,18 @@ describe("RetainCoordinator", () => {
     expect(apiKeys).toEqual([TOKEN_BACKEND, TOKEN_BACKEND]);
   });
 
+  it("does not queue non-retryable client errors", async () => {
+    const { retain } = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(400);
+      },
+    });
+    await expect(retain.retain("main", { content: "invalid" })).rejects.toThrow("http 400");
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    expect(() => readFileSync(queueFile, "utf8")).toThrow();
+  });
+
   it("replay keeps items queued for unknown agents (fail closed)", async () => {
     const apiKeys: string[] = [];
     const first = makeStack({

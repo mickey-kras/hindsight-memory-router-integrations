@@ -32,9 +32,12 @@
       },
       "agents": {
         "type": "object",
+        "minProperties": 1,
+        "propertyNames": { "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
         "description": "Per-agent routing: token (SecretRef), writeBank, recallBanks. Keyed by trusted OpenClaw agent ID. Unknown agents fail closed; there is no global fallback token.",
         "additionalProperties": {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
             "token": {
               "type": ["string", "object"],
@@ -42,15 +45,17 @@
             },
             "writeBank": {
               "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]{1,128}$",
               "description": "Default write bank for auto-retain and knowledge-tool writes."
             },
             "recallBanks": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+              "uniqueItems": true,
               "description": "Banks auto-recall and the recall tool fan out to. Empty means no recall."
             }
           },
-          "required": ["token", "writeBank"]
+          "required": ["token"]
         }
       },
       "autoRecall": {
@@ -64,12 +69,14 @@
         "default": true
       },
       "recallTimeoutMs": {
-        "type": "number",
+        "type": "integer",
+        "minimum": 1,
         "description": "Shared timeout across all recall banks.",
         "default": 5000
       },
       "recallMaxTokens": {
-        "type": "number",
+        "type": "integer",
+        "minimum": 1,
         "description": "Shared recall context token budget across all banks.",
         "default": 1024
       },
@@ -88,7 +95,8 @@
         "description": "Prefer consolidated observations in recall results."
       },
       "recallTopK": {
-        "type": "number",
+        "type": "integer",
+        "minimum": 1,
         "description": "Cap on injected memories after multi-bank merge and ranking."
       },
       "recallPromptPreamble": {
@@ -118,19 +126,21 @@
       "enableKnowledgeTools": {
         "type": "boolean",
         "description": "Register agent_knowledge_* tools. They use the same identity and routing rules as auto-recall/retain.",
-        "default": true
+        "default": false
       },
       "queueDir": {
         "type": "string",
         "description": "Directory for per-agent retain queue files (hindsight-retain-queue.<agent>.jsonl)."
       },
       "retainQueueFlushIntervalMs": {
-        "type": "number",
+        "type": "integer",
+        "minimum": 1,
         "description": "Queue replay cadence.",
         "default": 30000
       },
       "retainQueueMaxAgeMs": {
-        "type": "number",
+        "type": "integer",
+        "minimum": -1,
         "description": "Max age of queued retains (-1 keeps forever).",
         "default": -1
       },
@@ -150,6 +160,7 @@
         "description": "Message providers excluded from retain."
       }
     },
-    "required": ["routerUrl", "agents"]
+    "required": ["routerUrl", "agents"],
+    "additionalProperties": false
   }
 }

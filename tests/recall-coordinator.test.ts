@@ -184,6 +184,27 @@ describe("RecallCoordinator", () => {
     expect(result.results.map((r) => r.text)).toEqual(["fast"]);
   });
 
+  it("aborts timed-out bank requests", async () => {
+    let signal: AbortSignal | undefined;
+    const client: RouterClient = {
+      async retain() {},
+      async recall(_bank, _query, options) {
+        signal = options?.signal;
+        await new Promise((_resolve, reject) =>
+          signal?.addEventListener("abort", () => reject(signal?.reason), { once: true })
+        );
+        return { results: [] };
+      },
+    };
+    const result = await new RecallCoordinator().recall(client, {
+      query: "q",
+      banks: ["main"],
+      timeoutMs: 10,
+    });
+    expect(result.failedBanks).toEqual(["main"]);
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("returns empty result for an agent with no recall banks", async () => {
     const client = fakeClient({});
     const coordinator = new RecallCoordinator();

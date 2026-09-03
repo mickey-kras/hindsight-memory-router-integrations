@@ -87,6 +87,15 @@ describe("AgentCredentialResolver", () => {
     expect(r.resolveRecallBanks("backend")).toEqual(["dev", "dev-best-practices"]);
   });
 
+  it("supports read-only agents without a write bank", () => {
+    const r = new AgentCredentialResolver({
+      agents: { reader: { token: TOKEN_A, recallBanks: ["main"] } },
+    });
+    r.validateConfiguredAgents();
+    expect(r.resolveOptionalWriteBank("reader")).toBeNull();
+    expect(() => r.resolveWriteBank("reader")).toThrow("missing-write-bank");
+  });
+
   it("deduplicates recall banks and fails closed on malformed banks", () => {
     const r = new AgentCredentialResolver({
       agents: {

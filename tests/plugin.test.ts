@@ -34,6 +34,7 @@ function pluginConfig(queueDir: string) {
       },
     },
     queueDir,
+    enableKnowledgeTools: true,
   };
 }
 
@@ -191,6 +192,33 @@ describe("plugin wiring", () => {
     expect(sink.retains[0].content).toContain("remember this");
   });
 
+  it("normalizes structured messages and does not retain the same turn twice", async () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    const event = {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "remember this" }] },
+        { role: "assistant", content: [{ type: "text", text: "saved" }] },
+      ],
+    };
+    const ctx = { agentId: "main", sessionKey: "agent:main:main" };
+    await api.handlers.get("agent_end")!(event, ctx);
+    await api.handlers.get("session_end")!(event, ctx);
+    expect(sink.retains).toHaveLength(1);
+    expect(sink.retains[0].content).not.toContain("[object Object]");
+    expect(JSON.parse(sink.retains[0].content)).toEqual([
+      { role: "user", content: "remember this" },
+      { role: "assistant", content: "saved" },
+    ]);
+    await api.handlers.get("agent_end")!(event, ctx);
+    expect(sink.retains).toHaveLength(2);
+  });
+
   it("auto-recall fails closed for unknown agents: no client, no injection", async () => {
     const api = makeApi(queueDir);
     const sink = {
@@ -286,9 +314,34 @@ describe("plugin wiring", () => {
     expect(response.content[0].text).toContain("bp note");
   });
 
+  it("exposes recall only for a read-only agent", () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    const stack = instrumentedStack(queueDir, sink);
+    stack.config.agents = {
+      reader: { token: TOKEN_MAIN, recallBanks: ["main"] },
+    };
+    const credentials = new AgentCredentialResolver(stack.config);
+    stack.credentials = credentials;
+    stack.recallBanks = new RecallBankResolver(credentials);
+    stack.writeBanks = new WriteBankResolver(credentials);
+    registerWithStack(api as any, stack);
+    const tools = api.toolFactories[0].factory({ agentId: "reader" }) as Array<{ name: string }>;
+    expect(tools.map((tool) => tool.name)).toEqual(["agent_knowledge_recall"]);
+  });
+
   it("never logs raw tokens in warnings or errors", async () => {
     const api = makeApi(queueDir);
-    plugin(api as any);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    registerWithStack(api as any, instrumentedStack(queueDir, sink));
     await api.handlers.get("before_prompt_build")!({ prompt: "hello there" }, { agentId: "main" });
     await api.handlers.get("agent_end")!(
       { context: { sessionEntry: { messages: [{ role: "user", content: "hi" }] } } },

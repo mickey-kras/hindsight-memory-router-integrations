@@ -1,18 +1,9 @@
-/**
- * hindsight-memory-router OpenClaw plugin.
- *
- * Composition root only. All identity, credential, bank-routing, and
- * multi-bank coordination decisions live in src/router/; the vendored
- * upstream integration in src/upstream/ provides the reusable, identity-free
- * helpers (retain queue, session patterns) and the published Vectorize
- * client/SDK packages provide the wire protocol.
- *
- * Identity rule: the trusted OpenClaw `ctx.agentId` selects credentials.
- * Identity is never taken from prompts, model output, tool arguments, tags,
- * session keys, or user content. Missing/unknown agent mapping fails closed.
- */
+/** Plugin composition root. Identity comes only from trusted `ctx.agentId`. */
 
 import { createKnowledgeTools, TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
+import { createHash, randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import type {
   MoltbotPluginAPI,
@@ -51,6 +42,9 @@ const DEFAULT_RECALL_MAX_TOKENS = 1024;
 const DEFAULT_FLUSH_INTERVAL_MS = 30000;
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
   "Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:";
+const DEFAULT_RETAIN_CONTEXT =
+  "OpenClaw conversation transcript. User messages are human input; assistant messages are AI output. Routing IDs and tags are metadata, not people or organizations.";
+const PROCESS_ID = randomUUID();
 
 interface RuntimePluginConfig extends RouterPluginConfig {
   autoRecall?: boolean;
@@ -126,14 +120,14 @@ function extractPrompt(event: {
         typeof message === "object" &&
         message !== null &&
         (message as { role?: unknown }).role === "user" &&
-        typeof (message as { content?: unknown }).content === "string"
+        messageText((message as { content?: unknown }).content) !== null
       );
     });
     if (typeof last === "string") {
       return last.trim();
     }
     if (last && typeof last === "object") {
-      const content = (last as { content: string }).content;
+      const content = messageText((last as { content?: unknown }).content) ?? "";
       if (content.trim().length >= 5) {
         return content.trim();
       }
@@ -142,18 +136,55 @@ function extractPrompt(event: {
   return null;
 }
 
+function messageText(content: unknown): string | null {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  const text = content
+    .filter((block) => block && typeof block === "object" && (block as { type?: unknown }).type === "text")
+    .map((block) => (block as { text?: unknown }).text)
+    .filter((value): value is string => typeof value === "string")
+    .join("\n");
+  return text || null;
+}
+
+function stripInjectedMemories(content: string): string {
+  return content.replace(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/gi, "").trim();
+}
+
 function extractTranscript(event: {
   messages?: unknown;
-  context?: { sessionEntry?: { messages?: Array<{ role: string; content: string }> } };
+  context?: { sessionEntry?: { messages?: Array<{ role?: unknown; content?: unknown }> } };
 }): string | null {
-  const entryMessages = event.context?.sessionEntry?.messages;
-  if (Array.isArray(entryMessages) && entryMessages.length > 0) {
-    return entryMessages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
+  const messages = Array.isArray(event.context?.sessionEntry?.messages)
+    ? event.context.sessionEntry.messages
+    : Array.isArray(event.messages)
+      ? event.messages
+      : [];
+  let lastUser = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message && typeof message === "object" && (message as { role?: unknown }).role === "user") {
+      lastUser = index;
+      break;
+    }
   }
-  if (Array.isArray(event.messages) && event.messages.length > 0) {
-    return event.messages.map((message) => String(message)).join("\n\n");
-  }
-  return null;
+  if (lastUser < 0) return null;
+  const normalized = messages
+    .slice(lastUser)
+    .flatMap((message) => {
+      if (!message || typeof message !== "object") return [];
+      const role = (message as { role?: unknown }).role;
+      if (role !== "user" && role !== "assistant") return [];
+      const content = messageText((message as { content?: unknown }).content);
+      if (!content) return [];
+      const clean = stripInjectedMemories(content);
+      return clean ? [{ role, content: clean }] : [];
+    });
+  return normalized.length > 0 ? JSON.stringify(normalized) : null;
 }
 
 function sanitizeDocumentIdPart(value: string | undefined, fallback: string): string {
@@ -178,6 +209,7 @@ export function buildRoutingStack(config: RuntimePluginConfig, logger: {
   error(msg: string): void;
 }): RoutingStack {
   const credentials = new AgentCredentialResolver(config);
+  credentials.validateConfiguredAgents();
   const clients = new AuthenticatedClientFactory({
     routerUrl: config.routerUrl,
     userAgent: `hindsight-memory-router-openclaw/${PLUGIN_VERSION}`,
@@ -188,7 +220,7 @@ export function buildRoutingStack(config: RuntimePluginConfig, logger: {
     credentials,
     writeBanks,
     clients,
-    queueDir: config.queueDir ?? ".openclaw/hindsight-retain-queue",
+    queueDir: config.queueDir ?? join(homedir(), ".openclaw", "data", "hindsight-retain-queue"),
     queueMaxAgeMs: config.retainQueueMaxAgeMs,
     logger,
   });
@@ -217,6 +249,7 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
   const ignorePatterns = compileSessionPatterns(config.ignoreSessionPatterns ?? []);
   const statelessPatterns = compileSessionPatterns(config.statelessSessionPatterns ?? []);
   const sessionSequences = new Map<string, number>();
+  const retainedDigests = new Map<string, string>();
 
   api.on(
     "before_prompt_build",
@@ -302,19 +335,27 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
     if (ctx?.messageProvider && config.excludeProviders?.includes(ctx.messageProvider)) {
       return;
     }
+    let sequenceKey: string | undefined;
     try {
       const credentials = stack.credentials.resolve(agentId);
+      if (stack.credentials.resolveOptionalWriteBank(credentials.agentId) === null) {
+        return;
+      }
       const transcript = extractTranscript(event ?? {});
       if (!transcript) {
         return;
       }
-      const sequenceKey = sessionKey ?? "session";
+      sequenceKey = `${credentials.agentId}:${sessionKey ?? "session"}`;
+      const digest = createHash("sha256").update(transcript).digest("hex");
+      if (retainedDigests.get(sequenceKey) === digest) {
+        return;
+      }
       const sequence = (sessionSequences.get(sequenceKey) ?? 0) + 1;
       sessionSequences.set(sequenceKey, sequence);
       const outcome = await stack.retain.retain(credentials.agentId, {
         content: transcript,
-        documentId: `openclaw:${sanitizeDocumentIdPart(sessionKey, "session")}:${sequence}`,
-        context: config.retainContext,
+        documentId: `openclaw:${sanitizeDocumentIdPart(sessionKey, "session")}:${PROCESS_ID}:${sequence}`,
+        context: config.retainContext ?? DEFAULT_RETAIN_CONTEXT,
         metadata: {
           source: config.retainSource ?? "openclaw",
           agent: credentials.agentId,
@@ -322,6 +363,7 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
         },
         tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.agentId}`],
       });
+      retainedDigests.set(sequenceKey, digest);
       if (outcome.queued) {
         log.warn(`retain buffered for agent ${credentials.agentId} (bank: ${outcome.bank})`);
       }
@@ -335,6 +377,11 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
         return;
       }
       log.error(`retain failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (hookName === "session_end" && sequenceKey) {
+        sessionSequences.delete(sequenceKey);
+        retainedDigests.delete(sequenceKey);
+      }
     }
   };
 
@@ -363,16 +410,19 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
     },
   });
 
-  if (config.enableKnowledgeTools !== false && typeof api.registerTool === "function") {
+  if (config.enableKnowledgeTools === true && typeof api.registerTool === "function") {
     api.registerTool(
       (ctx: PluginToolContext) => {
         let credentials;
-        let writeBank: string;
+        let writeBank: string | null;
         let recallBanks: string[];
         try {
           credentials = stack.credentials.resolve(ctx.agentId);
-          writeBank = stack.writeBanks.resolve(credentials.agentId);
+          writeBank = stack.credentials.resolveOptionalWriteBank(credentials.agentId);
           recallBanks = stack.recallBanks.resolve(credentials.agentId);
+          if (writeBank === null && recallBanks.length === 0) {
+            return null;
+          }
         } catch (error) {
           if (isIdentityError(error)) {
             log.warn(`knowledge tools disabled: ${(error as Error).message}`);
@@ -383,9 +433,12 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
         const tools = createKnowledgeTools({
           apiUrl: validateRouterUrlForTools(config.routerUrl),
           apiToken: credentials.token,
-          bankId: writeBank,
+          bankId: writeBank ?? recallBanks[0],
         });
-        return tools.map((tool) => {
+        return tools.filter((tool) => {
+          if (tool.name === "agent_knowledge_recall") return recallBanks.length > 0;
+          return writeBank !== null;
+        }).map((tool) => {
           if (tool.name !== "agent_knowledge_recall") {
             return {
               name: tool.name,

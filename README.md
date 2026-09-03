@@ -1,19 +1,20 @@
 # hindsight-memory-router-openclaw
 
-Per-agent OpenClaw memory plugin for [hindsight-memory-router](https://github.com/mickey-kras/hindsight-memory-router).
+OpenClaw plugin for [hindsight-memory-router](https://github.com/mickey-kras/hindsight-memory-router).
 
-```text
-OpenClaw (this plugin) -> Memory Router -> Hindsight
-```
+`OpenClaw -> plugin -> Memory Router -> Hindsight`
 
-Forks the Vectorize OpenClaw integration v0.11.1 (`src/upstream/`, see `UPSTREAM_VERSION`; full tree restorable and byte-verified via `scripts/import-upstream.sh` + `src/upstream/SHA256SUMS`). The routing layer in `src/router/` is independent of upstream.
+Upstream: Vectorize OpenClaw integration `v0.11.1`. See `UPSTREAM_VERSION` and `docs/DEVIATIONS.md`.
 
-## Model
+## Rules
 
-- Every OpenClaw agent has its own Memory Router token, one default write bank, zero or more recall banks.
-- The trusted OpenClaw `ctx.agentId` selects credentials. Identity is never taken from prompts, model output, tool arguments, tags, session keys, or user content.
-- Unknown/missing agent mapping fails closed. No global fallback token.
-- Authorization is server-side (Memory Router principal grants); the plugin never decides permissions.
+- Identity: trusted `ctx.agentId` only.
+- Credentials: one Memory Router token per configured agent.
+- Routing: optional write bank; zero or more recall banks.
+- Authorization: Memory Router grants only.
+- Unknown agent, missing token, unresolved SecretRef: fail closed.
+- Transport: HTTPS, verified certificates, no URL credentials.
+- Secrets: process memory only; never queues or logs.
 
 ## Config
 
@@ -30,36 +31,38 @@ Forks the Vectorize OpenClaw integration v0.11.1 (`src/upstream/`, see `UPSTREAM
       "token": { "source": "exec", "provider": "op", "id": "memory-router-backend" },
       "writeBank": "dev",
       "recallBanks": ["dev", "dev-best-practices"]
+    },
+    "reader": {
+      "token": { "source": "exec", "provider": "op", "id": "memory-router-reader" },
+      "recallBanks": ["main"]
     }
   }
 }
 ```
 
-- Tokens are declared as SecretRefs in the manifest (`agents.*.token`) and resolved by OpenClaw; an unresolved SecretRef object fails closed.
-- `routerUrl` must be HTTPS. Certificate verification is never disabled. Credentials in the URL are rejected. Redirects never forward Authorization to another origin.
-- Plugin config id: `hindsight-memory-router`.
+Plugin ID: `hindsight-memory-router`.
 
-## Behavior
+`agents.*.token` is an OpenClaw SecretRef. Omit `writeBank` for read-only agents.
 
-| Flow | Routing |
+## Flows
+
+| Flow | Banks |
 | --- | --- |
-| auto-recall (`before_prompt_build`) | all configured recall banks, merged |
-| auto-retain (`agent_end`, `session_end`) | default write bank; transient failures queue per agent |
-| `agent_knowledge_*` tools | writes/ingest -> write bank; recall -> recall banks |
+| Auto-recall | All `recallBanks` |
+| Auto-retain | `writeBank` |
+| Recall tool | All `recallBanks` |
+| Other knowledge tools | `writeBank` |
 
-Multi-bank recall: shared timeout, shared context token budget, dedupe by content, deterministic ranking (score desc, bank asc, content asc). Authorization denial on any bank fails the whole recall closed. Other bank failures return partial recall and log a warning naming the failed banks.
+Knowledge tools are disabled by default. Enable with `enableKnowledgeTools: true`.
 
-Retain queue: `queueDir/hindsight-retain-queue.<agent>.jsonl`; replay re-resolves that agent's credentials and preserves the bank target. Tokens are never written to the queue.
+Multi-bank recall: one timeout, one token budget, content dedupe, deterministic ranking. Any `401/403` fails closed. Other bank failures return partial results and log failed bank IDs.
 
-## Upgrade workflow
+Transient retain failures (`408`, `429`, `5xx`, network) queue per agent. `4xx` validation failures do not queue. Default queue: `~/.openclaw/data/hindsight-retain-queue/`.
 
-1. Import next upstream integration into `src/upstream/`.
-2. Keep `src/router/` unchanged; resolve only composition-point conflicts in `src/plugin.ts`.
-3. Run upstream-derived tests and router identity/multi-bank tests (`npm test`).
-4. Bump `-router.<revision>`, publish, pin immutably.
+## Upgrade
 
-## Versioning
-
-`<upstream-version>-router.<revision>`, e.g. `0.11.1-router.1`. Reproducible contents via `npm-shrinkwrap.json`.
-
-Deviations from upstream: [docs/DEVIATIONS.md](docs/DEVIATIONS.md).
+1. Update `UPSTREAM_VERSION`.
+2. Run `scripts/import-upstream.sh`.
+3. Review `docs/DEVIATIONS.md`.
+4. Run `npm ci && npm test && npm run build && npm pack --dry-run`.
+5. Bump `<upstream>-router.<revision>`.

@@ -72,6 +72,17 @@ describe("AuthenticatedClientFactory", () => {
     expect(a1).not.toBe(b1);
     expect(a1).toBe(a2);
   });
+
+  it("replaces a cached client after token rotation", () => {
+    const factory = new AuthenticatedClientFactory({
+      routerUrl: "https://router.example.test",
+      userAgent: "test-agent/0",
+      construct: () => ({}) as RouterClient,
+    });
+    const first = factory.forAgent({ agentId: "main", token: TOKEN_MAIN });
+    const rotated = factory.forAgent({ agentId: "main", token: TOKEN_BACKEND });
+    expect(rotated).not.toBe(first);
+  });
 });
 
 describe("transport: redirect authorization stripping (Node >=22 undici)", () => {

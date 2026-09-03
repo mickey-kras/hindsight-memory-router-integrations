@@ -1,19 +1,4 @@
-/**
- * RetainCoordinator boundary.
- *
- * Routes retains to the agent's single default write bank with the agent's
- * own credentials, and buffers transient failures in a per-agent JSONL queue
- * (upstream RetainQueue, reused unmodified). Queue identity is preserved by
- * construction: the agent ID is encoded in the queue file name and the bank
- * target inside each queued item, so a replay always re-resolves THAT agent's
- * credentials and hits THAT bank.
- *
- * - authorization failures (401/403) fail closed: typed error, never queued
- *   (replaying a denied retain can never succeed)
- * - transient failures (network, 5xx, timeout) are queued and replayed
- * - the token itself is never written to the queue; replay re-resolves
- *   credentials through the AgentCredentialResolver
- */
+/** Per-agent retain routing and transient-failure queueing. */
 
 import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
@@ -51,6 +36,14 @@ const QUEUE_FILE_SUFFIX = ".jsonl";
 function isAuthzError(error: unknown): boolean {
   const status = (error as { statusCode?: unknown })?.statusCode;
   return status === 401 || status === 403;
+}
+
+function isTransientError(error: unknown): boolean {
+  const status = (error as { statusCode?: unknown })?.statusCode;
+  if (status === undefined) {
+    return true;
+  }
+  return status === 408 || status === 429 || (typeof status === "number" && status >= 500);
 }
 
 export class RetainCoordinator {
@@ -105,6 +98,9 @@ export class RetainCoordinator {
     } catch (error) {
       if (isAuthzError(error)) {
         throw new RetainAuthorizationError(bank);
+      }
+      if (!isTransientError(error)) {
+        throw error;
       }
       const queue = this.queueFor(agentId);
       queue.enqueue(bank, request, request.metadata);

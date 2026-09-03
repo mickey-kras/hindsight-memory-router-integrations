@@ -1,19 +1,4 @@
-/**
- * AuthenticatedClientFactory boundary.
- *
- * Builds one HindsightClient per agent, authenticated with that agent's own
- * Memory Router token and stamped with the `x-memory-router-agent` header.
- * Clients are cached per agent ID: isolation means no client ever carries
- * another agent's credentials, not that instances are never reused.
- *
- * Transport policy (enforced here, at the single construction point):
- * - routerUrl must be https: - no HTTP fallback, ever
- * - certificate verification is the undici default and is never disabled
- * - no credentials in the URL (userinfo rejected)
- * - redirects: the published client follows redirects; undici strips the
- *   Authorization header on cross-origin redirects (verified against Node 22),
- *   so a redirect can never leak a token to an unrelated origin
- */
+/** Creates one HTTPS Memory Router client per agent and active token. */
 
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 
@@ -71,6 +56,7 @@ export interface RouterClient {
       budget?: "low" | "mid" | "high";
       types?: string[];
       preferObservations?: boolean;
+      signal?: AbortSignal;
     }
   ): Promise<{ results?: unknown[] }>;
 }
@@ -86,7 +72,7 @@ export class AuthenticatedClientFactory {
   private readonly baseUrl: string;
   private readonly userAgent: string;
   private readonly construct: ClientConstructor;
-  private readonly cache = new Map<string, RouterClient>();
+  private readonly cache = new Map<string, { token: string; client: RouterClient }>();
 
   constructor(options: {
     routerUrl: unknown;
@@ -103,9 +89,9 @@ export class AuthenticatedClientFactory {
 
   /** Client authenticated as this agent. Never shares credentials across agents. */
   forAgent(credentials: AgentCredentials): RouterClient {
-    const existing = this.cache.get(credentials.agentId);
-    if (existing) {
-      return existing;
+    const cached = this.cache.get(credentials.agentId);
+    if (cached?.token === credentials.token) {
+      return cached.client;
     }
     const client = this.construct({
       baseUrl: this.baseUrl,
@@ -113,7 +99,7 @@ export class AuthenticatedClientFactory {
       userAgent: this.userAgent,
       headers: { [AGENT_HEADER]: credentials.agentId },
     });
-    this.cache.set(credentials.agentId, client);
+    this.cache.set(credentials.agentId, { token: credentials.token, client });
     return client;
   }
 }

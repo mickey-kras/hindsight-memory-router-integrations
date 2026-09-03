@@ -1,19 +1,4 @@
-/**
- * RecallCoordinator boundary.
- *
- * Fans a recall out to the agent's configured recall banks and merges the
- * results under one shared timeout and one shared context token budget.
- *
- * Semantics:
- * - shared timeout: a single deadline applies across all bank calls
- * - shared budget: maxTokens is split deterministically across banks, and the
- *   merged list is trimmed back to the total budget (approx. 4 chars/token)
- * - merge + deduplicate by normalized content hash
- * - deterministic ranking: score desc, then bank asc, then content asc
- * - authorization failure (401/403) on ANY bank fails the whole recall closed
- * - non-authorization bank failure returns partial recall; partial results are
- *   always observable via `partial: true` + `failedBanks`
- */
+/** Multi-bank recall with one timeout, one budget, and deterministic merge. */
 
 import { createHash } from "node:crypto";
 
@@ -60,6 +45,20 @@ function isAuthzError(error: unknown): boolean {
   return status === 401 || status === 403;
 }
 
+function timeoutAfter(ms: number, controller: AbortController): {
+  promise: Promise<never>;
+  timer: ReturnType<typeof setTimeout>;
+} {
+  let timer: ReturnType<typeof setTimeout>;
+  const promise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new DOMException(`recall timed out after ${ms}ms`, "TimeoutError"));
+    }, ms);
+  });
+  return { promise, timer: timer! };
+}
+
 function itemContent(item: RecallItem): string {
   const value = item.content ?? item.text;
   return typeof value === "string" ? value : JSON.stringify(item);
@@ -84,6 +83,15 @@ export class RecallCoordinator {
     if (banks.length === 0) {
       return { results: [], partial: false, failedBanks: [] };
     }
+    if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
+      throw new RangeError("recall timeout must be a positive integer");
+    }
+    if (
+      request.maxTokens !== undefined &&
+      (!Number.isSafeInteger(request.maxTokens) || request.maxTokens <= 0)
+    ) {
+      throw new RangeError("recall token budget must be a positive integer");
+    }
     const deadline = Date.now() + request.timeoutMs;
     const perBankTokens = request.maxTokens
       ? Math.max(1, Math.floor(request.maxTokens / banks.length))
@@ -95,25 +103,21 @@ export class RecallCoordinator {
         if (remaining <= 0) {
           throw new DOMException(`recall timed out after ${request.timeoutMs}ms`, "TimeoutError");
         }
+        const controller = new AbortController();
         const call = client.recall(bank, request.query, {
           maxTokens: perBankTokens,
           budget: request.budget,
           types: request.types,
           preferObservations: request.preferObservations,
+          signal: controller.signal,
         });
-        const response = await Promise.race([
-          call,
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () =>
-                reject(
-                  new DOMException(`recall timed out after ${request.timeoutMs}ms`, "TimeoutError")
-                ),
-              remaining
-            )
-          ),
-        ]);
-        return { bank, results: (response.results ?? []) as RecallItem[] };
+        const timeout = timeoutAfter(remaining, controller);
+        try {
+          const response = await Promise.race([call, timeout.promise]);
+          return { bank, results: (response.results ?? []) as RecallItem[] };
+        } finally {
+          clearTimeout(timeout.timer);
+        }
       })
     );
 
