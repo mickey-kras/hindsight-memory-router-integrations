@@ -16,8 +16,8 @@ rules:
       - pattern-either:
           - pattern: $PROCESS.exec(...)
           - pattern: $PROCESS.execSync(...)
-          - pattern: $PROCESS.spawn($CMD, $ARGS, { ..., shell: true, ... })
-          - pattern: $PROCESS.spawnSync($CMD, $ARGS, { ..., shell: true, ... })
+          - pattern: '$PROCESS.spawn($CMD, $ARGS, { ..., shell: true, ... })'
+          - pattern: '$PROCESS.spawnSync($CMD, $ARGS, { ..., shell: true, ... })'
 
   - id: github-actions.shell-injection
     message: Do not interpolate GitHub event data directly into run steps.
