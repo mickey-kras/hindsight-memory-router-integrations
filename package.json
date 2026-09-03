@@ -26,7 +26,8 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "UPSTREAM_VERSION"
+    "UPSTREAM_VERSION",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "tsc",

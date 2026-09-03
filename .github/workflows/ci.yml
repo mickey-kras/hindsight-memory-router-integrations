@@ -12,8 +12,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -21,4 +21,16 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - run: npm pack --dry-run
+      - run: npm audit --audit-level=moderate
+      - name: Verify package
+        run: |
+          artifact="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
+          tar -tzf "$RUNNER_TEMP/$artifact" | grep -Fxq package/npm-shrinkwrap.json
+          cmp "$RUNNER_TEMP/$artifact" "packages/$artifact"
+          sha256sum --check PACKAGE_SHA256
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Nix dependency hash
+        run: |
+          nix run github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3#prefetch-npm-deps \
+            -- npm-shrinkwrap.json
