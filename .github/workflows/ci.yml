@@ -25,12 +25,20 @@ jobs:
       - name: Verify package
         run: |
           artifact="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
-          tar -tzf "$RUNNER_TEMP/$artifact" | grep -Fxq package/npm-shrinkwrap.json
+          tar -tzf "$RUNNER_TEMP/$artifact" > "$RUNNER_TEMP/package-files"
+          grep -Fxq package/npm-shrinkwrap.json "$RUNNER_TEMP/package-files"
           cmp "$RUNNER_TEMP/$artifact" "packages/$artifact"
           sha256sum --check PACKAGE_SHA256
       - name: Install Nix
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       - name: Nix dependency hash
         run: |
-          nix run github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3#prefetch-npm-deps \
-            -- npm-shrinkwrap.json
+          artifact="packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.1.tgz"
+          expected_source="$(sed -n 's/^source=//p' PACKAGE_NIX_HASHES)"
+          expected_deps="$(sed -n 's/^npm_deps=//p' PACKAGE_NIX_HASHES)"
+          test "$(nix hash file "$artifact")" = "$expected_source"
+          actual_deps="$(
+            nix run github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3#prefetch-npm-deps \
+              -- npm-shrinkwrap.json
+          )"
+          test "$actual_deps" = "$expected_deps"

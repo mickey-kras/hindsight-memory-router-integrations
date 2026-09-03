@@ -45,6 +45,7 @@ Plugin ID: `hindsight-memory-router`.
 `agents.*.token` is an OpenClaw SecretRef. Omit `writeBank` for read-only agents.
 
 Immutable npm-pack artifact: `packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.1.tgz`.
+Nix hashes: `PACKAGE_NIX_HASHES`.
 
 ## Flows
 
