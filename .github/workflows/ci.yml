@@ -10,6 +10,7 @@ concurrency:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   checks:
@@ -75,3 +76,40 @@ jobs:
             -w /src \
             "$SEMGREP_IMAGE" \
             semgrep scan --config .semgrep.yml --exclude .semgrep.yml --error
+
+      - name: Trivy dependency report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          format: sarif
+          output: trivy-results.sarif
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 0
+          limit-severities-for-sarif: true
+          skip-dirs: node_modules,coverage,dist
+          version: v0.71.2
+
+      - name: Verify Trivy SARIF
+        run: test -s trivy-results.sarif
+
+      - name: Upload Trivy SARIF
+        if: >-
+          ${{
+            github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository
+          }}
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          sarif_file: trivy-results.sarif
+          category: .github/workflows/main.yml:trivy
+
+      - name: Trivy dependency gate
+        env:
+          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+        run: >-
+          trivy fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL
+          --ignore-unfixed --skip-dirs node_modules --skip-dirs coverage
+          --skip-dirs dist .

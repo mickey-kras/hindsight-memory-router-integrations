@@ -201,6 +201,8 @@ jobs:
                 'Nix dependency hash',
                 'Gitleaks',
                 'Semgrep',
+                'Trivy dependency gate',
+                'category: .github/workflows/main.yml:trivy',
               ]) {
                 if (!ci.includes(marker)) fail(`ci.yml: required gate missing: ${marker}`);
               }
