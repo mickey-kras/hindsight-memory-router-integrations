@@ -1,0 +1,23 @@
+# Upstream deviations
+
+Base: `vectorize-io/hindsight` OpenClaw integration `v0.11.1`.
+
+| Area | Upstream | Router plugin |
+| --- | --- | --- |
+| Endpoint | Local daemon or direct Hindsight | Memory Router only |
+| Token | One plugin token | One token per agent |
+| Identity | Context or session-key parsing | `ctx.agentId` only |
+| Banks | Dynamic channel/user banks | Declared write/recall banks |
+| Recall | One bank | Multi-bank merge |
+| Queue | Shared JSONL | Per-agent JSONL |
+| Bank defaults | Applied on first use | Deployment runbook |
+| Daemon/setup/backfill | Included | Removed |
+
+Reused source: `src/upstream/src/{retain-queue,session-patterns,types}.ts`.
+
+Published dependencies:
+
+- `@vectorize-io/hindsight-client@0.8.6`
+- `@vectorize-io/hindsight-agent-sdk@0.1.0`
+
+Not retained: dynamic bank derivation, per-user channel banks, setup/backfill CLIs, local daemon, embedded model configuration, sender-prefix parsing.

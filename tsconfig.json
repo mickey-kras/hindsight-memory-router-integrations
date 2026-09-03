@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "declaration": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/plugin.ts", "src/router/**/*.ts", "src/upstream/src/retain-queue.ts", "src/upstream/src/session-patterns.ts", "src/upstream/src/types.ts"],
+  "exclude": ["src/upstream/**/__tests__/**", "src/upstream/**/*.test.ts", "node_modules", "dist"]
+}
