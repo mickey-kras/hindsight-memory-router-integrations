@@ -1,0 +1,18 @@
+ci:
+  failBelow: 95
+
+exclude:
+  - coverage
+  - dist
+  - node_modules
+  - npm-shrinkwrap.json
+  - packages
+  - src/upstream
+
+rules:
+  security/hardcoded-secret: error
+  ai-slop/hardcoded-url: off
+
+quality:
+  maxFileLoc: 900
+  maxFunctionLoc: 150

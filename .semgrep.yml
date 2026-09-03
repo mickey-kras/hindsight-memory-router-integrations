@@ -1,0 +1,34 @@
+# Deterministic local rules for the TypeScript runtime and workflow configuration.
+rules:
+  - id: typescript.dynamic-code-execution
+    message: Avoid dynamic code execution.
+    languages: [typescript]
+    severity: ERROR
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+
+  - id: typescript.child-process-shell
+    message: Avoid shell-enabled child processes with runtime data.
+    languages: [typescript]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: $PROCESS.exec(...)
+          - pattern: $PROCESS.execSync(...)
+          - pattern: $PROCESS.spawn($CMD, $ARGS, { ..., shell: true, ... })
+          - pattern: $PROCESS.spawnSync($CMD, $ARGS, { ..., shell: true, ... })
+
+  - id: github-actions.shell-injection
+    message: Do not interpolate GitHub event data directly into run steps.
+    languages: [yaml]
+    severity: ERROR
+    patterns:
+      - pattern-inside: |
+          steps:
+            ...
+      - pattern: |
+          run: $RUN
+      - metavariable-regex:
+          metavariable: $RUN
+          regex: '.*\$\{\{.*github\.event\..*\}\}.*'

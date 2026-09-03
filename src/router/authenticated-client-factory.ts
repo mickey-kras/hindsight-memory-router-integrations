@@ -84,7 +84,7 @@ export class AuthenticatedClientFactory {
     this.userAgent = options.userAgent;
     this.construct =
       options.construct ??
-      ((clientOptions) => new HindsightClient(clientOptions) as unknown as RouterClient);
+      ((clientOptions) => new HindsightClient(clientOptions));
   }
 
   /** Client authenticated as this agent. Never shares credentials across agents. */

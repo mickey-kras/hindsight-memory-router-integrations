@@ -1,27 +1,41 @@
-name: CI
+name: ci
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  checks:
     runs-on: ubuntu-latest
     steps:
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: npm-shrinkwrap.json
+
       - run: npm ci
-      - run: npm test
+      - name: Tests and coverage
+        run: npm run test:coverage
       - run: npm run build
       - run: npm audit --audit-level=moderate
+
       - name: Verify package
         run: |
           artifact="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
@@ -29,8 +43,10 @@ jobs:
           grep -Fxq package/npm-shrinkwrap.json "$RUNNER_TEMP/package-files"
           cmp "$RUNNER_TEMP/$artifact" "packages/$artifact"
           sha256sum --check PACKAGE_SHA256
+
       - name: Install Nix
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
       - name: Nix dependency hash
         run: |
           artifact="packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.1.tgz"
@@ -41,4 +57,21 @@ jobs:
             nix run github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3#prefetch-npm-deps \
               -- npm-shrinkwrap.json
           )"
+          printf 'expected npm dependency hash: %s\nactual npm dependency hash:   %s\n' \
+            "$expected_deps" "$actual_deps"
           test "$actual_deps" = "$expected_deps"
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Semgrep
+        run: |
+          SEMGREP_IMAGE="semgrep/semgrep:1.172.0@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b"
+          docker pull "$SEMGREP_IMAGE"
+          docker run --rm \
+            -v "${PWD}:/src" \
+            -w /src \
+            "$SEMGREP_IMAGE" \
+            semgrep scan --config .semgrep.yml --exclude .semgrep.yml --error

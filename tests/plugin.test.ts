@@ -15,8 +15,14 @@ import {
   type RouterClient,
 } from "../src/router/authenticated-client-factory.js";
 import { RecallBankResolver } from "../src/router/recall-bank-resolver.js";
-import { RecallCoordinator } from "../src/router/recall-coordinator.js";
-import { RetainCoordinator } from "../src/router/retain-coordinator.js";
+import {
+  RecallAuthorizationError,
+  RecallCoordinator,
+} from "../src/router/recall-coordinator.js";
+import {
+  RetainAuthorizationError,
+  RetainCoordinator,
+} from "../src/router/retain-coordinator.js";
 import { WriteBankResolver } from "../src/router/write-bank-resolver.js";
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
@@ -357,5 +363,151 @@ describe("plugin wiring", () => {
       .join("\n");
     expect(sinkText).not.toContain(TOKEN_MAIN);
     expect(sinkText).not.toContain(TOKEN_BACKEND);
+  });
+
+  it("extracts structured prompts and supports system-context positions", async () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+      recallResults: { main: [{ content: "structured memory", type: "fact", score: 1 }] },
+    };
+    const stack = instrumentedStack(queueDir, sink);
+    stack.config.recallInjectionPosition = "append";
+    registerWithStack(api as any, stack);
+
+    const append = (await api.handlers.get("before_prompt_build")!(
+      {
+        messages: [
+          { role: "assistant", content: "not the query" },
+          { role: "user", content: [{ type: "text", text: "structured query" }] },
+        ],
+      },
+      { agentId: "main" }
+    )) as { appendSystemContext?: string };
+    expect(append.appendSystemContext).toContain("structured memory [fact]");
+
+    stack.config.recallInjectionPosition = "prepend";
+    const prepend = (await api.handlers.get("before_prompt_build")!(
+      { messages: ["plain string query"] },
+      { agentId: "main" }
+    )) as { prependSystemContext?: string };
+    expect(prepend.prependSystemContext).toContain("structured memory");
+    expect(sink.recalls.at(-1)?.query).toBe("plain string query");
+  });
+
+  it("fails closed on disabled, empty-route, and empty-prompt recall", async () => {
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    const disabledApi = makeApi(queueDir);
+    const disabledStack = instrumentedStack(queueDir, sink);
+    disabledStack.config.autoRecall = false;
+    registerWithStack(disabledApi as any, disabledStack);
+    expect(
+      await disabledApi.handlers.get("before_prompt_build")!(
+        { prompt: "ignored prompt" },
+        { agentId: "main" }
+      )
+    ).toBeUndefined();
+
+    const api = makeApi(queueDir);
+    const stack = instrumentedStack(queueDir, sink);
+    stack.config.agents = { writer: { token: TOKEN_MAIN, writeBank: "main" } };
+    stack.credentials = new AgentCredentialResolver(stack.config);
+    stack.recallBanks = new RecallBankResolver(stack.credentials);
+    registerWithStack(api as any, stack);
+    expect(
+      await api.handlers.get("before_prompt_build")!(
+        { prompt: "valid prompt" },
+        { agentId: "writer" }
+      )
+    ).toBeUndefined();
+
+    const noPromptApi = makeApi(queueDir);
+    const noPromptStack = instrumentedStack(queueDir, sink);
+    registerWithStack(noPromptApi as any, noPromptStack);
+    expect(
+      await noPromptApi.handlers.get("before_prompt_build")!(
+        { messages: [{ role: "assistant", content: "no user prompt" }] },
+        { agentId: "main" }
+      )
+    ).toBeUndefined();
+  });
+
+  it("records partial and denied recall without injecting untrusted results", async () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    const stack = instrumentedStack(queueDir, sink);
+    stack.recall.recall = vi
+      .fn()
+      .mockResolvedValueOnce({
+        results: [{ text: "partial memory" }],
+        partial: true,
+        failedBanks: ["dev"],
+      })
+      .mockRejectedValueOnce(new RecallAuthorizationError("main"))
+      .mockRejectedValueOnce(new Error("network down"));
+    registerWithStack(api as any, stack);
+    const handler = api.handlers.get("before_prompt_build")!;
+
+    expect(await handler({ prompt: "first query" }, { agentId: "main" })).toBeDefined();
+    expect(api.logger.warn).toHaveBeenCalledWith("partial recall: banks unavailable: dev");
+    expect(await handler({ prompt: "second query" }, { agentId: "main" })).toBeUndefined();
+    expect(api.logger.error).toHaveBeenCalledWith(
+      "auto-recall denied: recall authorization denied for bank main"
+    );
+    expect(await handler({ prompt: "third query" }, { agentId: "main" })).toBeUndefined();
+    expect(api.logger.warn).toHaveBeenCalledWith("auto-recall failed: network down");
+  });
+
+  it("enforces retain filters, reports failures, and manages the flush service", async () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    const stack = instrumentedStack(queueDir, sink);
+    stack.config.ignoreSessionPatterns = ["ignore:*"];
+    stack.config.statelessSessionPatterns = ["stateless:*"];
+    stack.config.excludeProviders = ["blocked"];
+    stack.retain.retain = vi
+      .fn()
+      .mockResolvedValueOnce({ queued: true, bank: "main" })
+      .mockRejectedValueOnce(new RetainAuthorizationError("main"))
+      .mockRejectedValueOnce(new Error("retain unavailable"));
+    const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
+    registerWithStack(api as any, stack);
+    const handler = api.handlers.get("agent_end")!;
+    const event = { messages: [{ role: "user", content: "remember this" }] };
+
+    await handler(event, { agentId: "main", sessionKey: "ignore:one" });
+    await handler(event, { agentId: "main", sessionKey: "stateless:one" });
+    await handler(event, {
+      agentId: "main",
+      sessionKey: "normal:one",
+      messageProvider: "blocked",
+    });
+    await handler({ messages: [] }, { agentId: "main", sessionKey: "normal:empty" });
+    await handler(event, { agentId: "main", sessionKey: "normal:queued" });
+    expect(api.logger.warn).toHaveBeenCalledWith("retain buffered for agent main (bank: main)");
+    await handler(event, { agentId: "main", sessionKey: "normal:denied" });
+    expect(api.logger.error).toHaveBeenCalledWith(
+      "retain denied: retain authorization denied for bank main"
+    );
+    await handler(event, { agentId: "main", sessionKey: "normal:failed" });
+    expect(api.logger.error).toHaveBeenCalledWith("retain failed: retain unavailable");
+
+    await api.services[0].start();
+    expect(flush).toHaveBeenCalledOnce();
+    await api.services[0].stop();
   });
 });

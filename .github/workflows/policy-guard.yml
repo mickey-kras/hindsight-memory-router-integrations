@@ -1,0 +1,295 @@
+name: policy
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect PR policy-sensitive files
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.payload.pull_request.number;
+            const headSha = context.payload.pull_request.head.sha;
+            const wfDir = ['.github', 'workflows'].join('/');
+            const protectedWorkflows = {
+              aislop: [wfDir, 'aislop.yml'].join('/'),
+              ci: [wfDir, 'ci.yml'].join('/'),
+              codeql: [wfDir, 'codeql.yml'].join('/'),
+              main: [wfDir, 'main.yml'].join('/'),
+              policy: [wfDir, 'policy-guard.yml'].join('/'),
+            };
+            const protectedFiles = new Set([
+              ...Object.values(protectedWorkflows),
+              '.aislop/config.yml',
+              '.semgrep.yml',
+              'package.json',
+              'sonar-project.properties',
+              'vitest.config.ts',
+            ]);
+            const forbiddenWriteKeys = [
+              'actions',
+              'attestations',
+              'contents',
+              'id-token',
+              'issues',
+              'packages',
+              'pull-requests',
+            ];
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+            const changed = new Set(
+              files.flatMap((file) =>
+                file.previous_filename
+                  ? [file.filename, file.previous_filename]
+                  : [file.filename],
+              ),
+            );
+            const removedOrRenamed = new Set(
+              files.flatMap((file) => {
+                if (file.status === 'removed') return [file.filename];
+                if (file.status === 'renamed' && file.previous_filename) {
+                  return [file.previous_filename];
+                }
+                return [];
+              }),
+            );
+            const failures = [];
+
+            async function readFileAtHead(path) {
+              const response = await github.rest.repos.getContent({
+                owner,
+                repo,
+                path,
+                ref: headSha,
+              });
+              const data = response.data;
+              if (!('content' in data)) return '';
+              return Buffer.from(data.content, data.encoding || 'base64').toString('utf8');
+            }
+
+            function fail(message) {
+              failures.push(message);
+            }
+
+            function stripYamlBlockScalars(content) {
+              const lines = content.split('\n');
+              const kept = [];
+              for (let i = 0; i < lines.length; i += 1) {
+                const line = lines[i];
+                kept.push(line);
+                const block = line.match(/^(\s*)(?:-\s*)?[A-Za-z0-9_-]+:\s*[>|]/);
+                if (!block) continue;
+                const parentIndent = block[1].length;
+                while (i + 1 < lines.length) {
+                  const next = lines[i + 1];
+                  const nextIndent = next.match(/^\s*/)[0].length;
+                  if (next.trim() === '' || nextIndent > parentIndent) {
+                    i += 1;
+                    continue;
+                  }
+                  break;
+                }
+              }
+              return kept.join('\n');
+            }
+
+            function yamlSurface(content) {
+              return stripYamlBlockScalars(content)
+                .split('\n')
+                .filter((line) => !line.trimStart().startsWith('#'))
+                .join('\n');
+            }
+
+            function escapeRegex(value) {
+              return value.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
+            }
+
+            function hasYamlKey(content, key) {
+              const escaped = escapeRegex(key);
+              return new RegExp(`^\\s*["']?${escaped}["']?\\s*:`, 'm').test(yamlSurface(content));
+            }
+
+            function hasYamlScalar(content, key, value) {
+              const escapedKey = escapeRegex(key);
+              const escapedValue = escapeRegex(value);
+              return new RegExp(
+                `(?:^|[,{])\\s*["']?${escapedKey}["']?\\s*:\\s*["']?${escapedValue}["']?\\s*(?=$|[,}#])`,
+                'im',
+              ).test(yamlSurface(content));
+            }
+
+            function hasYamlEvent(content, event) {
+              if (hasYamlKey(content, event)) return true;
+              const escaped = escapeRegex(event);
+              const eventToken = new RegExp(`^["']?${escaped}["']?$`, 'i');
+              for (const line of yamlSurface(content).split('\n')) {
+                const match = line.match(/^\s*["']?on["']?\s*:\s*(.*?)\s*(?:#.*)?$/i);
+                if (!match) continue;
+                const value = match[1].trim();
+                if (eventToken.test(value)) return true;
+                if (value.startsWith('[') && value.endsWith(']')) {
+                  return value.slice(1, -1).split(',').some((item) => eventToken.test(item.trim()));
+                }
+              }
+              return false;
+            }
+
+            function unpinnedActions(content) {
+              return yamlSurface(content)
+                .split('\n')
+                .map((line) => line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/)?.[1])
+                .filter((value) => value && !value.startsWith('./'))
+                .filter((value) => !/@[0-9a-f]{40}$/i.test(value));
+            }
+
+            for (const path of protectedFiles) {
+              if (changed.has(path) && removedOrRenamed.has(path)) {
+                fail(`${path}: protected gate file must not be removed or renamed`);
+              }
+            }
+
+            for (const file of files) {
+              const path = file.filename;
+              if (!path.startsWith(`${wfDir}/`) || !/\.ya?ml$/.test(path) || file.status === 'removed') {
+                continue;
+              }
+              const content = await readFileAtHead(path);
+              if (hasYamlScalar(content, 'permissions', 'write-all')) {
+                fail(`${path}: broad write permissions are not allowed`);
+              }
+              const forbiddenWrites = forbiddenWriteKeys.filter((permission) =>
+                hasYamlScalar(content, permission, 'write'),
+              );
+              if (forbiddenWrites.length > 0) {
+                fail(`${path}: privileged writes are not allowed: ${forbiddenWrites.join(', ')}`);
+              }
+              const unpinned = unpinnedActions(content);
+              if (unpinned.length > 0) {
+                fail(`${path}: actions must use full commit SHAs: ${unpinned.join(', ')}`);
+              }
+              if (hasYamlEvent(content, 'pull_request_target') && content.includes('actions/checkout@')) {
+                fail(`${path}: trusted PR workflows must not checkout contributor code`);
+              }
+            }
+
+            if (changed.has(protectedWorkflows.ci) && !removedOrRenamed.has(protectedWorkflows.ci)) {
+              const ci = await readFileAtHead(protectedWorkflows.ci);
+              if (!ci.includes('name: ci')) fail('ci.yml: workflow name must remain ci');
+              if (!hasYamlEvent(ci, 'pull_request') || !hasYamlEvent(ci, 'workflow_call')) {
+                fail('ci.yml: PR and reusable main gates must stay enabled');
+              }
+              for (const marker of [
+                'checks:',
+                'npm run test:coverage',
+                'npm audit --audit-level=moderate',
+                'Verify package',
+                'Nix dependency hash',
+                'Gitleaks',
+                'Semgrep',
+              ]) {
+                if (!ci.includes(marker)) fail(`ci.yml: required gate missing: ${marker}`);
+              }
+            }
+
+            if (changed.has(protectedWorkflows.aislop) && !removedOrRenamed.has(protectedWorkflows.aislop)) {
+              const aislop = await readFileAtHead(protectedWorkflows.aislop);
+              if (!hasYamlEvent(aislop, 'pull_request') || !hasYamlEvent(aislop, 'workflow_call')) {
+                fail('aislop.yml: PR and reusable main gates must stay enabled');
+              }
+              for (const marker of [
+                'name: aislop status',
+                'Aislop findings gate',
+                'process.exit(1)',
+                'category: .github/workflows/main.yml:status',
+              ]) {
+                if (!aislop.includes(marker)) fail(`aislop.yml: required gate missing: ${marker}`);
+              }
+            }
+
+            if (changed.has(protectedWorkflows.codeql) && !removedOrRenamed.has(protectedWorkflows.codeql)) {
+              const codeql = await readFileAtHead(protectedWorkflows.codeql);
+              if (!hasYamlEvent(codeql, 'pull_request') || !hasYamlEvent(codeql, 'workflow_call')) {
+                fail('codeql.yml: PR and reusable main gates must stay enabled');
+              }
+              for (const marker of [
+                'languages: javascript-typescript',
+                'github/codeql-action/analyze@',
+                'category: .github/workflows/main.yml:analyze',
+              ]) {
+                if (!codeql.includes(marker)) fail(`codeql.yml: required gate missing: ${marker}`);
+              }
+            }
+
+            if (changed.has(protectedWorkflows.main) && !removedOrRenamed.has(protectedWorkflows.main)) {
+              const main = await readFileAtHead(protectedWorkflows.main);
+              if (!hasYamlEvent(main, 'push') || hasYamlEvent(main, 'pull_request')) {
+                fail('main.yml: trusted main-only push trigger must stay isolated from PRs');
+              }
+              for (const marker of [
+                'uses: ./.github/workflows/ci.yml',
+                'uses: ./.github/workflows/aislop.yml',
+                'uses: ./.github/workflows/codeql.yml',
+                'needs: [quality, aislop, codeql]',
+                'SonarQube quality gate',
+              ]) {
+                if (!main.includes(marker)) fail(`main.yml: required gate missing: ${marker}`);
+              }
+            }
+
+            if (changed.has(protectedWorkflows.policy) && !removedOrRenamed.has(protectedWorkflows.policy)) {
+              const policy = await readFileAtHead(protectedWorkflows.policy);
+              if (!hasYamlEvent(policy, 'pull_request_target')) {
+                fail('policy-guard.yml: trusted policy trigger must stay enabled');
+              }
+              if (!policy.includes('actions/github-script@') || !policy.includes('core.setFailed')) {
+                fail('policy-guard.yml: policy enforcement must stay active');
+              }
+            }
+
+            if (changed.has('package.json')) {
+              const packageJson = JSON.parse(await readFileAtHead('package.json'));
+              if (packageJson.scripts?.['aislop:ci'] !== 'aislop ci') {
+                fail('package.json: full-repository Aislop scan must stay configured');
+              }
+              if (packageJson.scripts?.['test:coverage'] !== 'vitest run --coverage') {
+                fail('package.json: coverage test command must stay configured');
+              }
+            }
+
+            if (changed.has('vitest.config.ts')) {
+              const vitest = await readFileAtHead('vitest.config.ts');
+              if (!/lines:\s*90/.test(vitest)) fail('vitest.config.ts: 90% line threshold must stay configured');
+            }
+
+            if (changed.has('.aislop/config.yml')) {
+              const config = await readFileAtHead('.aislop/config.yml');
+              if (!/failBelow:\s*95/.test(config)) fail('.aislop/config.yml: score threshold must remain 95');
+            }
+
+            if (changed.has('sonar-project.properties')) {
+              const sonar = await readFileAtHead('sonar-project.properties');
+              if (!sonar.includes('sonar.javascript.lcov.reportPaths=coverage/lcov.info')) {
+                fail('sonar-project.properties: coverage import must stay configured');
+              }
+            }
+
+            if (failures.length > 0) {
+              core.setFailed(`Policy guard failed:\n- ${failures.join('\n- ')}`);
+            } else {
+              core.info('Policy guard passed.');
+            }

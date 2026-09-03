@@ -1,0 +1,85 @@
+name: aislop
+
+on:
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: aislop-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  status:
+    name: aislop status
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: npm-shrinkwrap.json
+
+      - run: npm ci
+
+      - name: Aislop quality gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "${EVENT_NAME}" = pull_request ]; then
+            npm run aislop:ci -- --human
+          else
+            npm run aislop:ci:human
+          fi
+
+      - name: Aislop SARIF
+        if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "${EVENT_NAME}" = pull_request ]; then
+            npm run --silent aislop:ci -- --sarif > aislop.sarif
+          else
+            npm run --silent aislop:ci:sarif > aislop.sarif
+          fi
+
+      - name: Aislop findings gate
+        if: always()
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+
+          const sarif = JSON.parse(readFileSync('aislop.sarif', 'utf8'));
+          const findings = sarif.runs.flatMap((run) => run.results ?? []);
+          if (findings.length > 0) {
+            const rules = [...new Set(findings.map((finding) => finding.ruleId ?? 'unknown'))];
+            console.error(`Aislop reported ${findings.length} finding(s): ${rules.join(', ')}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Upload Aislop SARIF
+        if: >-
+          ${{
+            always() &&
+            (
+              github.event_name != 'pull_request' ||
+              github.event.pull_request.head.repo.full_name == github.repository
+            )
+          }}
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          sarif_file: aislop.sarif
+          category: .github/workflows/main.yml:status
