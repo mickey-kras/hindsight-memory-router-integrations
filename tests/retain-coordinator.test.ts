@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentCredentialResolver } from "../src/router/agent-credential-resolver.js";
 import {
@@ -28,6 +28,7 @@ function makeStack(options: {
   queueDir: string;
   behavior?: (bank: string) => void;
   apiKeys?: string[];
+  logger?: { warn(msg: string): void; error(msg: string): void };
 }) {
   const credentials = new AgentCredentialResolver({
     routerUrl: "https://router.example.test",
@@ -61,7 +62,7 @@ function makeStack(options: {
     writeBanks: new WriteBankResolver(credentials),
     clients,
     queueDir: options.queueDir,
-    logger: silentLog,
+    logger: options.logger ?? silentLog,
   });
   return { retain, fakeClients };
 }
@@ -185,6 +186,49 @@ describe("RetainCoordinator", () => {
     await retain.flushQueues();
     const raw = readFileSync(join(queueDir, "hindsight-retain-queue.main.jsonl"), "utf8");
     expect(raw.trim()).not.toBe("");
+  });
+
+  it("replay denial keeps items queued, logs the denial, and stops the FIFO replay", async () => {
+    const first = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(500);
+      },
+    });
+    await first.retain.retain("main", { content: "first item" });
+    await first.retain.retain("main", { content: "second item" });
+
+    let attempts = 0;
+    const log = { warn: () => {}, error: vi.fn() };
+    const replay = makeStack({
+      queueDir,
+      logger: log,
+      behavior: () => {
+        attempts += 1;
+        throw httpError(403);
+      },
+    });
+    await replay.retain.flushQueues();
+
+    expect(log.error).toHaveBeenCalledWith(
+      "retain replay denied for bank main; item stays queued for operator review"
+    );
+    expect(attempts).toBe(1);
+    const raw = readFileSync(join(queueDir, "hindsight-retain-queue.main.jsonl"), "utf8").trim();
+    expect(raw.split("\n")).toHaveLength(2);
+  });
+
+  it("treats statusless errors as transient and queues the item", async () => {
+    const { retain } = makeStack({
+      queueDir,
+      behavior: () => {
+        throw new Error("connection reset");
+      },
+    });
+    const outcome = await retain.retain("main", { content: "offline work" });
+    expect(outcome).toEqual({ queued: true, bank: "main" });
+    const raw = readFileSync(join(queueDir, "hindsight-retain-queue.main.jsonl"), "utf8");
+    expect(JSON.parse(raw.trim()).content).toBe("offline work");
   });
 
   it("assigns and persists an operation id for replay identity", async () => {

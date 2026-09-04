@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    rebase-strategy: auto
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    rebase-strategy: auto
+    open-pull-requests-limit: 3
+    groups:
+      github-actions-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]

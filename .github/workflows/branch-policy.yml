@@ -1,0 +1,39 @@
+name: branch-policy
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+env:
+  WORK_BRANCH_RE: '^(feat|fix|refactor|docs|ci|security)/[a-z0-9]+(-[a-z0-9]+)*$'
+
+jobs:
+  branch-name:
+    name: branch name
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate same-repository branch name
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$HEAD_REPO" != "$REPOSITORY" ]]; then
+            exit 0
+          fi
+
+          if [[ "$PR_AUTHOR" == "dependabot[bot]" && "$HEAD_REF" == dependabot/* ]]; then
+            exit 0
+          fi
+
+          if [[ ! "$HEAD_REF" =~ $WORK_BRANCH_RE ]]; then
+            echo "Branch must match: $WORK_BRANCH_RE" >&2
+            exit 1
+          fi

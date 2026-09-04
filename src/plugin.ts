@@ -243,14 +243,14 @@ export default function hindsightMemoryRouterPlugin(api: MoltbotPluginAPI): void
 
 /** Registration, separated from stack construction for tests. */
 export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): void {
+  registerRecallHook(api, stack);
+  registerRetainHooks(api, stack);
+  registerKnowledgeTools(api, stack);
+}
+
+function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const log = api.logger;
   const config = stack.config;
-
-  const ignorePatterns = compileSessionPatterns(config.ignoreSessionPatterns ?? []);
-  const statelessPatterns = compileSessionPatterns(config.statelessSessionPatterns ?? []);
-  const sessionSequences = new Map<string, number>();
-  const retainedDigests = new Map<string, string>();
-
   api.on(
     "before_prompt_build",
     async (event: any, ctx?: PluginHookAgentContext): Promise<PluginPromptHookResult | void> => {
@@ -310,6 +310,15 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
       }
     }
   );
+}
+
+function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
+  const log = api.logger;
+  const config = stack.config;
+  const ignorePatterns = compileSessionPatterns(config.ignoreSessionPatterns ?? []);
+  const statelessPatterns = compileSessionPatterns(config.statelessSessionPatterns ?? []);
+  const sessionSequences = new Map<string, number>();
+  const retainedDigests = new Map<string, string>();
 
   const runRetain = async (
     event: any,
@@ -409,7 +418,11 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
       }
     },
   });
+}
 
+function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): void {
+  const log = api.logger;
+  const config = stack.config;
   if (config.enableKnowledgeTools === true && typeof api.registerTool === "function") {
     api.registerTool(
       (ctx: PluginToolContext) => {
