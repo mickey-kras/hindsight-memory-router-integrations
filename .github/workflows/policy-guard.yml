@@ -41,6 +41,7 @@ jobs:
           set -euo pipefail
           export FILES_JSON="${RUNNER_TEMP}/files.json"
           python3 <<'PY'
+          import hashlib
           import json
           import os
           import re
@@ -232,6 +233,9 @@ jobs:
                   scan_contributor_refs(path, f'{where} env {key}', str(value))
 
           def check_workflow(path, doc):
+              if path in AUTOMATION_SHAPES:
+                  gate_automation(path, yaml.safe_dump(doc))
+                  return
               events = check_triggers(path, doc)
               allow_id_token = bool(events) and events <= ID_TOKEN_EVENTS
               check_permissions(path, 'top-level', doc.get('permissions'), allow_id_token, required=True)
@@ -903,6 +907,28 @@ jobs:
               if properties.get('sonar.javascript.lcov.reportPaths') != 'coverage/lcov.info':
                   fail('sonar-project.properties: coverage import must stay configured')
 
+          # Only the reviewed Dependabot workflow shapes may write or use
+          # the privileged PR trigger. Action SHA updates remain allowed.
+          AUTOMATION_SHAPES = {
+              '.github/workflows/dependabot-auto-merge.yml': 'fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34',
+              '.github/workflows/dependabot-auto-merge-refresh.yml': '67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3',
+          }
+
+          def gate_automation(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              if True in doc:
+                  doc['on'] = doc.pop(True)
+              for _, job in iter_jobs(doc):
+                  for step in iter_steps(job):
+                      uses = step.get('uses')
+                      if isinstance(uses, str):
+                          step['uses'] = re.sub(r'@[0-9a-f]{40}$', '@PINNED', uses)
+              digest = hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
+              if digest != AUTOMATION_SHAPES[path]:
+                  fail(f'{path}: automation must match its reviewed workflow shape')
+
           GATES = {
               '.github/workflows/ci.yml': gate_ci,
               '.github/workflows/aislop.yml': gate_aislop,
@@ -918,6 +944,7 @@ jobs:
               'sonar-project.properties': gate_sonar,
           }
 
+          GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
           protected = set(GATES)
 
           def load_files():
@@ -1074,3 +1101,4 @@ jobs:
                   traceback.print_exc()
                   sys.exit(1)
           PY
+
