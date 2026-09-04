@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.11",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.4.0",
     "aislop": "0.14.1",
     "typescript": "^5.3.0",
     "vitest": "^4.1.2"
