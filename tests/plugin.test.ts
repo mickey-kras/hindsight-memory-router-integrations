@@ -479,11 +479,12 @@ describe("plugin wiring", () => {
     stack.config.ignoreSessionPatterns = ["ignore:*"];
     stack.config.statelessSessionPatterns = ["stateless:*"];
     stack.config.excludeProviders = ["blocked"];
-    stack.retain.retain = vi
+    const retainMock = vi
       .fn()
       .mockResolvedValueOnce({ queued: true, bank: "main" })
       .mockRejectedValueOnce(new RetainAuthorizationError("main"))
       .mockRejectedValueOnce(new Error("retain unavailable"));
+    stack.retain.retain = retainMock;
     const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
     registerWithStack(api as any, stack);
     const handler = api.handlers.get("agent_end")!;
@@ -506,8 +507,91 @@ describe("plugin wiring", () => {
     await handler(event, { agentId: "main", sessionKey: "normal:failed" });
     expect(api.logger.error).toHaveBeenCalledWith("retain failed: retain unavailable");
 
+    expect(retainMock).toHaveBeenCalledTimes(3);
+    expect(retainMock.mock.calls.map(([, request]) => request.documentId)).toEqual([
+      expect.stringContaining("openclaw:normal:queued:"),
+      expect.stringContaining("openclaw:normal:denied:"),
+      expect.stringContaining("openclaw:normal:failed:"),
+    ]);
+
     await api.services[0].start();
     expect(flush).toHaveBeenCalledOnce();
     await api.services[0].stop();
+  });
+
+  it("does not retain when autoRetain is disabled", async () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    const stack = instrumentedStack(queueDir, sink);
+    stack.config.autoRetain = false;
+    const retainSpy = vi.spyOn(stack.retain, "retain");
+    registerWithStack(api as any, stack);
+    await api.handlers.get("agent_end")!(
+      { context: { sessionEntry: { messages: [{ role: "user", content: "remember this" }] } } },
+      { agentId: "main", sessionKey: "agent:main:main" }
+    );
+    expect(retainSpy).not.toHaveBeenCalled();
+    expect(sink.constructed).toHaveLength(0);
+  });
+
+  it("skips retain for read-only agents without a write bank", async () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    const stack = instrumentedStack(queueDir, sink);
+    stack.config.agents = {
+      reader: { token: TOKEN_MAIN, recallBanks: ["main"] },
+    };
+    stack.credentials = new AgentCredentialResolver(stack.config);
+    const retainSpy = vi.spyOn(stack.retain, "retain");
+    registerWithStack(api as any, stack);
+    await api.handlers.get("agent_end")!(
+      { context: { sessionEntry: { messages: [{ role: "user", content: "remember this" }] } } },
+      { agentId: "reader", sessionKey: "agent:reader:main" }
+    );
+    expect(retainSpy).not.toHaveBeenCalled();
+    expect(sink.constructed).toHaveLength(0);
+  });
+
+  it("non-recall knowledge tools pass through to the bank API with details attached", async () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    const tools = api.toolFactories[0].factory({ agentId: "main" }) as Array<{
+      name: string;
+      execute(id: string, params: Record<string, unknown>): Promise<any>;
+    }>;
+    const createPage = tools.find((t) => t.name === "agent_knowledge_create_page")!;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "preferences", name: "Preferences" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    try {
+      const result = await createPage.execute("call-1", {
+        page_id: "preferences",
+        name: "Preferences",
+        source_query: "What are the user's preferences?",
+      });
+      expect(result.details).toEqual({});
+      expect(result.content[0].text).toContain("preferences");
+      const request = fetchMock.mock.calls[0][0] as Request;
+      expect(request.url).toContain("/v1/default/banks/main/mental-models");
+      expect(request.headers.get("authorization")).toBe(`Bearer ${TOKEN_MAIN}`);
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });

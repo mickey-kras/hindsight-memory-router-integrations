@@ -15,6 +15,8 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    env:
+      TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
     steps:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
@@ -89,7 +91,7 @@ jobs:
           ignore-unfixed: false
           exit-code: 0
           limit-severities-for-sarif: true
-          skip-dirs: node_modules,coverage,dist
+          skip-dirs: .cache,node_modules,coverage,dist
           version: v0.71.2
 
       - name: Verify Trivy SARIF
@@ -106,10 +108,13 @@ jobs:
           sarif_file: trivy-results.sarif
           category: .github/workflows/main.yml:trivy
 
+      - name: Setup Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.71.2
+
       - name: Trivy dependency gate
-        env:
-          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
         run: >-
           trivy fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL
-          --ignore-unfixed --skip-dirs node_modules --skip-dirs coverage
-          --skip-dirs dist .
+          --ignore-unfixed --skip-dirs .cache --skip-dirs node_modules
+          --skip-dirs coverage --skip-dirs dist .

@@ -35,6 +35,9 @@ jobs:
 
   sonar:
     name: sonar
+    permissions:
+      contents: read
+      id-token: write
     needs: [quality, aislop, codeql]
     runs-on: ubuntu-latest
     steps:

@@ -1,6 +1,8 @@
 name: policy
 
-on:
+# Quoted so PyYAML parses the key as 'on' (not True), keeping the document
+# JSON-serializable with sort_keys for the whole-document self-scan.
+'on':
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -13,285 +15,1062 @@ jobs:
     name: guard
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect PR policy-sensitive files
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const pull_number = context.payload.pull_request.number;
-            const headSha = context.payload.pull_request.head.sha;
-            const wfDir = ['.github', 'workflows'].join('/');
-            const protectedWorkflows = {
-              aislop: [wfDir, 'aislop.yml'].join('/'),
-              ci: [wfDir, 'ci.yml'].join('/'),
-              codeql: [wfDir, 'codeql.yml'].join('/'),
-              main: [wfDir, 'main.yml'].join('/'),
-              policy: [wfDir, 'policy-guard.yml'].join('/'),
-            };
-            const protectedFiles = new Set([
-              ...Object.values(protectedWorkflows),
-              '.aislop/config.yml',
-              '.semgrep.yml',
-              'package.json',
-              'sonar-project.properties',
-              'vitest.config.ts',
-            ]);
-            const forbiddenWriteKeys = [
-              'actions',
-              'attestations',
-              'contents',
-              'id-token',
-              'issues',
-              'packages',
-              'pull-requests',
-            ];
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner,
-              repo,
-              pull_number,
-              per_page: 100,
-            });
-            const changed = new Set(
-              files.flatMap((file) =>
-                file.previous_filename
-                  ? [file.filename, file.previous_filename]
-                  : [file.filename],
+          egress-policy: audit
+
+      - name: Fetch PR files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.event.repository.owner.login }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp \
+            "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" \
+            > "${RUNNER_TEMP}/files.json"
+
+      - name: policy guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.event.repository.owner.login }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          export FILES_JSON="${RUNNER_TEMP}/files.json"
+          python3 <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          import traceback
+
+          import yaml
+
+          failures = []
+
+          def fail(message):
+              failures.append(message)
+
+          # safe_load semantics with duplicate-key rejection: any repeated key
+          # in a mapping is a hard error, killing parser differentials such as
+          # a doubled `on:` registering under both True and 'on'. All string
+          # keys are lowercased (values untouched) because GitHub compares
+          # workflow keys case-insensitively; a capital `If: 'false'` or a
+          # mixed-case `ON:` must not bypass the checks below. Duplicates are
+          # rejected AFTER lowering, so `If:`/`if:` pairs are hard errors.
+          class UniqueKeyLoader(yaml.SafeLoader):
+              pass
+
+          def _construct_unique_mapping(loader, node, deep=False):
+              loader.flatten_mapping(node)
+              mapping = {}
+              for key_node, value_node in node.value:
+                  key = loader.construct_object(key_node, deep=True)
+                  if isinstance(key, str):
+                      key = key.lower()
+                  try:
+                      hash(key)
+                  except TypeError as exc:
+                      raise yaml.constructor.ConstructorError(
+                          'while constructing a mapping', node.start_mark,
+                          'found unhashable key', key_node.start_mark) from exc
+                  if key in mapping:
+                      raise yaml.constructor.ConstructorError(
+                          'while constructing a mapping', node.start_mark,
+                          f'found duplicate key {key!r}', key_node.start_mark)
+                  mapping[key] = loader.construct_object(value_node, deep=deep)
+              return mapping
+
+          UniqueKeyLoader.add_constructor(
+              yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+              _construct_unique_mapping,
+          )
+
+          def load_yaml(content):
+              return yaml.load(content, Loader=UniqueKeyLoader)
+
+          # YAML 1.1 quirk: PyYAML resolves an unquoted `on:` key to True.
+          def workflow_events(doc):
+              on = doc.get('on', doc.get(True))
+              if isinstance(on, str):
+                  return {on}
+              if isinstance(on, list):
+                  return {str(item) for item in on}
+              if isinstance(on, dict):
+                  return {str(key) for key in on}
+              return set()
+
+          def parse_yaml_file(path, content, kind='YAML'):
+              try:
+                  doc = load_yaml(content)
+              except yaml.YAMLError as exc:
+                  fail(f'{path}: {kind} does not parse: {exc}')
+                  return None
+              if not isinstance(doc, dict):
+                  fail(f'{path}: {kind} must be a mapping')
+                  return None
+              # PyYAML (1.1) reads unquoted on: as True while GitHub (1.2)
+              # reads it as 'on'; a file carrying both hides triggers from us.
+              if 'on' in doc and True in doc:
+                  fail(f'{path}: {kind} has ambiguous on: keys')
+                  return None
+              return doc
+
+          # Allowlist (replaces the old write-scope denylist). id-token: write
+          # is only permitted where no contributor-controlled code runs and no
+          # attacker-influenceable schedule exists, i.e. on push-only
+          # workflows (main.yml); schedule/workflow_dispatch no longer qualify.
+          ALLOWED_PERMISSIONS = {
+              'contents': {'read'},
+              'pull-requests': {'read'},
+              'security-events': {'write'},
+              'statuses': {'read'},
+              'checks': {'read'},
+              'id-token': {'write'},
+          }
+          ID_TOKEN_EVENTS = {'push'}
+
+          # Trigger allowlist (replaces per-file event freedom): only these
+          # events may ever appear in a workflow file. The guard file itself
+          # is pinned to exactly GUARD_EVENT and is the sole file allowed to
+          # carry it, which kills the privileged-PR-trigger class (including
+          # workflow_run and repository_dispatch) for new/changed workflows.
+          DEFAULT_ALLOWED_EVENTS = {
+              'pull_request', 'workflow_call', 'push', 'schedule', 'workflow_dispatch',
+          }
+
+          def check_triggers(path, doc):
+              events = workflow_events(doc)
+              if not events:
+                  fail(f'{path}: workflow must declare at least one trigger')
+                  return events
+              allowed = {GUARD_EVENT} if path == GUARD_PATH else DEFAULT_ALLOWED_EVENTS
+              extra = sorted(events - allowed)
+              if extra:
+                  fail(f'{path}: triggers outside the allowlist: {", ".join(extra)}')
+              return events
+
+          def check_permissions(path, where, value, allow_id_token, required=False):
+              if value is None:
+                  if required:
+                      fail(f'{path}: top-level permissions block is required')
+                  return
+              if isinstance(value, str):
+                  if value == 'none':
+                      return
+                  fail(f'{path}: {where} permissions must be an explicit allowlist mapping, not {value!r}')
+                  return
+              if not isinstance(value, dict):
+                  fail(f'{path}: {where} permissions must be a mapping')
+                  return
+              for key, level in value.items():
+                  key = str(key)
+                  level = str(level)
+                  allowed = ALLOWED_PERMISSIONS.get(key)
+                  if allowed is None or level not in allowed:
+                      fail(f'{path}: {where} permission {key}: {level} is not in the allowlist')
+                      continue
+                  if key == 'id-token' and not allow_id_token:
+                      fail(
+                          f'{path}: {where} id-token: write requires push to be the only trigger'
+                      )
+
+          PIN_RE = re.compile(r'@[0-9a-f]{40}$')
+
+          def iter_jobs(doc):
+              jobs = doc.get('jobs')
+              if isinstance(jobs, dict):
+                  for name, job in jobs.items():
+                      if isinstance(job, dict):
+                          yield str(name), job
+
+          def iter_steps(job):
+              steps = job.get('steps')
+              if isinstance(steps, list):
+                  for step in steps:
+                      if isinstance(step, dict):
+                          yield step
+
+          def _ref_pattern(*parts):
+              return re.compile(''.join(parts), re.IGNORECASE)
+
+          # Every needle below is assembled from pieces at runtime (no literal
+          # occurrence of the joined token anywhere in this file) so the
+          # guard's own run body, env values and serialized document stay
+          # clean under the contributor-ref scans and the whole-document
+          # self-scan in gate_policy_guard.
+          T_PR = 'pull' + '_' + 'request'
+          T_HD = 'he' + 'ad'
+          T_HRF = T_HD + '_' + 'ref'
+          T_PEX = 'pull' + '/' + '$' + '{{'
+          GUARD_EVENT = 'pull' + '_request_' + 'target'
+          GUARD_PATH = '.github/workflows/policy-guard.yml'
+          # A sliding window (not a fixed separator) also catches bracket
+          # chains such as ['x']['y'] and format() repackaging of the ref.
+          CONTRIBUTOR_REF_PATTERNS = (
+              _ref_pattern(T_PR, r'[\s\S]{0,40}', T_HD),
+              _ref_pattern('github', r'[\s\S]{0,20}', T_HRF),
+              _ref_pattern('pull' + '/', r'\$\{\{'),
+          )
+
+          def scan_contributor_refs(path, where, text):
+              for pattern in CONTRIBUTOR_REF_PATTERNS:
+                  if pattern.search(text):
+                      fail(
+                          f'{path}: {where} must not reference contributor-controlled refs '
+                          f'(matched {pattern.pattern!r})'
+                      )
+
+          def scan_env(path, where, env):
+              if not isinstance(env, dict):
+                  return
+              for key, value in env.items():
+                  scan_contributor_refs(path, f'{where} env {key}', str(value))
+
+          def check_workflow(path, doc):
+              events = check_triggers(path, doc)
+              allow_id_token = bool(events) and events <= ID_TOKEN_EVENTS
+              check_permissions(path, 'top-level', doc.get('permissions'), allow_id_token, required=True)
+              jobs = doc.get('jobs')
+              if jobs is not None and not isinstance(jobs, dict):
+                  fail(f'{path}: jobs must be a mapping')
+              uses_values = []
+              for job_name, job in iter_jobs(doc):
+                  check_permissions(path, f'job {job_name}', job.get('permissions'), allow_id_token)
+                  # This repository never forwards secrets to reusable
+                  # workflows; the key only ever shows up in exfiltration jobs.
+                  if 'secrets' in job:
+                      fail(f'{path}: job {job_name} must not set the secrets key')
+                  if 'steps' in job and not isinstance(job.get('steps'), list):
+                      fail(f'{path}: job {job_name} steps must be a list')
+                  job_uses = job.get('uses')
+                  if isinstance(job_uses, str):
+                      uses_values.append(job_uses)
+                  for step in iter_steps(job):
+                      step_uses = step.get('uses')
+                      if isinstance(step_uses, str):
+                          uses_values.append(step_uses)
+              docker_uses = [value for value in uses_values if value.lower().startswith('docker://')]
+              if docker_uses:
+                  fail(f'{path}: docker:// actions are not allowed: {", ".join(docker_uses)}')
+              unpinned = [
+                  value for value in uses_values
+                  if not value.startswith('./')
+                  and not value.lower().startswith('docker://')
+                  and not PIN_RE.search(value)
+              ]
+              if unpinned:
+                  fail(f'{path}: actions must be pinned to full commit SHAs: {", ".join(unpinned)}')
+              if GUARD_EVENT not in events:
+                  return
+              scan_contributor_refs(path, 'workflow env', json.dumps(doc.get('env') or {}, default=str))
+              for job_name, job in iter_jobs(doc):
+                  if isinstance(job.get('uses'), str):
+                      fail(
+                          f'{path}: {GUARD_EVENT} workflow must not call reusable workflows '
+                          f'(job {job_name})'
+                      )
+                  scan_env(path, f'job {job_name}', job.get('env'))
+                  for step in iter_steps(job):
+                      step_uses = step.get('uses')
+                      if isinstance(step_uses, str) and 'actions/checkout@' in step_uses.lower():
+                          fail(f'{path}: {GUARD_EVENT} workflow must not check out contributor code')
+                      scan_env(path, f'job {job_name} step', step.get('env'))
+                      run = step.get('run')
+                      if isinstance(run, str):
+                          scan_contributor_refs(path, f'job {job_name} run script', run)
+
+          def step_named(job, name):
+              for step in iter_steps(job):
+                  if step.get('name') == name:
+                      return step
+              return None
+
+          def job_named(doc, name):
+              for job_name, job in iter_jobs(doc):
+                  if job_name == name:
+                      return job
+              return None
+
+          # Exact job-set pinning: an extra job (secret exfiltration) or a
+          # missing gate job fails even when every kept job looks clean.
+          def require_job_set(path, doc, expected):
+              jobs = doc.get('jobs')
+              names = {str(name) for name in jobs} if isinstance(jobs, dict) else set()
+              if names != set(expected):
+                  fail(f'{path}: jobs must be exactly: {", ".join(sorted(expected))}')
+
+          # Normalize a run script before substring checks: backslash-newline
+          # continuations are joined first, then every whitespace run collapses
+          # to a single space, so folded scalars and line-split neutralizers
+          # cannot hide from the needles.
+          def normalize_run(text):
+              return re.sub(r'\s+', ' ', text.replace('\\\n', '')).strip()
+
+          # Normalize an if condition for exact comparison: collapse all
+          # whitespace (including newlines folded from >-) to single spaces,
+          # strip, and unwrap an optional expression wrapper.
+          def normalize_condition(text):
+              text = re.sub(r'\s+', ' ', str(text)).strip()
+              opener = '$' + '{{'
+              if text.startswith(opener) and text.endswith('}}'):
+                  text = text[len(opener):-2].strip()
+              return text
+
+          # Required non-conditioned steps carry no execution-context keys:
+          # working-directory/shell/env-file style injection on a pinned
+          # exact-run step is as good as replacing the run itself.
+          ALLOWED_STEP_KEYS = {'name', 'uses', 'run', 'with', 'env'}
+
+          def check_step_keys(path, job_label, step, allowed=ALLOWED_STEP_KEYS):
+              name = step.get('name')
+              label = name if isinstance(name, str) else '<unnamed>'
+              extra = sorted(str(key) for key in step if key not in allowed)
+              if extra:
+                  fail(
+                      f'{path}: job {job_label} step {label} must not set keys: '
+                      f'{", ".join(extra)}'
+                  )
+
+          # Exact-if contracts, assembled from pieces at runtime: the literal
+          # expressions contain contributor-ref chains that this file's own
+          # whole-document scan must never match.
+          T_EVENT_PR = "github.event_name != '" + T_PR + "'"
+          T_SAME_REPO = (
+              'github.event.' + T_PR + '.' + T_HD + '.repo.full_name == github.repository'
+          )
+          AISLOP_SARIF_IF = 'always()'
+          AISLOP_GATE_IF = "always() && hashFiles('aislop.sarif') != ''"
+          AISLOP_UPLOAD_IF = (
+              AISLOP_GATE_IF + ' && ( ' + T_EVENT_PR + ' || ' + T_SAME_REPO + ' )'
+          )
+          TRIVY_UPLOAD_IF = T_EVENT_PR + ' || ' + T_SAME_REPO
+
+          def require_events(path, doc, required):
+              events = workflow_events(doc)
+              missing = sorted(set(required) - events)
+              if missing:
+                  fail(f'{path}: required triggers missing: {", ".join(missing)}')
+
+          def require_step_names(path, job, required):
+              names = {
+                  step.get('name') for step in iter_steps(job)
+                  if isinstance(step.get('name'), str)
+              }
+              missing = sorted(set(required) - names)
+              if missing:
+                  fail(f'{path}: required steps missing: {", ".join(missing)}')
+
+          # continue-on-error fails closed: the key must be absent or the
+          # literal YAML false; any other value (true, 'true', '${{ true }}',
+          # ...) makes a required job or step skippable.
+          def _continue_on_error(mapping):
+              return (
+                  'continue-on-error' in mapping
+                  and mapping['continue-on-error'] is not False
+              )
+
+          # Required jobs and gate steps must not be skippable. Steps whose
+          # conditions are legitimate (SARIF uploads running under always()
+          # plus a fork guard) may keep an `if`, but the condition must stay
+          # an always(), hashFiles('...') or head.repo.full_name guard, and
+          # none may swallow failures with continue-on-error.
+          def check_gate_job(path, job_label, job):
+              if 'if' in job:
+                  fail(f'{path}: job {job_label} must not have an if condition')
+              if _continue_on_error(job):
+                  fail(f'{path}: job {job_label} must not set continue-on-error')
+
+          def check_gate_step(path, job_label, step, allow_if=False):
+              name = step.get('name')
+              label = name if isinstance(name, str) else '<unnamed>'
+              where = f'{path}: job {job_label} step {label}'
+              if _continue_on_error(step):
+                  fail(f'{where} must not set continue-on-error')
+              condition = step.get('if')
+              if condition is None:
+                  return
+              if not allow_if:
+                  fail(f'{where} must not have an if condition')
+                  return
+              text = str(condition)
+              compact = re.sub(r'\s+', '', text)
+              if (
+                  compact not in ('always()', '${{always()}}')
+                  and 'hashFiles(' not in text
+                  and 'head.repo.full_name' not in text
+              ):
+                  fail(
+                      f'{where} if condition must stay an always(), hashFiles('
+                      "'...' or head.repo.full_name guard"
+                  )
+
+          # Neutralization ban, applied to every signature-checked run body
+          # (ci.yml Semgrep/Verify package/Nix dependency hash/Trivy
+          # dependency gate, aislop.yml Aislop quality gate/Aislop SARIF).
+          # After normalization, the classic always-pass wrappers fail; an
+          # echo line also fails, because echoing the signature needles is
+          # the cheapest way to satisfy the substring checks without ever
+          # running the gate (raw lines are scanned, since normalization
+          # would fold an echo line into its neighbours).
+          NEUTRALIZATION_BANS = ('|| true', '||true', '|| echo', '; true', 'exit 0')
+
+          def check_run_not_neutralized(path, label, run):
+              normalized = normalize_run(run)
+              for banned in NEUTRALIZATION_BANS:
+                  if banned in normalized:
+                      fail(f'{path}: {label} run must not be neutralized with {banned!r}')
+              for line in run.split('\n'):
+                  if re.match(r'\s*echo\b', line):
+                      fail(f'{path}: {label} run must not spoof its gate with an echo line')
+                      return
+
+          CI_REQUIRED_STEPS = (
+              'Tests and coverage', 'Verify package', 'Nix dependency hash',
+              'Gitleaks', 'Semgrep', 'Trivy dependency gate', 'Setup Trivy',
+          )
+          # Name-only pins are not enough: each required step must still carry
+          # the substance of its gate (checked on the normalized run text).
+          CI_RUN_SIGNATURES = {
+              'Verify package': (
+                  'npm pack', 'sha256sum --check PACKAGE_SHA256',
+                  'cmp ', 'grep -Fxq package/npm-shrinkwrap.json',
               ),
-            );
-            const removedOrRenamed = new Set(
-              files.flatMap((file) => {
-                if (file.status === 'removed') return [file.filename];
-                if (file.status === 'renamed' && file.previous_filename) {
-                  return [file.previous_filename];
-                }
-                return [];
-              }),
-            );
-            const failures = [];
+              'Nix dependency hash': ('prefetch-npm-deps', 'PACKAGE_NIX_HASHES'),
+              'Semgrep': (
+                  'semgrep scan --config .semgrep.yml', '--error',
+                  'docker run', 'semgrep/semgrep:',
+              ),
+              'Trivy dependency gate': (
+                  'trivy fs', '--exit-code 1', 'HIGH,CRITICAL',
+                  '--severity HIGH,CRITICAL',
+              ),
+          }
+          CI_USES_PREFIXES = {
+              'Gitleaks': 'gitleaks/gitleaks-action@',
+              'Setup Trivy': 'aquasecurity/setup-trivy@',
+          }
 
-            async function readFileAtHead(path) {
-              const response = await github.rest.repos.getContent({
-                owner,
-                repo,
-                path,
-                ref: headSha,
-              });
-              const data = response.data;
-              if (!('content' in data)) return '';
-              return Buffer.from(data.content, data.encoding || 'base64').toString('utf8');
-            }
+          def gate_ci(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              if doc.get('name') != 'ci':
+                  fail('ci.yml: workflow name must remain ci')
+              require_events(path, doc, ('pull_request', 'workflow_call'))
+              require_job_set(path, doc, ('checks',))
+              checks = job_named(doc, 'checks')
+              if checks is None:
+                  fail('ci.yml: jobs.checks must exist')
+                  return
+              check_gate_job(path, 'checks', checks)
+              require_step_names(path, checks, CI_REQUIRED_STEPS)
+              for name in CI_REQUIRED_STEPS:
+                  step = step_named(checks, name)
+                  if step is None:
+                      continue
+                  check_gate_step(path, 'checks', step)
+                  check_step_keys(path, 'checks', step)
+                  needles = CI_RUN_SIGNATURES.get(name)
+                  if needles is not None:
+                      run = step.get('run')
+                      normalized = normalize_run(run) if isinstance(run, str) else ''
+                      missing = [needle for needle in needles if needle not in normalized]
+                      if missing:
+                          fail(
+                              f'ci.yml: {name} run must keep: {", ".join(missing)}'
+                          )
+                      if isinstance(run, str):
+                          check_run_not_neutralized(path, f"step {name}", run)
+                  prefix = CI_USES_PREFIXES.get(name)
+                  if prefix is not None:
+                      uses = step.get('uses')
+                      if not isinstance(uses, str) or not uses.startswith(prefix):
+                          fail(f'ci.yml: {name} must keep using {prefix}...')
+              steps = list(iter_steps(checks))
+              # Exact-run pinning: these two single-line gates must stay
+              # byte-identical, so echo-spoofed needles, appended
+              # neutralizers or reformulations cannot pass; legitimate edits
+              # intentionally require guard-aware review.
+              tests_step = step_named(checks, 'Tests and coverage')
+              tests_run = tests_step.get('run') if tests_step else None
+              if not isinstance(tests_run, str) or tests_run.strip() != 'npm run test:coverage':
+                  fail("ci.yml: Tests and coverage run must be exactly 'npm run test:coverage'")
+              audit_steps = [
+                  step for step in steps
+                  if isinstance(step.get('run'), str) and 'npm audit' in step['run']
+              ]
+              if len(audit_steps) != 1:
+                  fail('ci.yml: exactly one npm audit step must stay configured')
+              else:
+                  audit_step = audit_steps[0]
+                  if audit_step is tests_step:
+                      fail('ci.yml: npm audit must be a separate step from Tests and coverage')
+                  if audit_step.get('name') is not None:
+                      fail('ci.yml: npm audit step must remain unnamed')
+                  if audit_step['run'].strip() != 'npm audit --audit-level=moderate':
+                      fail("ci.yml: npm audit run must be exactly 'npm audit --audit-level=moderate'")
+                  check_step_keys(path, 'checks', audit_step)
+              upload = next(
+                  (
+                      step for step in steps
+                      if isinstance(step.get('with'), dict)
+                      and step['with'].get('category') == '.github/workflows/main.yml:trivy'
+                  ),
+                  None,
+              )
+              if upload is None:
+                  fail('ci.yml: Trivy SARIF upload category must stay configured')
+              else:
+                  check_gate_step(path, 'checks', upload, allow_if=True)
+                  if normalize_condition(upload.get('if', '')) != TRIVY_UPLOAD_IF:
+                      fail('ci.yml: Upload Trivy SARIF if condition must stay exactly: ' + TRIVY_UPLOAD_IF)
 
-            function fail(message) {
-              failures.push(message);
-            }
+          AISLOP_REQUIRED_STEPS = (
+              'Aislop quality gate', 'Aislop SARIF',
+              'Aislop findings gate', 'Upload Aislop SARIF',
+          )
+          # These steps legitimately keep always()/hashFiles/fork-guard
+          # conditions; they are only barred from if:false and
+          # continue-on-error.
+          AISLOP_CONDITIONED_STEPS = {
+              'Aislop SARIF', 'Aislop findings gate', 'Upload Aislop SARIF',
+          }
+          # The aislop gate steps were name-only pins: their runs must still
+          # carry the substance of the scan (checked on the normalized run
+          # text) and survive the neutralization ban like the ci.yml gates.
+          AISLOP_RUN_SIGNATURES = {
+              'Aislop quality gate': ('aislop:ci',),
+              'Aislop SARIF': ('aislop', '--sarif', '> aislop.sarif'),
+          }
 
-            function stripYamlBlockScalars(content) {
-              const lines = content.split('\n');
-              const kept = [];
-              for (let i = 0; i < lines.length; i += 1) {
-                const line = lines[i];
-                kept.push(line);
-                const block = line.match(/^(\s*)(?:-\s*)?[A-Za-z0-9_-]+:\s*[>|]/);
-                if (!block) continue;
-                const parentIndent = block[1].length;
-                while (i + 1 < lines.length) {
-                  const next = lines[i + 1];
-                  const nextIndent = next.match(/^\s*/)[0].length;
-                  if (next.trim() === '' || nextIndent > parentIndent) {
-                    i += 1;
-                    continue;
-                  }
-                  break;
-                }
-              }
-              return kept.join('\n');
-            }
+          def gate_aislop(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              require_events(path, doc, ('pull_request', 'workflow_call'))
+              require_job_set(path, doc, ('status',))
+              status = job_named(doc, 'status')
+              if status is None:
+                  fail('aislop.yml: jobs.status must exist')
+                  return
+              check_gate_job(path, 'status', status)
+              require_step_names(path, status, AISLOP_REQUIRED_STEPS)
+              for name in AISLOP_REQUIRED_STEPS:
+                  step = step_named(status, name)
+                  if step is not None:
+                      check_gate_step(path, 'status', step, allow_if=name in AISLOP_CONDITIONED_STEPS)
+              # Exact-if contracts: conditioned steps must match their pinned
+              # expressions byte-for-byte after whitespace normalization, so a
+              # hashFiles('never-present') oracle or a dropped fork guard fails.
+              for name, expected in (
+                  ('Aislop SARIF', AISLOP_SARIF_IF),
+                  ('Aislop findings gate', AISLOP_GATE_IF),
+                  ('Upload Aislop SARIF', AISLOP_UPLOAD_IF),
+              ):
+                  step = step_named(status, name)
+                  if step is not None and normalize_condition(step.get('if', '')) != expected:
+                      fail(f'aislop.yml: {name} if condition must stay exactly: {expected}')
+              for name, needles in AISLOP_RUN_SIGNATURES.items():
+                  step = step_named(status, name)
+                  run = step.get('run') if step else None
+                  normalized = normalize_run(run) if isinstance(run, str) else ''
+                  missing = [needle for needle in needles if needle not in normalized]
+                  if missing:
+                      fail(f'aislop.yml: {name} run must keep: {", ".join(missing)}')
+                  if isinstance(run, str):
+                      check_run_not_neutralized(path, f'step {name}', run)
+              gate_step = step_named(status, 'Aislop findings gate')
+              gate_run = gate_step.get('run') if gate_step else None
+              if not isinstance(gate_run, str) or 'process.exit(1)' not in gate_run:
+                  fail('aislop.yml: findings gate must fail the job on findings')
+              upload_step = step_named(status, 'Upload Aislop SARIF')
+              upload_with = upload_step.get('with') if upload_step else None
+              if not isinstance(upload_with, dict) or upload_with.get('category') != '.github/workflows/main.yml:status':
+                  fail('aislop.yml: SARIF upload category must stay configured')
 
-            function yamlSurface(content) {
-              return stripYamlBlockScalars(content)
-                .split('\n')
-                .filter((line) => !line.trimStart().startsWith('#'))
-                .join('\n');
-            }
+          def gate_codeql(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              require_events(path, doc, ('pull_request', 'workflow_call'))
+              require_job_set(path, doc, ('analyze',))
+              steps = [step for _, job in iter_jobs(doc) for step in iter_steps(job)]
+              init_step = next(
+                  (
+                      step for step in steps
+                      if isinstance(step.get('uses'), str)
+                      and step['uses'].startswith('github/codeql-action/init@')
+                      and isinstance(step.get('with'), dict)
+                      and step['with'].get('languages') == 'javascript-typescript'
+                  ),
+                  None,
+              )
+              if init_step is None:
+                  fail('codeql.yml: CodeQL init step must stay configured')
+              analyze_step = next(
+                  (
+                      step for step in steps
+                      if isinstance(step.get('uses'), str)
+                      and step['uses'].startswith('github/codeql-action/analyze@')
+                      and isinstance(step.get('with'), dict)
+                      and step['with'].get('category') == '.github/workflows/main.yml:analyze'
+                  ),
+                  None,
+              )
+              if analyze_step is None:
+                  fail('codeql.yml: CodeQL analyze step must stay configured')
+              # init/analyze are pure action invocations: no run/env/if, no
+              # continue-on-error, nothing but name/uses/with.
+              for label, step in (('init', init_step), ('analyze', analyze_step)):
+                  if step is None:
+                      continue
+                  check_step_keys(path, 'analyze', step, allowed={'name', 'uses', 'with'})
+                  if 'if' in step:
+                      fail(f'codeql.yml: CodeQL {label} step must not have an if condition')
+                  if _continue_on_error(step):
+                      fail(f'codeql.yml: CodeQL {label} step must not set continue-on-error')
 
-            function escapeRegex(value) {
-              return value.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
-            }
+          def gate_main(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              events = workflow_events(doc)
+              require_job_set(path, doc, ('quality', 'aislop', 'codeql', 'sonar'))
+              if 'push' not in events:
+                  fail('main.yml: push trigger must stay enabled')
+              if 'pull_request' in events or GUARD_EVENT in events:
+                  fail('main.yml: trusted main workflow must stay isolated from PRs')
+              expected_uses = {
+                  'quality': './.github/workflows/ci.yml',
+                  'aislop': './.github/workflows/aislop.yml',
+                  'codeql': './.github/workflows/codeql.yml',
+              }
+              for job_name, expected in expected_uses.items():
+                  job = job_named(doc, job_name)
+                  if job is None or job.get('uses') != expected:
+                      fail(f'main.yml: jobs.{job_name} must call {expected}')
+              sonar = job_named(doc, 'sonar')
+              if sonar is None:
+                  fail('main.yml: jobs.sonar must exist')
+                  return
+              check_gate_job(path, 'sonar', sonar)
+              if sonar.get('needs') != ['quality', 'aislop', 'codeql']:
+                  fail('main.yml: sonar job must need quality, aislop and codeql')
+              if step_named(sonar, 'SonarQube quality gate') is None:
+                  fail('main.yml: SonarQube quality gate step must exist')
+              for name in ('SonarQube analysis', 'SonarQube quality gate'):
+                  step = step_named(sonar, name)
+                  if step is not None:
+                      check_gate_step(path, 'sonar', step)
 
-            function hasYamlKey(content, key) {
-              const escaped = escapeRegex(key);
-              return new RegExp(`^\\s*["']?${escaped}["']?\\s*:`, 'm').test(yamlSurface(content));
-            }
+          # The 'policy guard' step run must carry ALL of these tokens and be
+          # a plausibly full implementation (> 4000 chars), so echoing the
+          # tokens alone cannot spoof it; human review is the documented
+          # backstop for a full self-gutting rewrite. The round-5 tokens kill
+          # the round-4 minimal tokens+padding gut, which only echoed the
+          # original seven.
+          GUARD_RUN_TOKENS = (
+              'safe_load', 'protected', 'GATES', 'check_workflow',
+              'ALLOWED_PERMISSIONS', 'UniqueKeyLoader', 'workflow_events',
+              'author_association', 'require_job_set', 'normalize_condition',
+              'resolve_pr_context', 'AISLOP_UPLOAD_IF',
+          )
 
-            function hasYamlScalar(content, key, value) {
-              const escapedKey = escapeRegex(key);
-              const escapedValue = escapeRegex(value);
-              return new RegExp(
-                `(?:^|[,{])\\s*["']?${escapedKey}["']?\\s*:\\s*["']?${escapedValue}["']?\\s*(?=$|[,}#])`,
-                'im',
-              ).test(yamlSurface(content));
-            }
+          # Exit-branch contract for the guard itself: the run must keep a
+          # genuine failure exit in BOTH the failures branch and the main()
+          # catch-all (so deleting or flipping either one fails), and must
+          # not carry any silent-success escape. All needles are assembled
+          # from pieces so this file's own run body stays clean under the
+          # banned-forms scan and a naive flip/replace cannot corrupt the
+          # required-exit needle itself.
+          T_SYS_EXIT1 = 'sys.exit(' + '1)'
+          BANNED_GUARD_EXITS = (
+              'sys.exit(' + '0)',
+              'os._' + 'exit',
+              'exit(' + '0)',
+          )
 
-            function hasYamlEvent(content, event) {
-              if (hasYamlKey(content, event)) return true;
-              const escaped = escapeRegex(event);
-              const eventToken = new RegExp(`^["']?${escaped}["']?$`, 'i');
-              for (const line of yamlSurface(content).split('\n')) {
-                const match = line.match(/^\s*["']?on["']?\s*:\s*(.*?)\s*(?:#.*)?$/i);
-                if (!match) continue;
-                const value = match[1].trim();
-                if (eventToken.test(value)) return true;
-                if (value.startsWith('[') && value.endsWith(']')) {
-                  return value.slice(1, -1).split(',').some((item) => eventToken.test(item.trim()));
-                }
-              }
-              return false;
-            }
+          def gate_policy_guard(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              require_events(path, doc, (GUARD_EVENT,))
+              require_job_set(path, doc, ('guard',))
+              if workflow_events(doc) != {GUARD_EVENT}:
+                  fail('policy-guard.yml: only the privileged PR trigger may be declared')
+              for job_name, job in iter_jobs(doc):
+                  if isinstance(job.get('uses'), str):
+                      fail(f'policy-guard.yml: job {job_name} must not call a reusable workflow')
+                  for step in iter_steps(job):
+                      uses = step.get('uses')
+                      if isinstance(uses, str) and 'actions/checkout@' in uses.lower():
+                          fail(f'policy-guard.yml: job {job_name} must not check out code')
+              # Whole-document self-scan: with:, matrix and outputs are
+              # expression carriers unreachable by the env/run scans, so the
+              # serialized document itself is checked for contributor refs.
+              serialized = json.dumps(doc, sort_keys=True, default=str)
+              if re.search(T_PR + r'[\s\S]{0,40}' + T_HD, serialized, re.IGNORECASE):
+                  fail('policy-guard.yml: document must not reference contributor head refs')
+              if re.search(re.escape(T_HRF), serialized, re.IGNORECASE):
+                  fail('policy-guard.yml: document must not reference contributor ref names')
+              if T_PEX in serialized:
+                  fail('policy-guard.yml: document must not reference pull expressions')
+              # The guard only ever uses github.token; a secrets context
+              # anywhere in this file means credential access was smuggled in.
+              if 'sec' + 'rets' + '.' in serialized:
+                  fail('policy-guard.yml: document must not reference secrets contexts')
+              guard_job = job_named(doc, 'guard')
+              if guard_job is None:
+                  fail('policy-guard.yml: jobs.guard must exist')
+                  return
+              check_gate_job(path, 'guard', guard_job)
+              # Exact step contract: [harden-runner uses step (unnamed),
+              # 'Fetch PR files', 'policy guard'] — nothing appended, nothing
+              # reordered, nothing renamed.
+              guard_steps = list(iter_steps(guard_job))
+              if len(guard_steps) != 3:
+                  fail('policy-guard.yml: guard job must have exactly 3 steps')
+              else:
+                  harden_uses = guard_steps[0].get('uses')
+                  if (
+                      guard_steps[0].get('name') is not None
+                      or not isinstance(harden_uses, str)
+                      or not harden_uses.startswith('step-security/harden-runner@')
+                  ):
+                      fail('policy-guard.yml: first guard step must be the unnamed harden-runner step')
+                  if guard_steps[1].get('name') != 'Fetch PR files':
+                      fail("policy-guard.yml: second guard step must be 'Fetch PR files'")
+                  if guard_steps[2].get('name') != 'policy guard':
+                      fail("policy-guard.yml: third guard step must be 'policy guard'")
+              fetch_step = step_named(guard_job, 'Fetch PR files')
+              if fetch_step is None:
+                  fail('policy-guard.yml: Fetch PR files step must exist')
+              else:
+                  check_gate_step(path, 'guard', fetch_step)
+              guard_step = step_named(guard_job, 'policy guard')
+              if guard_step is None:
+                  fail('policy-guard.yml: policy guard step must exist')
+                  return
+              check_gate_step(path, 'guard', guard_step)
+              run = guard_step.get('run')
+              if not isinstance(run, str) or len(run) <= 4000 or not all(
+                  token in run for token in GUARD_RUN_TOKENS
+              ):
+                  fail('policy-guard.yml: structural policy guard step must stay active')
+              if isinstance(run, str):
+                  if run.count(T_SYS_EXIT1) < 2:
+                      fail(
+                          'policy-guard.yml: policy guard run must keep both failure '
+                          'exits (failures branch and main() catch-all)'
+                      )
+                  if any(banned in run for banned in BANNED_GUARD_EXITS):
+                      fail(
+                          'policy-guard.yml: policy guard run must not contain '
+                          'a silent-success exit'
+                      )
 
-            function unpinnedActions(content) {
-              return yamlSurface(content)
-                .split('\n')
-                .map((line) => line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/)?.[1])
-                .filter((value) => value && !value.startsWith('./'))
-                .filter((value) => !/@[0-9a-f]{40}$/i.test(value));
-            }
+          def gate_branch_policy(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              require_events(path, doc, ('pull_request',))
+              require_job_set(path, doc, ('branch-name',))
+              branch_job = job_named(doc, 'branch-name')
+              if branch_job is None:
+                  fail('branch-policy.yml: jobs.branch-name must exist')
+                  return
+              check_gate_job(path, 'branch-name', branch_job)
+              validate_step = step_named(branch_job, 'Validate same-repository branch name')
+              if validate_step is None:
+                  fail('branch-policy.yml: Validate same-repository branch name step must exist')
+              else:
+                  check_gate_step(path, 'branch-name', validate_step)
+              # Normalize before matching: a backslash-newline continuation
+              # splits a neutralizer such as || true across lines, which a
+              # raw substring scan would miss.
+              runs = [
+                  normalize_run(step['run'])
+                  for _, job in iter_jobs(doc)
+                  for step in iter_steps(job)
+                  if isinstance(step.get('run'), str)
+              ]
+              matches = [run for run in runs if 'WORK_BRANCH_RE' in run]
+              if not matches:
+                  fail('branch-policy.yml: branch name validation must stay active')
+                  return
+              for run in matches:
+                  if '|| true' in run or '||true' in run.replace(' ', ''):
+                      fail('branch-policy.yml: branch name validation must not be neutralized with || true')
+              if not any('=~' in run and 'exit 1' in run for run in matches):
+                  fail('branch-policy.yml: branch name validation must keep failing on invalid names')
 
-            for (const path of protectedFiles) {
-              if (changed.has(path) && removedOrRenamed.has(path)) {
-                fail(`${path}: protected gate file must not be removed or renamed`);
-              }
-            }
+          # Keys are lowercased by the loader, so the camelCase failBelow
+          # arrives as 'failbelow'; values (including exclude entries) are
+          # untouched.
+          AISLOP_REQUIRED_EXCLUDE = {
+              'coverage', 'dist', 'node_modules',
+              'npm-shrinkwrap.json', 'packages', 'src/upstream',
+          }
 
-            for (const file of files) {
-              const path = file.filename;
-              if (!path.startsWith(`${wfDir}/`) || !/\.ya?ml$/.test(path) || file.status === 'removed') {
-                continue;
-              }
-              const content = await readFileAtHead(path);
-              if (hasYamlScalar(content, 'permissions', 'write-all')) {
-                fail(`${path}: broad write permissions are not allowed`);
-              }
-              const forbiddenWrites = forbiddenWriteKeys.filter((permission) =>
-                hasYamlScalar(content, permission, 'write'),
-              );
-              if (forbiddenWrites.length > 0) {
-                fail(`${path}: privileged writes are not allowed: ${forbiddenWrites.join(', ')}`);
-              }
-              const unpinned = unpinnedActions(content);
-              if (unpinned.length > 0) {
-                fail(`${path}: actions must use full commit SHAs: ${unpinned.join(', ')}`);
-              }
-              if (hasYamlEvent(content, 'pull_request_target') && content.includes('actions/checkout@')) {
-                fail(`${path}: trusted PR workflows must not checkout contributor code`);
-              }
-            }
+          def gate_aislop_config(path, content):
+              doc = parse_yaml_file(path, content)
+              if doc is None:
+                  return
+              ci = doc.get('ci')
+              fail_below = ci.get('failbelow') if isinstance(ci, dict) else None
+              if not isinstance(fail_below, (int, float)) or fail_below < 95:
+                  fail('.aislop/config.yml: ci.failBelow must remain at least 95')
+              exclude = doc.get('exclude')
+              if not isinstance(exclude, list) or {str(item) for item in exclude} != AISLOP_REQUIRED_EXCLUDE:
+                  fail(
+                      '.aislop/config.yml: exclude must be exactly: '
+                      + ', '.join(sorted(AISLOP_REQUIRED_EXCLUDE))
+                  )
 
-            if (changed.has(protectedWorkflows.ci) && !removedOrRenamed.has(protectedWorkflows.ci)) {
-              const ci = await readFileAtHead(protectedWorkflows.ci);
-              if (!ci.includes('name: ci')) fail('ci.yml: workflow name must remain ci');
-              if (!hasYamlEvent(ci, 'pull_request') || !hasYamlEvent(ci, 'workflow_call')) {
-                fail('ci.yml: PR and reusable main gates must stay enabled');
+          def gate_semgrep(path, content):
+              doc = parse_yaml_file(path, content)
+              if doc is None:
+                  return
+              # A top-level paths block would silently exclude files from
+              # every rule; this repository has none and must never gain one.
+              if 'paths' in doc:
+                  fail('.semgrep.yml: top-level paths exclusions are not allowed')
+              rules = doc.get('rules')
+              ids = {
+                  rule.get('id') for rule in rules
+                  if isinstance(rule, dict) and isinstance(rule.get('id'), str)
+              } if isinstance(rules, list) else set()
+              required = {
+                  'typescript.dynamic-code-execution',
+                  'typescript.child-process-shell',
+                  'github-actions.shell-injection',
+                  'github-actions.shell-injection-block-scalar',
               }
-              for (const marker of [
-                'checks:',
-                'npm run test:coverage',
-                'npm audit --audit-level=moderate',
-                'Verify package',
-                'Nix dependency hash',
-                'Gitleaks',
-                'Semgrep',
-                'Trivy dependency gate',
-                'category: .github/workflows/main.yml:trivy',
-              ]) {
-                if (!ci.includes(marker)) fail(`ci.yml: required gate missing: ${marker}`);
-              }
-            }
+              missing = sorted(required - ids)
+              if missing:
+                  fail(f'.semgrep.yml: required rules missing: {", ".join(missing)}')
 
-            if (changed.has(protectedWorkflows.aislop) && !removedOrRenamed.has(protectedWorkflows.aislop)) {
-              const aislop = await readFileAtHead(protectedWorkflows.aislop);
-              if (!hasYamlEvent(aislop, 'pull_request') || !hasYamlEvent(aislop, 'workflow_call')) {
-                fail('aislop.yml: PR and reusable main gates must stay enabled');
-              }
-              for (const marker of [
-                'name: aislop status',
-                'Aislop findings gate',
-                'process.exit(1)',
-                'category: .github/workflows/main.yml:status',
-              ]) {
-                if (!aislop.includes(marker)) fail(`aislop.yml: required gate missing: ${marker}`);
-              }
-            }
+          def gate_dependabot(path, content):
+              doc = parse_yaml_file(path, content)
+              if doc is None:
+                  return
+              updates = doc.get('updates')
+              ecosystems = {
+                  entry.get('package-ecosystem') for entry in updates
+                  if isinstance(entry, dict)
+              } if isinstance(updates, list) else set()
+              missing = sorted({'npm', 'github-actions'} - ecosystems)
+              if missing:
+                  fail(f'.github/dependabot.yml: required ecosystems missing: {", ".join(missing)}')
 
-            if (changed.has(protectedWorkflows.codeql) && !removedOrRenamed.has(protectedWorkflows.codeql)) {
-              const codeql = await readFileAtHead(protectedWorkflows.codeql);
-              if (!hasYamlEvent(codeql, 'pull_request') || !hasYamlEvent(codeql, 'workflow_call')) {
-                fail('codeql.yml: PR and reusable main gates must stay enabled');
-              }
-              for (const marker of [
-                'languages: javascript-typescript',
-                'github/codeql-action/analyze@',
-                'category: .github/workflows/main.yml:analyze',
-              ]) {
-                if (!codeql.includes(marker)) fail(`codeql.yml: required gate missing: ${marker}`);
-              }
-            }
+          def gate_package_json(path, content):
+              try:
+                  doc = json.loads(content)
+              except json.JSONDecodeError as exc:
+                  fail(f'package.json: does not parse: {exc}')
+                  return
+              scripts = doc.get('scripts') if isinstance(doc, dict) else None
+              scripts = scripts if isinstance(scripts, dict) else {}
+              if scripts.get('aislop:ci') != 'aislop ci':
+                  fail('package.json: full-repository Aislop scan must stay configured')
+              if scripts.get('test:coverage') != 'vitest run --coverage':
+                  fail('package.json: coverage test command must stay configured')
 
-            if (changed.has(protectedWorkflows.main) && !removedOrRenamed.has(protectedWorkflows.main)) {
-              const main = await readFileAtHead(protectedWorkflows.main);
-              if (!hasYamlEvent(main, 'push') || hasYamlEvent(main, 'pull_request')) {
-                fail('main.yml: trusted main-only push trigger must stay isolated from PRs');
-              }
-              for (const marker of [
-                'uses: ./.github/workflows/ci.yml',
-                'uses: ./.github/workflows/aislop.yml',
-                'uses: ./.github/workflows/codeql.yml',
-                'needs: [quality, aislop, codeql]',
-                'SonarQube quality gate',
-              ]) {
-                if (!main.includes(marker)) fail(`main.yml: required gate missing: ${marker}`);
-              }
-            }
+          def gate_vitest(path, content):
+              stripped = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+              stripped = '\n'.join(
+                  line.split('//', 1)[0] for line in stripped.split('\n')
+              )
+              # The threshold must live inside the thresholds block itself;
+              # a decoy 'lines: 90' string elsewhere in the file does not
+              # count.
+              if not re.search(r'thresholds:\s*\{[^}]*?lines:\s*90\b', stripped, re.S):
+                  fail('vitest.config.ts: 90% line threshold must stay configured')
 
-            if (changed.has(protectedWorkflows.policy) && !removedOrRenamed.has(protectedWorkflows.policy)) {
-              const policy = await readFileAtHead(protectedWorkflows.policy);
-              if (!hasYamlEvent(policy, 'pull_request_target')) {
-                fail('policy-guard.yml: trusted policy trigger must stay enabled');
-              }
-              if (!policy.includes('actions/github-script@') || !policy.includes('core.setFailed')) {
-                fail('policy-guard.yml: policy enforcement must stay active');
-              }
-            }
+          def gate_sonar(path, content):
+              properties = {}
+              for line in content.split('\n'):
+                  line = line.strip()
+                  if not line or line.startswith('#') or '=' not in line:
+                      continue
+                  key, _, value = line.partition('=')
+                  properties[key.strip()] = value.strip()
+              if properties.get('sonar.javascript.lcov.reportPaths') != 'coverage/lcov.info':
+                  fail('sonar-project.properties: coverage import must stay configured')
 
-            if (changed.has('package.json')) {
-              const packageJson = JSON.parse(await readFileAtHead('package.json'));
-              if (packageJson.scripts?.['aislop:ci'] !== 'aislop ci') {
-                fail('package.json: full-repository Aislop scan must stay configured');
-              }
-              if (packageJson.scripts?.['test:coverage'] !== 'vitest run --coverage') {
-                fail('package.json: coverage test command must stay configured');
-              }
-            }
+          GATES = {
+              '.github/workflows/ci.yml': gate_ci,
+              '.github/workflows/aislop.yml': gate_aislop,
+              '.github/workflows/codeql.yml': gate_codeql,
+              '.github/workflows/main.yml': gate_main,
+              '.github/workflows/policy-guard.yml': gate_policy_guard,
+              '.github/workflows/branch-policy.yml': gate_branch_policy,
+              '.aislop/config.yml': gate_aislop_config,
+              '.semgrep.yml': gate_semgrep,
+              '.github/dependabot.yml': gate_dependabot,
+              'package.json': gate_package_json,
+              'vitest.config.ts': gate_vitest,
+              'sonar-project.properties': gate_sonar,
+          }
 
-            if (changed.has('vitest.config.ts')) {
-              const vitest = await readFileAtHead('vitest.config.ts');
-              if (!/lines:\s*90/.test(vitest)) fail('vitest.config.ts: 90% line threshold must stay configured');
-            }
+          protected = set(GATES)
 
-            if (changed.has('.aislop/config.yml')) {
-              const config = await readFileAtHead('.aislop/config.yml');
-              if (!/failBelow:\s*95/.test(config)) fail('.aislop/config.yml: score threshold must remain 95');
-            }
+          def load_files():
+              with open(os.environ['FILES_JSON'], encoding='utf-8') as handle:
+                  data = json.load(handle)
+              if not isinstance(data, list):
+                  raise RuntimeError('files.json must contain a JSON array')
+              entries = []
+              for item in data:
+                  if isinstance(item, list):
+                      entries.extend(item)
+                  else:
+                      entries.append(item)
+              files = []
+              for entry in entries:
+                  if not isinstance(entry, dict) or not isinstance(entry.get('filename'), str):
+                      raise RuntimeError('files.json entries must be objects with a filename')
+                  files.append(entry)
+              return files
 
-            if (changed.has('sonar-project.properties')) {
-              const sonar = await readFileAtHead('sonar-project.properties');
-              if (!sonar.includes('sonar.javascript.lcov.reportPaths=coverage/lcov.info')) {
-                fail('sonar-project.properties: coverage import must stay configured');
-              }
-            }
+          # Author gate: only maintainers (or dependabot, whose updates are
+          # structurally pinned by the gates) may touch protected gate files.
+          TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
+          DEPENDABOT_LOGIN = 'dependabot[bot]'
 
-            if (failures.length > 0) {
-              core.setFailed(`Policy guard failed:\n- ${failures.join('\n- ')}`);
-            } else {
-              core.info('Policy guard passed.');
-            }
+          def resolve_pr_context():
+              fixture_dir = os.environ.get('GUARD_FIXTURE_DIR')
+              if fixture_dir:
+                  values = {}
+                  for field in ('head_sha', 'author_association', 'author_login'):
+                      marker = os.path.join(fixture_dir, field)
+                      if not os.path.isfile(marker):
+                          raise RuntimeError(f'{field}: fixture file missing')
+                      with open(marker, encoding='utf-8') as handle:
+                          values[field] = handle.read().strip()
+                  sha = values['head_sha']
+                  association = values['author_association']
+                  login = values['author_login']
+              else:
+                  result = subprocess.run(
+                      [
+                          'gh', 'api',
+                          f'repos/{os.environ["OWNER"]}/{os.environ["REPO"]}/pulls/{os.environ["PR_NUMBER"]}',
+                      ],
+                      capture_output=True,
+                      text=True,
+                  )
+                  if result.returncode != 0:
+                      raise RuntimeError(f'failed to resolve pull request: {result.stderr.strip()}')
+                  try:
+                      payload = json.loads(result.stdout)
+                  except json.JSONDecodeError as exc:
+                      raise RuntimeError(f'unexpected pull request response: {exc}') from exc
+                  if not isinstance(payload, dict):
+                      raise RuntimeError('unexpected pull request response')
+                  head = payload.get('head')
+                  sha = head.get('sha') if isinstance(head, dict) else None
+                  association = payload.get('author_association')
+                  user = payload.get('user')
+                  login = user.get('login') if isinstance(user, dict) else None
+              if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{40}', sha):
+                  raise RuntimeError('unexpected pull request head sha')
+              return sha, str(association or ''), str(login or '')
+
+          def fetch_file(path, head_sha):
+              fixture_dir = os.environ.get('GUARD_FIXTURE_DIR')
+              if fixture_dir:
+                  local = os.path.join(fixture_dir, path)
+                  if not os.path.isfile(local):
+                      raise RuntimeError(f'{path}: fixture file missing')
+                  with open(local, encoding='utf-8') as handle:
+                      content = handle.read()
+              else:
+                  result = subprocess.run(
+                      [
+                          'gh', 'api',
+                          f'repos/{os.environ["OWNER"]}/{os.environ["REPO"]}/contents/{path}?ref={head_sha}',
+                          '-H', 'Accept: application/vnd.github.raw',
+                      ],
+                      capture_output=True,
+                      text=True,
+                  )
+                  if result.returncode != 0:
+                      raise RuntimeError(f'{path}: failed to fetch at head: {result.stderr.strip()}')
+                  content = result.stdout
+              if not content.strip():
+                  raise RuntimeError(f'{path}: empty content at head')
+              return content
+
+          def main():
+              head_sha, author_association, author_login = resolve_pr_context()
+              files = load_files()
+              if len(files) >= 3000:
+                  fail(
+                      f'changed-file list has {len(files)} entries; '
+                      'the file list may be truncated by the API'
+                  )
+              removed_or_renamed = set()
+              changed = set()
+              for entry in files:
+                  filename = entry['filename']
+                  changed.add(filename)
+                  previous = entry.get('previous_filename')
+                  if isinstance(previous, str):
+                      changed.add(previous)
+                  if entry.get('status') == 'removed':
+                      removed_or_renamed.add(filename)
+                  if entry.get('status') == 'renamed' and isinstance(previous, str):
+                      removed_or_renamed.add(previous)
+
+              if changed & protected:
+                  if (
+                      author_association.upper() not in TRUSTED_ASSOCIATIONS
+                      and author_login != DEPENDABOT_LOGIN
+                  ):
+                      fail(
+                          'protected gate files changed by an untrusted author '
+                          f'(author_association={author_association or "unknown"}, '
+                          f'login={author_login or "unknown"}); require OWNER, MEMBER or '
+                          'COLLABORATOR, or dependabot[bot]'
+                      )
+
+              for path in sorted(protected & removed_or_renamed):
+                  fail(f'{path}: protected gate file must not be removed or renamed')
+
+              for entry in files:
+                  path = entry['filename']
+                  if entry.get('status') == 'removed':
+                      continue
+                  if not path.startswith('.github/workflows/') or not re.search(r'\.ya?ml$', path, re.I):
+                      continue
+                  doc = parse_yaml_file(path, fetch_file(path, head_sha), 'workflow')
+                  if doc is not None:
+                      check_workflow(path, doc)
+
+              for path in sorted(protected):
+                  if path not in changed or path in removed_or_renamed:
+                      continue
+                  GATES[path](path, fetch_file(path, head_sha))
+
+              if failures:
+                  print('Policy guard failed:')
+                  for message in failures:
+                      print(f'- {message}')
+                  sys.exit(1)
+              print('Policy guard passed.')
+
+          if __name__ == '__main__':
+              try:
+                  main()
+              except SystemExit:
+                  raise
+              except Exception:
+                  traceback.print_exc()
+                  sys.exit(1)
+          PY

@@ -7,6 +7,7 @@ rules:
     pattern-either:
       - pattern: eval(...)
       - pattern: new Function(...)
+      - pattern: Function(...)
 
   - id: typescript.child-process-shell
     message: Avoid shell-enabled child processes with runtime data.
@@ -16,8 +17,18 @@ rules:
       - pattern-either:
           - pattern: $PROCESS.exec(...)
           - pattern: $PROCESS.execSync(...)
+          - pattern: '$PROCESS.spawn($CMD, { ..., shell: true, ... })'
           - pattern: '$PROCESS.spawn($CMD, $ARGS, { ..., shell: true, ... })'
+          - pattern: '$PROCESS.spawnSync($CMD, { ..., shell: true, ... })'
           - pattern: '$PROCESS.spawnSync($CMD, $ARGS, { ..., shell: true, ... })'
+          - pattern: '$PROCESS.execFile($CMD, { ..., shell: true, ... })'
+          - pattern: '$PROCESS.execFile($CMD, $ARGS, { ..., shell: true, ... })'
+          - pattern: '$PROCESS.execFileSync($CMD, { ..., shell: true, ... })'
+          - pattern: '$PROCESS.execFileSync($CMD, $ARGS, { ..., shell: true, ... })'
+      # $PROCESS receiver whitelist: only real child_process aliases match, so look-alikes like RegExp.prototype.exec are ignored.
+      - metavariable-regex:
+          metavariable: $PROCESS
+          regex: ^(child_process|childProcess|cp)$
 
   - id: github-actions.shell-injection
     message: Do not interpolate GitHub event data directly into run steps.
@@ -31,4 +42,10 @@ rules:
           run: $RUN
       - metavariable-regex:
           metavariable: $RUN
-          regex: '.*\$\{\{.*github\.event\..*\}\}.*'
+          regex: '.*\$\{\{.*github\.(event[.\[]|head_ref|base_ref|ref_name|event_name).*\}\}.*'
+
+  - id: github-actions.shell-injection-block-scalar
+    message: Do not interpolate GitHub event data directly into block-scalar run steps.
+    languages: [yaml]
+    severity: ERROR
+    pattern-regex: '(?ms)^([ \t]+)(?:-[ \t]+)?run:[ \t]*[|>][0-9+-]*[ \t]*\n(?:\1[ \t]+[^\n]*\n|[ \t]*\n)*?\1[ \t]+[^\n]*\$\{\{[^}]*github\.(event[.\[]|head_ref|base_ref|ref_name|event_name)'
