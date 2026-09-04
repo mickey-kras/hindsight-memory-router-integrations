@@ -1,3 +1,4 @@
+import { visibleBanks } from "@memory-router/shared/bank-access";
 import { harnessTransport } from "@memory-router/coding-agents/runtime";
 import { readAcrossBanks } from "@memory-router/shared/read-execution";
 import type { RouterTransport } from "@memory-router/shared/router-transport";
@@ -187,11 +188,8 @@ const RETRY_AFTER_CEILING_MS = 60 * 1000;
 
 export class HindsightClient {
   private readonly transport: RouterTransport;
+  private readonly routerHarness: string | undefined;
   readonly apiUrl: string;
-  /** The credential the NEXT request will sign with — NOT the one the config file holds. The two
-   *  diverge exactly when #3600 bites, which is why `hindsight_diagnose` reports both. */
-  private token: string | undefined;
-  private readonly tokenProvider?: () => string | undefined;
   readonly bank: string;
   readonly project?: string;
   readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
@@ -204,10 +202,9 @@ export class HindsightClient {
   readonly observationScopes: ObservationScopes;
 
   constructor(o: ClientOpts) {
+    this.routerHarness = o.routerHarness;
     this.transport = harnessTransport(o.routerHarness);
     this.apiUrl = this.transport.baseUrl;
-    this.token = undefined;
-    this.tokenProvider = o.tokenProvider;
     this.transport.bankUrl(o.bank);
     this.bank = o.bank;
     this.project = o.project;
@@ -216,44 +213,21 @@ export class HindsightClient {
     this.observationScopes = o.observationScopes ?? DEFAULT_OBSERVATION_SCOPES;
   }
 
-  /** The credential in use, for diagnostics. Never log or report the VALUE — booleans only. */
-  get apiToken(): string | undefined {
-    return this.token;
+  assertAuthorized(): void { this.transport.assertAuthorized(); }
+
+  visibleBanks(): string[] { return visibleBanks(this.transport.access); }
+
+  forBank(bank: string): HindsightClient {
+    this.assertAuthorized();
+    this.transport.bankUrl(bank);
+    return new HindsightClient({ routerHarness: this.routerHarness, apiUrl: this.apiUrl, bank,
+      project: this.project, maxParallelRetains: this.maxParallelRetains, observationScopes: this.observationScopes });
   }
 
-  private headers(): Record<string, string> {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.token) h["Authorization"] = `Bearer ${this.token}`;
-    return h;
-  }
+  get apiToken(): undefined { return undefined; }
 
-  /** Re-read the credential from the live config. Returns whether it actually CHANGED — a retry is
-   *  only worth sending if it did, so a genuinely wrong key still surfaces as one 401 rather than
-   *  doubling every failing request. */
-  private refreshToken(): boolean {
-    if (!this.tokenProvider) return false;
-    let next: string | undefined;
-    try {
-      next = this.tokenProvider();
-    } catch {
-      return false; // a half-written config file must never drop the last credential that worked
-    }
-    if (next === this.token) return false;
-    this.token = next;
-    return true;
-  }
+  hasCredentials(): boolean { return this.transport.hasCredentials(); }
 
-  /**
-   * The ONE place a request is signed. Every fetch goes through it — the generic `req`, the drain
-   * poll and `reflect` — because a 401 recovery wired into only one of them leaves the others
-   * failing forever, which is how #3600 read from the outside: hooks worked, in-session tools did
-   * not.
-   *
-   * On a 401 the credential is re-resolved and the request replayed ONCE (its body is already a
-   * string, so replay is exact). A 401 means the server did nothing, so replaying is side-effect
-   * free even for retain. The retry shares the caller's `signal`, deliberately: one deadline still
-   * bounds the whole call.
-   */
   private async fetchWithAuth(url: string, init: RequestInit): Promise<Response> {
     if (url === this.bankUrl("/memories/recall")) {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -262,15 +236,6 @@ export class HindsightClient {
       return Response.json({ results: result.results });
     }
     return this.transport.request(url, init);
-  }
-
-  /** A 401 with no `Authorization` header is a different failure from a rejected key, and the
-   *  server answers identically for both — only the client knows which it sent. */
-  private authHint(status: number): string {
-    if (status !== 401) return "";
-    return this.token
-      ? " (the configured apiToken was rejected — check ~/.hindsight/coding-agent.json)"
-      : " (no apiToken is configured, so no Authorization header was sent)";
   }
 
   bankUrl(suffix = ""): string {
@@ -295,7 +260,7 @@ export class HindsightClient {
       throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
     if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
       throw new Error(
-        `${method} ${url} -> ${r.status} ${await r.text()}${this.authHint(r.status)}`
+        `${method} ${url} -> ${r.status} ${await r.text()}`
       );
     return r;
   }

@@ -38,7 +38,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "prepublishOnly": "npm run clean && npm run build && npm test",
-    "build:coding-agents": "npm run build --prefix integrations/coding-agents/upstream",
+    "build:coding-agents": "npm run build --prefix src/upstream/coding-agents",
     "test:coding-agents": "vitest run tests/coding-agents-upstream.test.ts"
   },
   "dependencies": {

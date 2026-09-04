@@ -26,13 +26,13 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 
 ```sh
 npm ci
-npm ci --prefix integrations/coding-agents/upstream
+npm ci --prefix src/upstream/coding-agents
 npm run test:coverage
 npm run build
 npm run build:coding-agents
-npm test --prefix integrations/coding-agents/upstream
+npm test --prefix src/upstream/coding-agents
 npm audit --audit-level=moderate
-npm audit --prefix integrations/coding-agents/upstream --audit-level=moderate
+npm audit --prefix src/upstream/coding-agents --audit-level=moderate
 node scripts/verify-coding-upstream.mjs
 ```
 

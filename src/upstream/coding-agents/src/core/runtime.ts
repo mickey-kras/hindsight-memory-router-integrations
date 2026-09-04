@@ -148,6 +148,9 @@ export class RuntimeCore {
   async onPrompt(sessionId: string | undefined, prompt: string): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
     if (!sessionId || !prompt.trim()) return;
+    this.injection.delete(sessionId);
+    this.lastInjection = "";
+    this.preamble = "";
     const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
     this.turnCount.set(sessionId, turns);
 
@@ -192,6 +195,7 @@ export class RuntimeCore {
    * session's `chat.message`/onPrompt, so `lastInjection` is this turn's block.
    */
   getInjection(sessionId: string | undefined): string | undefined {
+    this.client.assertAuthorized();
     const keyed = sessionId ? this.injection.get(sessionId) : undefined;
     return keyed ?? this.lastInjection ?? undefined;
   }

@@ -449,6 +449,7 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
         const tools = routedKnowledgeTools(new RouterTransport({
           routerUrl: validateRouterUrlForTools(config.routerUrl),
           token: () => credentials.token,
+          principalId: credentials.principalId,
           access: { writeBank: writeBank ?? undefined, additionalReadBanks: recallBanks },
         }));
         return tools.filter((tool) => {

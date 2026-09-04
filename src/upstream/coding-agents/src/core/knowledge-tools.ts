@@ -110,7 +110,7 @@ export function buildKnowledgeTools(
     reflectBudget?: "low" | "mid" | "high";
   } = {}
 ): ToolSpec[] {
-  return [
+  const tools: ToolSpec[] = [
     {
       name: "hindsight_sync_status",
       description:
@@ -158,7 +158,7 @@ export function buildKnowledgeTools(
             path: configPath,
             exists: existsSync(configPath),
             api_url: cfg.apiUrl,
-            api_token_configured: Boolean(cfg.apiToken),
+            token_reference_configured: Boolean(cfg.routerHarness),
             disabled: cfg.disabled,
           },
           // What the LIVE client is signing with, which is not the same question as what the file
@@ -166,8 +166,8 @@ export function buildKnowledgeTools(
           // this tool reported that state as perfectly healthy (#3600). Booleans only — the token
           // value is never returned.
           credential: {
-            api_token_in_use: Boolean(client.apiToken),
-            api_token_matches_config: client.apiToken === cfg.apiToken,
+            api_token_in_use: client.hasCredentials(),
+            token_source: "runtime environment",
           },
           environment: {
             config_override: Boolean(process.env.HINDSIGHT_CONFIG),
@@ -333,4 +333,22 @@ export function buildKnowledgeTools(
       }),
     },
   ];
+  return tools.map(tool => ({
+    ...tool,
+    inputSchema: tool.annotations.readOnlyHint && tool.name !== "hindsight_reflect"
+      ? { ...tool.inputSchema, bankId: z.string().optional().describe("Explicit assigned read bank") }
+      : tool.inputSchema,
+    handler: async (args: Record<string, unknown>) => {
+      try {
+        client.assertAuthorized();
+        if (args.bankId !== undefined) {
+          if (typeof args.bankId !== "string" || !tool.annotations.readOnlyHint || tool.name === "hindsight_reflect") throw new Error("memory access denied");
+          const selected = client.forBank(args.bankId);
+          const routed = buildKnowledgeTools(selected, args.bankId, opts).find(item => item.name === tool.name)!;
+          return routed.handler({ ...args, bankId: undefined });
+        }
+        return tool.handler(args);
+      } catch (error) { return err(error); }
+    },
+  }));
 }

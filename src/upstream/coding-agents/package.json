@@ -4,7 +4,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/mickey-kras/hindsight-memory-router-integrations.git",
-    "directory": "integrations/coding-agents/upstream"
+    "directory": "src/upstream/coding-agents"
   },
   "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, \u2026), with automatic background ingestion (no setup CLI).",
   "type": "module",

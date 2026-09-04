@@ -140,3 +140,14 @@ describe("multi-bank read execution", () => {
     await expect(readAcrossBanks(client, "reflect", {}, { timeoutMs: 100, maxTokens: 100 })).rejects.toThrow();
   });
 });
+
+it("rejects query/body bank overrides before transport and reports credential availability safely", async () => {
+  const { client, send } = transport();
+  expect(client.hasCredentials()).toBe(true);
+  await expect(client.request(client.bankUrl("A", "/config?bankId=hidden"))).rejects.toThrow(AccessDeniedError);
+  await expect(client.request(client.bankUrl("A", "/reflect"), { method: "POST", body: JSON.stringify({ bank_id: "hidden" }) })).rejects.toThrow(AccessDeniedError);
+  expect(send).not.toHaveBeenCalled();
+  send.mockResolvedValueOnce(new Response("denied", { status: 401 }));
+  await expect(client.request(client.bankUrl("A"))).rejects.toThrow(AccessDeniedError);
+  expect(client.hasCredentials()).toBe(false);
+});

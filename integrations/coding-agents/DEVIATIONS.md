@@ -11,3 +11,6 @@
 The source hashes in `UPSTREAM.json` describe the pristine snapshot. `LOCAL_CHANGES.json` pins adapted files.
 The regression suite covers unchanged transcript/provenance code; root tests cover the changed security contracts.
 Live harness and deployed Memory Router compatibility must be verified before rollout.
+
+Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back.
+Memory content is not reused from session caches; lifecycle flags remain cached. Authorization failures disable that client until restart.

@@ -52,7 +52,7 @@ import { createInstallerUi, type SelectOption } from "./install-ui";
  * `uninstall` removes exactly what we added.
  *
  * It must appear in the package path under BOTH layouts: npm
- * (`node_modules/@vectorize-io/hindsight-coding-agents/...`) and a repo checkout
+ * (`node_modules/@mickey-kras/hindsight-memory-router-coding-agents/...`) and a repo checkout
  * (`hindsight-integrations/coding-agents/...`). The old value was the full package name, which the
  * repo path stopped containing when the directory dropped its `hindsight-` prefix — silently
  * breaking dedupe-on-reinstall and uninstall for anyone running from a checkout.
@@ -1180,7 +1180,7 @@ const grok: HarnessInstaller = {
 
 const CLINE_HOOK_MARKER = "HINDSIGHT_CODING_AGENTS_CLINE";
 const CLINE_OLD_HOOK_EVENTS = ["TaskStart", "UserPromptSubmit", "TaskComplete"];
-const CLINE_PLUGIN_NAME = "@vectorize-io/hindsight-coding-agents";
+const CLINE_PLUGIN_NAME = "@mickey-kras/hindsight-memory-router-coding-agents";
 
 /** Remove only wrappers from the short-lived file-hook implementation. Cline file hooks cannot
  * mutate a prompt; keeping them would falsely imply that old installs still inject memory. */
@@ -1369,7 +1369,7 @@ function dshHome(c: InstallCtx): string {
  * DeepSeek Harness — a native Cordis plugin, wired through the HOME-level patch layer
  * (`$DSH_HOME/cordis.patch.yml`), which every profile composes after its bundles.
  *
- * The alternative is `dsh plugin --profile <name> add @vectorize-io/hindsight-coding-agents`, which
+ * The alternative is `dsh plugin --profile <name> add @mickey-kras/hindsight-memory-router-coding-agents`, which
  * pnpm-installs the package into ONE profile and picks up the `dsh.bundle.patch` this package
  * ships. That is the right route for a published install and is what the docs recommend, but it
  * needs pnpm, a network, and a repeat per profile — so the installer takes the path that always

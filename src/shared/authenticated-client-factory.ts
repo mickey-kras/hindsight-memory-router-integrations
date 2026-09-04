@@ -7,31 +7,8 @@ import type { PrincipalCredentials } from "./principal-credential-resolver.js";
 
 export const AGENT_HEADER = "x-memory-router-agent";
 
-export class RouterUrlError extends Error {
-  constructor(reason: "missing" | "not-https" | "userinfo" | "invalid") {
-    super(`routerUrl rejected: ${reason}`);
-    this.name = "RouterUrlError";
-  }
-}
-
-export function validateRouterUrl(value: unknown): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new RouterUrlError("missing");
-  }
-  let url: URL;
-  try {
-    url = new URL(value.trim());
-  } catch {
-    throw new RouterUrlError("invalid");
-  }
-  if (url.protocol !== "https:") {
-    throw new RouterUrlError("not-https");
-  }
-  if (url.username !== "" || url.password !== "") {
-    throw new RouterUrlError("userinfo");
-  }
-  return url.toString().replace(/\/$/, "");
-}
+export { RouterUrlError, validateRouterUrl } from "./router-url.js";
+import { validateRouterUrl } from "./router-url.js";
 
 /** The subset of HindsightClient the routing layer depends on. */
 export interface RouterClient {
@@ -103,7 +80,7 @@ export class AuthenticatedClientFactory {
   }
   private createClient(credentials: PrincipalCredentials): RouterClient {
     if (!credentials.access) throw new AccessDeniedError();
-    const transport = new RouterTransport({ routerUrl: this.baseUrl, access: credentials.access, token: () => credentials.token });
+    const transport = new RouterTransport({ routerUrl: this.baseUrl, access: credentials.access, principalId: credentials.principalId, token: () => credentials.token });
     return {
       async retain(bank, content, options) {
         const response = await transport.request(transport.bankUrl(bank, "/memories"), {

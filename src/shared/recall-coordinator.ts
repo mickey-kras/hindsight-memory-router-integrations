@@ -32,6 +32,7 @@ export interface CoordinatedRecallResult {
 }
 
 export class RecallAuthorizationError extends Error {
+  readonly statusCode = 403;
   readonly bank: string;
   constructor(bank: string) {
     super(`recall authorization denied for bank ${bank}`);

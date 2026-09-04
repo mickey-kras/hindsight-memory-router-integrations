@@ -587,7 +587,7 @@ export function applyBankConfig(
   // target's own banks section, if any, is deliberately NOT consulted: no chaining).
   const bankId = resolvedId;
   delete safe.bank;
-  return { cfg: { ...cfg, ...resolvePartial(cfg, safe as RawConfig) }, bankId };
+  return { cfg: { ...cfg, ...resolvePartial(cfg, safe as RawConfig), ...managedSettings(cfg.routerHarness) }, bankId };
 }
 
 /** Resolve just the fields present in `patch`, defaulting against the CURRENT cfg (not the global

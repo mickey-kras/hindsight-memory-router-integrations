@@ -9,7 +9,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: ["src/upstream/**", "integrations/coding-agents/upstream/**"],
+      exclude: ["src/upstream/**"],
       thresholds: {
         lines: 90,
         statements: 90,

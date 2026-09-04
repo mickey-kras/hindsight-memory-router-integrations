@@ -1,3 +1,4 @@
+import { AccessDeniedError } from "@memory-router/shared/bank-access";
 /**
  * Shared runtime for HOOK-based harnesses (Claude Code, Codex, Cursor CLI, ...).
  *
@@ -132,6 +133,7 @@ export async function buildHookOutput(args: {
         answer: reflectAnswer.slice(0, 8000),
       });
     } catch (e) {
+      if ((e as { statusCode?: number }).statusCode === 403) throw new AccessDeniedError();
       reflectAnswer = ""; // ran and failed — don't retry every turn; the diag trail records it
       reflectFailed = true;
       log.warn(harness, "reflect failed — session runs without memory", {
@@ -155,6 +157,7 @@ export async function buildHookOutput(args: {
       pages = parsePageList(await client.listPages());
       diag(harness, "pages_ok", { ms: Date.now() - t0, count: pages.length });
     } catch (e) {
+      if ((e as { statusCode?: number }).statusCode === 403) throw new AccessDeniedError();
       diag(
         harness,
         client.knowledgePagesSupported === false ? "knowledge_pages_unavailable" : "pages_failed",

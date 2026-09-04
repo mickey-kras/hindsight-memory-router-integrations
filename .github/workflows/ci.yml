@@ -34,14 +34,14 @@ jobs:
           cache-dependency-path: npm-shrinkwrap.json
 
       - run: npm ci
-      - run: npm ci --prefix integrations/coding-agents/upstream
+      - run: npm ci --prefix src/upstream/coding-agents
       - name: Tests and coverage
         run: npm run test:coverage
       - run: npm run build
       - run: npm run build:coding-agents
-      - run: npm exec --prefix integrations/coding-agents/upstream -- tsc --noEmit -p integrations/coding-agents/upstream/tsconfig.json
-      - run: npm test --prefix integrations/coding-agents/upstream
-      - run: npm audit --prefix integrations/coding-agents/upstream --audit-level=moderate
+      - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
+      - run: npm test --prefix src/upstream/coding-agents
+      - run: npm audit --prefix src/upstream/coding-agents --audit-level=moderate
       - run: node scripts/verify-coding-upstream.mjs
       - run: npm audit --audit-level=moderate
 
@@ -51,7 +51,7 @@ jobs:
           tar -tzf "$RUNNER_TEMP/$artifact" > "$RUNNER_TEMP/package-files"
           grep -Fxq package/npm-shrinkwrap.json "$RUNNER_TEMP/package-files"
           cmp "$RUNNER_TEMP/$artifact" "packages/$artifact"
-          coding_artifact="$(cd integrations/coding-agents/upstream && npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
+          coding_artifact="$(cd src/upstream/coding-agents && npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
           cmp "$RUNNER_TEMP/$coding_artifact" "packages/$coding_artifact"
           sha256sum --check PACKAGE_SHA256
 

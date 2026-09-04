@@ -67,11 +67,12 @@ export function seedControl(
     repo: string;
     bankId: string;
     limit?: number;
+    harness?: string;
     spawn?: typeof realSpawn;
   }
 ): SeedControlResult {
   if (command === "seed") {
-    startBackgroundSeed(args.repo, { limit: args.limit, spawn: args.spawn });
+    startBackgroundSeed(args.repo, { limit: args.limit, spawn: args.spawn, harness: args.harness });
     return {
       ok: true,
       message: `🧠 Hindsight is learning this repo → memory bank “${args.bankId}”`,

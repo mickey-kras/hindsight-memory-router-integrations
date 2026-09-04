@@ -21,7 +21,8 @@ export function sessionCacheFile(harness: string, sessionId: string): string {
 
 export function readSessionCache(cacheFile: string): SessionCache {
   try {
-    return JSON.parse(readFileSync(cacheFile, "utf8")) as SessionCache;
+    const cached = JSON.parse(readFileSync(cacheFile, "utf8")) as SessionCache;
+    return { turns: cached.turns, deferInitialReflect: cached.deferInitialReflect, reflectAnswer: cached.reflectAnswer === undefined ? undefined : "" };
   } catch {
     return {};
   }
@@ -54,7 +55,7 @@ function writeFileAtomic(path: string, body: string): void {
 
 export function writeSessionCache(cacheFile: string, cache: SessionCache): void {
   try {
-    writeFileAtomic(cacheFile, JSON.stringify(cache));
+    writeFileAtomic(cacheFile, JSON.stringify({ turns: cache.turns, deferInitialReflect: cache.deferInitialReflect, reflectAnswer: cache.reflectAnswer === undefined ? undefined : "" }));
   } catch {
     /* session state is best-effort */
   }

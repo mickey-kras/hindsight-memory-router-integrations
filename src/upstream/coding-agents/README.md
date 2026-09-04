@@ -52,6 +52,3 @@ Transient failures return partial results with a diagnostic. Any 401/403 discard
 Other bank/config/page reads use an explicit assigned bank; mutations cannot target additional read banks.
 
 See `DEVIATIONS.md` for intentional differences and `UPSTREAM.json` for exact provenance.
-
-Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back.
-Memory content is not reused from session caches; lifecycle flags remain cached. Authorization failures disable that client until restart.
