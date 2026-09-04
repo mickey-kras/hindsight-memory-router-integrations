@@ -31,16 +31,11 @@ jobs:
             "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" \
             > "${RUNNER_TEMP}/files.json"
 
-      - name: policy guard
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OWNER: ${{ github.event.repository.owner.login }}
-          REPO: ${{ github.event.repository.name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+      - name: Policy source 1
         run: |
           set -euo pipefail
-          export FILES_JSON="${RUNNER_TEMP}/files.json"
-          python3 <<'PY'
+          cat <<'POLICY_SOURCE' > "$RUNNER_TEMP/policy_guard.py"
+          import hashlib
           import json
           import os
           import re
@@ -232,6 +227,9 @@ jobs:
                   scan_contributor_refs(path, f'{where} env {key}', str(value))
 
           def check_workflow(path, doc):
+              if path in AUTOMATION_SHAPES:
+                  gate_automation(path, yaml.safe_dump(doc))
+                  return
               events = check_triggers(path, doc)
               allow_id_token = bool(events) and events <= ID_TOKEN_EVENTS
               check_permissions(path, 'top-level', doc.get('permissions'), allow_id_token, required=True)
@@ -452,6 +450,12 @@ jobs:
           }
           CI_USES_PREFIXES = {
               'Gitleaks': 'gitleaks/gitleaks-action@',
+          POLICY_SOURCE
+
+      - name: Policy source 2
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
               'Setup Trivy': 'aquasecurity/setup-trivy@',
           }
 
@@ -699,6 +703,51 @@ jobs:
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
+              # Reassemble the bounded inline source steps for the same
+              # structural checks used for the original single-step guard.
+              physical = doc.get('jobs', {}).get('guard', {}).get('steps', [])
+              if len(physical) != 6:
+                  fail('policy-guard.yml: guard must have exactly 6 steps')
+                  return
+              source = []
+              for index, step in enumerate(physical[2:5]):
+                  operator = '>' if index == 0 else '>>'
+                  prefix = (
+                      "set -euo pipefail\n"
+                      f"cat <<'POLICY_SOURCE' {operator} \"$RUNNER_TEMP/policy_guard.py\"\n"
+                  )
+                  run = step.get('run', '')
+                  suffix = 'POLICY_SOURCE\n'
+                  if (
+                      set(step) != {'name', 'run'}
+                      or step.get('name') != f'Policy source {index + 1}'
+                      or not run.startswith(prefix)
+                      or not run.endswith(suffix)
+                      or len(run) > 21000
+                  ):
+                      fail('policy-guard.yml: unexpected policy source step')
+                      return
+                  chunk = run[len(prefix):-len(suffix)]
+                  if 'POLICY_SOURCE' in chunk.splitlines():
+                      fail('policy-guard.yml: nested source terminator')
+                      return
+                  source.append(chunk)
+              execute = physical[5]
+              expected_run = (
+                  'set -euo pipefail\n'
+                  'export FILES_JSON="${RUNNER_TEMP}/files.json"\n'
+                  'python3 "$RUNNER_TEMP/policy_guard.py"\n'
+              )
+              if execute.get('run') != expected_run:
+                  fail('policy-guard.yml: unexpected policy execution command')
+                  return
+              logical = dict(execute)
+              logical['run'] = (
+                  'set -euo pipefail\n'
+                  'export FILES_JSON="${RUNNER_TEMP}/files.json"\n'
+                  "python3 <<'PY'\n" + ''.join(source) + 'PY\n'
+              )
+              doc['jobs']['guard']['steps'] = physical[:2] + [logical]
               require_events(path, doc, (GUARD_EVENT,))
               require_job_set(path, doc, ('guard',))
               if workflow_events(doc) != {GUARD_EVENT}:
@@ -763,6 +812,12 @@ jobs:
               ):
                   fail('policy-guard.yml: structural policy guard step must stay active')
               if isinstance(run, str):
+          POLICY_SOURCE
+
+      - name: Policy source 3
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   if run.count(T_SYS_EXIT1) < 2:
                       fail(
                           'policy-guard.yml: policy guard run must keep both failure '
@@ -903,6 +958,28 @@ jobs:
               if properties.get('sonar.javascript.lcov.reportPaths') != 'coverage/lcov.info':
                   fail('sonar-project.properties: coverage import must stay configured')
 
+          # Only the reviewed Dependabot workflow shapes may write or use
+          # the privileged PR trigger. Action SHA updates remain allowed.
+          AUTOMATION_SHAPES = {
+              '.github/workflows/dependabot-auto-merge.yml': 'fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34',
+              '.github/workflows/dependabot-auto-merge-refresh.yml': '67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3',
+          }
+
+          def gate_automation(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              if True in doc:
+                  doc['on'] = doc.pop(True)
+              for _, job in iter_jobs(doc):
+                  for step in iter_steps(job):
+                      uses = step.get('uses')
+                      if isinstance(uses, str):
+                          step['uses'] = re.sub(r'@[0-9a-f]{40}$', '@PINNED', uses)
+              digest = hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
+              if digest != AUTOMATION_SHAPES[path]:
+                  fail(f'{path}: automation must match its reviewed workflow shape')
+
           GATES = {
               '.github/workflows/ci.yml': gate_ci,
               '.github/workflows/aislop.yml': gate_aislop,
@@ -918,6 +995,7 @@ jobs:
               'sonar-project.properties': gate_sonar,
           }
 
+          GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
           protected = set(GATES)
 
           def load_files():
@@ -1073,4 +1151,15 @@ jobs:
               except Exception:
                   traceback.print_exc()
                   sys.exit(1)
-          PY
+          POLICY_SOURCE
+
+      - name: policy guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.event.repository.owner.login }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          export FILES_JSON="${RUNNER_TEMP}/files.json"
+          python3 "$RUNNER_TEMP/policy_guard.py"
