@@ -20,7 +20,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mickey-kras/hindsight-memory-router-openclaw.git"
+    "url": "git+https://github.com/mickey-kras/hindsight-memory-router-integrations.git"
   },
   "files": [
     "dist",
