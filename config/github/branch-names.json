@@ -1,0 +1,34 @@
+{
+  "name": "Enforce work branch names",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [
+        "refs/heads/main",
+        "refs/heads/dependabot/*",
+        "refs/heads/feat/*",
+        "refs/heads/fix/*",
+        "refs/heads/refactor/*",
+        "refs/heads/docs/*",
+        "refs/heads/ci/*",
+        "refs/heads/security/*"
+      ],
+      "include": [
+        "~ALL"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "creation"
+    }
+  ],
+  "bypass_actors": [
+    {
+      "actor_id": 29110,
+      "actor_type": "Integration",
+      "bypass_mode": "always"
+    }
+  ]
+}
