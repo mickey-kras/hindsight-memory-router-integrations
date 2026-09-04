@@ -364,7 +364,7 @@ jobs:
                   fail(f'{path}: required steps missing: {", ".join(missing)}')
 
           # continue-on-error fails closed: the key must be absent or the
-          # literal YAML false; any other value (true, 'true', '${{ true }}',
+          # literal YAML false; any other value (true, 'true', an expression wrapping true,
           # ...) makes a required job or step skippable.
           def _continue_on_error(mapping):
               return (
@@ -398,7 +398,7 @@ jobs:
               text = str(condition)
               compact = re.sub(r'\s+', '', text)
               if (
-                  compact not in ('always()', '${{always()}}')
+                  compact not in ('always()', '$' + '{{always()}}')
                   and 'hashFiles(' not in text
                   and 'head.repo.full_name' not in text
               ):
