@@ -1,0 +1,42 @@
+name: dependabot policy tests
+
+on:
+  pull_request:
+    paths:
+      - .github/scripts/dependabot-*
+      - .github/workflows/dependabot-*
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  policy-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: node --test .github/scripts/dependabot-auto-merge.test.cjs
+      - name: Read pinned upstream metadata bundle
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dependabot/fetch-metadata
+          ref: 25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+          path: metadata-action
+          sparse-checkout: dist
+          persist-credentials: false
+      - name: Verify upstream metadata with the repository token
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          script: |
+            const { fetchMetadata } = require('./.github/scripts/dependabot-auto-merge.cjs');
+            const { data: pulls } = await github.rest.pulls.list({ ...context.repo, state: 'all', per_page: 100 });
+            const pull = pulls.find(p => p.user.login === 'dependabot[bot]');
+            if (!pull) throw new Error('No Dependabot PR available for upstream smoke test');
+            const { data: full } = await github.rest.pulls.get({ ...context.repo, pull_number: pull.number });
+            const deps = fetchMetadata(full, `${context.repo.owner}/${context.repo.repo}`, require('node:path').resolve('metadata-action'));
+            if (!Array.isArray(deps) || !deps.length) throw new Error('Upstream returned no dependencies');
+            core.info(`Parsed ${deps.length} dependencies from #${pull.number} using GITHUB_TOKEN`);
