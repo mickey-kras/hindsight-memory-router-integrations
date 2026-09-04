@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { RouterClient } from "../src/router/authenticated-client-factory.js";
+import type { RouterClient } from "../src/shared/authenticated-client-factory.js";
 import {
   RecallAuthorizationError,
   RecallCoordinator,
   type RecallItem,
-} from "../src/router/recall-coordinator.js";
+} from "../src/shared/recall-coordinator.js";
 
 function fakeClient(
   perBank: Record<

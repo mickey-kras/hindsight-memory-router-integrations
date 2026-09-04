@@ -9,21 +9,21 @@ import plugin, {
   registerWithStack,
   type RoutingStack,
 } from "../src/plugin.js";
-import { AgentCredentialResolver } from "../src/router/agent-credential-resolver.js";
+import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import {
   AuthenticatedClientFactory,
   type RouterClient,
-} from "../src/router/authenticated-client-factory.js";
-import { RecallBankResolver } from "../src/router/recall-bank-resolver.js";
+} from "../src/shared/authenticated-client-factory.js";
+import { ReadBankResolver } from "../src/shared/read-bank-resolver.js";
 import {
   RecallAuthorizationError,
   RecallCoordinator,
-} from "../src/router/recall-coordinator.js";
+} from "../src/shared/recall-coordinator.js";
 import {
   RetainAuthorizationError,
   RetainCoordinator,
-} from "../src/router/retain-coordinator.js";
-import { WriteBankResolver } from "../src/router/write-bank-resolver.js";
+} from "../src/shared/retain-coordinator.js";
+import { WriteBankResolver } from "../src/shared/write-bank-resolver.js";
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
 const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
@@ -32,11 +32,11 @@ function pluginConfig(queueDir: string) {
   return {
     routerUrl: "https://router.example.test",
     agents: {
-      main: { token: TOKEN_MAIN, writeBank: "main", recallBanks: ["main", "dev"] },
+      main: { token: TOKEN_MAIN, writeBank: "main", additionalReadBanks: ["main", "dev"] },
       backend: {
         token: TOKEN_BACKEND,
         writeBank: "dev",
-        recallBanks: ["dev", "dev-best-practices"],
+        additionalReadBanks: ["dev", "dev-best-practices"],
       },
     },
     queueDir,
@@ -90,7 +90,7 @@ function instrumentedStack(
   }
 ): RoutingStack {
   const config = pluginConfig(queueDir);
-  const credentials = new AgentCredentialResolver(config);
+  const credentials = new PrincipalCredentialResolver({ ...config, principals: config.agents });
   const clients = new AuthenticatedClientFactory({
     routerUrl: config.routerUrl,
     userAgent: "test/0",
@@ -117,7 +117,7 @@ function instrumentedStack(
     config,
     credentials,
     clients,
-    recallBanks: new RecallBankResolver(credentials),
+    recallBanks: new ReadBankResolver(credentials),
     writeBanks: new WriteBankResolver(credentials),
     recall: new RecallCoordinator(),
     retain: new RetainCoordinator({
@@ -329,15 +329,15 @@ describe("plugin wiring", () => {
     };
     const stack = instrumentedStack(queueDir, sink);
     stack.config.agents = {
-      reader: { token: TOKEN_MAIN, recallBanks: ["main"] },
+      reader: { token: TOKEN_MAIN, additionalReadBanks: ["main"] },
     };
-    const credentials = new AgentCredentialResolver(stack.config);
+    const credentials = new PrincipalCredentialResolver({ ...stack.config, principals: stack.config.agents });
     stack.credentials = credentials;
-    stack.recallBanks = new RecallBankResolver(credentials);
+    stack.recallBanks = new ReadBankResolver(credentials);
     stack.writeBanks = new WriteBankResolver(credentials);
     registerWithStack(api as any, stack);
     const tools = api.toolFactories[0].factory({ agentId: "reader" }) as Array<{ name: string }>;
-    expect(tools.map((tool) => tool.name)).toEqual(["agent_knowledge_recall"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["agent_knowledge_list_pages", "agent_knowledge_get_page", "agent_knowledge_recall"]);
   });
 
   it("never logs raw tokens in warnings or errors", async () => {
@@ -417,8 +417,8 @@ describe("plugin wiring", () => {
     const api = makeApi(queueDir);
     const stack = instrumentedStack(queueDir, sink);
     stack.config.agents = { writer: { token: TOKEN_MAIN, writeBank: "main" } };
-    stack.credentials = new AgentCredentialResolver(stack.config);
-    stack.recallBanks = new RecallBankResolver(stack.credentials);
+    stack.credentials = new PrincipalCredentialResolver({ ...stack.config, principals: stack.config.agents });
+    stack.recallBanks = new ReadBankResolver(stack.credentials);
     registerWithStack(api as any, stack);
     expect(
       await api.handlers.get("before_prompt_build")!(
@@ -465,7 +465,7 @@ describe("plugin wiring", () => {
       "auto-recall denied: recall authorization denied for bank main"
     );
     expect(await handler({ prompt: "third query" }, { agentId: "main" })).toBeUndefined();
-    expect(api.logger.warn).toHaveBeenCalledWith("auto-recall failed: network down");
+    expect(api.logger.warn).toHaveBeenCalledWith("auto-recall failed: memory operation failed");
   });
 
   it("enforces retain filters, reports failures, and manages the flush service", async () => {
@@ -505,7 +505,7 @@ describe("plugin wiring", () => {
       "retain denied: retain authorization denied for bank main"
     );
     await handler(event, { agentId: "main", sessionKey: "normal:failed" });
-    expect(api.logger.error).toHaveBeenCalledWith("retain failed: retain unavailable");
+    expect(api.logger.error).toHaveBeenCalledWith("retain failed: memory operation failed");
 
     expect(retainMock).toHaveBeenCalledTimes(3);
     expect(retainMock.mock.calls.map(([, request]) => request.documentId)).toEqual([
@@ -547,9 +547,9 @@ describe("plugin wiring", () => {
     };
     const stack = instrumentedStack(queueDir, sink);
     stack.config.agents = {
-      reader: { token: TOKEN_MAIN, recallBanks: ["main"] },
+      reader: { token: TOKEN_MAIN, additionalReadBanks: ["main"] },
     };
-    stack.credentials = new AgentCredentialResolver(stack.config);
+    stack.credentials = new PrincipalCredentialResolver({ ...stack.config, principals: stack.config.agents });
     const retainSpy = vi.spyOn(stack.retain, "retain");
     registerWithStack(api as any, stack);
     await api.handlers.get("agent_end")!(
@@ -587,9 +587,9 @@ describe("plugin wiring", () => {
       });
       expect(result.details).toEqual({});
       expect(result.content[0].text).toContain("preferences");
-      const request = fetchMock.mock.calls[0][0] as Request;
-      expect(request.url).toContain("/v1/default/banks/main/mental-models");
-      expect(request.headers.get("authorization")).toBe(`Bearer ${TOKEN_MAIN}`);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toContain("/v1/default/banks/main/mental-models");
+      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${TOKEN_MAIN}`);
     } finally {
       fetchMock.mockRestore();
     }

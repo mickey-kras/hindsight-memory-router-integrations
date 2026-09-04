@@ -8,6 +8,8 @@ exclude:
   - npm-shrinkwrap.json
   - packages
   - src/upstream
+  - integrations/coding-agents/upstream
+  - integrations/coding-agents/UPSTREAM.json
 
 rules:
   security/hardcoded-secret: error

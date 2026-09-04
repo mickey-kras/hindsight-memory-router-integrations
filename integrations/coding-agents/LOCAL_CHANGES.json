@@ -1,0 +1,15 @@
+{
+  "package.json": "db74d69adc53832db004d9d707dbf7be8bb676072b488f86c39ef8606ba1fab0",
+  "src/core/bank.ts": "82366d3e750db09b342cf66fa6b6af3666d1a53ef8e251ff5f6e36c8467a46d3",
+  "src/core/config.ts": "8c3d42cd52c3a8b58b8d0b45e293d23dc8c9c691a65e97372050ce57998f93e9",
+  "src/core/hindsight.ts": "657de3c96738c9b659aa7125edd0cc6994b14542bceaeca3fc24a5b2f4c11306",
+  "src/core/hook.ts": "a6048cc64bb8bd63641adbe539d0463da10cec9f72a9d6e2f0db1b336d17c20f",
+  "src/core/host-client.ts": "3de6c25a7c28ebdbcfef8c8482cadd604d1518074d58abe42442ad3fb449616e",
+  "src/core/retain-hook.ts": "93b43d02de7bec05e009271a7d5d4bcdc0ccc9bda9f4457aaa377b7df0272e39",
+  "src/core/session-start.ts": "3d5c52654d6c37e1b7c3ee39539e53e2094d4fe4faff67c5bfa5f6ab4eb7f0be",
+  "src/deepen.ts": "4e162032dadf3c098f5cf02e5ad42ac278b5c0cbf6b357301ecec4c10e5f8d99",
+  "src/installer.ts": "7d2471e10fa7b9048a33f78e5dadaeda8a1eb9e8f34dfd35d1e8330dd1dc207d",
+  "src/status.ts": "3a9fbc0d4421d067dc03e94ef777c21a9d3766a8ef2da85fa1081114e950e4e6",
+  "tsconfig.json": "259ae1a998965db4a5dc00bc729d6c0713885df01e223d14fc783fa04f7b447f",
+  "vitest.config.ts": "7369f4c44c3ef4641d1240f58eed967cd0363e28d1045dd3027101b51de93b23"
+}

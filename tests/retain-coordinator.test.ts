@@ -4,16 +4,16 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AgentCredentialResolver } from "../src/router/agent-credential-resolver.js";
+import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import {
   AuthenticatedClientFactory,
   type RouterClient,
-} from "../src/router/authenticated-client-factory.js";
+} from "../src/shared/authenticated-client-factory.js";
 import {
   RetainAuthorizationError,
   RetainCoordinator,
-} from "../src/router/retain-coordinator.js";
-import { WriteBankResolver } from "../src/router/write-bank-resolver.js";
+} from "../src/shared/retain-coordinator.js";
+import { WriteBankResolver } from "../src/shared/write-bank-resolver.js";
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
 const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
@@ -30,11 +30,11 @@ function makeStack(options: {
   apiKeys?: string[];
   logger?: { warn(msg: string): void; error(msg: string): void };
 }) {
-  const credentials = new AgentCredentialResolver({
+  const credentials = new PrincipalCredentialResolver({
     routerUrl: "https://router.example.test",
-    agents: {
-      main: { token: TOKEN_MAIN, writeBank: "main", recallBanks: ["main", "dev"] },
-      backend: { token: TOKEN_BACKEND, writeBank: "dev", recallBanks: ["dev"] },
+    principals: {
+      main: { token: TOKEN_MAIN, writeBank: "main", additionalReadBanks: ["main", "dev"] },
+      backend: { token: TOKEN_BACKEND, writeBank: "dev", additionalReadBanks: ["dev"] },
     },
   });
   const fakeClients = new Map<string, FakeClient>();
@@ -163,10 +163,10 @@ describe("RetainCoordinator", () => {
     });
     await first.retain.retain("main", { content: "orphaned" });
 
-    const credentials = new AgentCredentialResolver({
+    const credentials = new PrincipalCredentialResolver({
       routerUrl: "https://router.example.test",
-      agents: {
-        backend: { token: TOKEN_BACKEND, writeBank: "dev", recallBanks: [] },
+      principals: {
+        backend: { token: TOKEN_BACKEND, writeBank: "dev", additionalReadBanks: [] },
       },
     });
     const clients = new AuthenticatedClientFactory({

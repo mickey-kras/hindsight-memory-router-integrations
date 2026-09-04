@@ -3,3 +3,5 @@ dist/
 *.tgz
 !packages/
 !packages/*.tgz
+
+coverage/

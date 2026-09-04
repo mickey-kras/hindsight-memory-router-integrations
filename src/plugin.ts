@@ -1,6 +1,8 @@
+import { routedKnowledgeTools } from "./shared/knowledge-tools.js";
+import { RouterTransport } from "./shared/router-transport.js";
 /** Plugin composition root. Identity comes only from trusted `ctx.agentId`. */
 
-import { createKnowledgeTools, TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
+import { TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -16,26 +18,26 @@ import {
   matchesSessionPattern,
 } from "./upstream/src/session-patterns.js";
 import {
-  AgentCredentialResolver,
+  PrincipalCredentialResolver,
   CredentialResolutionError,
-  UnknownAgentError,
+  UnknownPrincipalError,
   type RouterPluginConfig,
-} from "./router/agent-credential-resolver.js";
-import { AuthenticatedClientFactory } from "./router/authenticated-client-factory.js";
-import { RecallBankResolver } from "./router/recall-bank-resolver.js";
-import { WriteBankResolver } from "./router/write-bank-resolver.js";
+} from "./shared/principal-credential-resolver.js";
+import { AuthenticatedClientFactory } from "./shared/authenticated-client-factory.js";
+import { ReadBankResolver } from "./shared/read-bank-resolver.js";
+import { WriteBankResolver } from "./shared/write-bank-resolver.js";
 import {
   RecallAuthorizationError,
   RecallCoordinator,
   type RecallItem,
-} from "./router/recall-coordinator.js";
+} from "./shared/recall-coordinator.js";
 import {
   RetainAuthorizationError,
   RetainCoordinator,
-} from "./router/retain-coordinator.js";
+} from "./shared/retain-coordinator.js";
 
 export const PLUGIN_ID = "hindsight-memory-router";
-export const PLUGIN_VERSION = "0.11.1-router.1";
+export const PLUGIN_VERSION = "0.11.1-router.2";
 
 const DEFAULT_RECALL_TIMEOUT_MS = 5000;
 const DEFAULT_RECALL_MAX_TOKENS = 1024;
@@ -47,6 +49,7 @@ const DEFAULT_RETAIN_CONTEXT =
 const PROCESS_ID = randomUUID();
 
 interface RuntimePluginConfig extends RouterPluginConfig {
+  agents?: Record<string, import("./shared/principal-credential-resolver.js").PrincipalConfig>;
   autoRecall?: boolean;
   autoRetain?: boolean;
   recallBudget?: "low" | "mid" | "high";
@@ -68,9 +71,9 @@ interface RuntimePluginConfig extends RouterPluginConfig {
 
 interface RoutingStack {
   config: RuntimePluginConfig;
-  credentials: AgentCredentialResolver;
+  credentials: PrincipalCredentialResolver;
   clients: AuthenticatedClientFactory;
-  recallBanks: RecallBankResolver;
+  recallBanks: ReadBankResolver;
   writeBanks: WriteBankResolver;
   recall: RecallCoordinator;
   retain: RetainCoordinator;
@@ -201,20 +204,20 @@ function sanitizeDocumentIdPart(value: string | undefined, fallback: string): st
 }
 
 function isIdentityError(error: unknown): boolean {
-  return error instanceof UnknownAgentError || error instanceof CredentialResolutionError;
+  return error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError;
 }
 
 export function buildRoutingStack(config: RuntimePluginConfig, logger: {
   warn(msg: string): void;
   error(msg: string): void;
 }): RoutingStack {
-  const credentials = new AgentCredentialResolver(config);
-  credentials.validateConfiguredAgents();
+  const credentials = new PrincipalCredentialResolver({ ...config, principals: config.agents });
+  credentials.validateConfiguredPrincipals();
   const clients = new AuthenticatedClientFactory({
     routerUrl: config.routerUrl,
     userAgent: `hindsight-memory-router-openclaw/${PLUGIN_VERSION}`,
   });
-  const recallBanks = new RecallBankResolver(credentials);
+  const recallBanks = new ReadBankResolver(credentials);
   const writeBanks = new WriteBankResolver(credentials);
   const retain = new RetainCoordinator({
     credentials,
@@ -235,7 +238,7 @@ export default function hindsightMemoryRouterPlugin(api: MoltbotPluginAPI): void
     stack = buildRoutingStack(config, log);
   } catch (error) {
     // Invalid routerUrl etc.: fail closed at load time, never partially armed.
-    log.error(`plugin disabled: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`plugin disabled: ${error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError ? error.message : "memory operation failed"}`);
     throw error;
   }
   registerWithStack(api, stack);
@@ -260,7 +263,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
       const agentId = ctx?.agentId;
       try {
         const credentials = stack.credentials.resolve(agentId);
-        const banks = stack.recallBanks.resolve(credentials.agentId);
+        const banks = stack.recallBanks.resolve(credentials.principalId);
         if (banks.length === 0) {
           return;
         }
@@ -306,7 +309,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
           log.error(`auto-recall denied: ${error.message}`);
           return;
         }
-        log.warn(`auto-recall failed: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn(`auto-recall failed: ${error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError ? error.message : "memory operation failed"}`);
       }
     }
   );
@@ -347,34 +350,34 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
     let sequenceKey: string | undefined;
     try {
       const credentials = stack.credentials.resolve(agentId);
-      if (stack.credentials.resolveOptionalWriteBank(credentials.agentId) === null) {
+      if (stack.credentials.resolveOptionalWriteBank(credentials.principalId) === null) {
         return;
       }
       const transcript = extractTranscript(event ?? {});
       if (!transcript) {
         return;
       }
-      sequenceKey = `${credentials.agentId}:${sessionKey ?? "session"}`;
+      sequenceKey = `${credentials.principalId}:${sessionKey ?? "session"}`;
       const digest = createHash("sha256").update(transcript).digest("hex");
       if (retainedDigests.get(sequenceKey) === digest) {
         return;
       }
       const sequence = (sessionSequences.get(sequenceKey) ?? 0) + 1;
       sessionSequences.set(sequenceKey, sequence);
-      const outcome = await stack.retain.retain(credentials.agentId, {
+      const outcome = await stack.retain.retain(credentials.principalId, {
         content: transcript,
         documentId: `openclaw:${sanitizeDocumentIdPart(sessionKey, "session")}:${PROCESS_ID}:${sequence}`,
         context: config.retainContext ?? DEFAULT_RETAIN_CONTEXT,
         metadata: {
           source: config.retainSource ?? "openclaw",
-          agent: credentials.agentId,
+          agent: credentials.principalId,
           hook: hookName,
         },
-        tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.agentId}`],
+        tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.principalId}`],
       });
       retainedDigests.set(sequenceKey, digest);
       if (outcome.queued) {
-        log.warn(`retain buffered for agent ${credentials.agentId} (bank: ${outcome.bank})`);
+        log.warn(`retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`);
       }
     } catch (error) {
       if (isIdentityError(error)) {
@@ -385,7 +388,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
         log.error(`retain denied: ${error.message}`);
         return;
       }
-      log.error(`retain failed: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`retain failed: ${error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError ? error.message : "memory operation failed"}`);
     } finally {
       if (hookName === "session_end" && sequenceKey) {
         sessionSequences.delete(sequenceKey);
@@ -405,7 +408,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
     async start() {
       flushTimer = setInterval(() => {
         void stack.retain.flushQueues().catch((error: unknown) => {
-          log.error(`retain queue flush failed: ${error instanceof Error ? error.message : String(error)}`);
+          log.error(`retain queue flush failed: ${error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError ? error.message : "memory operation failed"}`);
         });
       }, config.retainQueueFlushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS);
       flushTimer.unref?.();
@@ -431,8 +434,8 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
         let recallBanks: string[];
         try {
           credentials = stack.credentials.resolve(ctx.agentId);
-          writeBank = stack.credentials.resolveOptionalWriteBank(credentials.agentId);
-          recallBanks = stack.recallBanks.resolve(credentials.agentId);
+          writeBank = stack.credentials.resolveOptionalWriteBank(credentials.principalId);
+          recallBanks = stack.recallBanks.resolve(credentials.principalId);
           if (writeBank === null && recallBanks.length === 0) {
             return null;
           }
@@ -443,13 +446,13 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
           }
           throw error;
         }
-        const tools = createKnowledgeTools({
-          apiUrl: validateRouterUrlForTools(config.routerUrl),
-          apiToken: credentials.token,
-          bankId: writeBank ?? recallBanks[0],
-        });
+        const tools = routedKnowledgeTools(new RouterTransport({
+          routerUrl: validateRouterUrlForTools(config.routerUrl),
+          token: () => credentials.token,
+          access: { writeBank: writeBank ?? undefined, additionalReadBanks: recallBanks },
+        }));
         return tools.filter((tool) => {
-          if (tool.name === "agent_knowledge_recall") return recallBanks.length > 0;
+          if (["agent_knowledge_recall", "agent_knowledge_list_pages", "agent_knowledge_get_page"].includes(tool.name)) return recallBanks.length > 0;
           return writeBank !== null;
         }).map((tool) => {
           if (tool.name !== "agent_knowledge_recall") {

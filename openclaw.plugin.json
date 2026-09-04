@@ -34,7 +34,7 @@
         "type": "object",
         "minProperties": 1,
         "propertyNames": { "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
-        "description": "Per-agent routing: token (SecretRef), writeBank, recallBanks. Keyed by trusted OpenClaw agent ID. Unknown agents fail closed; there is no global fallback token.",
+        "description": "Per-agent routing: token (SecretRef), writeBank, additionalReadBanks. Keyed by trusted OpenClaw agent ID. Unknown agents fail closed; there is no global fallback token.",
         "additionalProperties": {
           "type": "object",
           "additionalProperties": false,
@@ -48,7 +48,7 @@
               "pattern": "^[A-Za-z0-9._:-]{1,128}$",
               "description": "Default write bank for auto-retain and knowledge-tool writes."
             },
-            "recallBanks": {
+            "additionalReadBanks": {
               "type": "array",
               "items": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
               "uniqueItems": true,
