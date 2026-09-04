@@ -63,11 +63,8 @@ export class RouterTransport {
       if (body && typeof body === "object" && routingKeys.some(key => Object.hasOwn(body, key))) throw new AccessDeniedError();
     }
     const prefix = `${this.baseUrl}/v1/default/banks/`;
-    if (url === `${this.baseUrl}/v1/default/banks` && method === "GET") {
-      // Never request global bank metadata. These are configured IDs, not existence claims.
-      return Response.json({ banks: visibleBanks(this.access).map(bank_id => ({ bank_id })) });
-    }
-    if (!(url === `${this.baseUrl}/version` && method === "GET")) {
+    const listing = url === `${this.baseUrl}/v1/default/banks` && method === "GET";
+    if (!listing && !(url === `${this.baseUrl}/version` && method === "GET")) {
       if (!url.startsWith(prefix)) throw new AccessDeniedError();
       const path = url.slice(prefix.length).split("?")[0];
       const split = path.indexOf("/");
@@ -93,6 +90,13 @@ export class RouterTransport {
     }
     // Never expose server error bodies, which may echo credentials or bank existence.
     if (!response.ok && (response.status !== 404 || method !== "GET")) throw new RouterRequestError(response.status);
+    if (listing && response.ok) {
+      const data = await response.json() as { banks?: unknown };
+      if (!Array.isArray(data.banks)) throw new RouterRequestError(502);
+      const allowed = new Set(visibleBanks(this.access));
+      const banks = data.banks.filter((bank: unknown) => bank !== null && typeof bank === "object" && allowed.has((bank as { bank_id?: string }).bank_id ?? ""));
+      return Response.json({ banks, total: banks.length });
+    }
     return response.status === 404 ? new Response(null, { status: 404 }) : response;
   }
 }

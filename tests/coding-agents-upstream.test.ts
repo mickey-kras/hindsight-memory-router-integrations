@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { run as install } from "../src/upstream/coding-agents/src/installer";
 import { readFileSync } from "node:fs";
 import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/knowledge-tools";
@@ -96,4 +96,34 @@ it("installs harness-specific MCP identities without migrating or storing tokens
   expect(readFileSync(join(dir, ".codex", "config.toml"), "utf8")).toContain("codex");
   expect(cli.mock.calls.flat(2).join(" ")).toContain("HINDSIGHT_MCP_HARNESS=claude-code");
   expect(() => install(["install", "codex", "--api-token", "plaintext"], context)).toThrow("tokenEnv");
+});
+
+it("runs the packaged Codex hook with harness-bound credentials and fails closed without them", () => {
+  const dir = setup();
+  execFileSync("tar", ["-xzf", new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.5.1-router.1.tgz", import.meta.url).pathname, "-C", dir]);
+  const normal = join(dir, "normal.json");
+  writeFileSync(normal, JSON.stringify({ autoSeed: false, codebaseSurvey: false, autoReflect: true, pageRefreshEveryTurns: 1 }));
+  const trace = join(dir, "trace.jsonl");
+  const shim = join(dir, "fetch.mjs");
+  writeFileSync(shim, `import { appendFileSync } from 'node:fs';
+    globalThis.fetch = async (url, init) => {
+      appendFileSync(process.env.TEST_TRACE, JSON.stringify({ url, authorization: new Headers(init.headers).get('authorization') }) + '\\n');
+      return Response.json(String(url).endsWith('/reflect') ? { text: 'packaged memory' } : { roots: [] });
+    };`);
+  const args = ["--import", shim, join(dir, "package", "dist", "codex-hook.js")];
+  const env = { ...process.env, HINDSIGHT_CONFIG: normal, TEST_TRACE: trace, HINDSIGHT_DIAG_FILE: join(dir, "diag.jsonl") };
+  const input = JSON.stringify({ prompt: "What decisions did we make?", session_id: dir.split("/").at(-1), cwd: dir, harness: "opencode", bankId: "hidden" });
+  const output = execFileSync(process.execPath, args, { input, env, encoding: "utf8" });
+  expect(output).toContain("packaged memory");
+  const requests = readFileSync(trace, "utf8").trim().split("\n").map(line => JSON.parse(line) as { url: string; authorization: string });
+  expect(requests.map(request => request.url)).toEqual([
+    "https://router.test/v1/default/banks/A/reflect", "https://router.test/v1/default/banks/B/reflect",
+    "https://router.test/v1/default/banks/A/knowledge-base/tree",
+  ]);
+  expect(requests.every(request => request.authorization === `Bearer ${token}`)).toBe(true);
+  const denied = spawnSync(process.execPath, args, { input, env: { ...env, UPSTREAM_TEST_TOKEN: "" }, encoding: "utf8" });
+  expect(denied.status).toBe(1);
+  expect(denied.stdout).toBe("");
+  expect(denied.stderr).not.toContain(token);
+  expect(readFileSync(trace, "utf8").trim().split("\n")).toHaveLength(3);
 });

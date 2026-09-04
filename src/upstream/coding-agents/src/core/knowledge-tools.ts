@@ -112,6 +112,18 @@ export function buildKnowledgeTools(
 ): ToolSpec[] {
   const tools: ToolSpec[] = [
     {
+      name: "hindsight_list_banks",
+      description: "List banks visible through Memory Router for this principal.",
+      inputSchema: {}, annotations: READ_ONLY_ANNOTATIONS,
+      handler: guarded(async () => (await client.req("GET", `${client.apiUrl}/v1/default/banks`)).json()),
+    },
+    {
+      name: "hindsight_read_bank_config",
+      description: "Read configuration for an explicitly assigned bank.",
+      inputSchema: {}, annotations: READ_ONLY_ANNOTATIONS,
+      handler: guarded(async () => (await client.req("GET", client.bankUrl("/config"))).json()),
+    },
+    {
       name: "hindsight_sync_status",
       description:
         "Report whether this repo's memory bank is in sync: gitlog seed present, how much recent " +

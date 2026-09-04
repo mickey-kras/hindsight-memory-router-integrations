@@ -8,7 +8,7 @@
   "src/core/hindsight.ts": "8cae3bb57e2ea54df2fa9155e436168aac19917a6269537f678d249ed8153dec",
   "src/core/hook.ts": "0ac8cadcc8c162fc426e02204e7eb59b0400a7f478b47612f9a425a006e0df05",
   "src/core/host-client.ts": "3de6c25a7c28ebdbcfef8c8482cadd604d1518074d58abe42442ad3fb449616e",
-  "src/core/knowledge-tools.ts": "e91f31db0488ecbee7695e20f852b5d42663c926f48bea35abe91d3dd24ae2f8",
+  "src/core/knowledge-tools.ts": "9df21f5b2b84ae614d1aed05f992b3eba30ca40abf7b605e1096778246283962",
   "src/core/retain-hook.ts": "93b43d02de7bec05e009271a7d5d4bcdc0ccc9bda9f4457aaa377b7df0272e39",
   "src/core/runtime.ts": "09741b648d54a5a88e2451ce18da834fc7c298950fba06527a4f047749b7df3e",
   "src/core/seed.ts": "243a6f9f72808c52fe0cffe1de923b7899f409ab1277978aaaa5052457705c22",

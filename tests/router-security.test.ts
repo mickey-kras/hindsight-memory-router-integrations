@@ -77,10 +77,10 @@ describe("bank isolation", () => {
     expect(visibleBanks({ additionalReadBanks: [] })).toEqual([]);
     expect(() => visibleBanks({ additionalReadBanks: ["*"] })).toThrow(AccessDeniedError);
   });
-  it("lists only configured IDs without a global-bank request", async () => {
-    const { client, send } = transport();
-    expect(await (await client.request(`${url}/v1/default/banks`)).json()).toEqual({ banks: [{ bank_id: "A" }, { bank_id: "B" }, { bank_id: "C" }] });
-    expect(send).not.toHaveBeenCalled();
+  it("intersects router bank visibility with configured IDs", async () => {
+    const { client, send } = transport(vi.fn<typeof fetch>().mockResolvedValue(Response.json({ banks: [{ bank_id: "A" }, { bank_id: "B" }, { bank_id: "hidden" }] })));
+    expect(await (await client.request(`${url}/v1/default/banks`)).json()).toEqual({ banks: [{ bank_id: "A" }, { bank_id: "B" }], total: 2 });
+    expect(send).toHaveBeenCalledTimes(1);
   });
   it.each(["/config", "/reflect", "/memories/recall", "/knowledge-base/tree", ""])("unassigned bank stays invisible for %s", async suffix => {
     const { client, send } = transport();
