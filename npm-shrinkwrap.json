@@ -9,13 +9,13 @@
       "version": "0.11.1-router.1",
       "license": "MIT",
       "dependencies": {
-        "@vectorize-io/hindsight-agent-sdk": "0.1.0",
-        "@vectorize-io/hindsight-client": "0.8.6"
+        "@vectorize-io/hindsight-agent-sdk": "0.1.1",
+        "@vectorize-io/hindsight-client": "0.9.2"
       },
       "devDependencies": {
         "@types/node": "^22.0.0",
         "@vitest/coverage-v8": "4.1.11",
-        "aislop": "0.14.1",
+        "aislop": "0.15.0",
         "typescript": "^5.3.0",
         "vitest": "^4.1.2"
       },
@@ -1684,24 +1684,24 @@
       }
     },
     "node_modules/@vectorize-io/hindsight-agent-sdk": {
-      "version": "0.1.0",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-agent-sdk/-/hindsight-agent-sdk-0.1.0.tgz",
-      "integrity": "sha512-JCjG7MLXAdqkRtWVsB57t3Ae9axRzbIUy+qOMdlQx9OJUx7oszugdqnqYTlLik4LdQGIM19Mo2sBGj5ruXWABg==",
+      "version": "0.1.1",
+      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-agent-sdk/-/hindsight-agent-sdk-0.1.1.tgz",
+      "integrity": "sha512-O08ZXQL65L1Dd4DHWuihaprGRkG8/YSr75dhVykyCv4UFX0C48MOCo7aRXRB2ajEPJpmIu3BGRMNKaiShf+Ppg==",
       "license": "MIT",
       "dependencies": {
-        "@vectorize-io/hindsight-client": "^0.5.6"
+        "@vectorize-io/hindsight-client": "^0.6.2"
       }
     },
     "node_modules/@vectorize-io/hindsight-agent-sdk/node_modules/@vectorize-io/hindsight-client": {
-      "version": "0.5.6",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-0.5.6.tgz",
-      "integrity": "sha512-VBMkCQP7dCy9BqkoqhZxxl5sVW6opKT3l6wexval7ZM4syTOGlmpu7BRhtFycxWmkWjXwH+XM6n4lzBoWTSPdA==",
+      "version": "0.6.2",
+      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-0.6.2.tgz",
+      "integrity": "sha512-bymmlMWI1z0zOjgY+wRMLudNxzqcW20VHMtyV3QLhwJm63NeQN/nEZ4plWPR0p28DffaUM5nk2VSxzQljN+Mow==",
       "license": "MIT"
     },
     "node_modules/@vectorize-io/hindsight-client": {
-      "version": "0.8.6",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-0.8.6.tgz",
-      "integrity": "sha512-ixwtVju8p9C9/UFhn2PzThxaxWBBrhT5T2USzTeW9AO3imacbw8KWJWoG4YFTffS9jHh93jv0VJ7vAWlwa0uLw==",
+      "version": "0.9.2",
+      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-0.9.2.tgz",
+      "integrity": "sha512-sjmLkhyH2XafpLzT4abWdF4wcjHWhLU1igxxo6Ng67vGMAWA6Br1Ck3rmdejIyxcsArscpu+JrJ3X+jpcp+LLQ==",
       "license": "MIT"
     },
     "node_modules/@vitest/coverage-v8": {
@@ -1873,13 +1873,13 @@
       }
     },
     "node_modules/aislop": {
-      "version": "0.14.1",
-      "resolved": "https://registry.npmjs.org/aislop/-/aislop-0.14.1.tgz",
-      "integrity": "sha512-t5B2Gv2xny1CXpLi/MsFFreCc9x8lUWwCCW9kFjm6/LRjD+uh8nBx2TxZjBSFAIRr0LOben8B9xvLt1mvneq+Q==",
+      "version": "0.15.0",
+      "resolved": "https://registry.npmjs.org/aislop/-/aislop-0.15.0.tgz",
+      "integrity": "sha512-+NsoIWymGo6YYWcVYn4XPFWa2CpqWlACj3Nh5FQ1gZk+qNQjESr1Etdv1lBvVZHo1TxmQodgncwE+m1rBj+r9Q==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
-        "@biomejs/biome": "^2.5.5",
+        "@biomejs/biome": "^2.5.8",
         "@clack/prompts": "^1.7.0",
         "@modelcontextprotocol/sdk": "^1.30.0",
         "adm-zip": "^0.6.0",
@@ -1887,7 +1887,7 @@
         "expo-doctor": "^1.20.1",
         "ink": "^7.1.1",
         "ink-select-input": "^6.2.0",
-        "knip": "^6.29.0",
+        "knip": "^6.32.2",
         "micromatch": "^4.0.8",
         "oxlint": "^1.77.0",
         "picocolors": "^1.1.1",
