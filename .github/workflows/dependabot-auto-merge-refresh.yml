@@ -1,0 +1,15 @@
+name: dependabot auto-merge refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  refresh:
+    uses: ./.github/workflows/dependabot-auto-merge.yml

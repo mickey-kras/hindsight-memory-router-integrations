@@ -42,14 +42,14 @@
     "test:coding-agents": "vitest run tests/coding-agents-upstream.test.ts"
   },
   "dependencies": {
-    "@vectorize-io/hindsight-agent-sdk": "0.1.0",
-    "@vectorize-io/hindsight-client": "0.8.6"
+    "@vectorize-io/hindsight-agent-sdk": "0.1.1",
+    "@vectorize-io/hindsight-client": "0.9.2"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.11",
-    "@types/node": "^22.0.0",
-    "aislop": "0.14.1",
-    "typescript": "^5.3.0",
+    "@types/node": "^26.4.0",
+    "aislop": "0.15.0",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.2"
   },
   "engines": {

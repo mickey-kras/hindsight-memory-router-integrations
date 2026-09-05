@@ -1,31 +1,25 @@
 # Dependabot auto-merge
 
-Matches `hindsight-memory-router`:
+- Auto-merge requires minor/patch updates and a compatibility score of at
+  least 75% for every dependency in the PR.
+- Missing scores, unknown versions, major updates and non-Dependabot commits
+  require manual review. Security updates use the same merge policy.
+- Required repository checks still apply. The score reflects other projects'
+  CI results; it does not replace this repository's tests.
+- PR events and the 30-minute refresh use the same implementation. A failed
+  lookup clears an earlier bot auto-merge decision; manually enabled
+  auto-merge is left to the owner.
+- `GITHUB_TOKEN` handles merging and main-workflow dispatch. No App or PAT.
+- The refresh also starts missing main validation for the current default
+  branch tip when it is a Dependabot merge. Existing push/dispatch runs are
+  reused; failed runs remain visible rather than being retried automatically.
 
-- Minor/patch PR events enable squash auto-merge.
-- A 30-minute refresh enables it for every open, non-draft Dependabot PR,
-  including major updates. Required merge gates still apply.
-- Uses `GITHUB_TOKEN`; no additional app or secret.
-- Weekly grouped updates retain the seven-day cooldown.
+The pinned `dependabot/fetch-metadata` bundle supplies per-dependency scores.
+Its single `compatibility-score` output covers only the first dependency, so
+the policy reads `updated-dependencies-json` for grouped PRs. The pinned
+implementation fetches public badges without authentication, despite its
+README's PAT note.
 
-Apply the policy-guard prerequisite before adding the automation workflows.
-From an authenticated repository checkout, apply the repository settings:
-
-```sh
-bash scripts/configure-github.sh --apply
-```
-
-This installs the router's four rulesets, enables squash-only auto-merge and
-deletes merged branches. Required PR checks are `checks`, `aislop status`,
-`analyze`, `guard`, and `branch name`. The router's `container` check is omitted
-because this repository has no container job. SonarQube remains on main.
-
-After both workflow files are on main, refresh existing PRs:
-
-```sh
-gh workflow run dependabot-auto-merge-refresh.yml --repo mickey-kras/hindsight-memory-router-integrations
-```
-
-The policy guard pins the automation workflow structure, allowing full action
-SHA updates. Trigger, permission, script or condition changes require an
-explicit update to the reviewed shape in `policy-guard.yml`.
+To re-evaluate open PRs, run **Actions → dependabot auto-merge refresh → Run
+workflow** on the default branch. Change `MINIMUM_SCORE` in
+`.github/scripts/dependabot-auto-merge.cjs` to adjust the threshold.

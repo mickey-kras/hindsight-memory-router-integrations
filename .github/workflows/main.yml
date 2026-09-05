@@ -1,6 +1,7 @@
 name: main
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
 
@@ -14,6 +15,7 @@ permissions:
 jobs:
   quality:
     name: quality
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       security-events: write
@@ -21,6 +23,7 @@ jobs:
 
   aislop:
     name: aislop
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       security-events: write
@@ -28,6 +31,7 @@ jobs:
 
   codeql:
     name: codeql
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       security-events: write
@@ -35,6 +39,7 @@ jobs:
 
   sonar:
     name: sonar
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       id-token: write
@@ -82,3 +87,4 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
