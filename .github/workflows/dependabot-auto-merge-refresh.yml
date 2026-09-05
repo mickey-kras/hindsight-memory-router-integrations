@@ -8,26 +8,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   refresh:
-    name: refresh
-    runs-on: ubuntu-latest
-    steps:
-      - name: Enable auto-merge for open Dependabot PRs
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          gh pr list \
-            --repo "$REPO" \
-            --author dependabot[bot] \
-            --state open \
-            --json number,url,isDraft \
-            --jq '.[] | select(.isDraft == false) | [.number, .url] | @tsv' |
-          while IFS=$'\t' read -r number url; do
-            echo "Enabling auto-merge for Dependabot PR #${number}"
-            gh pr merge "$url" --auto --squash || true
-          done
+    uses: ./.github/workflows/dependabot-auto-merge.yml
