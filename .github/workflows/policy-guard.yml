@@ -231,7 +231,7 @@ jobs:
                   gate_automation(path, yaml.safe_dump(doc))
                   return
               events = check_triggers(path, doc)
-              allow_id_token = bool(events) and events <= ID_TOKEN_EVENTS
+              allow_id_token = (bool(events) and events <= ID_TOKEN_EVENTS) or trusted_main_dispatch(path, doc)
               check_permissions(path, 'top-level', doc.get('permissions'), allow_id_token, required=True)
               jobs = doc.get('jobs')
               if jobs is not None and not isinstance(jobs, dict):
@@ -639,6 +639,21 @@ jobs:
                   if _continue_on_error(step):
                       fail(f'codeql.yml: CodeQL {label} step must not set continue-on-error')
 
+          def trusted_main_dispatch(path, doc):
+              if path != '.github/workflows/main.yml':
+                  return False
+              events = workflow_events(doc)
+              if events != {'push', 'workflow_dispatch'}:
+                  return False
+              trigger = doc.get('on', doc.get(True, {}))
+              if trigger.get('push') != {'branches': ['main']}:
+                  return False
+              jobs = doc.get('jobs', {})
+              return bool(jobs) and all(
+                  normalize_condition(job.get('if', '')) == "github.ref == 'refs/heads/main'"
+                  for job in jobs.values()
+              )
+
           def gate_main(path, content):
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
@@ -662,7 +677,12 @@ jobs:
               if sonar is None:
                   fail('main.yml: jobs.sonar must exist')
                   return
-              check_gate_job(path, 'sonar', sonar)
+              if 'workflow_dispatch' in events:
+                  if not trusted_main_dispatch(path, doc):
+                      fail('main.yml: dispatch requires every job to be restricted to main')
+                  check_gate_job(path, 'sonar', {key: value for key, value in sonar.items() if key != 'if'})
+              else:
+                  check_gate_job(path, 'sonar', sonar)
               if sonar.get('needs') != ['quality', 'aislop', 'codeql']:
                   fail('main.yml: sonar job must need quality, aislop and codeql')
               if step_named(sonar, 'SonarQube quality gate') is None:
@@ -961,8 +981,8 @@ jobs:
           # Only the reviewed Dependabot workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
-              '.github/workflows/dependabot-auto-merge.yml': 'fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34',
-              '.github/workflows/dependabot-auto-merge-refresh.yml': '67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3',
+              '.github/workflows/dependabot-auto-merge.yml': ('fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34', '602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19'),
+              '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3', 'dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05'),
           }
 
           def gate_automation(path, content):
@@ -977,7 +997,7 @@ jobs:
                       if isinstance(uses, str):
                           step['uses'] = re.sub(r'@[0-9a-f]{40}$', '@PINNED', uses)
               digest = hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
-              if digest != AUTOMATION_SHAPES[path]:
+              if digest not in AUTOMATION_SHAPES[path]:
                   fail(f'{path}: automation must match its reviewed workflow shape')
 
           GATES = {
@@ -1163,3 +1183,4 @@ jobs:
           set -euo pipefail
           export FILES_JSON="${RUNNER_TEMP}/files.json"
           python3 "$RUNNER_TEMP/policy_guard.py"
+
