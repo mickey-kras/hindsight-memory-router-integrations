@@ -34,9 +34,15 @@ jobs:
           cache-dependency-path: npm-shrinkwrap.json
 
       - run: npm ci
+      - run: npm ci --prefix src/upstream/coding-agents
       - name: Tests and coverage
         run: npm run test:coverage
       - run: npm run build
+      - run: npm run build:coding-agents
+      - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
+      - run: npm test --prefix src/upstream/coding-agents
+      - run: npm run audit:coding-agents
+      - run: node scripts/verify-coding-upstream.mjs
       - run: npm audit --audit-level=moderate
 
       - name: Verify package
@@ -45,6 +51,8 @@ jobs:
           tar -tzf "$RUNNER_TEMP/$artifact" > "$RUNNER_TEMP/package-files"
           grep -Fxq package/npm-shrinkwrap.json "$RUNNER_TEMP/package-files"
           cmp "$RUNNER_TEMP/$artifact" "packages/$artifact"
+          coding_artifact="$(cd src/upstream/coding-agents && npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
+          cmp "$RUNNER_TEMP/$coding_artifact" "packages/$coding_artifact"
           sha256sum --check PACKAGE_SHA256
 
       - name: Install Nix
@@ -52,7 +60,7 @@ jobs:
 
       - name: Nix dependency hash
         run: |
-          artifact="packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.1.tgz"
+          artifact="packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.2.tgz"
           expected_source="$(sed -n 's/^source=//p' PACKAGE_NIX_HASHES)"
           expected_deps="$(sed -n 's/^npm_deps=//p' PACKAGE_NIX_HASHES)"
           test "$(nix hash file "$artifact")" = "$expected_source"

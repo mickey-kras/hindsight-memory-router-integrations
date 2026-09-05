@@ -1,71 +1,41 @@
-# hindsight-memory-router-openclaw
+# Hindsight Memory Router integrations
 
-OpenClaw plugin for [hindsight-memory-router](https://github.com/mickey-kras/hindsight-memory-router).
+OpenClaw and the current upstream `coding-agents` package share `src/shared/`.
 
-`OpenClaw -> plugin -> Memory Router -> Hindsight`
+**client routing != authorization; Memory Router grants are authoritative**
 
-Upstream: Vectorize OpenClaw integration `v0.11.1`. See `UPSTREAM_VERSION` and `docs/DEVIATIONS.md`.
+| Integration | Identity | Package version |
+| --- | --- | --- |
+| OpenClaw | trusted `ctx.agentId` | `0.11.1-router.2` |
+| Coding agents | harness entrypoint (`codex`, `claude-code`, `opencode`, etc.) | `0.5.1-router.1` |
 
-## Rules
+Each principal has one optional `writeBank` and `additionalReadBanks`.
+Readable banks are their deduplicated union. Mutations target only `writeBank`.
+Unassigned banks are rejected locally without contacting the server.
+No wildcard, dynamic bank, fallback identity, or credential fallback.
 
-- Identity: trusted `ctx.agentId` only.
-- Credentials: one Memory Router token per configured agent.
-- Routing: optional write bank; zero or more recall banks.
-- Authorization: Memory Router grants only.
-- Unknown agent, missing token, unresolved SecretRef: fail closed.
-- Transport: HTTPS, verified certificates, no URL credentials.
-- Secrets: process memory only; never queues or logs.
+- HTTPS only; redirects rejected; runtime-resolved secrets; sanitized errors.
+- Recall/reflect share a deadline and token budget; content dedupe and deterministic order.
+- Any 401/403 discards the entire read result. Network/408/429/5xx failures permit partial reads.
+- Bank/config/page reads are read operations. Scope checks still belong to Memory Router.
+- OpenClaw retain queues recheck the current write bank before replay.
 
-## Config
+[OpenClaw configuration](docs/OPENCLAW.md) · [Coding agents](integrations/coding-agents/README.md)
 
-```json
-{
-  "routerUrl": "https://memory-router.example.internal",
-  "agents": {
-    "main": {
-      "token": { "source": "exec", "provider": "op", "id": "memory-router-main" },
-      "writeBank": "main",
-      "recallBanks": ["main", "dev", "creative"]
-    },
-    "backend": {
-      "token": { "source": "exec", "provider": "op", "id": "memory-router-backend" },
-      "writeBank": "dev",
-      "recallBanks": ["dev", "dev-best-practices"]
-    },
-    "reader": {
-      "token": { "source": "exec", "provider": "op", "id": "memory-router-reader" },
-      "recallBanks": ["main"]
-    }
-  }
-}
+## Verify
+
+```sh
+npm ci
+npm ci --prefix src/upstream/coding-agents
+npm run test:coverage
+npm run build
+npm run build:coding-agents
+npm test --prefix src/upstream/coding-agents
+npm audit --audit-level=moderate
+npm audit --prefix src/upstream/coding-agents --audit-level=moderate
+node scripts/verify-coding-upstream.mjs
 ```
 
-Plugin ID: `hindsight-memory-router`.
-
-`agents.*.token` is an OpenClaw SecretRef. Omit `writeBank` for read-only agents.
-
-Immutable npm-pack artifact: `packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.1.tgz`.
-Nix hashes: `PACKAGE_NIX_HASHES`.
-
-## Flows
-
-| Flow | Banks |
-| --- | --- |
-| Auto-recall | All `recallBanks` |
-| Auto-retain | `writeBank` |
-| Recall tool | All `recallBanks` |
-| Other knowledge tools | `writeBank` |
-
-Knowledge tools are disabled by default. Enable with `enableKnowledgeTools: true`.
-
-Multi-bank recall: one timeout, one token budget, content dedupe, deterministic ranking. Any `401/403` fails closed. Other bank failures return partial results and log failed bank IDs.
-
-Transient retain failures (`408`, `429`, `5xx`, network) queue per agent. `4xx` validation failures do not queue. Default queue: `~/.openclaw/data/hindsight-retain-queue/`.
-
-## Upgrade
-
-1. Update `UPSTREAM_VERSION`.
-2. Run `scripts/import-upstream.sh`.
-3. Review `docs/DEVIATIONS.md`.
-4. Run `npm ci && npm test && npm run build && npm pack --dry-run`.
-5. Bump `<upstream>-router.<revision>`.
+Packages and SHA-256 hashes are committed under `packages/` and `PACKAGE_SHA256`.
+OpenClaw provenance: `UPSTREAM_VERSION`; coding-agents provenance: `integrations/coding-agents/UPSTREAM.json`.
+Local revisions are independent of upstream versions. Upgrade either integration separately.

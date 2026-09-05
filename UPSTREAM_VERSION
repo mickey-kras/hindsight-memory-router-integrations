@@ -2,4 +2,4 @@ upstream_repo=vectorize-io/hindsight
 upstream_ref=integrations/openclaw/v0.11.1
 upstream_path=hindsight-integrations/openclaw
 upstream_version=0.11.1
-router_revision=1
+router_revision=2

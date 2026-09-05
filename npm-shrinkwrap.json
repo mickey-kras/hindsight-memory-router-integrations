@@ -1,12 +1,12 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-openclaw",
-  "version": "0.11.1-router.1",
+  "version": "0.11.1-router.2",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@mickey-kras/hindsight-memory-router-openclaw",
-      "version": "0.11.1-router.1",
+      "version": "0.11.1-router.2",
       "license": "MIT",
       "dependencies": {
         "@vectorize-io/hindsight-agent-sdk": "0.1.1",

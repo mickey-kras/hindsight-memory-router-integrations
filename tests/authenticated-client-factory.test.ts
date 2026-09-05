@@ -10,7 +10,7 @@ import {
   RouterUrlError,
   validateRouterUrl,
   type RouterClient,
-} from "../src/router/authenticated-client-factory.js";
+} from "../src/shared/authenticated-client-factory.js";
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
 const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
@@ -51,8 +51,8 @@ describe("AuthenticatedClientFactory", () => {
         return {} as RouterClient;
       },
     });
-    factory.forAgent({ agentId: "main", token: TOKEN_MAIN });
-    factory.forAgent({ agentId: "backend", token: TOKEN_BACKEND });
+    factory.forAgent({ principalId: "main", token: TOKEN_MAIN });
+    factory.forAgent({ principalId: "backend", token: TOKEN_BACKEND });
     expect(built).toHaveLength(2);
     expect(built[0].apiKey).toBe(TOKEN_MAIN);
     expect(built[0].headers[AGENT_HEADER]).toBe("main");
@@ -60,15 +60,15 @@ describe("AuthenticatedClientFactory", () => {
     expect(built[1].headers[AGENT_HEADER]).toBe("backend");
   });
 
-  it("isolates agents: cached clients never cross agents", () => {
+  it("isolates principals: cached clients never cross agents", () => {
     const factory = new AuthenticatedClientFactory({
       routerUrl: "https://router.example.test",
       userAgent: "test-agent/0",
       construct: () => ({}) as RouterClient,
     });
-    const a1 = factory.forAgent({ agentId: "main", token: TOKEN_MAIN });
-    const b1 = factory.forAgent({ agentId: "backend", token: TOKEN_BACKEND });
-    const a2 = factory.forAgent({ agentId: "main", token: TOKEN_MAIN });
+    const a1 = factory.forAgent({ principalId: "main", token: TOKEN_MAIN });
+    const b1 = factory.forAgent({ principalId: "backend", token: TOKEN_BACKEND });
+    const a2 = factory.forAgent({ principalId: "main", token: TOKEN_MAIN });
     expect(a1).not.toBe(b1);
     expect(a1).toBe(a2);
   });
@@ -79,8 +79,8 @@ describe("AuthenticatedClientFactory", () => {
       userAgent: "test-agent/0",
       construct: () => ({}) as RouterClient,
     });
-    const first = factory.forAgent({ agentId: "main", token: TOKEN_MAIN });
-    const rotated = factory.forAgent({ agentId: "main", token: TOKEN_BACKEND });
+    const first = factory.forAgent({ principalId: "main", token: TOKEN_MAIN });
+    const rotated = factory.forAgent({ principalId: "main", token: TOKEN_BACKEND });
     expect(rotated).not.toBe(first);
   });
 });

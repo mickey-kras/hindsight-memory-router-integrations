@@ -14,6 +14,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/plugin.ts", "src/router/**/*.ts", "src/upstream/src/retain-queue.ts", "src/upstream/src/session-patterns.ts", "src/upstream/src/types.ts"],
+  "include": ["src/plugin.ts", "src/shared/**/*.ts", "src/coding-agents/**/*.ts", "src/upstream/src/retain-queue.ts", "src/upstream/src/session-patterns.ts", "src/upstream/src/types.ts"],
   "exclude": ["src/upstream/**/__tests__/**", "src/upstream/**/*.test.ts", "node_modules", "dist"]
 }

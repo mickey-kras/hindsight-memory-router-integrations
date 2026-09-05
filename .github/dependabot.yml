@@ -25,3 +25,16 @@ updates:
       github-actions-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /src/upstream/coding-agents
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    rebase-strategy: auto
+    open-pull-requests-limit: 3
+    groups:
+      coding-agents-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
