@@ -77,16 +77,16 @@
     "test:upstream": "vitest run --exclude **/*.e2e.test.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@vectorize-io/hindsight-all": "^0.8.6",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@vectorize-io/hindsight-all": "^0.9.2",
     "jsonc-parser": "^3.3.1",
-    "zod": "^4.4.3"
+    "zod": "^4.5.2"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.9",
+    "@opencode-ai/plugin": "^1.18.25",
     "@opencode-ai/plugin-v2": "npm:@opencode-ai/plugin@0.0.0-beta-18743",
     "@opencode-ai/sdk": "^1.18.9",
-    "@types/node": "^26.1.0",
+    "@types/node": "^26.4.0",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.6"

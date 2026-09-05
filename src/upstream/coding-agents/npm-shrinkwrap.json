@@ -8,10 +8,10 @@
       "name": "@mickey-kras/hindsight-memory-router-coding-agents",
       "version": "0.5.1-router.1",
       "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.29.0",
-        "@vectorize-io/hindsight-all": "^0.8.6",
+        "@modelcontextprotocol/sdk": "^1.30.0",
+        "@vectorize-io/hindsight-all": "^0.9.2",
         "jsonc-parser": "^3.3.1",
-        "zod": "^4.4.3"
+        "zod": "^4.5.2"
       },
       "bin": {
         "hindsight-antigravity-hook": "dist/antigravity-hook.js",
@@ -37,10 +37,10 @@
         "hindsight-qwen-stop-hook": "dist/qwen-stop-hook.js"
       },
       "devDependencies": {
-        "@opencode-ai/plugin": "^1.18.9",
+        "@opencode-ai/plugin": "^1.18.25",
         "@opencode-ai/plugin-v2": "npm:@opencode-ai/plugin@0.0.0-beta-18743",
         "@opencode-ai/sdk": "^1.18.9",
-        "@types/node": "^26.1.0",
+        "@types/node": "^26.4.0",
         "tsup": "^8.3.0",
         "typescript": "^5.6.0",
         "vitest": "^3.2.6"
@@ -640,12 +640,12 @@
       }
     },
     "node_modules/@modelcontextprotocol/sdk": {
-      "version": "1.29.0",
-      "resolved": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz",
-      "integrity": "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==",
+      "version": "1.30.0",
+      "resolved": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
+      "integrity": "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==",
       "license": "MIT",
       "dependencies": {
-        "@hono/node-server": "^1.19.9",
+        "@hono/node-server": "^1.19.9 || ^2.0.5",
         "ajv": "^8.17.1",
         "ajv-formats": "^3.0.1",
         "content-type": "^1.0.5",
@@ -790,14 +790,14 @@
       }
     },
     "node_modules/@opencode-ai/plugin": {
-      "version": "1.18.9",
-      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.18.9.tgz",
-      "integrity": "sha512-0kFX9Usj+3N+WupIe9VnEdDNzMNbW4/C5GeIzdj02/t5kQoXsNrFpW3Br9aABebazcaYsQEWdlaLV0zQISy3OA==",
+      "version": "1.18.25",
+      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.18.25.tgz",
+      "integrity": "sha512-Kb34zFqYosFNiMd1IuYiZGjX17z+18Srm7tHZMCz+uMVRTYNkEw1FTrfAK2FLbggwYdgzifGwKMNF1slLT8eLw==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
         "@ai-sdk/provider": "3.0.8",
-        "@opencode-ai/sdk": "1.18.9",
+        "@opencode-ai/sdk": "1.18.25",
         "effect": "4.0.0-beta.83",
         "zod": "4.1.8"
       },
@@ -955,9 +955,9 @@
       }
     },
     "node_modules/@opencode-ai/sdk": {
-      "version": "1.18.9",
-      "resolved": "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.18.9.tgz",
-      "integrity": "sha512-oDJSmsmiGW+3lNLmZYj3EpUkpiT3ITZBKffH3mrmu2KMJXlkxQ/Nvv7jqPffSM7o8lCdBZS/aCE+2GkA3/92gQ==",
+      "version": "1.18.25",
+      "resolved": "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.18.25.tgz",
+      "integrity": "sha512-GwgwhW+vE8FWSDw730SjzqNhsWXB0uJjbFOiqFkmM+USFuG13HuTlGe6SR2ixt+WXxoD6FV1hILWqsXyqej9hQ==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
@@ -1456,9 +1456,9 @@
       "license": "MIT"
     },
     "node_modules/@types/node": {
-      "version": "26.1.0",
-      "resolved": "https://registry.npmjs.org/@types/node/-/node-26.1.0.tgz",
-      "integrity": "sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw==",
+      "version": "26.4.0",
+      "resolved": "https://registry.npmjs.org/@types/node/-/node-26.4.0.tgz",
+      "integrity": "sha512-faiGnoIrLH/V8cibOMEAZ8pMw6oXqSukl29ra4mN8GdaB2ZewzeaLj+INpV5N+Z1eKWzY+IzaIZH2EIR6YZRNQ==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
@@ -1466,9 +1466,9 @@
       }
     },
     "node_modules/@vectorize-io/hindsight-all": {
-      "version": "0.8.6",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-all/-/hindsight-all-0.8.6.tgz",
-      "integrity": "sha512-2AWNhDBpk1KbWc28t6/MnPDq8Ea8OTYfxB1QV2/2Grs+BOesiTbTPfrPtuXcw+jlSi6M5Xs+JtIH2wGwC0JQ4Q==",
+      "version": "0.9.2",
+      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-all/-/hindsight-all-0.9.2.tgz",
+      "integrity": "sha512-TZlYxbaGV28kNesglAhiMBkQqtC147IOgvZ9W1zCsXFiK7TShmGjgiCHWIlM4SYfsRD5RPOu6ZbCIG5U6Mr69w==",
       "license": "MIT",
       "engines": {
         "node": ">=22"
@@ -4664,9 +4664,9 @@
       }
     },
     "node_modules/zod": {
-      "version": "4.4.3",
-      "resolved": "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz",
-      "integrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
+      "version": "4.5.2",
+      "resolved": "https://registry.npmjs.org/zod/-/zod-4.5.2.tgz",
+      "integrity": "sha512-XkYXCol10+ba/6F/cueWV+TezUeOqXW0hdeJt5CdXjTYeAgAQg5N03RQdJ80mhfFE72+pblvYMW4wy2Qp4Qbrg==",
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/colinhacks"
