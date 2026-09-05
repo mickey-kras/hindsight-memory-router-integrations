@@ -70,6 +70,7 @@ jobs:
           cache-dependency-path: npm-shrinkwrap.json
 
       - run: npm ci
+      - run: npm ci --prefix src/upstream/coding-agents
       - name: Generate coverage for SonarQube
         run: npm run test:coverage
 
