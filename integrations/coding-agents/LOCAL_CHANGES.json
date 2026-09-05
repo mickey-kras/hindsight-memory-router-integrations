@@ -2,7 +2,7 @@
   "README.md": "dffd3456f1c510bc7da15e47b38971b3fbc2fac8a05885bfa1296a4b9a6445c4",
   "cordis.patch.yml": "9a32a0a6819c281fcb0f17c9c2e77ba6be8f78f7f369882edbe9170afd48cd25",
   "package-lock.json": null,
-  "package.json": "25e8d35a90d08dbfffa50970d77633f8c94c2ae627643d017b3d51cac0e1af9c",
+  "package.json": "22d8f21a368d723e0754613897be9235e08f3a2838b8d4148b2b9ea65ef36593",
   "src/core/bank.ts": "82366d3e750db09b342cf66fa6b6af3666d1a53ef8e251ff5f6e36c8467a46d3",
   "src/core/config.ts": "9dce8df5dc7b8e1bc9c98d04b19dcd52c02e5483dec39f213c48c6b8936a481e",
   "src/core/hindsight.ts": "8cae3bb57e2ea54df2fa9155e436168aac19917a6269537f678d249ed8153dec",
@@ -21,6 +21,6 @@
   "src/status.ts": "3a9fbc0d4421d067dc03e94ef777c21a9d3766a8ef2da85fa1081114e950e4e6",
   "tsconfig.json": "259ae1a998965db4a5dc00bc729d6c0713885df01e223d14fc783fa04f7b447f",
   "vitest.config.ts": "fb1a69195247e1e976cc17577c241d6220558c73c3d09eb2d953c755e1cb2c43",
-  "npm-shrinkwrap.json": "d1c93372b67034e61c99246192681701e3623258359b8c223bf8db0550455671",
+  "npm-shrinkwrap.json": "fd2e708c234cc8df117f2c8c4ec8b1ac0d8c6521d9052254f0b909f99cc9ad87",
   "LICENSE": "77cf0484000e1ba583f081f38c1fe0fe88e304565a2cab8464df9f0c2ebb10c0"
 }
