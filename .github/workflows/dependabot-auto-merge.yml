@@ -3,29 +3,55 @@ name: dependabot auto-merge
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_call:
 
 permissions:
   contents: write
   pull-requests: write
+  actions: write
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   enable-auto-merge:
     if: >-
-      github.actor == 'dependabot[bot]' &&
-      github.event.pull_request.draft == false
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Dependabot metadata
-        id: metadata
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          egress-policy: audit
 
-      - name: Enable auto-merge after required gates
-        if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          steps.metadata.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr merge --auto --squash "$PR_URL"
+      - name: Read automation from the trusted workflow revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: automation
+          sparse-checkout: .github/scripts
+
+      - name: Read pinned Dependabot metadata action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dependabot/fetch-metadata
+          ref: 25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+          persist-credentials: false
+          path: metadata-action
+          sparse-checkout: dist
+
+      - name: Evaluate compatibility and queue eligible updates
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        with:
+          script: |
+            const { run } = require('./automation/.github/scripts/dependabot-auto-merge.cjs');
+            await run({
+              github, context, core,
+              metadataPath: require('node:path').resolve('metadata-action'),
+              mainWorkflow: 'main.yml',
+            });
