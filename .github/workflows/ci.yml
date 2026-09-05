@@ -41,7 +41,7 @@ jobs:
       - run: npm run build:coding-agents
       - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
       - run: npm test --prefix src/upstream/coding-agents
-      - run: npm audit --prefix src/upstream/coding-agents --audit-level=moderate
+      - run: npm run audit:coding-agents
       - run: node scripts/verify-coding-upstream.mjs
       - run: npm audit --audit-level=moderate
 

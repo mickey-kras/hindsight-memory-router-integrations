@@ -39,7 +39,8 @@
     "test:coverage": "vitest run --coverage",
     "prepublishOnly": "npm run clean && npm run build && npm test",
     "build:coding-agents": "npm run build --prefix src/upstream/coding-agents",
-    "test:coding-agents": "vitest run tests/coding-agents-upstream.test.ts"
+    "test:coding-agents": "vitest run tests/coding-agents-upstream.test.ts",
+    "audit:coding-agents": "npm audit --prefix src/upstream/coding-agents --audit-level=moderate"
   },
   "dependencies": {
     "@vectorize-io/hindsight-agent-sdk": "0.1.1",
