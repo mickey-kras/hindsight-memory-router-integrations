@@ -75,6 +75,70 @@ function estimateTokens(item: RecallItem): number {
   return Math.max(1, Math.ceil(itemContent(item).length / 4));
 }
 
+interface BankRecallResult {
+  bank: string;
+  results: RecallItem[];
+}
+
+interface BankItem {
+  bank: string;
+  item: RecallItem;
+}
+
+function mergeSettledResults(
+  settled: PromiseSettledResult<BankRecallResult>[],
+  banks: readonly string[]
+): { merged: BankItem[]; failedBanks: string[] } {
+  const failedBanks: string[] = [];
+  const merged: BankItem[] = [];
+  const seen = new Set<string>();
+  settled.forEach((outcome, index) => {
+    const bank = banks[index];
+    if (outcome.status === "rejected") {
+      if (isAuthzError(outcome.reason)) throw new RecallAuthorizationError(bank);
+      const status = (outcome.reason as { statusCode?: number })?.statusCode;
+      if (status !== undefined && status !== 408 && status !== 429 && status < 500) {
+        throw new Error("memory read failed");
+      }
+      failedBanks.push(bank);
+      return;
+    }
+    for (const item of outcome.value.results) {
+      const key = dedupeKey(item);
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push({ bank, item });
+      }
+    }
+  });
+  return { merged, failedBanks };
+}
+
+function compareBankItems(a: BankItem, b: BankItem): number {
+  const scoreA = typeof a.item.score === "number" ? a.item.score : Number.NEGATIVE_INFINITY;
+  const scoreB = typeof b.item.score === "number" ? b.item.score : Number.NEGATIVE_INFINITY;
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  if (a.bank !== b.bank) return a.bank < b.bank ? -1 : 1;
+  const contentA = itemContent(a.item);
+  const contentB = itemContent(b.item);
+  if (contentA === contentB) return 0;
+  return contentA < contentB ? -1 : 1;
+}
+
+function trimToTokenBudget(items: RecallItem[], maxTokens: number | undefined): RecallItem[] {
+  if (maxTokens === undefined) return items;
+  const kept: RecallItem[] = [];
+  let spent = 0;
+  for (const item of items) {
+    const tokens = estimateTokens(item);
+    if (spent + tokens <= maxTokens) {
+      spent += tokens;
+      kept.push(item);
+    }
+  }
+  return kept;
+}
+
 export class RecallCoordinator {
   async recall(
     client: RouterClient,
@@ -122,63 +186,13 @@ export class RecallCoordinator {
       })
     );
 
-    const failedBanks: string[] = [];
-    const merged: Array<{ bank: string; item: RecallItem }> = [];
-    const seen = new Set<string>();
-    for (let i = 0; i < settled.length; i++) {
-      const outcome = settled[i];
-      const bank = banks[i];
-      if (outcome.status === "rejected") {
-        if (isAuthzError(outcome.reason)) {
-          throw new RecallAuthorizationError(bank);
-        }
-        const status = (outcome.reason as { statusCode?: number })?.statusCode;
-        if (status !== undefined && status !== 408 && status !== 429 && status < 500) {
-          throw new Error("memory read failed");
-        }
-        failedBanks.push(bank);
-        continue;
-      }
-      for (const item of outcome.value.results) {
-        const key = dedupeKey(item);
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        merged.push({ bank, item });
-      }
-    }
+    const { merged, failedBanks } = mergeSettledResults(settled, banks);
 
     // Deterministic ranking: score desc, bank asc, content asc.
-    merged.sort((a, b) => {
-      const scoreA = typeof a.item.score === "number" ? a.item.score : Number.NEGATIVE_INFINITY;
-      const scoreB = typeof b.item.score === "number" ? b.item.score : Number.NEGATIVE_INFINITY;
-      if (scoreA !== scoreB) {
-        return scoreB - scoreA;
-      }
-      if (a.bank !== b.bank) {
-        return a.bank < b.bank ? -1 : 1;
-      }
-      const contentA = itemContent(a.item);
-      const contentB = itemContent(b.item);
-      return contentA < contentB ? -1 : contentA > contentB ? 1 : 0;
-    });
+    merged.sort(compareBankItems);
 
     // Trim merged list to the shared context token budget.
-    let results = merged.map((entry) => entry.item);
-    if (request.maxTokens) {
-      const kept: RecallItem[] = [];
-      let spent = 0;
-      for (const item of results) {
-        const tokens = estimateTokens(item);
-        if (spent + tokens > request.maxTokens) {
-          continue;
-        }
-        spent += tokens;
-        kept.push(item);
-      }
-      results = kept;
-    }
+    const results = trimToTokenBudget(merged.map((entry) => entry.item), request.maxTokens);
 
     return { results, partial: failedBanks.length > 0, failedBanks };
   }

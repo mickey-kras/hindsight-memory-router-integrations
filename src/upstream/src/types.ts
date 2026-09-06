@@ -16,7 +16,7 @@ export interface MoltbotPluginAPI {
   ): void;
   // Register a tool or tool factory for agents
   registerTool?(
-    factory: (ctx: PluginToolContext) => any | any[] | null | undefined,
+    factory: (ctx: PluginToolContext) => unknown,
     opts?: { name?: string; names?: string[]; optional?: boolean }
   ): void;
   // OpenClaw framework logger — handles coloring/formatting consistently across plugins

@@ -121,46 +121,57 @@ export class RetainCoordinator {
       if (!file.startsWith(QUEUE_FILE_PREFIX) || !file.endsWith(QUEUE_FILE_SUFFIX)) {
         continue;
       }
-      const principalId = file.slice(QUEUE_FILE_PREFIX.length, -QUEUE_FILE_SUFFIX.length);
-      let credentials;
-      try {
-        credentials = this.credentials.resolve(principalId);
-      } catch {
-        this.log.error(`retain queue replay skipped: no routing entry for agent ${principalId}`);
-        continue; // fail closed: unknown agent's items stay queued
-      }
-      const client = this.clients.forAgent(credentials);
-      const queue = this.queueFor(principalId);
-      queue.cleanup();
-      const delivered: string[] = [];
-      for (const item of queue.peek(50)) {
-        try {
-          if (item.bankId !== this.writeBanks.resolve(principalId)) {
-            throw new RetainAuthorizationError(item.bankId);
-          }
-          const operationId = queue.ensureOperationId(item.id, item.operationId ?? randomUUID());
-          await client.retain(item.bankId, item.content, {
-            documentId: item.documentId,
-            context: item.context,
-            metadata: toStringMetadata(item.metadata),
-            tags: item.tags,
-            updateMode: item.updateMode,
-            operationId,
-            async: true,
-          });
-          delivered.push(item.id);
-        } catch (error) {
-          if (isAuthzError(error)) {
-            this.log.error(
-              `retain replay denied for bank ${item.bankId}; item stays queued for operator review`
-            );
-          }
-          break; // preserve FIFO ordering; retry next flush
-        }
-      }
-      queue.removeMany(delivered);
+      await this.flushQueueFile(file);
     }
   }
+
+  private async flushQueueFile(file: string): Promise<void> {
+    const principalId = file.slice(QUEUE_FILE_PREFIX.length, -QUEUE_FILE_SUFFIX.length);
+    let credentials;
+    try {
+      credentials = this.credentials.resolve(principalId);
+    } catch {
+      this.log.error(`retain queue replay skipped: no routing entry for agent ${principalId}`);
+      return; // fail closed: unknown agent's items stay queued
+    }
+    const client = this.clients.forAgent(credentials);
+    const queue = this.queueFor(principalId);
+    queue.cleanup();
+    const delivered: string[] = [];
+    for (const item of queue.peek(50)) {
+      try {
+        if (item.bankId !== this.writeBanks.resolve(principalId)) {
+          throw new RetainAuthorizationError(item.bankId);
+        }
+        const operationId = queue.ensureOperationId(item.id, item.operationId ?? randomUUID());
+        await client.retain(item.bankId, item.content, {
+          documentId: item.documentId,
+          context: item.context,
+          metadata: toStringMetadata(item.metadata),
+          tags: item.tags,
+          updateMode: item.updateMode,
+          operationId,
+          async: true,
+        });
+        delivered.push(item.id);
+      } catch (error) {
+        if (isAuthzError(error)) {
+          this.log.error(
+            `retain replay denied for bank ${item.bankId}; item stays queued for operator review`
+          );
+        }
+        break; // preserve FIFO ordering; retry next flush
+      }
+    }
+    queue.removeMany(delivered);
+  }
+}
+
+function stringifyMetadataValue(value: unknown): string {
+  if (typeof value === "object") {
+    return JSON.stringify(value) ?? "";
+  }
+  return String(value);
 }
 
 function toStringMetadata(
@@ -174,7 +185,7 @@ function toStringMetadata(
     if (value === undefined || value === null) {
       continue;
     }
-    out[key] = typeof value === "string" ? value : String(value);
+    out[key] = typeof value === "string" ? value : stringifyMetadataValue(value);
   }
   return out;
 }

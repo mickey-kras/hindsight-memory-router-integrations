@@ -91,7 +91,7 @@ export class PrincipalCredentialResolver {
 
   /** Whether a routing entry exists for this agent ID. */
   has(principalId: string): boolean {
-    return Object.prototype.hasOwnProperty.call(this.principals, principalId);
+    return Object.hasOwn(this.principals, principalId);
   }
 
   /**

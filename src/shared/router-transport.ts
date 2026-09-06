@@ -9,6 +9,29 @@ export class RouterRequestError extends Error {
   }
 }
 
+const ROUTING_KEYS = ["bankId", "bank_id", "bank_ids"];
+
+function assertSafeRequest(url: string, body: RequestInit["body"]): URL {
+  if (/[\\#]/.test(url) || /%(?:2e|2f|5c|25)/i.test(url) || /\/\.\.?(?:\/|$|\?)/.test(url)) {
+    throw new AccessDeniedError();
+  }
+  const parsed = new URL(url);
+  if (ROUTING_KEYS.some((key) => parsed.searchParams.has(key))) throw new AccessDeniedError();
+  if (typeof body === "string") {
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(body);
+    } catch {
+      throw new AccessDeniedError();
+    }
+    if (parsedBody && typeof parsedBody === "object" && ROUTING_KEYS.some((key) => Object.hasOwn(parsedBody, key))) {
+      throw new AccessDeniedError();
+    }
+  }
+  if (parsed.username || parsed.password) throw new AccessDeniedError();
+  return parsed;
+}
+
 export class RouterTransport {
   readonly baseUrl: string;
   readonly access: BankAccess;
@@ -53,15 +76,7 @@ export class RouterTransport {
     const token = this.credential();
     const method = init.method ?? "GET";
     // Validate before URL normalization can erase dot segments or backslashes.
-    if (/[\\#]/.test(url) || /%(?:2e|2f|5c|25)/i.test(url) || /\/\.\.?(?:\/|$|\?)/.test(url)) throw new AccessDeniedError();
-    const parsed = new URL(url);
-    const routingKeys = ["bankId", "bank_id", "bank_ids"];
-    if (routingKeys.some(key => parsed.searchParams.has(key))) throw new AccessDeniedError();
-    if (typeof init.body === "string") {
-      let body: unknown;
-      try { body = JSON.parse(init.body); } catch { throw new AccessDeniedError(); }
-      if (body && typeof body === "object" && routingKeys.some(key => Object.hasOwn(body, key))) throw new AccessDeniedError();
-    }
+    assertSafeRequest(url, init.body);
     const prefix = `${this.baseUrl}/v1/default/banks/`;
     const listing = url === `${this.baseUrl}/v1/default/banks` && method === "GET";
     if (!listing && !(url === `${this.baseUrl}/version` && method === "GET")) {
@@ -72,18 +87,7 @@ export class RouterTransport {
       const suffix = split < 0 ? "" : path.slice(split);
       requireBank(this.access, bank, classifyOperation(method, suffix));
     }
-    if (parsed.username || parsed.password) throw new AccessDeniedError();
-    let response: Response;
-    try {
-      response = await this.#send(url, {
-        ...init,
-        redirect: "error",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(this.#principalId ? { "x-memory-router-agent": this.#principalId } : {}) },
-        signal: init.signal ?? AbortSignal.timeout(15_000),
-      });
-    } catch {
-      throw new RouterRequestError(503);
-    }
+    const response = await this.send(url, init, token);
     if (response.status === 401 || response.status === 403) {
       this.#denied = true;
       throw new AccessDeniedError();
@@ -98,5 +102,18 @@ export class RouterTransport {
       return Response.json({ banks, total: banks.length });
     }
     return response.status === 404 ? new Response(null, { status: 404 }) : response;
+  }
+
+  private async send(url: string, init: RequestInit, token: string): Promise<Response> {
+    try {
+      return await this.#send(url, {
+        ...init,
+        redirect: "error",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(this.#principalId ? { "x-memory-router-agent": this.#principalId } : {}) },
+        signal: init.signal ?? AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new RouterRequestError(503);
+    }
   }
 }
