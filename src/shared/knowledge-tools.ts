@@ -28,7 +28,7 @@ export function routedKnowledgeTools(transport: RouterTransport) {
       case "agent_knowledge_delete_page": suffix += `/${page}`; method = "DELETE"; break;
       case "agent_knowledge_ingest":
         method = "POST"; suffix = "/memories";
-        body = { async: true, items: [{ content: params.content, document_id: String(params.title).toLowerCase().replaceAll(/ /g, "-") }] }; break;
+        body = { async: true, items: [{ content: params.content, document_id: String(params.title).toLowerCase().replaceAll(" ", "-") }] }; break;
       default: throw new AccessDeniedError();
     }
     const response = await transport.request(transport.bankUrl(bank, suffix), { method, body: body ? JSON.stringify(body) : undefined });
