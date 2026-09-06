@@ -203,7 +203,10 @@ function sanitizeDocumentIdPart(value: string | undefined, fallback: string): st
   const withoutEdgeUnderscores = withoutLeadingUnderscore.endsWith("_")
     ? withoutLeadingUnderscore.slice(0, -1)
     : withoutLeadingUnderscore;
-  return withoutEdgeUnderscores || fallback;
+  if (!withoutEdgeUnderscores) {
+    return fallback;
+  }
+  return withoutEdgeUnderscores;
 }
 
 function isIdentityError(error: unknown): boolean {
