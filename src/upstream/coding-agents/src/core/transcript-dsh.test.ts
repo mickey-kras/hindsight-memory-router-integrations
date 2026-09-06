@@ -3,11 +3,11 @@ import { readDshEvents, type DshSessionEvent } from "./transcript-dsh";
 
 const at = (iso: string) => Date.parse(iso);
 
-const userMessage = (text: string, source: Record<string, unknown> = { kind: "user" }) => ({
+const userMessage = (text: string, source?: Record<string, unknown>) => ({
   id: "m-1",
   role: "user",
   content: [{ type: "text", text }],
-  source,
+  source: source ?? { kind: "user" },
 });
 
 describe("readDshEvents", () => {

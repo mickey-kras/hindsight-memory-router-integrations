@@ -70,13 +70,13 @@ function readPyValue(s: string, i: number): { value: unknown; end: number } | nu
         else if (esc === "x") {
           const hex = s.slice(j + 2, j + 4);
           if (!/^[0-9a-fA-F]{2}$/.test(hex)) return null;
-          out += String.fromCharCode(parseInt(hex, 16));
+          out += String.fromCodePoint(Number.parseInt(hex, 16));
           j += 4;
           continue;
         } else if (esc === "u") {
           const hex = s.slice(j + 2, j + 6);
           if (!/^[0-9a-fA-F]{4}$/.test(hex)) return null;
-          out += String.fromCharCode(parseInt(hex, 16));
+          out += String.fromCodePoint(Number.parseInt(hex, 16));
           j += 6;
           continue;
         } else out += esc;

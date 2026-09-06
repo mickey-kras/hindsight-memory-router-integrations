@@ -1,8 +1,9 @@
+import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "./core/config";
 import { buildAntigravityStatusLine } from "./antigravity-statusline";
 
-const stripAnsi = (value: string): string => value.replace(/\x1b\[[0-9;]*m/g, "");
+const stripAnsi = (value: string): string => stripVTControlCharacters(value);
 
 describe("Antigravity status line", () => {
   it("identifies the resolved Hindsight bank for the active workspace", () => {

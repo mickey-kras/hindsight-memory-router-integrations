@@ -163,7 +163,7 @@ describe("startCodebaseSurvey", () => {
     const allowed = Object.entries(SURVEY_AGENT_CONFIG.permission)
       .filter(([, v]) => v === "allow")
       .map(([k]) => k)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
     expect(allowed).toEqual(["glob", "grep", "hindsight_ingest_document", "read"]);
     // No write, no bash, and no `task` — which would reach a subagent that CAN write.
     for (const escape of ["write", "edit", "bash", "task", "patch"])

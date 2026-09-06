@@ -22,7 +22,7 @@ describe("native Dcode plugin", () => {
 
   it("registers exactly the lifecycle hooks Dcode owns", () => {
     const hooks = JSON.parse(readFileSync(join(packageRoot, "hooks/hooks.json"), "utf8"));
-    expect(Object.keys(hooks.hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
+    expect(Object.keys(hooks.hooks).sort((a, b) => a.localeCompare(b))).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
     expect(hooks.hooks.SessionStart[0].hooks[0].command).toBe(
       'node "${PLUGIN_ROOT}/dist/dcode-sessionstart-hook.js"'
     );
@@ -44,7 +44,7 @@ describe("native Dcode plugin", () => {
   it("keeps hooks.json byte-identical in meaning to the shared install declaration", () => {
     const hooks = JSON.parse(readFileSync(join(packageRoot, "hooks/hooks.json"), "utf8"));
     const declared = Object.values(HOOK_HARNESSES.dcode.install);
-    expect(Object.keys(hooks.hooks).sort()).toEqual(declared.map((h) => h.event).sort());
+    expect(Object.keys(hooks.hooks).sort((a, b) => a.localeCompare(b))).toEqual(declared.map((h) => h.event).sort((a, b) => a.localeCompare(b)));
     for (const hook of declared) {
       const entry = hooks.hooks[hook.event][0].hooks[0];
       expect(entry.command).toBe(`node "\${PLUGIN_ROOT}/dist/${hook.entry}"`);

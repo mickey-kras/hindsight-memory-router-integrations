@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 /**
  * Host adapter runtime for PERSISTENT-PLUGIN harnesses (opencode, Kilo, Cline). It delegates SessionStart and
  * prompt behavior to the same core lifecycle as fresh-process hook harnesses; this class keeps only
@@ -129,7 +130,7 @@ export class RuntimeCore {
       // on stderr (shows in the plugin log / console) rather than dropping it.
       // Banner: via the host's toast API when available (stderr corrupts the TUI); always logged.
       if (out.systemMessage) {
-        const plain = out.systemMessage.replace(/\x1b\[[0-9;]*m/g, "");
+        const plain = stripVTControlCharacters(out.systemMessage);
         log.info(this.harness, plain);
         this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
       }
@@ -178,7 +179,7 @@ export class RuntimeCore {
     // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
     // renders inside the TUI input line. The shared output owns when a notice exists.
     if (output.notice) {
-      const preview = output.notice.replace(/\s+/g, " ").trim().slice(0, 140);
+      const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
       log.info(this.harness, "reflect goal", { preview });
       this.notify?.("Hindsight · recalled past decisions", preview);
     }

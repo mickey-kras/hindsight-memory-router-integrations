@@ -207,10 +207,10 @@ export function gitLogNewestAuthorDate(repo: string): string | null {
 export async function ingestGitLog(
   client: HindsightClient,
   repo: string,
-  opts: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp } = { limit: 300 }
+  opts?: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp }
 ): Promise<number> {
-  const log = opts.log ?? (() => {});
-  const text = gitLogText(repo, opts.limit);
+  const log = opts?.log ?? (() => {});
+  const text = gitLogText(repo, opts?.limit ?? 300);
   if (!text) {
     log("[gitlog] no commits found — skipping");
     return 0;
@@ -222,7 +222,7 @@ export async function ingestGitLog(
     // The gitlog-head:<sha> tag makes freshness a single tag query: the deepen engine re-upserts
     // this document (same id — replaces, never duplicates) only when HEAD has moved past it.
     const head = gitHeadSha(repo);
-    const stamp = opts.stampFor?.();
+    const stamp = opts?.stampFor?.();
     const tags = [
       ...new Set([
         ...(stamp?.tags ?? []),

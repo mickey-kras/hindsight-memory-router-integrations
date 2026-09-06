@@ -16,13 +16,13 @@ export type Resolvers = Record<string, () => string>;
 /** Substitute every `{name}` in `template` using `resolvers`. `what` names the setting in the
  *  error message, so a typo points at the config key that carries it. */
 export function applyTemplate(template: string, resolvers: Resolvers, what: string): string {
-  return template.replace(PLACEHOLDER, (_, name: string) => {
+  return template.replaceAll(PLACEHOLDER, (_, name: string) => {
     const resolve = resolvers[name];
     if (!resolve) {
       console.error(
         `hindsight: unknown ${what} placeholder "{${name}}" — valid: ` +
           Object.keys(resolvers)
-            .sort()
+            .sort((a, b) => a.localeCompare(b))
             .map((k) => `{${k}}`)
             .join(", ")
       );

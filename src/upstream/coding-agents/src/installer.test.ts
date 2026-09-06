@@ -76,7 +76,7 @@ describe("claude-code installer", () => {
     expect(run(["install", "claude-code"], ctx)).toBe(0);
     const settings = readJson(settingsPath(ctx));
     const hooks = settings.hooks;
-    expect(Object.keys(hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
+    expect(Object.keys(hooks).sort((a, b) => a.localeCompare(b))).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
     const inner = (ev: string) => hooks[ev][0].hooks[0];
     expect(inner("SessionStart").command).toContain(join(ctx.dist, "claude-sessionstart-hook.js"));
     expect(inner("UserPromptSubmit").command).toContain(join(ctx.dist, "claude-hook.js"));
@@ -248,7 +248,7 @@ describe("codex installer", () => {
     const ctx = makeCtx();
     expect(run(["install", "codex"], ctx)).toBe(0);
     const hooks = readJson(hooksPath(ctx)).hooks;
-    expect(Object.keys(hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
+    expect(Object.keys(hooks).sort((a, b) => a.localeCompare(b))).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
     expect(hooks.SessionStart[0].hooks[0].command).toContain("codex-sessionstart-hook.js");
     expect(hooks.UserPromptSubmit[0].hooks[0].command).toContain("codex-hook.js");
     expect(hooks.Stop[0].hooks[0].command).toContain("codex-stop-hook.js");
@@ -1850,6 +1850,6 @@ describe("every installed companion skill is kept current by the session-start s
       syncCompanionSkill(harness, { home: ctx.home, srcDir });
       expect(readFileSync(installed, "utf8"), harness).toBe("packaged v2");
     }
-    expect(withoutSkill.sort()).toEqual(NO_SKILL_MECHANISM);
+    expect(withoutSkill.sort((a, b) => a.localeCompare(b))).toEqual(NO_SKILL_MECHANISM);
   });
 });

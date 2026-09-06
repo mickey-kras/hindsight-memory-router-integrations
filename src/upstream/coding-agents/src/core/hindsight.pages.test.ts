@@ -178,7 +178,7 @@ describe("HindsightClient.seedPages", () => {
       (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
     );
     expect(posts).toHaveLength(PAGES.length);
-    expect(posts.map((p) => p.body.name).sort()).toEqual(PAGES.map((p) => p.name).sort());
+    expect(posts.map((p) => p.body.name).sort((a, b) => a.localeCompare(b))).toEqual(PAGES.map((p) => p.name).sort((a, b) => a.localeCompare(b)));
     for (const post of posts) {
       expect(post.body.tags).toHaveLength(1);
       expect(post.body.tags[0]).toMatch(

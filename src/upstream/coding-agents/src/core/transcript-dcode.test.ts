@@ -92,6 +92,11 @@ describe("dcodeAssistantText", () => {
     );
   });
 
+  it("decodes BMP escapes and preserves surrogate pairs", () => {
+    expect(dcodeAssistantText("[{'type': 'text', 'text': '\\x41\\u00e9\\ud83d\\ude00'}]"))
+      .toBe("Aé😀");
+  });
+
   it("handles the value forms repr() produces for LangChain content", () => {
     expect(
       dcodeAssistantText(

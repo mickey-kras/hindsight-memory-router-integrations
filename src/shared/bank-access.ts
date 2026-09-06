@@ -32,6 +32,6 @@ export function classifyOperation(method: string, suffix: string): "read" | "wri
   if (method === "POST" && ["/memories/recall", "/reflect"].includes(suffix)) return "read";
   if (method === "GET" && /^\/(?:config|stats|tags|graph|documents|operations|memories|mental-models|knowledge-base)(?:\/[^/]+)*$/.test(suffix)) return "read";
   if (method === "GET" && suffix === "") return "read";
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && /^(?:|\/(?:config|import|memories|documents|mental-models|knowledge-base|consolidate|consolidation)(?:\/[^/]+)*)$/.test(suffix)) return "write";
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && /^(?:\/(?:config|import|memories|documents|mental-models|knowledge-base|consolidate|consolidation)(?:\/[^/]+)*)?$/.test(suffix)) return "write";
   throw new AccessDeniedError();
 }

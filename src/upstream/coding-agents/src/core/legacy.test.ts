@@ -76,7 +76,7 @@ describe("readLegacyEndpoint", () => {
     const e = readLegacyEndpoint(
       homeWith({ hindsightApiUrl: "http://box:8888", recallBudget: "high", retainMode: "chunked" })
     );
-    expect(Object.keys(e ?? {}).sort()).toEqual(["apiUrl", "harness", "serverMode", "source"]);
+    expect(Object.keys(e ?? {}).sort((a, b) => a.localeCompare(b))).toEqual(["apiUrl", "harness", "serverMode", "source"]);
   });
 
   it("reads the Codex plugin's config too", () => {
