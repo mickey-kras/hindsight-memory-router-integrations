@@ -13,7 +13,7 @@ export const HINDSIGHT_NAMESPACE = "e75686a4-e923-4326-a0d1-358f1c6c3eb4";
 
 /** RFC 4122 v5 (SHA-1) UUID for `name` within `namespace`. */
 export function uuidV5(name: string, namespace: string = HINDSIGHT_NAMESPACE): string {
-  const ns = Buffer.from(namespace.replaceAll("-", ""), "hex");
+  const ns = Buffer.from(namespace.replaceAll(/-/g, ""), "hex");
   if (ns.length !== 16) throw new Error(`invalid UUID namespace: ${namespace}`);
   const bytes = Buffer.from(
     createHash("sha1").update(ns).update(Buffer.from(name, "utf8")).digest().subarray(0, 16)
