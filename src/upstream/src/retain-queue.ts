@@ -15,8 +15,8 @@ import {
   existsSync,
   renameSync,
   unlinkSync,
-} from "fs";
-import { randomBytes } from "crypto";
+} from "node:fs";
+import { randomBytes } from "node:crypto";
 
 /** The subset of a retain payload the queue needs to persist and replay. */
 export interface QueuedRetainPayload {

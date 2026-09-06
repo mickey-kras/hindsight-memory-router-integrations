@@ -87,13 +87,13 @@ describe("dcodeAssistantText", () => {
   });
 
   it("decodes the escapes repr() emits", () => {
-    expect(dcodeAssistantText(`[{'type': 'text', 'text': 'line\\none\\ttab "q" \\'s\\''}]`)).toBe(
+    expect(dcodeAssistantText(String.raw`[{'type': 'text', 'text': 'line\none\ttab "q" \'s\''}]`)).toBe(
       "line\none\ttab \"q\" 's'"
     );
   });
 
   it("decodes BMP escapes and preserves surrogate pairs", () => {
-    expect(dcodeAssistantText("[{'type': 'text', 'text': '\\x41\\u00e9\\ud83d\\ude00'}]"))
+    expect(dcodeAssistantText(String.raw`[{'type': 'text', 'text': '\x41\u00e9\ud83d\ude00'}]`))
       .toBe("Aé😀");
   });
 

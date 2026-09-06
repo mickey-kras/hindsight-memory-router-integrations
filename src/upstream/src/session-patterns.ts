@@ -5,9 +5,9 @@
  */
 export function compileSessionPattern(pattern: string): RegExp {
   const escaped = pattern
-    .replaceAll(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replaceAll(/\*\*/g, "\u0000")
-    .replaceAll(/\*/g, "[^:]*")
+    .replaceAll(new RegExp(String.raw`[.+^${"$"}{}()|[\]\\]`, "g"), "\\$&")
+    .replaceAll("**", "\u0000")
+    .replaceAll("*", "[^:]*")
     .replaceAll("\u0000", ".*");
   return new RegExp(`^${escaped}$`);
 }

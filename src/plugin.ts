@@ -207,6 +207,31 @@ function isIdentityError(error: unknown): boolean {
   return error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError;
 }
 
+function memoryErrorMessage(error: unknown): string {
+  return isIdentityError(error) ? (error as Error).message : "memory operation failed";
+}
+
+function sessionKeyFor(event: any, ctx: PluginHookAgentContext | undefined): string | undefined {
+  if (typeof ctx?.sessionKey === "string") {
+    return ctx.sessionKey;
+  }
+  return typeof event?.sessionKey === "string" ? event.sessionKey : undefined;
+}
+
+function shouldSkipRetain(
+  sessionKey: string | undefined,
+  ctx: PluginHookAgentContext | undefined,
+  config: RuntimePluginConfig,
+  ignorePatterns: RegExp[],
+  statelessPatterns: RegExp[]
+): boolean {
+  const ignoredSession = sessionKey !== undefined && matchesSessionPattern(sessionKey, ignorePatterns);
+  const statelessSession = sessionKey !== undefined && matchesSessionPattern(sessionKey, statelessPatterns);
+  const excludedProvider = ctx?.messageProvider !== undefined &&
+    config.excludeProviders?.includes(ctx.messageProvider) === true;
+  return config.autoRetain === false || ignoredSession || statelessSession || excludedProvider;
+}
+
 export function buildRoutingStack(config: RuntimePluginConfig, logger: {
   warn(msg: string): void;
   error(msg: string): void;
@@ -238,7 +263,7 @@ export default function hindsightMemoryRouterPlugin(api: MoltbotPluginAPI): void
     stack = buildRoutingStack(config, log);
   } catch (error) {
     // Invalid routerUrl etc.: fail closed at load time, never partially armed.
-    log.error(`plugin disabled: ${error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError ? error.message : "memory operation failed"}`);
+    log.error(`plugin disabled: ${memoryErrorMessage(error)}`);
     throw error;
   }
   registerWithStack(api, stack);
@@ -309,7 +334,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
           log.error(`auto-recall denied: ${error.message}`);
           return;
         }
-        log.warn(`auto-recall failed: ${error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError ? error.message : "memory operation failed"}`);
+        log.warn(`auto-recall failed: ${memoryErrorMessage(error)}`);
       }
     }
   );
@@ -328,23 +353,9 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
     ctx: PluginHookAgentContext | undefined,
     hookName: "agent_end" | "session_end"
   ): Promise<void> => {
-    if (config.autoRetain === false) {
-      return;
-    }
     const agentId = ctx?.agentId;
-    const sessionKey =
-      typeof ctx?.sessionKey === "string"
-        ? ctx.sessionKey
-        : typeof event?.sessionKey === "string"
-          ? event.sessionKey
-          : undefined;
-    if (sessionKey && matchesSessionPattern(sessionKey, ignorePatterns)) {
-      return;
-    }
-    if (sessionKey && matchesSessionPattern(sessionKey, statelessPatterns)) {
-      return;
-    }
-    if (ctx?.messageProvider && config.excludeProviders?.includes(ctx.messageProvider)) {
+    const sessionKey = sessionKeyFor(event, ctx);
+    if (shouldSkipRetain(sessionKey, ctx, config, ignorePatterns, statelessPatterns)) {
       return;
     }
     let sequenceKey: string | undefined;
@@ -388,7 +399,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
         log.error(`retain denied: ${error.message}`);
         return;
       }
-      log.error(`retain failed: ${error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError ? error.message : "memory operation failed"}`);
+      log.error(`retain failed: ${memoryErrorMessage(error)}`);
     } finally {
       if (hookName === "session_end" && sequenceKey) {
         sessionSequences.delete(sequenceKey);
@@ -408,7 +419,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
     async start() {
       flushTimer = setInterval(() => {
         void stack.retain.flushQueues().catch((error: unknown) => {
-          log.error(`retain queue flush failed: ${error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError ? error.message : "memory operation failed"}`);
+          log.error(`retain queue flush failed: ${memoryErrorMessage(error)}`);
         });
       }, config.retainQueueFlushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS);
       flushTimer.unref?.();

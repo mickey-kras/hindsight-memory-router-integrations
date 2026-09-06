@@ -35,9 +35,12 @@ export function harnessTransport(harness: string | undefined): RouterTransport {
 /** The supplied harness is the entrypoint identity, never a normal-config override. */
 export function managedSettings(harness: string | undefined) {
   const transport = harnessTransport(harness);
+  const readOnlySettings = transport.access.writeBank
+    ? {}
+    : { retainSessions: false, autoSeed: false, codebaseSurvey: false, gitIngest: "none" as const };
   return { harness: harness!, routerHarness: harness!, apiUrl: transport.baseUrl, apiToken: undefined,
     serverMode: "self-hosted" as const, dynamicBankId: false, autoUpdate: false, optInOnly: true, manageBankConfig: false,
-    ...(!transport.access.writeBank ? { retainSessions: false, autoSeed: false, codebaseSurvey: false, gitIngest: "none" as const } : {}) };
+    ...readOnlySettings };
 }
 
 export function managedBank(harness: string | undefined, directory: string): string {

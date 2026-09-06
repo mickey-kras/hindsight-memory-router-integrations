@@ -9,20 +9,24 @@ export async function readAcrossBanks(
   body: Record<string, unknown>,
   options: { timeoutMs: number; maxTokens: number },
 ) {
+  const suffix = operation === "recall" ? "/memories/recall" : "/reflect";
+  const query = typeof body.query === "string" ? body.query : "";
   return new RecallCoordinator().recall({
     retain: async () => { throw new Error("read-only execution"); },
     async recall(bank, _query, request) {
-      const suffix = operation === "recall" ? "/memories/recall" : "/reflect";
       const response = await transport.request(transport.bankUrl(bank, suffix), {
         method: "POST", signal: request?.signal,
         body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
       });
       if (!response.ok) throw new Error("memory read unavailable");
       const data = await response.json() as { text?: string; results?: RecallItem[] };
-      return { results: operation === "reflect" ? (data.text ? [{ text: data.text }] : []) : data.results };
+      if (operation === "reflect") {
+        return { results: data.text ? [{ text: data.text }] : [] };
+      }
+      return { results: data.results };
     },
   }, {
-    banks: visibleBanks(transport.access), query: String(body.query ?? ""),
+    banks: visibleBanks(transport.access), query,
     timeoutMs: options.timeoutMs, maxTokens: options.maxTokens,
   });
 }
