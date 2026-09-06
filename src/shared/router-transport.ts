@@ -11,6 +11,38 @@ export class RouterRequestError extends Error {
 
 const ROUTING_KEYS = ["bankId", "bank_id", "bank_ids"];
 
+function assertAuthorizedUrl(
+  url: string,
+  method: string,
+  baseUrl: string,
+  access: BankAccess
+): boolean {
+  const listing = url === `${baseUrl}/v1/default/banks` && method === "GET";
+  if (listing || (url === `${baseUrl}/version` && method === "GET")) {
+    return listing;
+  }
+  const prefix = `${baseUrl}/v1/default/banks/`;
+  if (!url.startsWith(prefix)) throw new AccessDeniedError();
+  const path = url.slice(prefix.length).split("?")[0];
+  const split = path.indexOf("/");
+  const bank = decodeURIComponent(split < 0 ? path : path.slice(0, split));
+  const suffix = split < 0 ? "" : path.slice(split);
+  requireBank(access, bank, classifyOperation(method, suffix));
+  return false;
+}
+
+async function filterVisibleBanks(response: Response, access: BankAccess): Promise<Response> {
+  const data = await response.json() as { banks?: unknown };
+  if (!Array.isArray(data.banks)) throw new RouterRequestError(502);
+  const allowed = new Set(visibleBanks(access));
+  const banks = data.banks.filter(
+    (bank: unknown) => bank !== null
+      && typeof bank === "object"
+      && allowed.has((bank as { bank_id?: string }).bank_id ?? "")
+  );
+  return Response.json({ banks, total: banks.length });
+}
+
 function assertSafeRequest(url: string, body: RequestInit["body"]): URL {
   if (/[\\#]/.test(url) || /%(?:2e|2f|5c|25)/i.test(url) || /\/\.\.?(?:\/|$|\?)/.test(url)) {
     throw new AccessDeniedError();
@@ -77,16 +109,7 @@ export class RouterTransport {
     const method = init.method ?? "GET";
     // Validate before URL normalization can erase dot segments or backslashes.
     assertSafeRequest(url, init.body);
-    const prefix = `${this.baseUrl}/v1/default/banks/`;
-    const listing = url === `${this.baseUrl}/v1/default/banks` && method === "GET";
-    if (!listing && !(url === `${this.baseUrl}/version` && method === "GET")) {
-      if (!url.startsWith(prefix)) throw new AccessDeniedError();
-      const path = url.slice(prefix.length).split("?")[0];
-      const split = path.indexOf("/");
-      const bank = decodeURIComponent(split < 0 ? path : path.slice(0, split));
-      const suffix = split < 0 ? "" : path.slice(split);
-      requireBank(this.access, bank, classifyOperation(method, suffix));
-    }
+    const listing = assertAuthorizedUrl(url, method, this.baseUrl, this.access);
     const response = await this.send(url, init, token);
     if (response.status === 401 || response.status === 403) {
       this.#denied = true;
@@ -95,11 +118,7 @@ export class RouterTransport {
     // Never expose server error bodies, which may echo credentials or bank existence.
     if (!response.ok && (response.status !== 404 || method !== "GET")) throw new RouterRequestError(response.status);
     if (listing && response.ok) {
-      const data = await response.json() as { banks?: unknown };
-      if (!Array.isArray(data.banks)) throw new RouterRequestError(502);
-      const allowed = new Set(visibleBanks(this.access));
-      const banks = data.banks.filter((bank: unknown) => bank !== null && typeof bank === "object" && allowed.has((bank as { bank_id?: string }).bank_id ?? ""));
-      return Response.json({ banks, total: banks.length });
+      return filterVisibleBanks(response, this.access);
     }
     return response.status === 404 ? new Response(null, { status: 404 }) : response;
   }

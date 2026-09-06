@@ -168,10 +168,16 @@ export class RetainCoordinator {
 }
 
 function stringifyMetadataValue(value: unknown): string {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
   if (typeof value === "object") {
     return JSON.stringify(value) ?? "";
   }
-  return String(value);
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "symbol") {
+    return value.toString();
+  }
+  return "";
 }
 
 function toStringMetadata(

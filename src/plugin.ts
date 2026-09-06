@@ -162,11 +162,12 @@ function extractTranscript(event: {
   messages?: unknown;
   context?: { sessionEntry?: { messages?: Array<{ role?: unknown; content?: unknown }> } };
 }): string | null {
-  const messages = Array.isArray(event.context?.sessionEntry?.messages)
-    ? event.context.sessionEntry.messages
-    : Array.isArray(event.messages)
-      ? event.messages
-      : [];
+  let messages: unknown[] = [];
+  if (Array.isArray(event.context?.sessionEntry?.messages)) {
+    messages = event.context.sessionEntry.messages;
+  } else if (Array.isArray(event.messages)) {
+    messages = event.messages;
+  }
   let lastUser = -1;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
@@ -195,12 +196,14 @@ function sanitizeDocumentIdPart(value: string | undefined, fallback: string): st
   if (!normalized) {
     return fallback;
   }
-  return (
-    normalized
-      .replaceAll(/[^a-zA-Z0-9:_-]+/g, "_")
-      .replaceAll(/_+/g, "_")
-      .replaceAll(/(?:^_+)|(?:_+$)/g, "") || fallback
-  );
+  const sanitized = normalized
+    .replaceAll(/[^a-zA-Z0-9:_-]+/g, "_")
+    .replaceAll(/_+/g, "_");
+  const withoutLeadingUnderscore = sanitized.startsWith("_") ? sanitized.slice(1) : sanitized;
+  const withoutEdgeUnderscores = withoutLeadingUnderscore.endsWith("_")
+    ? withoutLeadingUnderscore.slice(0, -1)
+    : withoutLeadingUnderscore;
+  return withoutEdgeUnderscores || fallback;
 }
 
 function isIdentityError(error: unknown): boolean {
