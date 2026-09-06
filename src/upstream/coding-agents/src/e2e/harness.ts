@@ -198,7 +198,7 @@ export async function runHarnessE2e(harness: HarnessDockerSetup): Promise<E2eRun
   const workDir = join(root, "workspace");
   const resultDir = join(root, "results");
   const configPath = join(root, "hindsight-config.json");
-  const bankId = `e2e-${harness.name}-${basename(root)}`.replace(/[^a-zA-Z0-9:_-]/g, "-");
+  const bankId = `e2e-${harness.name}-${basename(root)}`.replaceAll(/[^a-zA-Z0-9:_-]/g, "-");
   let stub: StubModel | undefined;
 
   try {

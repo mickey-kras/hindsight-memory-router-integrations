@@ -196,9 +196,9 @@ export async function buildHookOutput(args: {
   // the hindsight_search_knowledge_pages tool, which is visible as a real tool call.
   let notice: string | undefined;
   if (reflectRanThisTurn && reflectAnswer) {
-    const q = prompt.replace(/\s+/g, " ").trim();
+    const q = prompt.replaceAll(/\s+/g, " ").trim();
     const excerpt = q.length > 48 ? `${q.slice(0, 48)}…` : q;
-    const preview = reflectAnswer.replace(/\s+/g, " ").trim();
+    const preview = reflectAnswer.replaceAll(/\s+/g, " ").trim();
     notice =
       `${brandWord()} · goal: recall this repo's past decisions about “${excerpt}”\n` +
       `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;

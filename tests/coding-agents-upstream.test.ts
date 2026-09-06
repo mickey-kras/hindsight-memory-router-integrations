@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { run as install } from "../src/upstream/coding-agents/src/installer";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/knowledge-tools";
 import { buildHookOutput } from "../src/upstream/coding-agents/src/core/hook";
 import { resolveConfig } from "../src/upstream/coding-agents/src/core/config";
@@ -126,4 +126,15 @@ it("runs the packaged Codex hook with harness-bound credentials and fails closed
   expect(denied.stdout).toBe("");
   expect(denied.stderr).not.toContain(token);
   expect(readFileSync(trace, "utf8").trim().split("\n")).toHaveLength(3);
+});
+
+it.each(["", "\n"])("Codex uninstall preserves adjacent tables with EOF suffix %j", (ending) => {
+  const dir = setup();
+  mkdirSync(join(dir, ".codex"));
+  const path = join(dir, ".codex", "config.toml");
+  const kept = '[mcp_servers.other]\ncommand = "other"\n\n[features]\nhooks = true\n';
+  writeFileSync(path, '[mcp_servers.hindsight]\ncommand = "old"\n\n' + kept +
+    '[mcp_servers.hindsight.env]\nTOKEN = "old"' + ending);
+  expect(install(["uninstall", "codex"], { home: dir, pkgRoot: dir, dist: join(dir, "dist"), interactive: false })).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(kept);
 });

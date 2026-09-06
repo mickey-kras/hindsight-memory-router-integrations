@@ -21,7 +21,7 @@ const MEMORY_TAG_RE =
   /<(hook_prompt|task-notification|system-reminder|hindsight_memory|hindsight_memories|hindsight_bank|relevant_memories|user_feedback|hindsight_knowledge|hindsight_knowledge_refresh)\b[\s\S]*?<\/\1>/g;
 
 export function stripInjectedMemory(s: string): string {
-  return s.replace(MEMORY_TAG_RE, "");
+  return s.replaceAll(MEMORY_TAG_RE, "");
 }
 
 export function truncate(s: string, max = TOOL_TEXT_CAP): string {

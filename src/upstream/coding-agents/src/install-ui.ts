@@ -164,7 +164,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
   // Messages embed absolute config paths; shorten $HOME so the action stays the eye-catcher.
   const tidy = (s: string): string => s.replaceAll(o.home, "~");
   // The lookbehind keeps URL slashes ("http://…") from being treated as a path start.
-  const dimPaths = (s: string): string => s.replace(/(?<![:\w/])~?\/[^\s"',)]+/g, (m) => dim(m));
+  const dimPaths = (s: string): string => s.replaceAll(/(?<![:\w/])~?\/[^\s"',)]+/g, (m) => dim(m));
 
   const prefixRe = new RegExp(`^(${[...o.harnessNames, ...(o.auxNames ?? [])].join("|")}): `);
   const startedAt = now();
@@ -274,7 +274,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
     },
 
     log(message: string): void {
-      const text = tidy(message).replace(/^\n+|\n+$/g, "");
+      const text = tidy(message).replaceAll(/(?:^\n+)|(?:\n+$)/g, "");
       if (!text) return;
       const lines = text.split("\n");
       // A message that begins indented is detail for the previous one (e.g. the re-run command a

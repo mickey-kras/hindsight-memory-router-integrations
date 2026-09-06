@@ -21,7 +21,7 @@ describe("selectTools", () => {
   it("returns the eight hindsight_* tool specs when enabled", () => {
     const cfg = resolveConfig({});
     const tools = selectTools(cfg, stubClient, "b");
-    expect(tools.map((t) => t.name).sort()).toEqual(
+    expect(tools.map((t) => t.name).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         "hindsight_sync_status",
         "hindsight_diagnose",
@@ -31,7 +31,7 @@ describe("selectTools", () => {
         "hindsight_reflect",
         "hindsight_capture_initiative",
         "hindsight_ingest_document",
-      ].sort()
+      ].sort((a, b) => a.localeCompare(b))
     );
   });
 

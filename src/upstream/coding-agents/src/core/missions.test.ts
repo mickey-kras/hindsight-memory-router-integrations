@@ -70,7 +70,7 @@ describe("buildPageTrigger", () => {
     const trigger = buildPageTrigger(
       resolveConfig({ pageTriggerType, pageTriggerCron: "0 3 * * *" })
     );
-    expect(Object.keys(trigger).sort()).toEqual([...keys].sort());
+    expect(Object.keys(trigger).sort((a, b) => a.localeCompare(b))).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
   });
 });
 
@@ -124,7 +124,7 @@ describe("codingBankManifest (#3927)", () => {
       reflect_mission: "seeded",
       retain_strategies: { ...seededByAnOlderRelease, mycustom: { retain_chunk_size: 500 } },
     });
-    expect(Object.keys(bank!.retain_strategies as object).sort()).toEqual([
+    expect(Object.keys(bank!.retain_strategies as object).sort((a, b) => a.localeCompare(b))).toEqual([
       "conversation",
       "document",
       "git",

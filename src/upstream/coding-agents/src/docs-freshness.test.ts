@@ -61,7 +61,7 @@ describe("configuration reference", () => {
     const pairs = [...block[1].matchAll(/^\s*(\w+): "(HINDSIGHT_\w+)"/gm)];
     expect(pairs.length).toBeGreaterThan(30);
     const expected = (field: string) =>
-      "HINDSIGHT_" + field.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
+      "HINDSIGHT_" + field.replaceAll(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
     expect(pairs.filter(([, field, env]) => expected(field) !== env).map(([, f]) => f)).toEqual([]);
   });
 

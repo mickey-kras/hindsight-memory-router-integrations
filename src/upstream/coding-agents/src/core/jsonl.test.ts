@@ -91,10 +91,8 @@ describe("readJsonlTail", () => {
   it("closes the file even when the consumer stops early", () => {
     writeFileSync(file, ["a", "b", "c"].join("\n") + "\n");
     const { lines } = readJsonlTail(file, { scope: "test" });
-    for (const line of lines) {
-      expect(line).toBe("a");
-      break; // for..of calls the generator's return(), which must run the finally that closes the fd
-    }
+    expect(lines.next()).toEqual({ value: "a", done: false });
+    lines.return(undefined);
     expect(lines.next().done).toBe(true);
   });
 

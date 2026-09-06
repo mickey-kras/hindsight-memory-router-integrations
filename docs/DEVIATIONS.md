@@ -23,3 +23,5 @@ Published dependencies:
 Not retained: dynamic bank derivation, per-user channel banks, setup/backfill CLIs, local daemon, embedded model configuration, sender-prefix parsing.
 
 Router revision 2 shares transport and bank checks with coding-agents. Page reads are available to read-only principals; queue replay rechecks the current write bank.
+
+Session patterns use global replacements and a literal sentinel lookup; wildcard matching is unchanged. `src/upstream/SHA256SUMS` remains the pristine upstream manifest.

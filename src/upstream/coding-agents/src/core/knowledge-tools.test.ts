@@ -40,7 +40,7 @@ describe("buildKnowledgeTools", () => {
   it("returns exactly the eight expected tools (as a set)", () => {
     const client = stubClient();
     const tools = buildKnowledgeTools(client, "repo-a");
-    expect(tools.map((t) => t.name).sort()).toEqual([...EXPECTED_TOOLS].sort());
+    expect(tools.map((t) => t.name).sort((a, b) => a.localeCompare(b))).toEqual([...EXPECTED_TOOLS].sort((a, b) => a.localeCompare(b)));
   });
 
   it("hindsight_sync_status is the FIRST tool in the list", () => {

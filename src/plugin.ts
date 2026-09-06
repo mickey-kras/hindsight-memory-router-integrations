@@ -155,7 +155,7 @@ function messageText(content: unknown): string | null {
 }
 
 function stripInjectedMemories(content: string): string {
-  return content.replace(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/gi, "").trim();
+  return content.replaceAll(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/gi, "").trim();
 }
 
 function extractTranscript(event: {
@@ -197,9 +197,9 @@ function sanitizeDocumentIdPart(value: string | undefined, fallback: string): st
   }
   return (
     normalized
-      .replace(/[^a-zA-Z0-9:_-]+/g, "_")
-      .replace(/_+/g, "_")
-      .replace(/^_+|_+$/g, "") || fallback
+      .replaceAll(/[^a-zA-Z0-9:_-]+/g, "_")
+      .replaceAll(/_+/g, "_")
+      .replaceAll(/(?:^_+)|(?:_+$)/g, "") || fallback
   );
 }
 

@@ -115,9 +115,9 @@ function readJson(path: string): Record<string, any> {
 export function parseJsonc(text: string): Record<string, any> | null {
   const stripped = text
     // Blank out comments, preserving anything inside string literals.
-    .replace(/"(?:\\.|[^"\\])*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
+    .replaceAll(/"(?:\\.|[^"\\])*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
     // Trailing commas are legal in JSONC, not in JSON.
-    .replace(/,(\s*[}\]])/g, "$1");
+    .replaceAll(/,(\s*[}\]])/g, "$1");
   try {
     const v = JSON.parse(stripped);
     return v && typeof v === "object" ? (v as Record<string, any>) : null;
@@ -577,7 +577,7 @@ function defaultClaudeMcp(args: string[]): boolean {
  * Our `[mcp_servers.hindsight]` table (plus any sub-table of it): the header line through to the
  * next table header or EOF. Shared by install — which REPLACES the block — and uninstall.
  */
-const CODEX_MCP_BLOCK_RE = /^\[mcp_servers\.hindsight(?:\.[^\]]+)?\][^\n]*\n(?:(?!\[)[^\n]*\n?)*/gm;
+const CODEX_MCP_BLOCK_RE = /^\[mcp_servers\.hindsight(?:\.[^\]]+)?\][^\n]*\n(?:(?!\[)(?:[^\n]+\n?|\n))*/gm;
 
 /** Inline `env`, so CODEX_MCP_BLOCK_RE never has to straddle a `[mcp_servers.hindsight.env]` table. */
 const codexMcpBlock = (dist: string) =>
@@ -601,7 +601,7 @@ const codex: HarnessInstaller = {
     // attributed every Codex write to claude-code could never be repaired by re-running install.
     const tomlPath = join(c.home, ".codex", "config.toml");
     const existing = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
-    const toml = existing.replace(CODEX_MCP_BLOCK_RE, "");
+    const toml = existing.replaceAll(CODEX_MCP_BLOCK_RE, "");
     const additions: string[] = [];
     // Codex ≥ 0.145 deprecates `codex_hooks` for `[features].hooks`; accept either as "already
     // enabled", write the modern name for new installs.
@@ -639,7 +639,7 @@ const codex: HarnessInstaller = {
     const tomlPath = join(c.home, ".codex", "config.toml");
     if (existsSync(tomlPath)) {
       const toml = readFileSync(tomlPath, "utf8");
-      const cleaned = toml.replace(CODEX_MCP_BLOCK_RE, "");
+      const cleaned = toml.replaceAll(CODEX_MCP_BLOCK_RE, "");
       if (cleaned !== toml) writeFileSync(tomlPath, cleaned);
     }
     c.log?.(

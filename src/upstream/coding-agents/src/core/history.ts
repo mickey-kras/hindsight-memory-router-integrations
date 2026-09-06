@@ -60,7 +60,7 @@ export interface HistoryImport {
  *  Verified against Claude Code 2.1.241: `hs_under_test` -> `hs-under-test`, and
  *  `hs+odd@repo v2` -> `hs-odd-repo-v2`. */
 export function claudeProjectDir(repoDir: string, home = homedir()): string {
-  return join(home, ".claude", "projects", repoDir.replace(/[^a-zA-Z0-9]/g, "-"));
+  return join(home, ".claude", "projects", repoDir.replaceAll(/[^a-zA-Z0-9]/g, "-"));
 }
 
 /** pi names a session folder after the working directory it was started in: one leading separator
@@ -72,7 +72,7 @@ export function claudeProjectDir(repoDir: string, home = homedir()): string {
  *  and `/a-b` both give `--a-b--` — so it only narrows the search; attribution comes from the `cwd`
  *  recorded in each session's header line. */
 export function piSessionDir(repoDir: string): string {
-  return `--${repoDir.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  return `--${repoDir.replace(/^[/\\]/, "").replaceAll(/[/\\:]/g, "-")}--`;
 }
 
 /** Is `dir` the repo itself or somewhere inside it? */

@@ -73,7 +73,7 @@ function render({ title, lines }) {
     return `## ${title}\n\n${body}`;
   }
   const shift = 2 - first[1].length;
-  const shifted = body.replace(/^(#{1,6})(\s)/gm, (_, hashes, space) => {
+  const shifted = body.replaceAll(/^(#{1,6})(\s)/gm, (_, hashes, space) => {
     const level = Math.min(6, Math.max(1, hashes.length + shift));
     return "#".repeat(level) + space;
   });
@@ -90,7 +90,7 @@ export function build() {
   if (!fm) throw new Error("skill-src/preamble.md must start with a frontmatter block");
   const withMarker = `${fm[0]}\n${marker}\n\n${head.slice(fm[0].length).trimStart()}`;
   const body = [withMarker, ...regions(readFileSync(readme, "utf8"))].join("\n\n");
-  return `${body.replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+  return `${body.replaceAll(/\n{3,}/g, "\n\n").trimEnd()}\n`;
 }
 
 // Guarded so the test can import regions()/build() without the CLI running on import.

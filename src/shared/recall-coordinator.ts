@@ -66,7 +66,7 @@ function itemContent(item: RecallItem): string {
 }
 
 function dedupeKey(item: RecallItem): string {
-  const normalized = itemContent(item).trim().toLowerCase().replace(/\s+/g, " ");
+  const normalized = itemContent(item).trim().toLowerCase().replaceAll(/\s+/g, " ");
   return createHash("sha256").update(normalized).digest("hex");
 }
 

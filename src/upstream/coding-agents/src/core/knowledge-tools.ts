@@ -320,8 +320,8 @@ export function buildKnowledgeTools(
         const docId =
           title
             .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "") || "doc";
+            .replaceAll(/[^a-z0-9]+/g, "-")
+            .replaceAll(/(?:^-+)|(?:-+$)/g, "") || "doc";
         const stamp = opts.stampFor?.();
         const metadata = {
           ...stamp?.metadata,

@@ -5,10 +5,10 @@
  */
 export function compileSessionPattern(pattern: string): RegExp {
   const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "\u0000")
-    .replace(/\*/g, "[^:]*")
-    .replace(/\u0000/g, ".*");
+    .replaceAll(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replaceAll(/\*\*/g, "\u0000")
+    .replaceAll(/\*/g, "[^:]*")
+    .replaceAll("\u0000", ".*");
   return new RegExp(`^${escaped}$`);
 }
 

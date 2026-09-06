@@ -9,7 +9,7 @@ const HOOK_HARNESS_NAMES = Object.keys(HOOK_HARNESSES) as HookHarnessName[];
 describe("HOOK_HARNESSES lifecycle contract", () => {
   it("declares every lifecycle once for every hook-based harness", () => {
     for (const harness of HOOK_HARNESS_NAMES) {
-      expect(Object.keys(HOOK_HARNESSES[harness].install).sort()).toEqual([
+      expect(Object.keys(HOOK_HARNESSES[harness].install).sort((a, b) => a.localeCompare(b))).toEqual([
         "prompt",
         "sessionStart",
         "stop",

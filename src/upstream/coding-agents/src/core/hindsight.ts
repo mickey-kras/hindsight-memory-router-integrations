@@ -73,7 +73,7 @@ export function resolveRetainScopes(
   configured: ObservationScopes
 ): ObservationScopes {
   if (configured !== "per_source") return configured;
-  const sources = [...new Set((tags ?? []).filter((t) => t.startsWith("source:")))].sort();
+  const sources = [...new Set((tags ?? []).filter((t) => t.startsWith("source:")))].sort((a, b) => a.localeCompare(b));
   return [[], ...sources.map((s) => [s])];
 }
 
@@ -381,7 +381,7 @@ export class HindsightClient {
         this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);
       } else {
         await this.req("POST", this.bankUrl("/import"), manifest);
-        this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort().join(", ")}`);
+        this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort((a, b) => a.localeCompare(b)).join(", ")}`);
       }
     }
     await this.seedPages(opts.pageTrigger);
@@ -669,8 +669,8 @@ export class HindsightClient {
     return (
       s
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
+        .replaceAll(/[^a-z0-9]+/g, "-")
+        .replaceAll(/(?:^-+)|(?:-+$)/g, "")
         .slice(0, 60) || "initiative"
     );
   }
