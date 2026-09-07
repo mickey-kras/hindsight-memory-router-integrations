@@ -5,12 +5,9 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { RetainQueue, type QueuedRetainPayload } from "../upstream/src/retain-queue.js";
-import type {
-  PrincipalCredentialResolver,
-  PrincipalCredentials,
-} from "./principal-credential-resolver.js";
-import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
-import type { WriteBankResolver } from "./write-bank-resolver.js";
+import { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
+import { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
+import { WriteBankResolver } from "./write-bank-resolver.js";
 
 export interface RetainRequestPayload extends QueuedRetainPayload {}
 
@@ -130,7 +127,7 @@ export class RetainCoordinator {
 
   private async flushQueueFile(file: string): Promise<void> {
     const principalId = file.slice(QUEUE_FILE_PREFIX.length, -QUEUE_FILE_SUFFIX.length);
-    let credentials: PrincipalCredentials;
+    let credentials;
     try {
       credentials = this.credentials.resolve(principalId);
     } catch {
@@ -159,9 +156,7 @@ export class RetainCoordinator {
         delivered.push(item.id);
       } catch (error) {
         if (isAuthzError(error)) {
-          this.log.error(
-            `retain replay denied for bank ${item.bankId}; item stays queued for operator review`
-          );
+          this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
         }
         break; // preserve FIFO ordering; retry next flush
       }
@@ -183,9 +178,7 @@ function stringifyMetadataValue(value: unknown): string {
   return "";
 }
 
-function toStringMetadata(
-  metadata: Record<string, unknown> | undefined
-): Record<string, string> | undefined {
+function toStringMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> | undefined {
   if (!metadata) {
     return undefined;
   }

@@ -19,7 +19,8 @@ function managed(harness: string | undefined): { config: ManagedConfig; principa
     const config = JSON.parse(readFileSync(path, "utf8")) as ManagedConfig;
     if (!Object.hasOwn(config.principals, harness)) throw new AccessDeniedError();
     const principal = config.principals[harness];
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(principal.tokenEnv) || "token" in principal || "apiToken" in principal) throw new AccessDeniedError();
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(principal.tokenEnv) || "token" in principal || "apiToken" in principal)
+      throw new AccessDeniedError();
     visibleBanks(principal);
     return { config, principal };
   } catch {
@@ -29,7 +30,12 @@ function managed(harness: string | undefined): { config: ManagedConfig; principa
 
 export function harnessTransport(harness: string | undefined): RouterTransport {
   const { config, principal } = managed(harness);
-  return new RouterTransport({ routerUrl: config.routerUrl, access: principal, principalId: harness, token: () => process.env[principal.tokenEnv] });
+  return new RouterTransport({
+    routerUrl: config.routerUrl,
+    access: principal,
+    principalId: harness,
+    token: () => process.env[principal.tokenEnv],
+  });
 }
 
 /** The supplied harness is the entrypoint identity, never a normal-config override. */
@@ -38,9 +44,18 @@ export function managedSettings(harness: string | undefined) {
   const readOnlySettings = transport.access.writeBank
     ? {}
     : { retainSessions: false, autoSeed: false, codebaseSurvey: false, gitIngest: "none" as const };
-  return { harness: harness!, routerHarness: harness!, apiUrl: transport.baseUrl, apiToken: undefined,
-    serverMode: "self-hosted" as const, dynamicBankId: false, autoUpdate: false, optInOnly: true, manageBankConfig: false,
-    ...readOnlySettings };
+  return {
+    harness: harness!,
+    routerHarness: harness!,
+    apiUrl: transport.baseUrl,
+    apiToken: undefined,
+    serverMode: "self-hosted" as const,
+    dynamicBankId: false,
+    autoUpdate: false,
+    optInOnly: true,
+    manageBankConfig: false,
+    ...readOnlySettings,
+  };
 }
 
 export function managedBank(harness: string | undefined, directory: string): string {

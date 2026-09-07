@@ -46,7 +46,10 @@ function isAuthzError(error: unknown): boolean {
   return status === 401 || status === 403;
 }
 
-function timeoutAfter(ms: number, controller: AbortController): {
+function timeoutAfter(
+  ms: number,
+  controller: AbortController,
+): {
   promise: Promise<never>;
   timer: ReturnType<typeof setTimeout>;
 } {
@@ -87,7 +90,7 @@ interface BankItem {
 
 function mergeSettledResults(
   settled: PromiseSettledResult<BankRecallResult>[],
-  banks: readonly string[]
+  banks: readonly string[],
 ): { merged: BankItem[]; failedBanks: string[] } {
   const failedBanks: string[] = [];
   const merged: BankItem[] = [];
@@ -140,10 +143,7 @@ function trimToTokenBudget(items: RecallItem[], maxTokens: number | undefined): 
 }
 
 export class RecallCoordinator {
-  async recall(
-    client: RouterClient,
-    request: CoordinatedRecallRequest
-  ): Promise<CoordinatedRecallResult> {
+  async recall(client: RouterClient, request: CoordinatedRecallRequest): Promise<CoordinatedRecallResult> {
     const banks = request.banks;
     if (banks.length === 0) {
       return { results: [], partial: false, failedBanks: [] };
@@ -151,16 +151,11 @@ export class RecallCoordinator {
     if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
       throw new RangeError("recall timeout must be a positive integer");
     }
-    if (
-      request.maxTokens !== undefined &&
-      (!Number.isSafeInteger(request.maxTokens) || request.maxTokens <= 0)
-    ) {
+    if (request.maxTokens !== undefined && (!Number.isSafeInteger(request.maxTokens) || request.maxTokens <= 0)) {
       throw new RangeError("recall token budget must be a positive integer");
     }
     const deadline = Date.now() + request.timeoutMs;
-    const perBankTokens = request.maxTokens
-      ? Math.max(1, Math.floor(request.maxTokens / banks.length))
-      : undefined;
+    const perBankTokens = request.maxTokens ? Math.max(1, Math.floor(request.maxTokens / banks.length)) : undefined;
 
     const settled = await Promise.allSettled(
       banks.map(async (bank) => {
@@ -183,7 +178,7 @@ export class RecallCoordinator {
         } finally {
           clearTimeout(timeout.timer);
         }
-      })
+      }),
     );
 
     const { merged, failedBanks } = mergeSettledResults(settled, banks);
@@ -192,7 +187,10 @@ export class RecallCoordinator {
     merged.sort(compareBankItems);
 
     // Trim merged list to the shared context token budget.
-    const results = trimToTokenBudget(merged.map((entry) => entry.item), request.maxTokens);
+    const results = trimToTokenBudget(
+      merged.map((entry) => entry.item),
+      request.maxTokens,
+    );
 
     return { results, partial: failedBanks.length > 0, failedBanks };
   }

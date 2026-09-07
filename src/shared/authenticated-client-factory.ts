@@ -24,7 +24,7 @@ export interface RouterClient {
       operationId?: string;
       async?: boolean;
       signal?: AbortSignal;
-    }
+    },
   ): Promise<unknown>;
   recall(
     bankId: string,
@@ -35,7 +35,7 @@ export interface RouterClient {
       types?: string[];
       preferObservations?: boolean;
       signal?: AbortSignal;
-    }
+    },
   ): Promise<{ results?: unknown[] }>;
 }
 
@@ -69,40 +69,63 @@ export class AuthenticatedClientFactory {
     if (cached?.token === credentials.token) {
       return cached.client;
     }
-    const client = this.construct ? this.construct({
-      baseUrl: this.baseUrl,
-      apiKey: credentials.token,
-      userAgent: this.userAgent,
-      headers: { [AGENT_HEADER]: credentials.principalId },
-    }) : this.createClient(credentials);
+    const client = this.construct
+      ? this.construct({
+          baseUrl: this.baseUrl,
+          apiKey: credentials.token,
+          userAgent: this.userAgent,
+          headers: { [AGENT_HEADER]: credentials.principalId },
+        })
+      : this.createClient(credentials);
     this.cache.set(credentials.principalId, { token: credentials.token, client });
     return client;
   }
   private createClient(credentials: PrincipalCredentials): RouterClient {
     if (!credentials.access) throw new AccessDeniedError();
-    const transport = new RouterTransport({ routerUrl: this.baseUrl, access: credentials.access, principalId: credentials.principalId, token: () => credentials.token });
+    const transport = new RouterTransport({
+      routerUrl: this.baseUrl,
+      access: credentials.access,
+      principalId: credentials.principalId,
+      token: () => credentials.token,
+    });
     return {
       async retain(bank, content, options) {
         const response = await transport.request(transport.bankUrl(bank, "/memories"), {
-          method: "POST", signal: options?.signal,
-          body: JSON.stringify({ items: [{ content, document_id: options?.documentId,
-            context: options?.context, metadata: options?.metadata, tags: options?.tags,
-            update_mode: options?.updateMode }], async: options?.async,
-            operation_id: options?.operationId }),
+          method: "POST",
+          signal: options?.signal,
+          body: JSON.stringify({
+            items: [
+              {
+                content,
+                document_id: options?.documentId,
+                context: options?.context,
+                metadata: options?.metadata,
+                tags: options?.tags,
+                update_mode: options?.updateMode,
+              },
+            ],
+            async: options?.async,
+            operation_id: options?.operationId,
+          }),
         });
         if (!response.ok) throw new Error("memory retain unavailable");
         return response.json();
       },
       async recall(bank, query, options) {
         const response = await transport.request(transport.bankUrl(bank, "/memories/recall"), {
-          method: "POST", signal: options?.signal,
-          body: JSON.stringify({ query, max_tokens: options?.maxTokens, budget: options?.budget,
-            types: options?.types, prefer_observations: options?.preferObservations }),
+          method: "POST",
+          signal: options?.signal,
+          body: JSON.stringify({
+            query,
+            max_tokens: options?.maxTokens,
+            budget: options?.budget,
+            types: options?.types,
+            prefer_observations: options?.preferObservations,
+          }),
         });
         if (!response.ok) throw new Error("memory read unavailable");
         return response.json() as Promise<{ results?: unknown[] }>;
       },
     };
   }
-
 }
