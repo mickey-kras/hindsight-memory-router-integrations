@@ -215,4 +215,29 @@ describe("RecallCoordinator", () => {
     });
     expect(result).toEqual({ results: [], partial: false, failedBanks: [] });
   });
+
+  it.each([0, -1, 1.5, Number.NaN])("rejects invalid timeout %s", async (timeoutMs) => {
+    await expect(new RecallCoordinator().recall(fakeClient({ main: { results: [] } }), {
+      query: "q", banks: ["main"], timeoutMs,
+    })).rejects.toThrow("recall timeout must be a positive integer");
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])("rejects invalid token budget %s", async (maxTokens) => {
+    await expect(new RecallCoordinator().recall(fakeClient({ main: { results: [] } }), {
+      query: "q", banks: ["main"], timeoutMs: 100, maxTokens,
+    })).rejects.toThrow("recall token budget must be a positive integer");
+  });
+
+  it("fails closed on non-retryable read errors", async () => {
+    await expect(new RecallCoordinator().recall(fakeClient({ main: { error: httpError(400) } }), {
+      query: "q", banks: ["main"], timeoutMs: 100,
+    })).rejects.toThrow("memory read failed");
+  });
+
+  it("orders unscored and structured results deterministically", async () => {
+    const result = await new RecallCoordinator().recall(fakeClient({
+      main: { results: [{ id: "b" }, { id: "a" }, { text: "same" }, { content: "same" }] },
+    }), { query: "q", banks: ["main"], timeoutMs: 100 });
+    expect(result.results).toEqual([{ text: "same" }, { id: "a" }, { id: "b" }]);
+  });
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -237,5 +237,50 @@ describe("RetainCoordinator", () => {
     const options = fakeClients.get("main")?.retains[0].options;
     expect(typeof options?.operationId).toBe("string");
     expect(String(options?.operationId)).not.toBe("");
+  });
+
+  it.each([401, 408, 429, 503])("classifies HTTP %i correctly", async (statusCode) => {
+    const { retain } = makeStack({
+      queueDir,
+      behavior: () => { throw httpError(statusCode); },
+    });
+    if (statusCode === 401) {
+      await expect(retain.retain("main", { content: "work" })).rejects.toThrow(RetainAuthorizationError);
+    } else {
+      await expect(retain.retain("main", { content: "work" })).resolves.toMatchObject({ queued: true });
+    }
+  });
+
+  it("serializes supported metadata values and omits nullish values", async () => {
+    const { retain, fakeClients } = makeStack({ queueDir });
+    await retain.retain("main", {
+      content: "metadata",
+      metadata: { text: "value", count: 2, enabled: false, large: 3n, object: { a: 1 },
+        missing: undefined, empty: null },
+    });
+    expect(fakeClients.get("main")?.retains[0].options?.metadata).toEqual({
+      text: "value", count: "2", enabled: "false", large: "3", object: '{"a":1}',
+    });
+  });
+
+  it("ignores unrelated queue files and a missing queue directory", async () => {
+    const { retain } = makeStack({ queueDir });
+    writeFileSync(join(queueDir, "notes.txt"), "ignore");
+    await expect(retain.flushQueues()).resolves.toBeUndefined();
+    rmSync(queueDir, { recursive: true, force: true });
+    await expect(retain.flushQueues()).resolves.toBeUndefined();
+  });
+
+  it("keeps a replay item whose bank no longer matches the principal route", async () => {
+    const first = makeStack({ queueDir, behavior: () => { throw httpError(500); } });
+    await first.retain.retain("main", { content: "queued" });
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const item = JSON.parse(readFileSync(queueFile, "utf8"));
+    item.bankId = "dev";
+    writeFileSync(queueFile, `${JSON.stringify(item)}\n`);
+    const replay = makeStack({ queueDir });
+    await replay.retain.flushQueues();
+    expect(readFileSync(queueFile, "utf8").trim()).not.toBe("");
+    expect(replay.fakeClients.get("main")?.retains).toHaveLength(0);
   });
 });
