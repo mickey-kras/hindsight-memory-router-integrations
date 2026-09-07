@@ -19,6 +19,7 @@ import {
 } from "./upstream/src/session-patterns.js";
 import {
   PrincipalCredentialResolver,
+  type PrincipalCredentials,
   CredentialResolutionError,
   UnknownPrincipalError,
   type RouterPluginConfig,
@@ -446,7 +447,7 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
   if (config.enableKnowledgeTools === true && typeof api.registerTool === "function") {
     api.registerTool(
       (ctx: PluginToolContext) => {
-        let credentials;
+        let credentials: PrincipalCredentials;
         let writeBank: string | null;
         let recallBanks: string[];
         try {

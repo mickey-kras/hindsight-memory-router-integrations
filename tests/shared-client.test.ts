@@ -30,3 +30,40 @@ it("routes knowledge reads and mutations through the same bank guard", async () 
   }
   expect(fetch).toHaveBeenCalledTimes(6);
 });
+
+it("fails closed when production clients lack access or receive upstream failures", async () => {
+  const factory = new AuthenticatedClientFactory({
+    routerUrl: "https://router.test",
+    userAgent: "test",
+  });
+  expect(() => factory.forAgent({ principalId: "test", token })).toThrow(
+    "memory access denied",
+  );
+
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+  const client = factory.forAgent({ principalId: "test", token, access });
+  await expect(client.retain("A", "content")).rejects.toThrow("memory request failed (503)");
+  await expect(client.recall("B", "query")).rejects.toThrow("memory request failed (503)");
+});
+
+it("requires an assigned bank and rejects failed knowledge operations", async () => {
+  const readOnly = new RouterTransport({
+    routerUrl: "https://router.test",
+    access: { additionalReadBanks: ["B"] },
+    token: () => token,
+  });
+  const list = routedKnowledgeTools(readOnly).find(
+    (tool) => tool.name === "agent_knowledge_list_pages",
+  );
+  expect(list).toBeDefined();
+  await expect(list?.execute({})).rejects.toThrow("memory access denied");
+
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+  await expect(list?.execute({ bankId: "B" })).rejects.toThrow("memory request failed (503)");
+
+  vi.mocked(globalThis.fetch).mockResolvedValue(Response.json({ id: "page" }));
+  const get = routedKnowledgeTools(readOnly).find(
+    (tool) => tool.name === "agent_knowledge_get_page",
+  );
+  await expect(get?.execute({ bankId: "B" })).rejects.toThrow("memory access denied");
+});

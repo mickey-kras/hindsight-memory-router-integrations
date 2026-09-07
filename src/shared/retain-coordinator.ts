@@ -5,9 +5,12 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { RetainQueue, type QueuedRetainPayload } from "../upstream/src/retain-queue.js";
-import { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
-import { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
-import { WriteBankResolver } from "./write-bank-resolver.js";
+import type {
+  PrincipalCredentialResolver,
+  PrincipalCredentials,
+} from "./principal-credential-resolver.js";
+import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
+import type { WriteBankResolver } from "./write-bank-resolver.js";
 
 export interface RetainRequestPayload extends QueuedRetainPayload {}
 
@@ -127,7 +130,7 @@ export class RetainCoordinator {
 
   private async flushQueueFile(file: string): Promise<void> {
     const principalId = file.slice(QUEUE_FILE_PREFIX.length, -QUEUE_FILE_SUFFIX.length);
-    let credentials;
+    let credentials: PrincipalCredentials;
     try {
       credentials = this.credentials.resolve(principalId);
     } catch {

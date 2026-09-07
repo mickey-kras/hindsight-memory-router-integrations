@@ -35,6 +35,10 @@ jobs:
 
       - run: npm ci
       - run: npm ci --prefix src/upstream/coding-agents
+      - uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2
+        with:
+          version: 2.5.12
+      - run: biome lint .
       - name: Tests and coverage
         run: npm run test:coverage
       - run: npm run build

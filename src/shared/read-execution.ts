@@ -1,5 +1,5 @@
 import { RecallCoordinator, type RecallItem } from "./recall-coordinator.js";
-import { RouterTransport } from "./router-transport.js";
+import type { RouterTransport } from "./router-transport.js";
 import { visibleBanks } from "./bank-access.js";
 
 /** Recall and reflect share deadlines, budgets, failure handling and deterministic merging. */

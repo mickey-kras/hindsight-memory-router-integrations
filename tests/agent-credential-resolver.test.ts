@@ -137,4 +137,17 @@ describe("PrincipalCredentialResolver", () => {
     });
     expect(() => wrongItem.resolveReadBanks("main")).toThrow("invalid-bank");
   });
+
+  it("rejects non-string tokens and malformed write banks", () => {
+    const invalidToken = new PrincipalCredentialResolver({
+      principals: { main: { token: 123, writeBank: "main" } },
+    });
+    expect(() => invalidToken.resolve("main")).toThrow("invalid-token");
+    for (const writeBank of [".", "..", "bad/bank", 123]) {
+      const invalidBank = new PrincipalCredentialResolver({
+        principals: { main: { token: TOKEN_A, writeBank } },
+      });
+      expect(() => invalidBank.resolveOptionalWriteBank("main")).toThrow("invalid-bank");
+    }
+  });
 });

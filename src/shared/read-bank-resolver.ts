@@ -1,4 +1,4 @@
-import { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
+import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 
 export class ReadBankResolver {
   private readonly credentials: PrincipalCredentialResolver;

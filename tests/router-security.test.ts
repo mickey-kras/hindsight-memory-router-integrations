@@ -12,7 +12,7 @@ const token = (id: string) => `mr_${id}_${"a".repeat(64)}`;
 const access = { writeBank: "A", additionalReadBanks: ["B", "C"] };
 const url = "https://router.example.test";
 const dirs: string[] = [];
-afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })); });
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); dirs.splice(0).forEach(dir => { rmSync(dir, { recursive: true, force: true }); }); });
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "router-test-")); dirs.push(dir);
   const path = join(dir, "router.json");
@@ -55,6 +55,19 @@ describe("managed harness identities", () => {
     for (const path of ["/approved-other", "/random/repo", "/escape", ""]) expect(() => managedBank("codex", path)).toThrow(AccessDeniedError);
     expect(managedSettings("codex")).toMatchObject({ harness: "codex", autoUpdate: false, dynamicBankId: false, optInOnly: true, apiToken: undefined });
   });
+  it("disables writes and repository ingestion for read-only harnesses", () => {
+    const path = setup();
+    writeFileSync(path, JSON.stringify({ routerUrl: url, principals: {
+      reader: { additionalReadBanks: ["B"], tokenEnv: "TEST_CODEX_TOKEN" },
+    } }));
+    expect(managedSettings("reader")).toMatchObject({
+      retainSessions: false,
+      autoSeed: false,
+      codebaseSurvey: false,
+      gitIngest: "none",
+    });
+    expect(() => managedBank("reader", "/approved")).toThrow(AccessDeniedError);
+  });
   it("rejects plaintext tokens and wildcard bank grants", () => {
     const path = setup();
     for (const principal of [{ ...access, tokenEnv: "TEST_CODEX_TOKEN", token: token("codex") }, { writeBank: "*", additionalReadBanks: [], tokenEnv: "TEST_CODEX_TOKEN" }]) {
@@ -81,6 +94,14 @@ describe("bank isolation", () => {
     const { client, send } = transport(vi.fn<typeof fetch>().mockResolvedValue(Response.json({ banks: [{ bank_id: "A" }, { bank_id: "B" }, { bank_id: "hidden" }] })));
     expect(await (await client.request(`${url}/v1/default/banks`)).json()).toEqual({ banks: [{ bank_id: "A" }, { bank_id: "B" }], total: 2 });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("rejects malformed bank-list responses", async () => {
+    const { client } = transport(
+      vi.fn<typeof fetch>().mockResolvedValue(Response.json({ banks: "invalid" })),
+    );
+    await expect(client.request(`${url}/v1/default/banks`)).rejects.toThrow(
+      "memory request failed (502)",
+    );
   });
   it.each(["/config", "/reflect", "/memories/recall", "/knowledge-base/tree", ""])("unassigned bank stays invisible for %s", async suffix => {
     const { client, send } = transport();
