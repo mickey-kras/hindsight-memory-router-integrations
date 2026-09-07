@@ -106,4 +106,35 @@ describe("PrincipalCredentialResolver", () => {
     expect(r.resolveReadBanks("main")).toEqual(["main", "dev"]);
     expect(() => r.resolveWriteBank("broken")).toThrow(CredentialResolutionError);
   });
+
+  it("validates startup configuration and route presence", () => {
+    expect(() => new PrincipalCredentialResolver({}).validateConfiguredPrincipals()).toThrow(UnknownPrincipalError);
+    const noRoute = new PrincipalCredentialResolver({ principals: { main: { token: TOKEN_A } } });
+    expect(() => noRoute.validateConfiguredPrincipals()).toThrow("missing-route");
+    expect(resolver().has("main")).toBe(true);
+    expect(resolver().has("missing")).toBe(false);
+  });
+
+  it.each([undefined, null, ""])("rejects missing token value %s", (token) => {
+    const r = new PrincipalCredentialResolver({ principals: { main: { token, writeBank: "main" } } });
+    expect(() => r.resolve("main")).toThrow("missing-token");
+  });
+
+  it("uses the write bank when read banks are omitted and validates direct lookups", () => {
+    const r = new PrincipalCredentialResolver({ principals: { main: { token: TOKEN_A, writeBank: "main" } } });
+    expect(r.resolveReadBanks("main")).toEqual(["main"]);
+    expect(() => r.resolveReadBanks("../bad")).toThrow(UnknownPrincipalError);
+    expect(() => r.resolveReadBanks("missing")).toThrow(UnknownPrincipalError);
+  });
+
+  it("rejects non-array and malformed read-bank configuration", () => {
+    const wrongType = new PrincipalCredentialResolver({
+      principals: { main: { token: TOKEN_A, writeBank: "main", additionalReadBanks: "dev" } },
+    });
+    expect(() => wrongType.resolveReadBanks("main")).toThrow("invalid-bank");
+    const wrongItem = new PrincipalCredentialResolver({
+      principals: { main: { token: TOKEN_A, writeBank: "main", additionalReadBanks: [".."] } },
+    });
+    expect(() => wrongItem.resolveReadBanks("main")).toThrow("invalid-bank");
+  });
 });
