@@ -5,7 +5,7 @@
  */
 export function compileSessionPattern(pattern: string): RegExp {
   const escaped = pattern
-    .replaceAll(new RegExp(String.raw`[.+^${"$"}{}()|[\]\\]`, "g"), "\\$&")
+    .replaceAll(new RegExp(String.raw`[.+^${"$"}{}()|[\]\\]`, "g"), String.raw`\$&`)
     .replaceAll("**", "\u0000")
     .replaceAll("*", "[^:]*")
     .replaceAll("\u0000", ".*");
