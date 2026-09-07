@@ -38,7 +38,7 @@ jobs:
       - uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2
         with:
           version: 2.5.12
-      - run: biome lint .
+      - run: biome lint . --max-diagnostics=none
       - name: Tests and coverage
         run: npm run test:coverage
       - run: npm run build
