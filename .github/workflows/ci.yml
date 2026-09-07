@@ -54,9 +54,15 @@ jobs:
           artifact="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
           tar -tzf "$RUNNER_TEMP/$artifact" > "$RUNNER_TEMP/package-files"
           grep -Fxq package/npm-shrinkwrap.json "$RUNNER_TEMP/package-files"
-          cmp "$RUNNER_TEMP/$artifact" "packages/$artifact"
+          mkdir "$RUNNER_TEMP/generated-root" "$RUNNER_TEMP/committed-root"
+          tar -xzf "$RUNNER_TEMP/$artifact" -C "$RUNNER_TEMP/generated-root"
+          tar -xzf "packages/$artifact" -C "$RUNNER_TEMP/committed-root"
+          diff -qr "$RUNNER_TEMP/generated-root" "$RUNNER_TEMP/committed-root"
           coding_artifact="$(cd src/upstream/coding-agents && npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
-          cmp "$RUNNER_TEMP/$coding_artifact" "packages/$coding_artifact"
+          mkdir "$RUNNER_TEMP/generated-coding" "$RUNNER_TEMP/committed-coding"
+          tar -xzf "$RUNNER_TEMP/$coding_artifact" -C "$RUNNER_TEMP/generated-coding"
+          tar -xzf "packages/$coding_artifact" -C "$RUNNER_TEMP/committed-coding"
+          diff -qr "$RUNNER_TEMP/generated-coding" "$RUNNER_TEMP/committed-coding"
           sha256sum --check PACKAGE_SHA256
 
       - name: Install Nix
