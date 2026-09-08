@@ -14,7 +14,7 @@ import { loadConfig, applyBankConfig } from "../src/upstream/coding-agents/src/c
 import { deriveBankId } from "../src/upstream/coding-agents/src/core/bank";
 const dirs: string[] = [];
 const token = `mr_codex_${"b".repeat(64)}`;
-afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); dirs.splice(0).forEach(p => rmSync(p, { recursive: true, force: true })); });
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); dirs.splice(0).forEach(p => { rmSync(p, { recursive: true, force: true }); }); });
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "upstream-router-")); dirs.push(dir);
   const path = join(dir, "managed.json");

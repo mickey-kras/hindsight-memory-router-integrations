@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 import { afterAll, describe, expect, it } from "vitest";

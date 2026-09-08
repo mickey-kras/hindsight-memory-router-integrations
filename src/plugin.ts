@@ -13,10 +13,7 @@ import type {
   PluginPromptHookResult,
   PluginToolContext,
 } from "./upstream/src/types.js";
-import {
-  compileSessionPatterns,
-  matchesSessionPattern,
-} from "./upstream/src/session-patterns.js";
+import { compileSessionPatterns, matchesSessionPattern } from "./upstream/src/session-patterns.js";
 import {
   PrincipalCredentialResolver,
   CredentialResolutionError,
@@ -26,15 +23,8 @@ import {
 import { AuthenticatedClientFactory } from "./shared/authenticated-client-factory.js";
 import { ReadBankResolver } from "./shared/read-bank-resolver.js";
 import { WriteBankResolver } from "./shared/write-bank-resolver.js";
-import {
-  RecallAuthorizationError,
-  RecallCoordinator,
-  type RecallItem,
-} from "./shared/recall-coordinator.js";
-import {
-  RetainAuthorizationError,
-  RetainCoordinator,
-} from "./shared/retain-coordinator.js";
+import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "./shared/recall-coordinator.js";
+import { RetainAuthorizationError, RetainCoordinator } from "./shared/retain-coordinator.js";
 
 export const PLUGIN_ID = "hindsight-memory-router";
 export const PLUGIN_VERSION = "0.11.1-router.2";
@@ -103,11 +93,7 @@ function formatMemories(results: RecallItem[]): string {
     .join("\n\n");
 }
 
-function extractPrompt(event: {
-  prompt?: unknown;
-  messages?: unknown;
-  rawMessage?: unknown;
-}): string | null {
+function extractPrompt(event: { prompt?: unknown; messages?: unknown; rawMessage?: unknown }): string | null {
   const candidates = [event.rawMessage, event.prompt];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim().length >= 5) {
@@ -177,17 +163,15 @@ function extractTranscript(event: {
     }
   }
   if (lastUser < 0) return null;
-  const normalized = messages
-    .slice(lastUser)
-    .flatMap((message) => {
-      if (!message || typeof message !== "object") return [];
-      const role = (message as { role?: unknown }).role;
-      if (role !== "user" && role !== "assistant") return [];
-      const content = messageText((message as { content?: unknown }).content);
-      if (!content) return [];
-      const clean = stripInjectedMemories(content);
-      return clean ? [{ role, content: clean }] : [];
-    });
+  const normalized = messages.slice(lastUser).flatMap((message) => {
+    if (!message || typeof message !== "object") return [];
+    const role = (message as { role?: unknown }).role;
+    if (role !== "user" && role !== "assistant") return [];
+    const content = messageText((message as { content?: unknown }).content);
+    if (!content) return [];
+    const clean = stripInjectedMemories(content);
+    return clean ? [{ role, content: clean }] : [];
+  });
   return normalized.length > 0 ? JSON.stringify(normalized) : null;
 }
 
@@ -196,9 +180,7 @@ function sanitizeDocumentIdPart(value: string | undefined, fallback: string): st
   if (!normalized) {
     return fallback;
   }
-  const sanitized = normalized
-    .replaceAll(/[^a-zA-Z0-9:_-]+/g, "_")
-    .replaceAll(/_+/g, "_");
+  const sanitized = normalized.replaceAll(/[^a-zA-Z0-9:_-]+/g, "_").replaceAll(/_+/g, "_");
   const withoutLeadingUnderscore = sanitized.startsWith("_") ? sanitized.slice(1) : sanitized;
   const withoutEdgeUnderscores = withoutLeadingUnderscore.endsWith("_")
     ? withoutLeadingUnderscore.slice(0, -1)
@@ -229,19 +211,22 @@ function shouldSkipRetain(
   ctx: PluginHookAgentContext | undefined,
   config: RuntimePluginConfig,
   ignorePatterns: RegExp[],
-  statelessPatterns: RegExp[]
+  statelessPatterns: RegExp[],
 ): boolean {
   const ignoredSession = sessionKey !== undefined && matchesSessionPattern(sessionKey, ignorePatterns);
   const statelessSession = sessionKey !== undefined && matchesSessionPattern(sessionKey, statelessPatterns);
-  const excludedProvider = ctx?.messageProvider !== undefined &&
-    config.excludeProviders?.includes(ctx.messageProvider) === true;
+  const excludedProvider =
+    ctx?.messageProvider !== undefined && config.excludeProviders?.includes(ctx.messageProvider) === true;
   return config.autoRetain === false || ignoredSession || statelessSession || excludedProvider;
 }
 
-export function buildRoutingStack(config: RuntimePluginConfig, logger: {
-  warn(msg: string): void;
-  error(msg: string): void;
-}): RoutingStack {
+export function buildRoutingStack(
+  config: RuntimePluginConfig,
+  logger: {
+    warn(msg: string): void;
+    error(msg: string): void;
+  },
+): RoutingStack {
   const credentials = new PrincipalCredentialResolver({ ...config, principals: config.agents });
   credentials.validateConfiguredPrincipals();
   const clients = new AuthenticatedClientFactory({
@@ -342,7 +327,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
         }
         log.warn(`auto-recall failed: ${memoryErrorMessage(error)}`);
       }
-    }
+    },
   );
 }
 
@@ -357,7 +342,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const runRetain = async (
     event: any,
     ctx: PluginHookAgentContext | undefined,
-    hookName: "agent_end" | "session_end"
+    hookName: "agent_end" | "session_end",
   ): Promise<void> => {
     const agentId = ctx?.agentId;
     const sessionKey = sessionKeyFor(event, ctx);
@@ -415,9 +400,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   };
 
   api.on("agent_end", (event: any, ctx?: PluginHookAgentContext) => runRetain(event, ctx, "agent_end"));
-  api.on("session_end", (event: any, ctx?: PluginHookAgentContext) =>
-    runRetain(event, ctx, "session_end")
-  );
+  api.on("session_end", (event: any, ctx?: PluginHookAgentContext) => runRetain(event, ctx, "session_end"));
 
   let flushTimer: ReturnType<typeof setInterval> | undefined;
   api.registerService({
@@ -463,63 +446,70 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
           }
           throw error;
         }
-        const tools = routedKnowledgeTools(new RouterTransport({
-          routerUrl: validateRouterUrlForTools(config.routerUrl),
-          token: () => credentials.token,
-          principalId: credentials.principalId,
-          access: { writeBank: writeBank ?? undefined, additionalReadBanks: recallBanks },
-        }));
-        return tools.filter((tool) => {
-          if (["agent_knowledge_recall", "agent_knowledge_list_pages", "agent_knowledge_get_page"].includes(tool.name)) return recallBanks.length > 0;
-          return writeBank !== null;
-        }).map((tool) => {
-          if (tool.name !== "agent_knowledge_recall") {
+        const tools = routedKnowledgeTools(
+          new RouterTransport({
+            routerUrl: validateRouterUrlForTools(config.routerUrl),
+            token: () => credentials.token,
+            principalId: credentials.principalId,
+            access: { writeBank: writeBank ?? undefined, additionalReadBanks: recallBanks },
+          }),
+        );
+        return tools
+          .filter((tool) => {
+            if (
+              ["agent_knowledge_recall", "agent_knowledge_list_pages", "agent_knowledge_get_page"].includes(tool.name)
+            )
+              return recallBanks.length > 0;
+            return writeBank !== null;
+          })
+          .map((tool) => {
+            if (tool.name !== "agent_knowledge_recall") {
+              return {
+                name: tool.name,
+                label: tool.label,
+                description: tool.description,
+                parameters: tool.parameters,
+                async execute(_id: string, params: Record<string, unknown>) {
+                  return { ...(await tool.execute(params)), details: {} };
+                },
+              };
+            }
+            // Recall tool routes through the multi-bank coordinator: same
+            // identity, same recall banks, same shared budget and timeout.
             return {
               name: tool.name,
               label: tool.label,
               description: tool.description,
               parameters: tool.parameters,
               async execute(_id: string, params: Record<string, unknown>) {
-                return { ...(await tool.execute(params)), details: {} };
+                const query = typeof params.query === "string" ? params.query : "";
+                const client = stack.clients.forAgent(credentials);
+                const recalled = await stack.recall.recall(client, {
+                  query,
+                  banks: recallBanks,
+                  timeoutMs: config.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS,
+                  maxTokens: config.recallMaxTokens ?? DEFAULT_RECALL_MAX_TOKENS,
+                  budget: config.recallBudget,
+                  types: config.recallTypes,
+                  preferObservations: config.preferObservations,
+                });
+                if (recalled.partial) {
+                  log.warn(`partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`);
+                }
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: formatMemories(recalled.results) || "No memories found.",
+                    },
+                  ],
+                  details: {},
+                };
               },
             };
-          }
-          // Recall tool routes through the multi-bank coordinator: same
-          // identity, same recall banks, same shared budget and timeout.
-          return {
-            name: tool.name,
-            label: tool.label,
-            description: tool.description,
-            parameters: tool.parameters,
-            async execute(_id: string, params: Record<string, unknown>) {
-              const query = typeof params.query === "string" ? params.query : "";
-              const client = stack.clients.forAgent(credentials);
-              const recalled = await stack.recall.recall(client, {
-                query,
-                banks: recallBanks,
-                timeoutMs: config.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS,
-                maxTokens: config.recallMaxTokens ?? DEFAULT_RECALL_MAX_TOKENS,
-                budget: config.recallBudget,
-                types: config.recallTypes,
-                preferObservations: config.preferObservations,
-              });
-              if (recalled.partial) {
-                log.warn(`partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`);
-              }
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: formatMemories(recalled.results) || "No memories found.",
-                  },
-                ],
-                details: {},
-              };
-            },
-          };
-        });
+          });
       },
-      { names: [...TOOL_NAMES], optional: false }
+      { names: [...TOOL_NAMES], optional: false },
     );
     log.info("knowledge tools registered");
   }

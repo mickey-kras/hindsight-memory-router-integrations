@@ -240,4 +240,20 @@ describe("RecallCoordinator", () => {
     }), { query: "q", banks: ["main"], timeoutMs: 100 });
     expect(result.results).toEqual([{ text: "same" }, { id: "a" }, { id: "b" }]);
   });
+
+  it.each([408, 429])("returns partial recall for HTTP %i", async (statusCode) => {
+    const result = await new RecallCoordinator().recall(
+      fakeClient({ main: { error: httpError(statusCode) } }),
+      { query: "q", banks: ["main"], timeoutMs: 1000 },
+    );
+    expect(result).toEqual({ results: [], partial: true, failedBanks: ["main"] });
+  });
+
+  it("handles missing result arrays", async () => {
+    const result = await new RecallCoordinator().recall(
+      fakeClient({ main: { results: undefined as unknown as RecallItem[] } }),
+      { query: "q", banks: ["main"], timeoutMs: 1000 },
+    );
+    expect(result.results).toEqual([]);
+  });
 });

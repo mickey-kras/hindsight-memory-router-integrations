@@ -255,11 +255,17 @@ describe("RetainCoordinator", () => {
     const { retain, fakeClients } = makeStack({ queueDir });
     await retain.retain("main", {
       content: "metadata",
-      metadata: { text: "value", count: 2, enabled: false, large: 3n, object: { a: 1 },
+      documentId: "doc",
+      context: "ctx",
+      tags: ["tag"],
+      updateMode: "append",
+      operationId: "operation",
+      metadata: { text: "value", count: 2, enabled: false, large: 3n, object: { a: 1 }, symbol: Symbol("value"),
         missing: undefined, empty: null },
     });
-    expect(fakeClients.get("main")?.retains[0].options?.metadata).toEqual({
-      text: "value", count: "2", enabled: "false", large: "3", object: '{"a":1}',
+    expect(fakeClients.get("main")?.retains[0].options).toMatchObject({
+      documentId: "doc", context: "ctx", tags: ["tag"], updateMode: "append", operationId: "operation",
+      metadata: { text: "value", count: "2", enabled: "false", large: "3", object: '{"a":1}', symbol: "Symbol(value)" },
     });
   });
 

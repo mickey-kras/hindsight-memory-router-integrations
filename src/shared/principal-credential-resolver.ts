@@ -46,7 +46,7 @@ export class CredentialResolutionError extends Error {
       | "invalid-token"
       | "missing-write-bank"
       | "invalid-bank"
-      | "missing-route"
+      | "missing-route",
   ) {
     super(`credential resolution failed: ${reason}`);
     this.name = "CredentialResolutionError";
@@ -116,7 +116,10 @@ export class PrincipalCredentialResolver {
     if (typeof token !== "string" || !TOKEN_FORMAT_PATTERN.test(token)) {
       throw new CredentialResolutionError("invalid-token");
     }
-    const access = { writeBank: this.resolveOptionalWriteBank(principalId) ?? undefined, additionalReadBanks: this.resolveReadBanks(principalId) };
+    const access = {
+      writeBank: this.resolveOptionalWriteBank(principalId) ?? undefined,
+      additionalReadBanks: this.resolveReadBanks(principalId),
+    };
     visibleBanks(access);
     return Object.defineProperty({ principalId, access, token }, "token", { value: token, enumerable: false });
   }

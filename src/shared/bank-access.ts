@@ -15,7 +15,7 @@ export class AccessDeniedError extends Error {
 
 export function visibleBanks(access: BankAccess): string[] {
   const banks = [...new Set([...(access.writeBank ? [access.writeBank] : []), ...access.additionalReadBanks])];
-  if (banks.some(bank => !BANK_ID_PATTERN.test(bank) || bank === "." || bank === "..")) {
+  if (banks.some((bank) => !BANK_ID_PATTERN.test(bank) || bank === "." || bank === "..")) {
     throw new AccessDeniedError();
   }
   return banks;
@@ -30,8 +30,20 @@ export function requireBank(access: BankAccess, bank: string, operation: "read" 
 /** Unknown operations are denied; POST does not by itself imply mutation. */
 export function classifyOperation(method: string, suffix: string): "read" | "write" {
   if (method === "POST" && ["/memories/recall", "/reflect"].includes(suffix)) return "read";
-  if (method === "GET" && /^\/(?:config|stats|tags|graph|documents|operations|memories|mental-models|knowledge-base)(?:\/[^/]+)*$/.test(suffix)) return "read";
+  if (
+    method === "GET" &&
+    /^\/(?:config|stats|tags|graph|documents|operations|memories|mental-models|knowledge-base)(?:\/[^/]+)*$/.test(
+      suffix,
+    )
+  )
+    return "read";
   if (method === "GET" && suffix === "") return "read";
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && /^(?:\/(?:config|import|memories|documents|mental-models|knowledge-base|consolidate|consolidation)(?:\/[^/]+)*)?$/.test(suffix)) return "write";
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
+    /^(?:\/(?:config|import|memories|documents|mental-models|knowledge-base|consolidate|consolidation)(?:\/[^/]+)*)?$/.test(
+      suffix,
+    )
+  )
+    return "write";
   throw new AccessDeniedError();
 }

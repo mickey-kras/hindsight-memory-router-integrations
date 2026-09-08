@@ -6,7 +6,7 @@
  * content-derived bank selection.
  */
 
-import { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
+import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 
 export class WriteBankResolver {
   private readonly credentials: PrincipalCredentialResolver;

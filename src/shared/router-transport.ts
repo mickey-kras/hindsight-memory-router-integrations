@@ -11,12 +11,7 @@ export class RouterRequestError extends Error {
 
 const ROUTING_KEYS = ["bankId", "bank_id", "bank_ids"];
 
-function assertAuthorizedUrl(
-  url: string,
-  method: string,
-  baseUrl: string,
-  access: BankAccess
-): boolean {
+function assertAuthorizedUrl(url: string, method: string, baseUrl: string, access: BankAccess): boolean {
   const listing = url === `${baseUrl}/v1/default/banks` && method === "GET";
   if (listing || (url === `${baseUrl}/version` && method === "GET")) {
     return listing;
@@ -32,13 +27,12 @@ function assertAuthorizedUrl(
 }
 
 async function filterVisibleBanks(response: Response, access: BankAccess): Promise<Response> {
-  const data = await response.json() as { banks?: unknown };
+  const data = (await response.json()) as { banks?: unknown };
   if (!Array.isArray(data.banks)) throw new RouterRequestError(502);
   const allowed = new Set(visibleBanks(access));
   const banks = data.banks.filter(
-    (bank: unknown) => bank !== null
-      && typeof bank === "object"
-      && allowed.has((bank as { bank_id?: string }).bank_id ?? "")
+    (bank: unknown) =>
+      bank !== null && typeof bank === "object" && allowed.has((bank as { bank_id?: string }).bank_id ?? ""),
   );
   return Response.json({ banks, total: banks.length });
 }
@@ -72,11 +66,20 @@ export class RouterTransport {
   readonly #principalId?: string;
   #denied = false;
 
-  constructor(options: { routerUrl: string; access: BankAccess; token: () => string | undefined; principalId?: string; fetch?: typeof fetch }) {
+  constructor(options: {
+    routerUrl: string;
+    access: BankAccess;
+    token: () => string | undefined;
+    principalId?: string;
+    fetch?: typeof fetch;
+  }) {
     this.baseUrl = validateRouterUrl(options.routerUrl);
     const url = new URL(this.baseUrl);
     if (url.search || url.hash) throw new AccessDeniedError();
-    this.access = Object.freeze({ writeBank: options.access.writeBank, additionalReadBanks: Object.freeze([...options.access.additionalReadBanks]) });
+    this.access = Object.freeze({
+      writeBank: options.access.writeBank,
+      additionalReadBanks: Object.freeze([...options.access.additionalReadBanks]),
+    });
     visibleBanks(this.access);
     this.#principalId = options.principalId;
     this.#token = options.token;
@@ -85,7 +88,12 @@ export class RouterTransport {
   }
 
   hasCredentials(): boolean {
-    try { this.credential(); return true; } catch { return false; }
+    try {
+      this.credential();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   assertAuthorized(): void {
@@ -128,7 +136,11 @@ export class RouterTransport {
       return await this.#send(url, {
         ...init,
         redirect: "error",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(this.#principalId ? { "x-memory-router-agent": this.#principalId } : {}) },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(this.#principalId ? { "x-memory-router-agent": this.#principalId } : {}),
+        },
         signal: init.signal ?? AbortSignal.timeout(15_000),
       });
     } catch {

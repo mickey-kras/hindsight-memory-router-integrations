@@ -156,9 +156,7 @@ export class RetainCoordinator {
         delivered.push(item.id);
       } catch (error) {
         if (isAuthzError(error)) {
-          this.log.error(
-            `retain replay denied for bank ${item.bankId}; item stays queued for operator review`
-          );
+          this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
         }
         break; // preserve FIFO ordering; retry next flush
       }
@@ -180,9 +178,7 @@ function stringifyMetadataValue(value: unknown): string {
   return "";
 }
 
-function toStringMetadata(
-  metadata: Record<string, unknown> | undefined
-): Record<string, string> | undefined {
+function toStringMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> | undefined {
   if (!metadata) {
     return undefined;
   }
