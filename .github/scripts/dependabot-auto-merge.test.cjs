@@ -121,6 +121,21 @@ test('dispatches missing main validation only after a confirmed Dependabot merge
   const noMerge = harness(); await ensureMainRun({ ...noMerge.options, branch: 'main' });
   assert.deepEqual(noMerge.dispatches, []);
 });
+test('closed Dependabot merge dispatches missing main validation', async () => {
+  const closed = { ...pull, state: 'closed' };
+  const h = harness({
+    event: 'pull_request_target',
+    pulls: [closed],
+    associated: [{ ...closed, merged_at: '2026-09-08T00:00:00Z', merge_commit_sha: 'b'.repeat(40) }],
+  });
+  h.options.context.payload.pull_request = closed;
+  h.options.mainWorkflow = 'main.yml';
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.dispatches, [
+    { owner: 'owner', repo: 'repo', workflow_id: 'main.yml', ref: 'main' },
+  ]);
+});
 for (const conclusion of [null, 'success', 'failure']) {
   test(`does not duplicate existing main run (${conclusion})`, async () => {
     const h = harness({ associated, runs: [{ head_sha: 'b'.repeat(40), event: 'workflow_dispatch', conclusion }] });
