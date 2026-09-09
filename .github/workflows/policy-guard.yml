@@ -465,7 +465,7 @@ jobs:
                   return
               if doc.get('name') != 'ci':
                   fail('ci.yml: workflow name must remain ci')
-              require_events(path, doc, ('pull_request', 'workflow_call'))
+              require_events(path, doc, ('workflow_call',))
               require_job_set(path, doc, ('checks',))
               checks = job_named(doc, 'checks')
               if checks is None:
@@ -551,7 +551,7 @@ jobs:
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
-              require_events(path, doc, ('pull_request', 'workflow_call'))
+              require_events(path, doc, ('workflow_call',))
               require_job_set(path, doc, ('status',))
               status = job_named(doc, 'status')
               if status is None:
@@ -596,7 +596,7 @@ jobs:
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
-              require_events(path, doc, ('pull_request', 'workflow_call'))
+              require_events(path, doc, ('workflow_call',))
               require_job_set(path, doc, ('analyze',))
               steps = [step for _, job in iter_jobs(doc) for step in iter_steps(job)]
               init_step = next(
@@ -648,6 +648,24 @@ jobs:
                   normalize_condition(job.get('if', '')) == "github.ref == 'refs/heads/main'"
                   for job in jobs.values()
               )
+
+          def gate_pr_validation(path, content):
+              doc = parse_yaml_file(path, content, 'workflow')
+              if doc is None:
+                  return
+              require_events(path, doc, ('pull_request',))
+              expected = {
+                  'quality': './.github/workflows/ci.yml',
+                  'aislop': './.github/workflows/aislop.yml',
+                  'codeql': './.github/workflows/codeql.yml',
+                  'branch-policy': './.github/workflows/branch-policy.yml',
+                  'dependabot-policy': './.github/workflows/dependabot-policy-tests.yml',
+              }
+              require_job_set(path, doc, tuple(expected))
+              for job_name, uses in expected.items():
+                  job = job_named(doc, job_name)
+                  if job is None or job.get('uses') != uses:
+                      fail(f'pr-validation.yml: jobs.{job_name} must call {uses}')
 
           def gate_main(path, content):
               doc = parse_yaml_file(path, content, 'workflow')
@@ -848,7 +866,7 @@ jobs:
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
-              require_events(path, doc, ('pull_request',))
+              require_events(path, doc, ('workflow_call',))
               require_job_set(path, doc, ('branch-name',))
               branch_job = job_named(doc, 'branch-name')
               if branch_job is None:
@@ -989,6 +1007,7 @@ jobs:
                   'fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34',
                   '602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19',
                   'ccfefaafd622388ee9362ce6b95d66079be875a6cd85684be592c6a8edb74a0e',
+                  '9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff',
               ),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3', 'dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05'),
           }
@@ -1013,6 +1032,7 @@ jobs:
               '.github/workflows/aislop.yml': gate_aislop,
               '.github/workflows/codeql.yml': gate_codeql,
               '.github/workflows/main.yml': gate_main,
+              '.github/workflows/pr-validation.yml': gate_pr_validation,
               '.github/workflows/policy-guard.yml': gate_policy_guard,
               '.github/workflows/branch-policy.yml': gate_branch_policy,
               '.aislop/config.yml': gate_aislop_config,
