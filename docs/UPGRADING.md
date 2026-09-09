@@ -1,5 +1,7 @@
 # Upgrading vendored integrations
 
+For release preparation, protected branches/tags and publication, see [Releasing](RELEASING.md).
+
 Upgrades are commit-pinned and reproducible. Never import from a mutable tag or edit a committed package directly.
 
 ## OpenClaw

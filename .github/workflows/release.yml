@@ -1,0 +1,23 @@
+name: release
+
+on:
+  push:
+    branches: ['release/*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      security-events: write
+      id-token: write
+      attestations: write
+      pull-requests: write
+    uses: ./.github/workflows/main.yml
+    secrets: inherit

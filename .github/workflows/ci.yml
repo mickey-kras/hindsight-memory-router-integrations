@@ -45,6 +45,11 @@ jobs:
       - run: node scripts/verify-coding-upstream.mjs
       - run: node scripts/verify-openclaw-overlay.mjs
       - run: node --test scripts/verify-vendored-files.test.mjs
+      - name: Release automation tests
+        run: node --test .github/scripts/release.test.cjs
+      - name: Release policy tests
+        run: python3 .github/scripts/release-policy.test.py
+
       - name: PR branch updater tests
         run: node --test .github/scripts/pr-branch-updater.test.cjs
       - name: Node tooling audit

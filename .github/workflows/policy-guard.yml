@@ -447,12 +447,15 @@ jobs:
                       return
 
           CI_REQUIRED_STEPS = (
+              'Release automation tests', 'Release policy tests',
               'Tests and coverage', 'Verify package', 'Nix dependency hash',
               'Gitleaks', 'Semgrep', 'Trivy dependency gate', 'Setup Trivy',
           )
           # Name-only pins are not enough: each required step must still carry
           # the substance of its gate (checked on the normalized run text).
           CI_RUN_SIGNATURES = {
+              'Release automation tests': ('node --test .github/scripts/release.test.cjs',),
+              'Release policy tests': ('python3 .github/scripts/release-policy.test.py',),
               'Verify package': (
                   'npm pack', 'sha256sum --check PACKAGE_SHA256',
                   'cmp ', 'grep -Fxq package/npm-shrinkwrap.json',
@@ -1028,6 +1031,9 @@ jobs:
           # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
+              '.github/workflows/main.yml': ('a5da743f8c143aa36df30322113af7bfec4937a11cdf0961c6901747639408c5',),
+              '.github/workflows/release.yml': ('b8963c9f6c9c98888c1dc77dd60d7a69e10a27c8bf5c14c296dde272141040bf',),
+
               '.github/workflows/dependabot-auto-merge.yml': (
                   'fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34',
                   '602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19',
@@ -1053,6 +1059,18 @@ jobs:
               if digest not in AUTOMATION_SHAPES[path]:
                   fail(f'{path}: automation must match its reviewed workflow shape')
 
+          RELEASE_SOURCE_HASHES = {
+              '.github/scripts/release.cjs': '4d61f95640ec9d284b27783512b4308aba523cfd287e58e0d9222cf7cf5ed9c5',
+              '.github/scripts/release-settings.cjs': 'c2502d720dc7c1355b3497a38ac7db825a16307aa0e146cdcf313871445f15ff',
+              '.github/scripts/release.test.cjs': '6559fac06661b1ad76f78bfe3d038b80279753c0a4dbec9fb8f659a03064a59a',
+              '.github/scripts/release-policy.test.py': '6e8f60e06669caded9eb29d953dbe1820c91ace971f71c7810b542bbf4eaf0f7',
+              '.github/rulesets/protect-release-branches.json': '33ed81946431335f2ac50ac7b729471a62bcf3eb49986056d22595262170c312',
+          }
+
+          def gate_release_source(path, content):
+              if hashlib.sha256(content.encode()).hexdigest() != RELEASE_SOURCE_HASHES[path]:
+                  fail(f'{path}: release automation must match its reviewed policy')
+
           GATES = {
               '.github/workflows/ci.yml': gate_ci,
               '.github/workflows/aislop.yml': gate_aislop,
@@ -1073,6 +1091,7 @@ jobs:
           }
 
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
+          GATES.update({path: gate_release_source for path in RELEASE_SOURCE_HASHES})
           protected = set(GATES)
 
           def load_files():
