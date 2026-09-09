@@ -1,6 +1,6 @@
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/DEVIATIONS.md b/DEVIATIONS.md
 --- a/DEVIATIONS.md	1969-12-31 19:00:00.000000000 -0500
-+++ b/DEVIATIONS.md	2026-09-08 22:12:32.224155652 -0400
++++ b/DEVIATIONS.md	2026-09-09 02:52:58.237844185 -0400
 @@ -0,0 +1,18 @@
 +# Router deviations
 +
@@ -22,7 +22,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/DEVIATIONS.md b/DEVIATIONS
 +Reliability fixes use explicit sorting, global replacements, Node ANSI stripping, optional arguments, and non-empty installer regex matches. Transcript escape decoding retains UTF-16 surrogate behavior.
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/LICENSE b/LICENSE
 --- a/LICENSE	1969-12-31 19:00:00.000000000 -0500
-+++ b/LICENSE	2026-09-08 22:12:32.224155652 -0400
++++ b/LICENSE	2026-09-09 02:52:58.237844185 -0400
 @@ -0,0 +1,23 @@
 +MIT License
 +
@@ -48,8 +48,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/LICENSE b/LICENSE
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/README.md b/README.md
---- a/README.md	2026-09-04 12:09:05.000000000 -0400
-+++ b/README.md	2026-09-08 22:12:32.224155652 -0400
+--- a/README.md	2026-09-09 02:57:54.435870708 -0400
++++ b/README.md	2026-09-09 02:52:58.237844185 -0400
 @@ -1,812 +1,54 @@
 -# hindsight-coding-agents
 +# Coding agents
@@ -910,7 +910,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/README.md b/README.md
 +See `DEVIATIONS.md` for intentional differences and `UPSTREAM.json` for exact provenance.
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/UPSTREAM.json b/UPSTREAM.json
 --- a/UPSTREAM.json	1969-12-31 19:00:00.000000000 -0500
-+++ b/UPSTREAM.json	2026-09-08 22:12:32.224155652 -0400
++++ b/UPSTREAM.json	2026-09-09 02:52:58.237844185 -0400
 @@ -0,0 +1,211 @@
 +{
 +  "source": "https://github.com/vectorize-io/hindsight",
@@ -1124,8 +1124,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/UPSTREAM.json b/UPSTREAM.j
 +  }
 +}
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/cordis.patch.yml b/cordis.patch.yml
---- a/cordis.patch.yml	2026-09-04 12:09:05.000000000 -0400
-+++ b/cordis.patch.yml	2026-09-08 22:12:32.224155652 -0400
+--- a/cordis.patch.yml	2026-09-09 02:57:54.435870708 -0400
++++ b/cordis.patch.yml	2026-09-09 02:52:58.237844185 -0400
 @@ -1,6 +1,6 @@
  # DeepSeek Harness profile layer for Hindsight memory.
  #
@@ -1142,7 +1142,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/cordis.patch.yml b/cordis.
 +      name: "@mickey-kras/hindsight-memory-router-coding-agents/dsh"
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/npm-shrinkwrap.json b/npm-shrinkwrap.json
 --- a/npm-shrinkwrap.json	1969-12-31 19:00:00.000000000 -0500
-+++ b/npm-shrinkwrap.json	2026-09-08 22:42:58.180991703 -0400
++++ b/npm-shrinkwrap.json	2026-09-09 02:52:58.238068185 -0400
 @@ -0,0 +1,4624 @@
 +{
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
@@ -5769,7 +5769,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/npm-shrinkwrap.json b/npm-
 +  }
 +}
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/package-lock.json b/package-lock.json
---- a/package-lock.json	2026-09-04 12:09:05.000000000 -0400
+--- a/package-lock.json	2026-09-09 02:57:54.437490570 -0400
 +++ b/package-lock.json	1969-12-31 19:00:00.000000000 -0500
 @@ -1,4685 +0,0 @@
 -{
@@ -10458,8 +10458,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/package-lock.json b/packag
 -  }
 -}
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/package.json b/package.json
---- a/package.json	2026-09-04 12:09:05.000000000 -0400
-+++ b/package.json	2026-09-08 22:40:12.644990066 -0400
+--- a/package.json	2026-09-09 02:57:54.441490666 -0400
++++ b/package.json	2026-09-09 02:53:04.030505006 -0400
 @@ -1,10 +1,10 @@
  {
 -  "name": "@vectorize-io/hindsight-coding-agents",
@@ -10487,7 +10487,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/package.json b/package.jso
    ],
    "dsh": {
      "bundle": {
-@@ -70,27 +73,23 @@
+@@ -70,32 +73,28 @@
    },
    "scripts": {
      "build": "tsup",
@@ -10523,9 +10523,15 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/package.json b/package.jso
    },
    "overrides": {
      "esbuild": ">=0.25.0 <1.0.0",
+     "fast-uri": ">=3.1.6 <4.0.0",
+-    "hono": ">=4.12.34 <5.0.0",
++    "hono": ">=4.13.7 <5.0.0",
+     "ip-address": ">=10.3.1 <11.0.0",
+     "postcss": ">=8.5.23 <9.0.0",
+     "vite": ">=6.4.3 <7.0.0"
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/scripts/build-skill.mjs b/scripts/build-skill.mjs
---- a/scripts/build-skill.mjs	2026-09-04 12:09:05.000000000 -0400
-+++ b/scripts/build-skill.mjs	2026-09-08 22:12:32.224412531 -0400
+--- a/scripts/build-skill.mjs	2026-09-09 02:57:54.441490666 -0400
++++ b/scripts/build-skill.mjs	2026-09-09 02:52:58.238068185 -0400
 @@ -73,7 +73,7 @@
      return `## ${title}\n\n${body}`;
    }
@@ -10545,8 +10551,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/scripts/build-skill.mjs b/
  
  // Guarded so the test can import regions()/build() without the CLI running on import.
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/antigravity-statusline.test.ts b/src/antigravity-statusline.test.ts
---- a/src/antigravity-statusline.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/antigravity-statusline.test.ts	2026-09-08 22:12:32.225465756 -0400
+--- a/src/antigravity-statusline.test.ts	2026-09-09 02:57:54.442584661 -0400
++++ b/src/antigravity-statusline.test.ts	2026-09-09 02:52:58.239708458 -0400
 @@ -1,8 +1,9 @@
 +import { stripVTControlCharacters } from "node:util";
  import { describe, expect, it } from "vitest";
@@ -10559,14 +10565,71 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/antigravity-statusline
  describe("Antigravity status line", () => {
    it("identifies the resolved Hindsight bank for the active workspace", () => {
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/bank.ts b/src/core/bank.ts
---- a/src/core/bank.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/bank.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/bank.ts	2026-09-09 02:57:54.443641771 -0400
++++ b/src/core/bank.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -1,3 +1,4 @@
 +import { managedBank } from "@memory-router/coding-agents/runtime";
  /**
   * Dynamic bank resolution — which memory bank does THIS directory belong to?
   *
-@@ -253,19 +254,10 @@
+@@ -33,7 +34,6 @@
+ import { diag } from "./diag";
+ import { probeGitLayout } from "./git-layout";
+ import { log } from "./log";
+-import { applyTemplate } from "./template";
+ 
+ export interface BankConfig {
+   bankId?: string;
+@@ -45,12 +45,6 @@
+   optInPaths?: string[]; // directories opted in, matched as prefixes
+ }
+ 
+-const DEFAULT_BANK_NAME = "coding";
+-// Harness-NEUTRAL default so every coding agent (Claude, Codex, Cursor, opencode) shares ONE bank
+-// per repo — switch agents, keep your memory. Namespaced with `coding-agent::` to identify these
+-// banks and avoid collisions with other Hindsight banks. Deliberately NOT `{harness}::…` (that would
+-// split memory per agent, defeating cross-agent sharing).
+-const DEFAULT_TEMPLATE = "coding-agent::{gitProject}";
+ 
+ /**
+  * The repository a directory belongs to — or WHY there is no answer.
+@@ -206,35 +200,7 @@
+   return directory === configured || directory.startsWith(configured + sep);
+ }
+ 
+-/** Longest-prefix match of `directory` against the map's absolute paths (exact or ancestor). */
+-function mapLookup(map: Record<string, string>, directory: string): string | undefined {
+-  const cwd = normalize(directory);
+-  let best: { len: number; bank: string } | undefined;
+-  for (const [dir, bank] of Object.entries(map)) {
+-    const p = configuredDir(dir);
+-    if (isWithin(cwd, p)) {
+-      if (!best || p.length > best.len) best = { len: p.length, bank };
+-    }
+-  }
+-  return best?.bank;
+-}
+ 
+-/** Current directory first, then its main Git root. Keeping the literal path first preserves an
+- * explicit worktree-specific mapping while letting an approved checkout carry that approval to
+- * linked worktrees outside the configured directory tree. Same cascade the bank name resolves
+- * through, session root included, so approval and identity cannot disagree about which repo a
+- * directory belongs to. */
+-function lookupDirectories(config: BankConfig, directory: string, sessionRoot = ""): string[] {
+-  const directories = [normalize(directory)];
+-  if (config.resolveWorktrees ?? true) {
+-    // Deliberately failure-tolerant, unlike bank naming: approval and mapping fall back to the
+-    // literal directory, which can only ever be narrower than the repo-wide answer.
+-    const projectRoot = mainWorktreeRoot(directory, sessionRoot);
+-    const normalizedRoot = projectRoot.status === "resolved" ? normalize(projectRoot.root) : "";
+-    if (normalizedRoot && normalizedRoot !== directories[0]) directories.push(normalizedRoot);
+-  }
+-  return directories;
+-}
+ 
+ /**
+  * Whether memory may run for this directory at all.
+@@ -253,19 +219,10 @@
   * inert even then — a privacy switch has to fail closed.
   */
  export function isOptedIn(config: BankConfig, directory: string): boolean {
@@ -10589,7 +10652,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/bank.ts b/src/cor
  }
  
  /** Derive the bank id for a working directory (see module doc for the resolution order). */
-@@ -279,27 +271,7 @@
+@@ -279,27 +236,7 @@
     *  entry this directory inherits (lookupDirectories). */
    sessionRoot?: string
  ): string {
@@ -10619,8 +10682,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/bank.ts b/src/cor
  
  /**
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/config.ts b/src/core/config.ts
---- a/src/core/config.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/config.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/config.ts	2026-09-09 02:57:54.443641771 -0400
++++ b/src/core/config.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -1,3 +1,4 @@
 +import { managedSettings } from "@memory-router/coding-agents/runtime";
  /**
@@ -10665,8 +10728,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/config.ts b/src/c
  
  /** Resolve just the fields present in `patch`, defaulting against the CURRENT cfg (not the global
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/git.ts b/src/core/git.ts
---- a/src/core/git.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/git.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/git.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/git.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -207,10 +207,10 @@
  export async function ingestGitLog(
    client: HindsightClient,
@@ -10691,8 +10754,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/git.ts b/src/core
        ...new Set([
          ...(stamp?.tags ?? []),
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/hindsight.pages.test.ts b/src/core/hindsight.pages.test.ts
---- a/src/core/hindsight.pages.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/hindsight.pages.test.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/hindsight.pages.test.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/hindsight.pages.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -178,7 +178,7 @@
        (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
      );
@@ -10703,8 +10766,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/hindsight.pages.t
        expect(post.body.tags).toHaveLength(1);
        expect(post.body.tags[0]).toMatch(
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/hindsight.ts b/src/core/hindsight.ts
---- a/src/core/hindsight.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/hindsight.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/hindsight.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/hindsight.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -1,3 +1,7 @@
 +import { visibleBanks } from "@memory-router/shared/bank-access";
 +import { harnessTransport } from "@memory-router/coding-agents/runtime";
@@ -10891,8 +10954,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/hindsight.ts b/sr
      );
    }
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/history.ts b/src/core/history.ts
---- a/src/core/history.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/history.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/history.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/history.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -60,7 +60,7 @@
   *  Verified against Claude Code 2.1.241: `hs_under_test` -> `hs-under-test`, and
   *  `hs+odd@repo v2` -> `hs-odd-repo-v2`. */
@@ -10912,8 +10975,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/history.ts b/src/
  
  /** Is `dir` the repo itself or somewhere inside it? */
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/hook.ts b/src/core/hook.ts
---- a/src/core/hook.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/hook.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/hook.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/hook.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -1,3 +1,4 @@
 +import { AccessDeniedError } from "@memory-router/shared/bank-access";
  /**
@@ -10958,8 +11021,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/hook.ts b/src/cor
      bank: bankId,
      maxParallelRetains: cfg.maxParallelRetains,
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/host-client.ts b/src/core/host-client.ts
---- a/src/core/host-client.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/host-client.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/host-client.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/host-client.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -58,6 +58,7 @@
      cfg,
      bankId,
@@ -10969,8 +11032,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/host-client.ts b/
        apiToken: cfg.apiToken,
        bank: bankId,
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/jsonl.test.ts b/src/core/jsonl.test.ts
---- a/src/core/jsonl.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/jsonl.test.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/jsonl.test.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/jsonl.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -91,10 +91,8 @@
    it("closes the file even when the consumer stops early", () => {
      writeFileSync(file, ["a", "b", "c"].join("\n") + "\n");
@@ -10985,8 +11048,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/jsonl.test.ts b/s
    });
  
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/knowledge-tools.test.ts b/src/core/knowledge-tools.test.ts
---- a/src/core/knowledge-tools.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/knowledge-tools.test.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/knowledge-tools.test.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/knowledge-tools.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -40,7 +40,7 @@
    it("returns exactly the eight expected tools (as a set)", () => {
      const client = stubClient();
@@ -10997,8 +11060,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/knowledge-tools.t
  
    it("hindsight_sync_status is the FIRST tool in the list", () => {
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/knowledge-tools.ts b/src/core/knowledge-tools.ts
---- a/src/core/knowledge-tools.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/knowledge-tools.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/knowledge-tools.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/knowledge-tools.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -110,7 +110,19 @@
      reflectBudget?: "low" | "mid" | "high";
    } = {}
@@ -11075,8 +11138,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/knowledge-tools.t
 +  }));
  }
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/legacy.test.ts b/src/core/legacy.test.ts
---- a/src/core/legacy.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/legacy.test.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/legacy.test.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/legacy.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -76,7 +76,7 @@
      const e = readLegacyEndpoint(
        homeWith({ hindsightApiUrl: "http://box:8888", recallBudget: "high", retainMode: "chunked" })
@@ -11087,8 +11150,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/legacy.test.ts b/
  
    it("reads the Codex plugin's config too", () => {
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/missions.test.ts b/src/core/missions.test.ts
---- a/src/core/missions.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/missions.test.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/missions.test.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/missions.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -70,7 +70,7 @@
      const trigger = buildPageTrigger(
        resolveConfig({ pageTriggerType, pageTriggerCron: "0 3 * * *" })
@@ -11108,8 +11171,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/missions.test.ts 
        "document",
        "git",
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/retain-hook.ts b/src/core/retain-hook.ts
---- a/src/core/retain-hook.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/retain-hook.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/retain-hook.ts	2026-09-09 02:57:54.445490761 -0400
++++ b/src/core/retain-hook.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -189,7 +189,8 @@
    // produces the same `retain_failed` diagnostic as an unreachable Cloud/self-hosted server.
    await ensureDaemon(cfg, spec.harness, { waitMs: DAEMON_WAIT_RETAIN_MS });
@@ -11121,8 +11184,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/retain-hook.ts b/
      bank: bankId,
      maxParallelRetains: cfg.maxParallelRetains,
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/runtime.ts b/src/core/runtime.ts
---- a/src/core/runtime.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/runtime.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/runtime.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/runtime.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -1,3 +1,4 @@
 +import { stripVTControlCharacters } from "node:util";
  /**
@@ -11165,9 +11228,17 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/runtime.ts b/src/
      return keyed ?? this.lastInjection ?? undefined;
    }
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/seed.ts b/src/core/seed.ts
---- a/src/core/seed.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/seed.ts	2026-09-08 22:12:32.225803728 -0400
-@@ -67,11 +67,12 @@
+--- a/src/core/seed.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/seed.ts	2026-09-09 02:52:58.240029995 -0400
+@@ -8,7 +8,6 @@
+  * not break the hook.
+  */
+ import { spawn as realSpawn } from "node:child_process";
+-import { readFileSync, writeFileSync } from "node:fs";
+ import { dirname, join } from "node:path";
+ import { fileURLToPath } from "node:url";
+ 
+@@ -67,11 +66,12 @@
      repo: string;
      bankId: string;
      limit?: number;
@@ -11182,9 +11253,9 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/seed.ts b/src/cor
        ok: true,
        message: `🧠 Hindsight is learning this repo → memory bank “${args.bankId}”`,
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/session-cache.ts b/src/core/session-cache.ts
---- a/src/core/session-cache.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/session-cache.ts	2026-09-08 22:12:32.225803728 -0400
-@@ -21,7 +21,8 @@
+--- a/src/core/session-cache.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/session-cache.ts	2026-09-09 02:52:58.240029995 -0400
+@@ -21,20 +21,13 @@
  
  export function readSessionCache(cacheFile: string): SessionCache {
    try {
@@ -11194,7 +11265,20 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/session-cache.ts 
    } catch {
      return {};
    }
-@@ -54,7 +55,7 @@
+ }
+ 
+-/**
+- * Replace a state file atomically: write a sibling temp file, then rename over the target.
+- *
+- * A plain writeFileSync is not atomic — a reader can observe a half-written file, and a process
+- * killed mid-write leaves one behind. rename() is atomic on POSIX and replaces the destination on
+- * Windows, so a reader sees either the old contents or the new, never a fragment (#3136, which
+- * measured this class on the per-agent plugin; its Python state writes already had os.replace()).
+- */
+ function writeFileAtomic(path: string, body: string): void {
+   mkdirSync(dirname(path), { recursive: true });
+   // The temp name is per-process, so two writers cannot collide on it.
+@@ -54,7 +47,7 @@
  
  export function writeSessionCache(cacheFile: string, cache: SessionCache): void {
    try {
@@ -11204,8 +11288,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/session-cache.ts 
      /* session state is best-effort */
    }
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/session-start.ts b/src/core/session-start.ts
---- a/src/core/session-start.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/session-start.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/session-start.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/session-start.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -374,6 +374,7 @@
      // cold one keeps coming up in the background and is picked up by a later turn.
      await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
@@ -11215,8 +11299,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/session-start.ts 
        apiToken: cfg.apiToken,
        bank: bankId,
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/survey.test.ts b/src/core/survey.test.ts
---- a/src/core/survey.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/survey.test.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/survey.test.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/survey.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -163,7 +163,7 @@
      const allowed = Object.entries(SURVEY_AGENT_CONFIG.permission)
        .filter(([, v]) => v === "allow")
@@ -11227,8 +11311,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/survey.test.ts b/
      // No write, no bash, and no `task` — which would reach a subagent that CAN write.
      for (const escape of ["write", "edit", "bash", "task", "patch"])
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/template.ts b/src/core/template.ts
---- a/src/core/template.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/template.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/template.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/template.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -16,13 +16,13 @@
  /** Substitute every `{name}` in `template` using `resolvers`. `what` names the setting in the
   *  error message, so a typo points at the config key that carries it. */
@@ -11246,8 +11330,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/template.ts b/src
              .join(", ")
        );
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/transcript-dcode.test.ts b/src/core/transcript-dcode.test.ts
---- a/src/core/transcript-dcode.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/transcript-dcode.test.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/transcript-dcode.test.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/transcript-dcode.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -92,6 +92,11 @@
      );
    });
@@ -11261,8 +11345,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/transcript-dcode.
      expect(
        dcodeAssistantText(
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/transcript-dcode.ts b/src/core/transcript-dcode.ts
---- a/src/core/transcript-dcode.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/transcript-dcode.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/transcript-dcode.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/transcript-dcode.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -70,13 +70,13 @@
          else if (esc === "x") {
            const hex = s.slice(j + 2, j + 4);
@@ -11279,9 +11363,21 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/transcript-dcode.
            j += 6;
            continue;
          } else out += esc;
+@@ -158,11 +158,6 @@
+   return contentText(parsed.value);
+ }
+ 
+-/**
+- * Read Dcode's materialized transcript into the normalized chat shape used by retention.
+- * Tool results are mechanical noise; tool records become compact action turns when a name exists.
+- * Invalid records are skipped so a partially-written Stop transcript remains fail-open.
+- */
+ export function readDcodeTranscript(path: string): TransportTurn[] {
+   const turns: TransportTurn[] = [];
+   for (const rawLine of readJsonlTail(path, { scope: "dcode" }).lines) {
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/transcript-dsh.test.ts b/src/core/transcript-dsh.test.ts
---- a/src/core/transcript-dsh.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/transcript-dsh.test.ts	2026-09-08 22:12:32.225803728 -0400
+--- a/src/core/transcript-dsh.test.ts	2026-09-09 02:57:54.449490856 -0400
++++ b/src/core/transcript-dsh.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -3,11 +3,11 @@
  
  const at = (iso: string) => Date.parse(iso);
@@ -11297,9 +11393,15 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/transcript-dsh.te
  
  describe("readDshEvents", () => {
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/transcript-util.ts b/src/core/transcript-util.ts
---- a/src/core/transcript-util.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/transcript-util.ts	2026-09-08 22:12:32.228107386 -0400
-@@ -21,7 +21,7 @@
+--- a/src/core/transcript-util.ts	2026-09-09 02:57:54.453490952 -0400
++++ b/src/core/transcript-util.ts	2026-09-09 02:52:58.240029995 -0400
+@@ -1,5 +1,3 @@
+-/** Shared transcript-rendering helpers used by both the Claude (transcript.ts) and Codex
+- *  (transcript-codex.ts) session readers. */
+ 
+ /** Cap on any single rendered tool input or tool result (mirrors v1's 2000-char cap): small
+  *  edits/commands are captured verbatim while a giant Write/output is bounded. */
+@@ -21,7 +19,7 @@
    /<(hook_prompt|task-notification|system-reminder|hindsight_memory|hindsight_memories|hindsight_bank|relevant_memories|user_feedback|hindsight_knowledge|hindsight_knowledge_refresh)\b[\s\S]*?<\/\1>/g;
  
  export function stripInjectedMemory(s: string): string {
@@ -11309,8 +11411,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/transcript-util.t
  
  export function truncate(s: string, max = TOOL_TEXT_CAP): string {
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/uuid.ts b/src/core/uuid.ts
---- a/src/core/uuid.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/core/uuid.ts	2026-09-08 22:12:32.228107386 -0400
+--- a/src/core/uuid.ts	2026-09-09 02:57:54.453490952 -0400
++++ b/src/core/uuid.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -13,7 +13,7 @@
  
  /** RFC 4122 v5 (SHA-1) UUID for `name` within `namespace`. */
@@ -11321,8 +11423,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/uuid.ts b/src/cor
    const bytes = Buffer.from(
      createHash("sha1").update(ns).update(Buffer.from(name, "utf8")).digest().subarray(0, 16)
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/dcode-plugin.test.ts b/src/dcode-plugin.test.ts
---- a/src/dcode-plugin.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/dcode-plugin.test.ts	2026-09-08 22:12:32.228107386 -0400
+--- a/src/dcode-plugin.test.ts	2026-09-09 02:57:54.453490952 -0400
++++ b/src/dcode-plugin.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -22,7 +22,7 @@
  
    it("registers exactly the lifecycle hooks Dcode owns", () => {
@@ -11342,8 +11444,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/dcode-plugin.test.ts b
        const entry = hooks.hooks[hook.event][0].hooks[0];
        expect(entry.command).toBe(`node "\${PLUGIN_ROOT}/dist/${hook.entry}"`);
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/deepen.ts b/src/deepen.ts
---- a/src/deepen.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/deepen.ts	2026-09-08 22:12:32.228107386 -0400
+--- a/src/deepen.ts	2026-09-09 02:57:54.453490952 -0400
++++ b/src/deepen.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -133,7 +133,8 @@
    try {
      const harness = await getHarness(HARNESS);
@@ -11355,8 +11457,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/deepen.ts b/src/deepen
        bank: FINAL_BANK!,
        // Names the repository in every seeded page's query, so page synthesis can tell this
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/docs-freshness.test.ts b/src/docs-freshness.test.ts
---- a/src/docs-freshness.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/docs-freshness.test.ts	2026-09-08 22:12:32.228107386 -0400
+--- a/src/docs-freshness.test.ts	2026-09-09 02:57:54.453490952 -0400
++++ b/src/docs-freshness.test.ts	2026-09-09 02:52:58.240029995 -0400
 @@ -61,7 +61,7 @@
      const pairs = [...block[1].matchAll(/^\s*(\w+): "(HINDSIGHT_\w+)"/gm)];
      expect(pairs.length).toBeGreaterThan(30);
@@ -11367,8 +11469,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/docs-freshness.test.ts
    });
  
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/e2e/harness.ts b/src/e2e/harness.ts
---- a/src/e2e/harness.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/e2e/harness.ts	2026-09-08 22:12:32.230735608 -0400
+--- a/src/e2e/harness.ts	2026-09-09 02:57:54.456335996 -0400
++++ b/src/e2e/harness.ts	2026-09-09 02:52:58.245514940 -0400
 @@ -198,7 +198,7 @@
    const workDir = join(root, "workspace");
    const resultDir = join(root, "results");
@@ -11379,8 +11481,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/e2e/harness.ts b/src/e
  
    try {
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/harness/hook-lifecycle.test.ts b/src/harness/hook-lifecycle.test.ts
---- a/src/harness/hook-lifecycle.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/harness/hook-lifecycle.test.ts	2026-09-08 22:12:32.230735608 -0400
+--- a/src/harness/hook-lifecycle.test.ts	2026-09-09 02:57:54.456335996 -0400
++++ b/src/harness/hook-lifecycle.test.ts	2026-09-09 02:52:58.245514940 -0400
 @@ -9,7 +9,7 @@
  describe("HOOK_HARNESSES lifecycle contract", () => {
    it("declares every lifecycle once for every hook-based harness", () => {
@@ -11390,9 +11492,49 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/harness/hook-lifecycle
          "prompt",
          "sessionStart",
          "stop",
+diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/harness/hook-lifecycle.ts b/src/harness/hook-lifecycle.ts
+--- a/src/harness/hook-lifecycle.ts	2026-09-09 02:57:54.457056487 -0400
++++ b/src/harness/hook-lifecycle.ts	2026-09-09 02:52:58.245864469 -0400
+@@ -292,9 +292,7 @@
+         sessionId:
+           (ev.conversation_id as string | undefined) ?? (ev.session_id as string | undefined),
+       }),
+-      emit: (out) => ({
+-        ...(out.additionalContext ? { additional_context: out.additionalContext } : {}),
+-      }),
++      emit: (out) => ((out.additionalContext ? { additional_context: out.additionalContext } : {})),
+     },
+     prompt: cursorPrompt,
+     retain: {
+@@ -327,9 +325,7 @@
+       // quiet rather than auto-submitting a synthetic prompt or showing an OS notification. When
+       // Copilot exposes a real TUI extension point, add the banner there without changing this
+       // shared lifecycle output.
+-      emit: (out) => ({
+-        ...(out.additionalContext ? { additionalContext: out.additionalContext } : {}),
+-      }),
++      emit: (out) => ((out.additionalContext ? { additionalContext: out.additionalContext } : {})),
+     },
+     prompt: copilotPrompt,
+     retain: {
+diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/harness/opencode.ts b/src/harness/opencode.ts
+--- a/src/harness/opencode.ts	2026-09-09 02:57:54.457056487 -0400
++++ b/src/harness/opencode.ts	2026-09-09 02:52:58.245864469 -0400
+@@ -59,11 +59,6 @@
+     .join("\n")
+     .trim();
+ 
+-// ── backfill: read opencode's past sessions ─────────────────────────────────────
+-// Same normalized JSON export every harness uses — kept here only so a real opencodeAdapter (used
+-// by index.ts) is a complete HarnessAdapter; the registry never routes through this file to get it
+-// (see harness/registry.ts's getHarness("opencode")), so this line pulling in "./registry" never
+-// drags @opencode-ai/plugin along for backfill's sake.
+ const chatReader = jsonChatReader("opencode");
+ 
+ /**
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/hindsight-seed.ts b/src/hindsight-seed.ts
---- a/src/hindsight-seed.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/hindsight-seed.ts	2026-09-08 22:12:32.231037985 -0400
+--- a/src/hindsight-seed.ts	2026-09-09 02:57:54.457491047 -0400
++++ b/src/hindsight-seed.ts	2026-09-09 02:52:58.245864469 -0400
 @@ -30,6 +30,6 @@
    );
    process.exit(1);
@@ -11402,8 +11544,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/hindsight-seed.ts b/sr
  console.log(result.message);
  process.exit(result.ok ? 0 : 1);
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/install-ui.ts b/src/install-ui.ts
---- a/src/install-ui.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/install-ui.ts	2026-09-08 22:12:32.231037985 -0400
+--- a/src/install-ui.ts	2026-09-09 02:57:54.457491047 -0400
++++ b/src/install-ui.ts	2026-09-09 02:52:58.245864469 -0400
 @@ -164,7 +164,7 @@
    // Messages embed absolute config paths; shorten $HOME so the action stays the eye-catcher.
    const tidy = (s: string): string => s.replaceAll(o.home, "~");
@@ -11423,8 +11565,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/install-ui.ts b/src/in
        const lines = text.split("\n");
        // A message that begins indented is detail for the previous one (e.g. the re-run command a
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/installer.test.ts b/src/installer.test.ts
---- a/src/installer.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/installer.test.ts	2026-09-08 22:12:32.231037985 -0400
+--- a/src/installer.test.ts	2026-09-09 02:57:54.457491047 -0400
++++ b/src/installer.test.ts	2026-09-09 02:52:58.245864469 -0400
 @@ -76,7 +76,7 @@
      expect(run(["install", "claude-code"], ctx)).toBe(0);
      const settings = readJson(settingsPath(ctx));
@@ -11452,8 +11594,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/installer.test.ts b/sr
    });
  });
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/installer.ts b/src/installer.ts
---- a/src/installer.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/installer.ts	2026-09-08 22:12:32.231037985 -0400
+--- a/src/installer.ts	2026-09-09 02:57:54.457491047 -0400
++++ b/src/installer.ts	2026-09-09 02:52:58.245864469 -0400
 @@ -52,7 +52,7 @@
   * `uninstall` removes exactly what we added.
   *
@@ -11502,7 +11644,58 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/installer.ts b/src/ins
        if (cleaned !== toml) writeFileSync(tomlPath, cleaned);
      }
      c.log?.(
-@@ -957,86 +957,7 @@
+@@ -851,7 +851,6 @@
+ 
+ export type ServerMode = "cloud" | "self-hosted" | "daemon";
+ 
+-const SERVER_MODES: ServerMode[] = ["cloud", "self-hosted", "daemon"];
+ 
+ /** Value of `--name value` or `--name=value`. */
+ export function flagValue(args: string[], name: string): string | undefined {
+@@ -871,7 +870,6 @@
+   return taken;
+ }
+ 
+-const CONFIG_RELATIVE = [".hindsight", "coding-agent.json"];
+ 
+ /**
+  * Ask which of the three connection modes to use, once.
+@@ -891,34 +889,6 @@
+   },
+ ];
+ 
+-function promptServerMode(c: InstallCtx): ServerMode | undefined {
+-  // Preferred UX: arrow-key picker (digits still submit directly). It reports undefined when a
+-  // raw TTY isn't available (no stty, exotic shell) — then the plain numbered menu below still
+-  // works everywhere a line can be read.
+-  if (c.selectPrompt) {
+-    const picked = c.selectPrompt(
+-      "Where should memory live?",
+-      SERVER_CHOICES.map(({ label, hint }) => ({ label, hint })),
+-      0
+-    );
+-    if (picked === null) {
+-      c.log?.("no server chosen — leaving the server config unchanged");
+-      return undefined;
+-    }
+-    if (picked !== undefined) return SERVER_CHOICES[picked].mode;
+-  }
+-  c.log?.(
+-    `\nWhere should memory live?\n` +
+-      SERVER_CHOICES.map((o, i) => `  ${i + 1}) ${o.label.padEnd(28)}— ${o.hint}`).join("\n") +
+-      `\n`
+-  );
+-  const answer = readLineSync(c, "Choose [1-3] (default 1): ").trim();
+-  if (answer === "") return "cloud";
+-  const digit = Number.parseInt(answer, 10);
+-  if (digit >= 1 && digit <= SERVER_CHOICES.length) return SERVER_CHOICES[digit - 1].mode;
+-  c.log?.(`unrecognised choice "${answer}" — leaving the server config unchanged`);
+-  return undefined;
+-}
+ 
+ /**
+  * Read one line from stdin synchronously.
+@@ -957,129 +927,11 @@
   * installed right after — unlike the harness preflights, which gate wiring that could never work.
   */
  function configureServer(c: InstallCtx, args: string[], installing: readonly string[]): boolean {
@@ -11590,7 +11783,67 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/installer.ts b/src/ins
    return true;
  }
  
-@@ -1259,7 +1180,7 @@
+-/** Cloud tokens are mandatory: re-ask a couple of times rather than writing a config that 401s
+- *  on the first session. Three blank answers mean the user doesn't have one at hand — give up
+- *  and let the cloud branch abort with the actionable message. */
+-function askToken(c: InstallCtx): string | undefined {
+-  for (let attempt = 0; attempt < 3; attempt++) {
+-    const token = readLineSync(c, "API token (required for Hindsight Cloud): ").trim();
+-    if (token) return token;
+-    c.log?.("  a token is required — find yours in the Hindsight Cloud dashboard");
+-  }
+-  return undefined;
+-}
+ 
+-/**
+- * Daemon mode has two prerequisites the plugin can't supply. Report both up front rather than
+- * letting the first session fail quietly with nothing but a diagnostic line.
+- */
+-function reportDaemonPrereqs(c: InstallCtx): void {
+-  if (!(c.hasUvx ?? hasUvx)()) {
+-    c.log?.(
+-      `⚠️  \`uv\` is not on PATH. The daemon is fetched and run with it, so memory stays inert\n` +
+-        `    until you install it: https://docs.astral.sh/uv/`
+-    );
+-  }
+-  if (!(c.hasRust ?? hasRustToolchain)()) {
+-    c.log?.(
+-      `⚠️  macOS needs a current Rust toolchain to build the daemon's dependencies (litellm\n` +
+-        `    publishes no macOS wheel). Install from https://rustup.rs, then\n` +
+-        `    \`rustup default stable && rustup update\` — an OUT-OF-DATE toolchain fails too.`
+-    );
+-  }
+-  const llm = (c.detectLlm ?? detectLlm)();
+-  if (llm) {
+-    c.log?.(`   local extraction will use ${llm.provider} (from ${llm.source})`);
+-  } else {
+-    c.log?.(
+-      `⚠️  No LLM available for local fact extraction. Set OPENAI_API_KEY, ANTHROPIC_API_KEY or\n` +
+-        `    GEMINI_API_KEY (or install the Claude Code CLI, which needs no key).`
+-    );
+-  }
+-}
+ 
+ const devin: HarnessInstaller = {
+   name: "devin-cli",
+@@ -1233,11 +1085,11 @@
+     const tomlString = (value: string) => JSON.stringify(value);
+     const block =
+       `\n${GROK_MARKER_START}\n` +
+-      `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = \"command\"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
+-      `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = \"command\"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
+-      `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
+-      `[mcp_servers.hindsight]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
+-      `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
++      `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = "command"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
++      `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = "command"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
++      `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = "command"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
++      `[mcp_servers.hindsight]\ncommand = "node"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
++      `env = { HINDSIGHT_MCP_HARNESS = "grok-build" }\n${GROK_MARKER_END}\n`;
+     if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
+       copyFileSync(path, `${path}.hindsight-backup`);
+     mkdirSync(dirname(path), { recursive: true });
+@@ -1259,7 +1111,7 @@
  
  const CLINE_HOOK_MARKER = "HINDSIGHT_CODING_AGENTS_CLINE";
  const CLINE_OLD_HOOK_EVENTS = ["TaskStart", "UserPromptSubmit", "TaskComplete"];
@@ -11599,7 +11852,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/installer.ts b/src/ins
  
  /** Remove only wrappers from the short-lived file-hook implementation. Cline file hooks cannot
   * mutate a prompt; keeping them would falsely imply that old installs still inject memory. */
-@@ -1448,7 +1369,7 @@
+@@ -1448,7 +1300,7 @@
   * DeepSeek Harness — a native Cordis plugin, wired through the HOME-level patch layer
   * (`$DSH_HOME/cordis.patch.yml`), which every profile composes after its bundles.
   *
@@ -11609,8 +11862,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/installer.ts b/src/ins
   * ships. That is the right route for a published install and is what the docs recommend, but it
   * needs pnpm, a network, and a repeat per profile — so the installer takes the path that always
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/mcp-server.test.ts b/src/mcp-server.test.ts
---- a/src/mcp-server.test.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/mcp-server.test.ts	2026-09-08 22:12:32.231037985 -0400
+--- a/src/mcp-server.test.ts	2026-09-09 02:57:54.457491047 -0400
++++ b/src/mcp-server.test.ts	2026-09-09 02:52:58.245864469 -0400
 @@ -21,7 +21,7 @@
    it("returns the eight hindsight_* tool specs when enabled", () => {
      const cfg = resolveConfig({});
@@ -11630,8 +11883,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/mcp-server.test.ts b/s
    });
  
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/mcp-server.ts b/src/mcp-server.ts
---- a/src/mcp-server.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/mcp-server.ts	2026-09-08 22:12:32.231037985 -0400
+--- a/src/mcp-server.ts	2026-09-09 02:57:54.457491047 -0400
++++ b/src/mcp-server.ts	2026-09-09 02:52:58.245864469 -0400
 @@ -62,7 +62,7 @@
        "HINDSIGHT_MCP_HARNESS is not set. Every coding agent launches this same mcp-server.js, so " +
          "only that variable identifies the caller — it decides the harness:<id> stamp on everything " +
@@ -11642,8 +11895,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/mcp-server.ts b/src/mc
      );
    }
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/status.ts b/src/status.ts
---- a/src/status.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/src/status.ts	2026-09-08 22:12:32.231037985 -0400
+--- a/src/status.ts	2026-09-09 02:57:54.457491047 -0400
++++ b/src/status.ts	2026-09-09 02:52:58.245864469 -0400
 @@ -32,7 +32,8 @@
  const cfg = resolved0.cfg;
  const FINAL_BANK = resolved0.bankId ?? BANK;
@@ -11655,8 +11908,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/status.ts b/src/status
    bank: FINAL_BANK!,
    maxParallelRetains: cfg.maxParallelRetains,
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/tsconfig.json b/tsconfig.json
---- a/tsconfig.json	2026-09-04 12:09:05.000000000 -0400
-+++ b/tsconfig.json	2026-09-08 22:12:32.231037985 -0400
+--- a/tsconfig.json	2026-09-09 02:57:54.457491047 -0400
++++ b/tsconfig.json	2026-09-09 02:52:58.245864469 -0400
 @@ -3,13 +3,25 @@
      "target": "ES2022",
      "module": "ESNext",
@@ -11687,8 +11940,8 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/tsconfig.json b/tsconfig.j
 +  ]
  }
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/vitest.config.ts b/vitest.config.ts
---- a/vitest.config.ts	2026-09-04 12:09:05.000000000 -0400
-+++ b/vitest.config.ts	2026-09-08 22:12:32.231037985 -0400
+--- a/vitest.config.ts	2026-09-09 02:57:54.457491047 -0400
++++ b/vitest.config.ts	2026-09-09 02:52:58.245864469 -0400
 @@ -1,20 +1,5 @@
  import { defineConfig } from "vitest/config";
 -import { tmpdir } from "node:os";

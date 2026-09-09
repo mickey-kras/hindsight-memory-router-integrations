@@ -41,8 +41,7 @@
     "prepublishOnly": "npm run clean && npm run build && npm test",
     "build:coding-agents": "npm run build --prefix src/upstream/coding-agents",
     "test:coding-agents": "vitest run tests/coding-agents-upstream.test.ts",
-    "audit:coding-agents": "npm audit --prefix src/upstream/coding-agents --audit-level=moderate",
-    "audit:root": "audit-ci --config audit-ci.jsonc"
+    "audit:coding-agents": "npm audit --prefix src/upstream/coding-agents --audit-level=moderate"
   },
   "dependencies": {
     "@vectorize-io/hindsight-agent-sdk": "0.1.1",
@@ -53,7 +52,6 @@
     "@types/node": "^22.20.1",
     "@vitest/coverage-v8": "4.1.11",
     "aislop": "^0.16.1",
-    "audit-ci": "^7.1.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.2"
   },

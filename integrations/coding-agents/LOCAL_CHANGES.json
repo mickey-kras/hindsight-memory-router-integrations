@@ -5,7 +5,7 @@
   "cordis.patch.yml": "9a32a0a6819c281fcb0f17c9c2e77ba6be8f78f7f369882edbe9170afd48cd25",
   "npm-shrinkwrap.json": "b0cee2683917a8dfdca73450bb4bf5003419ecd107bfbc5851d2608c65f11f7c",
   "package-lock.json": null,
-  "package.json": "3f8ed21372071275547737ea284c3598f58f19cf5ee3f4d3ee2e8c46612c7218",
+  "package.json": "b26d70a86af8cf4b81451c272b955d7fc279484899bec7ba5a4487202e4902f9",
   "scripts/build-skill.mjs": "0d6ecfcd964baaadb1624da2174e54d67ee40bb9a56832b5053d97a0daab814d",
   "src/antigravity-statusline.test.ts": "aff18df7bf52fe059757faaec2169b908e9f73e13f494d94a5987a892660ba04",
   "src/core/bank.ts": "947a316b74c45aec8ab38819543699d30d1b9e99de9940c96e1fb0373af0a9a1",
