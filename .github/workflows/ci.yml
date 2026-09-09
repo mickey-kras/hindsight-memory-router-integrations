@@ -45,9 +45,12 @@ jobs:
       - run: npm run build:coding-agents
       - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
       - run: npm test --prefix src/upstream/coding-agents
-      - run: npm run audit:coding-agents
       - run: node scripts/verify-coding-upstream.mjs
-      - run: npm audit --json | node scripts/check-npm-audit.mjs
+      - name: Node tooling audit
+        run: |
+          node --test .github/scripts/npm-audit.test.cjs
+          node .github/scripts/npm-audit.cjs
+          node .github/scripts/npm-audit.cjs src/upstream/coding-agents
 
       - name: Verify package
         run: |

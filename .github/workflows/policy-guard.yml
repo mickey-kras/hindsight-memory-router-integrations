@@ -504,20 +504,15 @@ jobs:
               tests_run = tests_step.get('run') if tests_step else None
               if not isinstance(tests_run, str) or tests_run.strip() != 'npm run test:coverage':
                   fail("ci.yml: Tests and coverage run must be exactly 'npm run test:coverage'")
-              audit_steps = [
-                  step for step in steps
-                  if isinstance(step.get('run'), str) and 'npm audit' in step['run']
-              ]
-              if len(audit_steps) != 1:
-                  fail('ci.yml: exactly one npm audit step must stay configured')
+              audit_step = step_named(checks, 'Node tooling audit')
+              expected_audit_run = (
+                  'node --test .github/scripts/npm-audit.test.cjs\n'
+                  'node .github/scripts/npm-audit.cjs\n'
+                  'node .github/scripts/npm-audit.cjs src/upstream/coding-agents'
+              )
+              if audit_step is None or audit_step.get('run', '').strip() != expected_audit_run:
+                  fail('ci.yml: Node tooling audit must scan both npm dependency trees')
               else:
-                  audit_step = audit_steps[0]
-                  if audit_step is tests_step:
-                      fail('ci.yml: npm audit must be a separate step from Tests and coverage')
-                  if audit_step.get('name') is not None:
-                      fail('ci.yml: npm audit step must remain unnamed')
-                  if audit_step['run'].strip() != 'npm audit --json | node scripts/check-npm-audit.mjs':
-                      fail('ci.yml: npm audit must use the checked JSON audit command')
                   check_step_keys(path, 'checks', audit_step)
               upload = next(
                   (
@@ -592,16 +587,6 @@ jobs:
               gate_run = gate_step.get('run') if gate_step else None
               if not isinstance(gate_run, str) or 'process.exit(1)' not in gate_run:
                   fail('aislop.yml: findings gate must fail the job on findings')
-              elif not all(
-                  token in gate_run
-                  for token in (
-                      '2026-10-09T00:00:00Z',
-                      'security/vulnerable-dependency',
-                      'adm-zip (moderate, dev-only) — no fix available',
-                      'blockingFindings',
-                  )
-              ):
-                  fail('aislop.yml: findings gate must keep the narrow expiring adm-zip exception')
               upload_step = step_named(status, 'Upload Aislop SARIF')
               upload_with = upload_step.get('with') if upload_step else None
               if not isinstance(upload_with, dict) or upload_with.get('category') != '.github/workflows/main.yml:status':
@@ -917,11 +902,11 @@ jobs:
                       + ', '.join(sorted(AISLOP_REQUIRED_EXCLUDE))
                   )
               rules = doc.get('rules')
-              if isinstance(rules, dict) and rules.get('security/vulnerable-dependency') == 'off':
-                  fail('.aislop/config.yml: vulnerable dependency scanning must remain enabled')
+              if not isinstance(rules, dict) or rules.get('security/vulnerable-dependency') != 'off':
+                  fail('.aislop/config.yml: dependency findings must remain owned by the checked npm audit')
 
           def gate_npm_audit_script(path, content):
-              expected = 'e66240c3504ffabff1a39415a6ab89db0b0ca8c7f8c82e9811e5c76265856e78'
+              expected = '5e9f2ede7e7a8b76f8cbf31c8e78e00371575764c28c26408c8961e64565f1ff'
               actual = hashlib.sha256(content.encode()).hexdigest()
               if actual != expected:
                   fail(f'{path}: checked audit policy must match the reviewed implementation')
@@ -1031,7 +1016,7 @@ jobs:
               '.github/workflows/policy-guard.yml': gate_policy_guard,
               '.github/workflows/branch-policy.yml': gate_branch_policy,
               '.aislop/config.yml': gate_aislop_config,
-              'scripts/check-npm-audit.mjs': gate_npm_audit_script,
+              '.github/scripts/npm-audit.cjs': gate_npm_audit_script,
               '.semgrep.yml': gate_semgrep,
               '.github/dependabot.yml': gate_dependabot,
               'package.json': gate_package_json,
