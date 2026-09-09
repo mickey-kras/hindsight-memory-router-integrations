@@ -1,5 +1,12 @@
 # Hindsight Memory Router integrations
 
+[![PR validation](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/pr-validation.yml/badge.svg?event=pull_request)](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/pr-validation.yml?query=event%3Apull_request)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25%20%28CI--gated%29-brightgreen)](vitest.config.ts)
+[![codeql](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/codeql.yml?query=branch%3Amain)
+[![aislop](https://badges.scanaislop.com/score/mickey-kras/hindsight-memory-router-integrations.svg)](https://scanaislop.com/mickey-kras/hindsight-memory-router-integrations)
+[![main + SonarQube](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/main.yml?query=branch%3Amain)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 OpenClaw and the current upstream `coding-agents` package share `src/shared/`.
 
 **client routing != authorization; Memory Router grants are authoritative**
