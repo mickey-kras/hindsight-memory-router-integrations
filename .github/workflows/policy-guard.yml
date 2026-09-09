@@ -244,13 +244,18 @@ jobs:
                   if (
                       path == '.github/workflows/main.yml'
                       and trusted_main_dispatch(path, doc)
-                      and job_name == 'update-pr-branches'
                   ):
-                      job_allowed_permissions = {
-                          **ALLOWED_PERMISSIONS,
-                          'contents': {'read', 'write'},
-                          'pull-requests': {'read', 'write'},
-                      }
+                      if job_name == 'update-pr-branches':
+                          job_allowed_permissions = {
+                              **ALLOWED_PERMISSIONS,
+                              'contents': {'read', 'write'},
+                              'pull-requests': {'read', 'write'},
+                          }
+                      elif job_name == 'sonar':
+                          job_allowed_permissions = {
+                              **ALLOWED_PERMISSIONS,
+                              'issues': {'write'},
+                          }
                   check_permissions(
                       path,
                       f'job {job_name}',
