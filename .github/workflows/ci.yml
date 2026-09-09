@@ -44,6 +44,8 @@ jobs:
       - run: npm test --prefix src/upstream/coding-agents
       - run: node scripts/verify-coding-upstream.mjs
       - run: node scripts/verify-openclaw-overlay.mjs
+      - name: PR branch updater tests
+        run: node --test .github/scripts/pr-branch-updater.test.cjs
       - name: Node tooling audit
         run: |
           node --test .github/scripts/npm-audit.test.cjs
