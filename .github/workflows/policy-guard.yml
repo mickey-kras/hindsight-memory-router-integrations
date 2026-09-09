@@ -149,7 +149,9 @@ jobs:
                   fail(f'{path}: triggers outside the allowlist: {", ".join(extra)}')
               return events
 
-          def check_permissions(path, where, value, allow_id_token, required=False):
+          def check_permissions(
+              path, where, value, allow_id_token, required=False, allowed_permissions=None
+          ):
               if value is None:
                   if required:
                       fail(f'{path}: top-level permissions block is required')
@@ -165,7 +167,7 @@ jobs:
               for key, level in value.items():
                   key = str(key)
                   level = str(level)
-                  allowed = ALLOWED_PERMISSIONS.get(key)
+                  allowed = (allowed_permissions or ALLOWED_PERMISSIONS).get(key)
                   if allowed is None or level not in allowed:
                       fail(f'{path}: {where} permission {key}: {level} is not in the allowlist')
                       continue
@@ -238,7 +240,24 @@ jobs:
                   fail(f'{path}: jobs must be a mapping')
               uses_values = []
               for job_name, job in iter_jobs(doc):
-                  check_permissions(path, f'job {job_name}', job.get('permissions'), allow_id_token)
+                  job_allowed_permissions = None
+                  if (
+                      path == '.github/workflows/main.yml'
+                      and trusted_main_dispatch(path, doc)
+                      and job_name == 'update-pr-branches'
+                  ):
+                      job_allowed_permissions = {
+                          **ALLOWED_PERMISSIONS,
+                          'contents': {'read', 'write'},
+                          'pull-requests': {'read', 'write'},
+                      }
+                  check_permissions(
+                      path,
+                      f'job {job_name}',
+                      job.get('permissions'),
+                      allow_id_token,
+                      allowed_permissions=job_allowed_permissions,
+                  )
                   # This repository never forwards secrets to reusable
                   # workflows; the key only ever shows up in exfiltration jobs.
                   if 'secrets' in job:
@@ -1015,6 +1034,7 @@ jobs:
                   '9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff',
               ),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3', 'dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05'),
+              '.github/workflows/pr-branch-updater.yml': ('077732d81e85b285a7cc33829c8876611f3fc9ff1068e628fe9cb54fb7e9ea48',),
           }
 
           def gate_automation(path, content):
