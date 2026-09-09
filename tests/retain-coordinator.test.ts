@@ -327,6 +327,24 @@ describe("RetainCoordinator", () => {
     expect(replay.fakeClients.get("main")?.retains).toHaveLength(0);
   });
 
+  it("does not replay an item with an invalid update mode", async () => {
+    const first = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(500);
+      },
+    });
+    await first.retain.retain("main", { content: "queued" });
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const item = JSON.parse(readFileSync(queueFile, "utf8"));
+    item.updateMode = "overwrite";
+    writeFileSync(queueFile, `${JSON.stringify(item)}\n`);
+    const replay = makeStack({ queueDir });
+    await replay.retain.flushQueues();
+    expect(readFileSync(queueFile, "utf8").trim()).not.toBe("");
+    expect(replay.fakeClients.get("main")?.retains).toHaveLength(0);
+  });
+
   it("persists replay attempts and abandons a poison item after five failures", async () => {
     const first = makeStack({
       queueDir,

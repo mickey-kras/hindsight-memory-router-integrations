@@ -89,3 +89,16 @@ it("requires an assigned bank and rejects failed knowledge operations", async ()
   const get = routedKnowledgeTools(readOnly).find((tool) => tool.name === "agent_knowledge_get_page");
   await expect(get?.execute({ bankId: "B" })).rejects.toThrow("memory access denied");
 });
+
+it("returns a stable not-found result for a missing knowledge page", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
+  const transport = new RouterTransport({
+    routerUrl: "https://router.test",
+    access: { additionalReadBanks: ["B"] },
+    token: () => token,
+  });
+  const get = routedKnowledgeTools(transport).find((tool) => tool.name === "agent_knowledge_get_page");
+  await expect(get?.execute({ bankId: "B", page_id: "missing" })).resolves.toEqual({
+    content: [{ type: "text", text: JSON.stringify({ error: "not found" }, null, 2) }],
+  });
+});

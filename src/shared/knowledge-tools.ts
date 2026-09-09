@@ -10,6 +10,12 @@ interface ToolRequest {
   body?: unknown;
 }
 
+async function responseData(response: Response, method: string): Promise<unknown> {
+  if (method === "DELETE") return { success: true };
+  if (response.status === 404) return { error: "not found" };
+  return response.json();
+}
+
 interface ToolSpec {
   read: boolean;
   request(params: Record<string, unknown>, page: string): ToolRequest;
@@ -69,7 +75,6 @@ const TOOL_SPECS: Record<string, ToolSpec> = {
     request: (params) => {
       if (typeof params.title !== "string" || params.title.trim() === "") throw new TypeError("title is required");
       return {
-        read: false,
         method: "POST",
         suffix: "/memories",
         body: {
@@ -90,7 +95,7 @@ export function routedKnowledgeTools(transport: RouterTransport) {
   // Reuse upstream descriptions and schemas; all execution uses the guarded transport.
   const definitions = createKnowledgeTools({
     apiUrl: transport.baseUrl,
-    bankId: "unused",
+    bankId: "router-managed",
   });
   return definitions.map((tool) => ({
     ...tool,
@@ -117,7 +122,7 @@ export function routedKnowledgeTools(transport: RouterTransport) {
         method: request.method,
         body: request.body === undefined ? undefined : JSON.stringify(request.body),
       });
-      const data: unknown = request.method === "DELETE" ? { success: true } : await response.json();
+      const data = await responseData(response, request.method);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };

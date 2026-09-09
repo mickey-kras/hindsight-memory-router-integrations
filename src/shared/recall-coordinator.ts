@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 
 import type { RouterClient } from "./authenticated-client-factory.js";
 import { type RecallItem, recallItemText } from "./recall-item.js";
+import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
 
 export type { RecallItem } from "./recall-item.js";
 
@@ -33,11 +34,6 @@ export class RecallAuthorizationError extends Error {
     this.name = "RecallAuthorizationError";
     this.bank = bank;
   }
-}
-
-function isAuthzError(error: unknown): boolean {
-  const status = (error as { statusCode?: unknown })?.statusCode;
-  return status === 401 || status === 403;
 }
 
 function timeoutAfter(
@@ -88,11 +84,8 @@ function mergeSettledResults(
   settled.forEach((outcome, index) => {
     const bank = banks[index];
     if (outcome.status === "rejected") {
-      if (isAuthzError(outcome.reason)) throw new RecallAuthorizationError(bank);
-      const status = (outcome.reason as { statusCode?: number })?.statusCode;
-      if (status !== undefined && status !== 408 && status !== 429 && status < 500) {
-        throw new Error("memory read failed");
-      }
+      if (isAuthorizationError(outcome.reason)) throw new RecallAuthorizationError(bank);
+      if (!isTransientRequestError(outcome.reason)) throw outcome.reason;
       failedBanks.push(bank);
       return;
     }

@@ -29,4 +29,24 @@ describe("openclaw.plugin.json", () => {
   it("uses package.json as the runtime version source", () => {
     expect(PLUGIN_VERSION).toBe(packageMetadata.version);
   });
+
+  it("keeps runtime defaults aligned with the public schema", () => {
+    expect(
+      Object.fromEntries(
+        Object.entries(manifest.configSchema.properties)
+          .filter(([, schema]) => Object.hasOwn(schema as object, "default"))
+          .map(([name, schema]) => [name, (schema as { default: unknown }).default]),
+      ),
+    ).toEqual({
+      autoRecall: true,
+      autoRetain: true,
+      recallTimeoutMs: 5000,
+      recallMaxTokens: 1024,
+      recallInjectionPosition: "user",
+      retainSource: "openclaw",
+      enableKnowledgeTools: false,
+      retainQueueFlushIntervalMs: 30000,
+      retainQueueMaxAgeMs: -1,
+    });
+  });
 });

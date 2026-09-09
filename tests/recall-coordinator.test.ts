@@ -156,6 +156,17 @@ describe("RecallCoordinator", () => {
     expect(result.results.map((r) => r.text)).toEqual(["ok"]);
   });
 
+  it("does not mask programming errors as partial recall", async () => {
+    const bug = new TypeError("cannot read property");
+    await expect(
+      new RecallCoordinator().recall(fakeClient({ main: { error: bug } }), {
+        query: "q",
+        banks: ["main"],
+        timeoutMs: 100,
+      }),
+    ).rejects.toBe(bug);
+  });
+
   it("fails closed on authorization denial from any bank (401)", async () => {
     const client = fakeClient({
       main: { results: [{ text: "ok", score: 0.9 }] },
@@ -264,7 +275,7 @@ describe("RecallCoordinator", () => {
         banks: ["main"],
         timeoutMs: 100,
       }),
-    ).rejects.toThrow("memory read failed");
+    ).rejects.toThrow("http 400");
   });
 
   it("orders unscored and structured results deterministically", async () => {

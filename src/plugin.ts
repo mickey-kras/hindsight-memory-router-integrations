@@ -238,9 +238,28 @@ export function buildRoutingStack(
     error(msg: string): void;
   },
 ): RoutingStack {
+  if (config.agents && config.principals) {
+    throw new TypeError("configure agents or principals, not both");
+  }
+  for (const [name, value] of [
+    ["recallTimeoutMs", config.recallTimeoutMs],
+    ["recallMaxTokens", config.recallMaxTokens],
+    ["recallTopK", config.recallTopK],
+    ["retainQueueFlushIntervalMs", config.retainQueueFlushIntervalMs],
+  ] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+      throw new RangeError(`${name} must be a positive integer`);
+    }
+  }
+  if (
+    config.retainQueueMaxAgeMs !== undefined &&
+    (config.retainQueueMaxAgeMs < -1 || !Number.isSafeInteger(config.retainQueueMaxAgeMs))
+  ) {
+    throw new RangeError("retainQueueMaxAgeMs must be -1 or a non-negative integer");
+  }
   const credentials = new PrincipalCredentialResolver({
     ...config,
-    principals: config.agents,
+    principals: config.agents ?? config.principals,
   });
   credentials.validateConfiguredPrincipals();
   const clients = new AuthenticatedClientFactory({

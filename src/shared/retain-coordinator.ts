@@ -7,6 +7,7 @@ import { isAbsolute, join } from "node:path";
 import { type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
 import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
 import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
+import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
 
 export interface RetainRequestPayload extends QueuedRetainPayload {}
 
@@ -32,19 +33,6 @@ export interface CoordinatorLogger {
 const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
 const QUEUE_FILE_SUFFIX = ".jsonl";
 const MAX_REPLAY_ATTEMPTS = 5;
-
-function isAuthzError(error: unknown): boolean {
-  const status = (error as { statusCode?: unknown })?.statusCode;
-  return status === 401 || status === 403;
-}
-
-function isTransientError(error: unknown): boolean {
-  const status = (error as { statusCode?: unknown })?.statusCode;
-  if (error instanceof DOMException) return ["AbortError", "NetworkError", "TimeoutError"].includes(error.name);
-  if (error instanceof TypeError) return error.message === "fetch failed";
-  if (status === undefined) return false;
-  return status === 408 || status === 429 || (typeof status === "number" && status >= 500);
-}
 
 export class RetainCoordinator {
   private readonly credentials: PrincipalCredentialResolver;
@@ -94,10 +82,10 @@ export class RetainCoordinator {
       });
       return { queued: false, bank };
     } catch (error) {
-      if (isAuthzError(error)) {
+      if (isAuthorizationError(error)) {
         throw new RetainAuthorizationError(bank);
       }
-      if (!isTransientError(error)) {
+      if (!isTransientRequestError(error)) {
         throw error;
       }
       const queue = this.queueFor(principalId);
@@ -138,6 +126,9 @@ export class RetainCoordinator {
     const delivered: string[] = [];
     for (const item of queue.peek(50)) {
       try {
+        if (item.updateMode !== undefined && item.updateMode !== "append" && item.updateMode !== "replace") {
+          throw new TypeError("invalid queued retain update mode");
+        }
         if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
           throw new RetainAuthorizationError(item.bankId);
         }
@@ -153,9 +144,9 @@ export class RetainCoordinator {
         });
         delivered.push(item.id);
       } catch (error) {
-        if (isAuthzError(error)) {
+        if (isAuthorizationError(error)) {
           this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
-        } else if (isTransientError(error)) {
+        } else if (isTransientRequestError(error)) {
           const attempts = queue.incrementReplayAttempts(item.id);
           if (attempts >= MAX_REPLAY_ATTEMPTS) {
             delivered.push(item.id);

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import plugin, { PLUGIN_ID, type RoutingStack, registerWithStack } from "../src/plugin.js";
+import plugin, { buildRoutingStack, PLUGIN_ID, type RoutingStack, registerWithStack } from "../src/plugin.js";
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RecallAuthorizationError, RecallCoordinator } from "../src/shared/recall-coordinator.js";
@@ -133,6 +133,19 @@ function instrumentedStack(
 }
 
 describe("plugin wiring", () => {
+  it("rejects ambiguous principal maps and invalid numeric limits", () => {
+    const config = pluginConfig(queueDir);
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    expect(() => buildRoutingStack({ ...config, principals: config.agents }, logger)).toThrow(
+      "configure agents or principals, not both",
+    );
+    expect(() => buildRoutingStack({ ...config, recallTimeoutMs: 0 }, logger)).toThrow(
+      "recallTimeoutMs must be a positive integer",
+    );
+    expect(() => buildRoutingStack({ ...config, retainQueueMaxAgeMs: -2 }, logger)).toThrow(
+      "retainQueueMaxAgeMs must be -1 or a non-negative integer",
+    );
+  });
   let queueDir: string;
   beforeEach(() => {
     queueDir = mkdtempSync(join(tmpdir(), "plugin-test-"));
