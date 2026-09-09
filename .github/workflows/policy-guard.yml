@@ -244,13 +244,18 @@ jobs:
                   if (
                       path == '.github/workflows/main.yml'
                       and trusted_main_dispatch(path, doc)
-                      and job_name == 'update-pr-branches'
                   ):
-                      job_allowed_permissions = {
-                          **ALLOWED_PERMISSIONS,
-                          'contents': {'read', 'write'},
-                          'pull-requests': {'read', 'write'},
-                      }
+                      if job_name == 'update-pr-branches':
+                          job_allowed_permissions = {
+                              **ALLOWED_PERMISSIONS,
+                              'contents': {'read', 'write'},
+                              'pull-requests': {'read', 'write'},
+                          }
+                      elif job_name == 'sonar':
+                          job_allowed_permissions = {
+                              **ALLOWED_PERMISSIONS,
+                              'issues': {'write'},
+                          }
                   check_permissions(
                       path,
                       f'job {job_name}',
@@ -449,6 +454,7 @@ jobs:
           CI_REQUIRED_STEPS = (
               'Tests and coverage', 'Verify package', 'Nix dependency hash',
               'Gitleaks', 'Semgrep', 'Trivy dependency gate', 'Setup Trivy',
+              'Sonar finding reporter tests',
           )
           # Name-only pins are not enough: each required step must still carry
           # the substance of its gate (checked on the normalized run text).
@@ -465,6 +471,9 @@ jobs:
               'Trivy dependency gate': (
                   'trivy fs', '--exit-code 1', 'HIGH,CRITICAL',
                   '--severity HIGH,CRITICAL',
+              ),
+              'Sonar finding reporter tests': (
+                  'python3 -m unittest tests/test_sonar_finding_sync.py',
               ),
           }
           CI_USES_PREFIXES = {
@@ -720,6 +729,24 @@ jobs:
                   fail('main.yml: sonar job must need quality, aislop and codeql')
               if step_named(sonar, 'SonarQube quality gate') is None:
                   fail('main.yml: SonarQube quality gate step must exist')
+              quality_gate = step_named(sonar, 'SonarQube quality gate')
+              if quality_gate is not None and quality_gate.get('id') != 'sonar-quality-gate':
+                  fail('main.yml: SonarQube quality gate must preserve its reporter id')
+              reporter = step_named(sonar, 'Synchronize SonarQube findings')
+              if reporter is None:
+                  fail('main.yml: SonarQube finding reporter must exist')
+              else:
+                  expected_if = (
+                      "failure() && steps.sonar-quality-gate.outcome == 'failure' "
+                      "&& github.ref == 'refs/heads/main'"
+                  )
+                  if normalize_condition(reporter.get('if', '')) != expected_if:
+                      fail('main.yml: SonarQube finding reporter condition must stay fail-closed')
+                  if normalize_run(reporter.get('run', '')) != (
+                      'python3 .github/scripts/sync-sonar-findings.py '
+                      '.scannerwork/report-task.txt'
+                  ):
+                      fail('main.yml: SonarQube finding reporter command must stay active')
               for name in ('SonarQube analysis', 'SonarQube quality gate'):
                   step = step_named(sonar, name)
                   if step is not None:
@@ -1020,6 +1047,17 @@ jobs:
               if properties.get('sonar.javascript.lcov.reportPaths') != 'coverage/lcov.info':
                   fail('sonar-project.properties: coverage import must stay configured')
 
+          def gate_sonar_reporter(path, content):
+              required = (
+                  'ISSUE_MARKER_PREFIX = "sonar-finding"',
+                  '"--state",\n            "all"',
+                  'self._run("gh", "issue", "reopen"',
+                  'sinceLeakPeriod=True',
+              )
+              missing = [contract for contract in required if contract not in content]
+              if missing:
+                  fail('sync-sonar-findings.py: required issue synchronization contract missing')
+
           def gate_checksum_file(path, content):
               lines = [line for line in content.splitlines() if line.strip()]
               if not lines:
@@ -1063,6 +1101,7 @@ jobs:
               '.github/workflows/branch-policy.yml': gate_branch_policy,
               '.aislop/config.yml': gate_aislop_config,
               '.github/scripts/npm-audit.cjs': gate_npm_audit_script,
+              '.github/scripts/sync-sonar-findings.py': gate_sonar_reporter,
               '.semgrep.yml': gate_semgrep,
               '.github/dependabot.yml': gate_dependabot,
               'package.json': gate_package_json,
