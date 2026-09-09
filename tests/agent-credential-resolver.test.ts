@@ -53,6 +53,11 @@ describe("PrincipalCredentialResolver", () => {
     expect(() => r.resolve("")).toThrow(UnknownPrincipalError);
   });
 
+  it("fails closed for a null principal entry without leaking a TypeError", () => {
+    const r = new PrincipalCredentialResolver({ principals: { main: null } as never });
+    expect(() => r.resolve("main")).toThrow(UnknownPrincipalError);
+  });
+
   it("has no global fallback token", () => {
     const r = new PrincipalCredentialResolver({
       routerUrl: "https://router.example.test",

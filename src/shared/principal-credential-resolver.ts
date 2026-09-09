@@ -109,6 +109,9 @@ export class PrincipalCredentialResolver {
       throw new UnknownPrincipalError(principalId);
     }
     const entry = this.principals[principalId];
+    if (!entry) {
+      throw new UnknownPrincipalError(principalId);
+    }
     const token = entry.token;
     if (token === undefined || token === null || token === "") {
       throw new CredentialResolutionError("missing-token");

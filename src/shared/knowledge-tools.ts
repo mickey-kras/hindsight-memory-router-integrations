@@ -99,17 +99,20 @@ export function routedKnowledgeTools(transport: RouterTransport) {
   });
   return definitions.map((tool) => ({
     ...tool,
-    parameters: {
-      ...tool.parameters,
-      properties: {
-        ...(tool.parameters.properties as Record<string, unknown>),
-        bankId: {
-          type: "string",
-          enum: visibleBanks(transport.access),
-          description: "Explicit assigned bank; required without a write bank.",
-        },
-      },
-    },
+    parameters:
+      tool.name === "agent_knowledge_recall"
+        ? tool.parameters
+        : {
+            ...tool.parameters,
+            properties: {
+              ...(tool.parameters.properties as Record<string, unknown>),
+              bankId: {
+                type: "string",
+                enum: visibleBanks(transport.access),
+                description: "Explicit assigned bank; required without a write bank.",
+              },
+            },
+          },
     async execute(params: Record<string, unknown>) {
       const spec = TOOL_SPECS[tool.name];
       if (!spec) throw new AccessDeniedError();

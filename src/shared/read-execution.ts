@@ -22,7 +22,6 @@ export async function readAcrossBanks(
           signal: request?.signal,
           body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
         });
-        if (!response.ok) throw new Error("memory read unavailable");
         const data = (await response.json()) as {
           text?: string;
           results?: RecallItem[];

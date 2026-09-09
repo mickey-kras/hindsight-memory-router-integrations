@@ -6,7 +6,7 @@ Upgrades are commit-pinned and reproducible. Never import from a mutable tag or 
 
 1. Resolve the upstream tag to its peeled commit SHA and update `UPSTREAM_VERSION`.
 2. Run `scripts/regen-upstream-hashes.sh` against that commit and review `src/upstream/SHA256SUMS`.
-3. Run `scripts/import-upstream.sh`. It verifies the pristine download before copying and preserves the three reviewed local adaptations listed in `integrations/openclaw/LOCAL_CHANGES.json`.
+3. Run `scripts/import-upstream.sh`. It verifies the pristine download before copying and preserves the reviewed adaptations listed in `integrations/openclaw/LOCAL_CHANGES.json`; update `VENDORED_PRISTINE_FILES.json` if another pristine file is intentionally retained.
 4. Reconcile the adapted files, run `scripts/regen-openclaw-overlay.mjs`, and review every hash change.
 5. Bump `router_revision`, update the root package version, rebuild, test, and replace the OpenClaw tarball.
 6. Run `node scripts/verify-openclaw-overlay.mjs`; it verifies every vendored OpenClaw file against the reviewed overlay manifest.
@@ -22,6 +22,22 @@ Upgrades are commit-pinned and reproducible. Never import from a mutable tag or 
 
 ## Package verification
 
-Run the root CI commands locally. CI rebuilds both tarballs, compares normalized contents with the committed artifacts, and verifies `PACKAGE_SHA256` and `PACKAGE_NIX_HASHES`.
+From the repository root, install and validate with:
+
+```sh
+npm ci
+npm ci --prefix src/upstream/coding-agents
+npm run lint
+npm run typecheck
+npm run test:coverage
+npm run build
+npm run build:coding-agents
+npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
+npm test --prefix src/upstream/coding-agents
+node scripts/verify-coding-upstream.mjs
+node scripts/verify-openclaw-overlay.mjs
+```
+
+Then rebuild both tarballs, regenerate `PACKAGE_SHA256` and `PACKAGE_NIX_HASHES`, and run the normalized package comparisons from `.github/workflows/ci.yml`.
 
 Release from `main` only after the PR validation workflow is green. Work branches must use one of the prefixes accepted by `.github/workflows/branch-policy.yml`; Dependabot branches are validated separately.

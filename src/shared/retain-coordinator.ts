@@ -9,7 +9,7 @@ import type { AuthenticatedClientFactory } from "./authenticated-client-factory.
 import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
 
-export interface RetainRequestPayload extends QueuedRetainPayload {}
+export type RetainRequestPayload = QueuedRetainPayload;
 
 export interface RetainOutcome {
   queued: boolean;
@@ -33,6 +33,7 @@ export interface CoordinatorLogger {
 const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
 const QUEUE_FILE_SUFFIX = ".jsonl";
 const MAX_REPLAY_ATTEMPTS = 5;
+const REPLAY_BATCH_SIZE = 50;
 
 export class RetainCoordinator {
   private readonly credentials: PrincipalCredentialResolver;
@@ -124,7 +125,7 @@ export class RetainCoordinator {
     const queue = this.queueFor(principalId);
     queue.cleanup();
     const delivered: string[] = [];
-    for (const item of queue.peek(50)) {
+    for (const item of queue.peek(REPLAY_BATCH_SIZE)) {
       try {
         if (item.updateMode !== undefined && item.updateMode !== "append" && item.updateMode !== "replace") {
           throw new TypeError("invalid queued retain update mode");

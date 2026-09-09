@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
-import { PLUGIN_VERSION } from "../src/plugin.js";
+import { PLUGIN_VERSION, RUNTIME_DEFAULTS } from "../src/plugin.js";
 
 const manifest = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"));
 const packageMetadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -37,16 +37,6 @@ describe("openclaw.plugin.json", () => {
           .filter(([, schema]) => Object.hasOwn(schema as object, "default"))
           .map(([name, schema]) => [name, (schema as { default: unknown }).default]),
       ),
-    ).toEqual({
-      autoRecall: true,
-      autoRetain: true,
-      recallTimeoutMs: 5000,
-      recallMaxTokens: 1024,
-      recallInjectionPosition: "user",
-      retainSource: "openclaw",
-      enableKnowledgeTools: false,
-      retainQueueFlushIntervalMs: 30000,
-      retainQueueMaxAgeMs: -1,
-    });
+    ).toEqual(RUNTIME_DEFAULTS);
   });
 });
