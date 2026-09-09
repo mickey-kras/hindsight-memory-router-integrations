@@ -1,0 +1,30 @@
+name: PR validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    uses: ./.github/workflows/ci.yml
+
+  aislop:
+    uses: ./.github/workflows/aislop.yml
+
+  codeql:
+    uses: ./.github/workflows/codeql.yml
+
+  branch-policy:
+    uses: ./.github/workflows/branch-policy.yml
+
+  dependabot-policy:
+    uses: ./.github/workflows/dependabot-policy-tests.yml
