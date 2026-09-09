@@ -1,37 +1,38 @@
 import { routedKnowledgeTools } from "./shared/knowledge-tools.js";
-import { RouterTransport } from "./shared/router-transport.js";
+
 /** Plugin composition root. Identity comes only from trusted `ctx.agentId`. */
 
-import { TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-
+import { TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
+import { AuthenticatedClientFactory } from "./shared/authenticated-client-factory.js";
+import { PACKAGE_VERSION } from "./shared/package-version.js";
+import {
+  CredentialResolutionError,
+  PrincipalCredentialResolver,
+  type RouterPluginConfig,
+  UnknownPrincipalError,
+} from "./shared/principal-credential-resolver.js";
+import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "./shared/recall-coordinator.js";
+import { recallItemText } from "./shared/recall-item.js";
+import { RetainAuthorizationError, RetainCoordinator } from "./shared/retain-coordinator.js";
+import { compileSessionPatterns, matchesSessionPattern } from "./upstream/src/session-patterns.js";
 import type {
   MoltbotPluginAPI,
   PluginHookAgentContext,
+  PluginHookEvent,
   PluginPromptHookResult,
   PluginToolContext,
 } from "./upstream/src/types.js";
-import { compileSessionPatterns, matchesSessionPattern } from "./upstream/src/session-patterns.js";
-import {
-  PrincipalCredentialResolver,
-  CredentialResolutionError,
-  UnknownPrincipalError,
-  type RouterPluginConfig,
-} from "./shared/principal-credential-resolver.js";
-import { AuthenticatedClientFactory } from "./shared/authenticated-client-factory.js";
-import { ReadBankResolver } from "./shared/read-bank-resolver.js";
-import { WriteBankResolver } from "./shared/write-bank-resolver.js";
-import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "./shared/recall-coordinator.js";
-import { RetainAuthorizationError, RetainCoordinator } from "./shared/retain-coordinator.js";
 
 export const PLUGIN_ID = "hindsight-memory-router";
-export const PLUGIN_VERSION = "0.11.1-router.2";
+export const PLUGIN_VERSION = PACKAGE_VERSION;
 
 const DEFAULT_RECALL_TIMEOUT_MS = 5000;
 const DEFAULT_RECALL_MAX_TOKENS = 1024;
 const DEFAULT_FLUSH_INTERVAL_MS = 30000;
+const MAX_SESSION_STATE_ENTRIES = 1000;
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
   "Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:";
 const DEFAULT_RETAIN_CONTEXT =
@@ -59,12 +60,10 @@ interface RuntimePluginConfig extends RouterPluginConfig {
   excludeProviders?: string[];
 }
 
-interface RoutingStack {
+export interface RoutingStack {
   config: RuntimePluginConfig;
   credentials: PrincipalCredentialResolver;
   clients: AuthenticatedClientFactory;
-  recallBanks: ReadBankResolver;
-  writeBanks: WriteBankResolver;
   recall: RecallCoordinator;
   retain: RetainCoordinator;
 }
@@ -85,7 +84,7 @@ function formatCurrentTimeForRecall(date = new Date()): string {
 function formatMemories(results: RecallItem[]): string {
   return results
     .map((item) => {
-      const text = typeof item.text === "string" ? item.text : String(item.content ?? "");
+      const text = recallItemText(item);
       const type = typeof item.type === "string" ? ` [${item.type}]` : "";
       const doc = typeof item.document_id === "string" ? ` [doc:${item.document_id}]` : "";
       return `- ${text}${type}${doc}`;
@@ -146,7 +145,9 @@ function stripInjectedMemories(content: string): string {
 
 function extractTranscript(event: {
   messages?: unknown;
-  context?: { sessionEntry?: { messages?: Array<{ role?: unknown; content?: unknown }> } };
+  context?: {
+    sessionEntry?: { messages?: Array<{ role?: unknown; content?: unknown }> };
+  };
 }): string | null {
   let messages: unknown[] = [];
   if (Array.isArray(event.context?.sessionEntry?.messages)) {
@@ -199,11 +200,11 @@ function memoryErrorMessage(error: unknown): string {
   return isIdentityError(error) ? (error as Error).message : "memory operation failed";
 }
 
-function sessionKeyFor(event: any, ctx: PluginHookAgentContext | undefined): string | undefined {
+function sessionKeyFor(event: PluginHookEvent, ctx: PluginHookAgentContext | undefined): string | undefined {
   if (typeof ctx?.sessionKey === "string") {
     return ctx.sessionKey;
   }
-  return typeof event?.sessionKey === "string" ? event.sessionKey : undefined;
+  return typeof event.sessionKey === "string" ? event.sessionKey : undefined;
 }
 
 function shouldSkipRetain(
@@ -220,6 +221,16 @@ function shouldSkipRetain(
   return config.autoRetain === false || ignoredSession || statelessSession || excludedProvider;
 }
 
+function setBounded<K, V>(map: Map<K, V>, key: K, value: V): void {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > MAX_SESSION_STATE_ENTRIES) {
+    const oldest = map.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
 export function buildRoutingStack(
   config: RuntimePluginConfig,
   logger: {
@@ -227,23 +238,48 @@ export function buildRoutingStack(
     error(msg: string): void;
   },
 ): RoutingStack {
-  const credentials = new PrincipalCredentialResolver({ ...config, principals: config.agents });
+  if (config.agents && config.principals) {
+    throw new TypeError("configure agents or principals, not both");
+  }
+  for (const [name, value] of [
+    ["recallTimeoutMs", config.recallTimeoutMs],
+    ["recallMaxTokens", config.recallMaxTokens],
+    ["recallTopK", config.recallTopK],
+    ["retainQueueFlushIntervalMs", config.retainQueueFlushIntervalMs],
+  ] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+      throw new RangeError(`${name} must be a positive integer`);
+    }
+  }
+  if (
+    config.retainQueueMaxAgeMs !== undefined &&
+    (config.retainQueueMaxAgeMs < -1 || !Number.isSafeInteger(config.retainQueueMaxAgeMs))
+  ) {
+    throw new RangeError("retainQueueMaxAgeMs must be -1 or a non-negative integer");
+  }
+  const credentials = new PrincipalCredentialResolver({
+    ...config,
+    principals: config.agents ?? config.principals,
+  });
   credentials.validateConfiguredPrincipals();
   const clients = new AuthenticatedClientFactory({
     routerUrl: config.routerUrl,
     userAgent: `hindsight-memory-router-openclaw/${PLUGIN_VERSION}`,
   });
-  const recallBanks = new ReadBankResolver(credentials);
-  const writeBanks = new WriteBankResolver(credentials);
   const retain = new RetainCoordinator({
     credentials,
-    writeBanks,
     clients,
     queueDir: config.queueDir ?? join(homedir(), ".openclaw", "data", "hindsight-retain-queue"),
     queueMaxAgeMs: config.retainQueueMaxAgeMs,
     logger,
   });
-  return { config, credentials, clients, recallBanks, writeBanks, recall: new RecallCoordinator(), retain };
+  return {
+    config,
+    credentials,
+    clients,
+    recall: new RecallCoordinator(),
+    retain,
+  };
 }
 
 export default function hindsightMemoryRouterPlugin(api: MoltbotPluginAPI): void {
@@ -272,14 +308,14 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const config = stack.config;
   api.on(
     "before_prompt_build",
-    async (event: any, ctx?: PluginHookAgentContext): Promise<PluginPromptHookResult | void> => {
+    async (event: PluginHookEvent, ctx?: PluginHookAgentContext): Promise<PluginPromptHookResult | undefined> => {
       if (config.autoRecall === false) {
         return;
       }
       const agentId = ctx?.agentId;
       try {
         const credentials = stack.credentials.resolve(agentId);
-        const banks = stack.recallBanks.resolve(credentials.principalId);
+        const banks = stack.credentials.resolveReadBanks(credentials.principalId);
         if (banks.length === 0) {
           return;
         }
@@ -312,7 +348,6 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
             return { appendSystemContext: contextMessage };
           case "prepend":
             return { prependSystemContext: contextMessage };
-          case "user":
           default:
             return { prependContext: contextMessage };
         }
@@ -340,7 +375,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const retainedDigests = new Map<string, string>();
 
   const runRetain = async (
-    event: any,
+    event: PluginHookEvent,
     ctx: PluginHookAgentContext | undefined,
     hookName: "agent_end" | "session_end",
   ): Promise<void> => {
@@ -365,7 +400,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
         return;
       }
       const sequence = (sessionSequences.get(sequenceKey) ?? 0) + 1;
-      sessionSequences.set(sequenceKey, sequence);
+      setBounded(sessionSequences, sequenceKey, sequence);
       const outcome = await stack.retain.retain(credentials.principalId, {
         content: transcript,
         documentId: `openclaw:${sanitizeDocumentIdPart(sessionKey, "session")}:${PROCESS_ID}:${sequence}`,
@@ -377,7 +412,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
         },
         tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.principalId}`],
       });
-      retainedDigests.set(sequenceKey, digest);
+      setBounded(retainedDigests, sequenceKey, digest);
       if (outcome.queued) {
         log.warn(`retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`);
       }
@@ -399,8 +434,8 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
     }
   };
 
-  api.on("agent_end", (event: any, ctx?: PluginHookAgentContext) => runRetain(event, ctx, "agent_end"));
-  api.on("session_end", (event: any, ctx?: PluginHookAgentContext) => runRetain(event, ctx, "session_end"));
+  api.on("agent_end", (event, ctx) => runRetain(event, ctx, "agent_end"));
+  api.on("session_end", (event, ctx) => runRetain(event, ctx, "session_end"));
 
   let flushTimer: ReturnType<typeof setInterval> | undefined;
   api.registerService({
@@ -429,13 +464,13 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
   if (config.enableKnowledgeTools === true && typeof api.registerTool === "function") {
     api.registerTool(
       (ctx: PluginToolContext) => {
-        let credentials;
+        let credentials: ReturnType<PrincipalCredentialResolver["resolve"]>;
         let writeBank: string | null;
         let recallBanks: string[];
         try {
           credentials = stack.credentials.resolve(ctx.agentId);
           writeBank = stack.credentials.resolveOptionalWriteBank(credentials.principalId);
-          recallBanks = stack.recallBanks.resolve(credentials.principalId);
+          recallBanks = stack.credentials.resolveReadBanks(credentials.principalId);
           if (writeBank === null && recallBanks.length === 0) {
             return null;
           }
@@ -446,14 +481,7 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
           }
           throw error;
         }
-        const tools = routedKnowledgeTools(
-          new RouterTransport({
-            routerUrl: validateRouterUrlForTools(config.routerUrl),
-            token: () => credentials.token,
-            principalId: credentials.principalId,
-            access: { writeBank: writeBank ?? undefined, additionalReadBanks: recallBanks },
-          }),
-        );
+        const tools = routedKnowledgeTools(stack.clients.transportFor(credentials));
         return tools
           .filter((tool) => {
             if (
@@ -513,13 +541,4 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
     );
     log.info("knowledge tools registered");
   }
-}
-
-function validateRouterUrlForTools(value: unknown): string {
-  // The stack constructor already validated this; the closure needs the plain
-  // string for the SDK tools.
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error("routerUrl is required for knowledge tools");
-  }
-  return value;
 }

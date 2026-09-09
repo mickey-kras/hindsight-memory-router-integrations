@@ -28,14 +28,6 @@ export function readSessionCache(cacheFile: string): SessionCache {
   }
 }
 
-/**
- * Replace a state file atomically: write a sibling temp file, then rename over the target.
- *
- * A plain writeFileSync is not atomic — a reader can observe a half-written file, and a process
- * killed mid-write leaves one behind. rename() is atomic on POSIX and replaces the destination on
- * Windows, so a reader sees either the old contents or the new, never a fragment (#3136, which
- * measured this class on the per-agent plugin; its Python state writes already had os.replace()).
- */
 function writeFileAtomic(path: string, body: string): void {
   mkdirSync(dirname(path), { recursive: true });
   // The temp name is per-process, so two writers cannot collide on it.

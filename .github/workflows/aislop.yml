@@ -61,7 +61,10 @@ jobs:
           import { readFileSync } from 'node:fs';
 
           const sarif = JSON.parse(readFileSync('aislop.sarif', 'utf8'));
-          const findings = sarif.runs.flatMap((run) => run.results ?? []);
+          // audit-ci separately gates the exact GHSA allowlist in audit-ci.jsonc.
+          const findings = sarif.runs
+            .flatMap((run) => run.results ?? [])
+            .filter((finding) => finding.ruleId !== 'security/vulnerable-dependency');
           if (findings.length > 0) {
             const rules = [...new Set(findings.map((finding) => finding.ruleId ?? 'unknown'))];
             console.error(`Aislop reported ${findings.length} finding(s): ${rules.join(', ')}`);

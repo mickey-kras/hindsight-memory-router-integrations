@@ -34,7 +34,6 @@ import { basename, dirname, join, normalize, sep } from "node:path";
 import { diag } from "./diag";
 import { probeGitLayout } from "./git-layout";
 import { log } from "./log";
-import { applyTemplate } from "./template";
 
 export interface BankConfig {
   bankId?: string;
@@ -46,12 +45,6 @@ export interface BankConfig {
   optInPaths?: string[]; // directories opted in, matched as prefixes
 }
 
-const DEFAULT_BANK_NAME = "coding";
-// Harness-NEUTRAL default so every coding agent (Claude, Codex, Cursor, opencode) shares ONE bank
-// per repo — switch agents, keep your memory. Namespaced with `coding-agent::` to identify these
-// banks and avoid collisions with other Hindsight banks. Deliberately NOT `{harness}::…` (that would
-// split memory per agent, defeating cross-agent sharing).
-const DEFAULT_TEMPLATE = "coding-agent::{gitProject}";
 
 /**
  * The repository a directory belongs to — or WHY there is no answer.
@@ -207,35 +200,7 @@ function isWithin(directory: string, configured: string): boolean {
   return directory === configured || directory.startsWith(configured + sep);
 }
 
-/** Longest-prefix match of `directory` against the map's absolute paths (exact or ancestor). */
-function mapLookup(map: Record<string, string>, directory: string): string | undefined {
-  const cwd = normalize(directory);
-  let best: { len: number; bank: string } | undefined;
-  for (const [dir, bank] of Object.entries(map)) {
-    const p = configuredDir(dir);
-    if (isWithin(cwd, p)) {
-      if (!best || p.length > best.len) best = { len: p.length, bank };
-    }
-  }
-  return best?.bank;
-}
 
-/** Current directory first, then its main Git root. Keeping the literal path first preserves an
- * explicit worktree-specific mapping while letting an approved checkout carry that approval to
- * linked worktrees outside the configured directory tree. Same cascade the bank name resolves
- * through, session root included, so approval and identity cannot disagree about which repo a
- * directory belongs to. */
-function lookupDirectories(config: BankConfig, directory: string, sessionRoot = ""): string[] {
-  const directories = [normalize(directory)];
-  if (config.resolveWorktrees ?? true) {
-    // Deliberately failure-tolerant, unlike bank naming: approval and mapping fall back to the
-    // literal directory, which can only ever be narrower than the repo-wide answer.
-    const projectRoot = mainWorktreeRoot(directory, sessionRoot);
-    const normalizedRoot = projectRoot.status === "resolved" ? normalize(projectRoot.root) : "";
-    if (normalizedRoot && normalizedRoot !== directories[0]) directories.push(normalizedRoot);
-  }
-  return directories;
-}
 
 /**
  * Whether memory may run for this directory at all.

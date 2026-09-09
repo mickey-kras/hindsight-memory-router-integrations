@@ -3,7 +3,7 @@
   "path": "hindsight-integrations/coding-agents",
   "commit": "163fbb0ede6543af837b2c7c89e13012893d6a6b",
   "version": "0.5.1",
-  "routerRevision": 1,
+  "routerRevision": 2,
   "files": {
     ".gitignore": "790e3169bc19b046fe55ba1da6d13b976c28363c8c00462a2195fe5faf260910",
     "README.md": "345f8e0abec6534e9e5d19674eb8bbbbc4f1e200ba00b803213b1cbf303d3e0d",

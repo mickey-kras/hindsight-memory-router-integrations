@@ -6,8 +6,8 @@ OpenClaw and the current upstream `coding-agents` package share `src/shared/`.
 
 | Integration | Identity | Package version |
 | --- | --- | --- |
-| OpenClaw | trusted `ctx.agentId` | `0.11.1-router.2` |
-| Coding agents | harness entrypoint (`codex`, `claude-code`, `opencode`, etc.) | `0.5.1-router.1` |
+| OpenClaw | trusted `ctx.agentId` | `0.11.1-router.3` |
+| Coding agents | harness entrypoint (`codex`, `claude-code`, `opencode`, etc.) | `0.5.1-router.2` |
 
 Each principal has one optional `writeBank` and `additionalReadBanks`.
 Readable banks are their deduplicated union. Mutations target only `writeBank`.

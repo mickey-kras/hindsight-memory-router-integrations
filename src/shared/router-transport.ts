@@ -1,6 +1,6 @@
+import { AccessDeniedError, type BankAccess, classifyOperation, requireBank, visibleBanks } from "./bank-access.js";
+import { TOKEN_FORMAT_PATTERN } from "./patterns.js";
 import { validateRouterUrl } from "./router-url.js";
-import { AccessDeniedError, classifyOperation, requireBank, visibleBanks, type BankAccess } from "./bank-access.js";
-import { TOKEN_FORMAT_PATTERN } from "./principal-credential-resolver.js";
 
 export class RouterRequestError extends Error {
   constructor(readonly statusCode: number) {
@@ -64,7 +64,7 @@ export class RouterTransport {
   readonly #token: () => string | undefined;
   readonly #send: typeof fetch;
   readonly #principalId?: string;
-  #denied = false;
+  #deniedToken: string | undefined;
 
   constructor(options: {
     routerUrl: string;
@@ -97,13 +97,15 @@ export class RouterTransport {
   }
 
   assertAuthorized(): void {
-    if (this.#denied) throw new AccessDeniedError();
+    const token = this.#token();
+    if (!token || !TOKEN_FORMAT_PATTERN.test(token) || this.#deniedToken === token) throw new AccessDeniedError();
+    if (this.#deniedToken !== undefined) this.#deniedToken = undefined;
   }
 
   private credential(): string {
     this.assertAuthorized();
     const token = this.#token();
-    if (!token || !TOKEN_FORMAT_PATTERN.test(token)) throw new AccessDeniedError();
+    if (!token) throw new AccessDeniedError();
     return token;
   }
 
@@ -120,7 +122,7 @@ export class RouterTransport {
     const listing = assertAuthorizedUrl(url, method, this.baseUrl, this.access);
     const response = await this.send(url, init, token);
     if (response.status === 401 || response.status === 403) {
-      this.#denied = true;
+      this.#deniedToken = token;
       throw new AccessDeniedError();
     }
     // Never expose server error bodies, which may echo credentials or bank existence.

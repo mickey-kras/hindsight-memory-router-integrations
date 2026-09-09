@@ -40,6 +40,7 @@ export interface QueuedRetain {
   operationId?: string;
   updateMode?: "replace" | "append";
   createdAt: string; // ISO 8601
+  replayAttempts?: number;
 }
 
 export interface RetainQueueOptions {
@@ -74,7 +75,7 @@ export class RetainQueue {
       updateMode: request.updateMode,
       createdAt: new Date().toISOString(),
     };
-    appendFileSync(this.filePath, JSON.stringify(item) + "\n", "utf8");
+    appendFileSync(this.filePath, JSON.stringify(item) + "\n", { encoding: "utf8", mode: 0o600 });
     this.cachedSize++;
   }
 
@@ -113,6 +114,15 @@ export class RetainQueue {
     return operationId;
   }
 
+  incrementReplayAttempts(id: string): number {
+    const items = this.readAll();
+    const item = items.find((queued) => queued.id === id);
+    if (!item) throw new Error(`queued retain not found: ${id}`);
+    item.replayAttempts = (item.replayAttempts ?? 0) + 1;
+    this.writeAll(items);
+    return item.replayAttempts;
+  }
+
   /** Number of items waiting (cached, O(1)). */
   size(): number {
     return this.cachedSize;
@@ -133,8 +143,6 @@ export class RetainQueue {
   close(): void {
     /* nothing to close */
   }
-
-  // -------------------------------------------------------------------------
 
   private readAll(): QueuedRetain[] {
     if (!existsSync(this.filePath)) return [];
@@ -163,7 +171,10 @@ export class RetainQueue {
       return;
     }
     const tmpPath = this.filePath + ".tmp";
-    writeFileSync(tmpPath, items.map((i) => JSON.stringify(i)).join("\n") + "\n", "utf8");
+    writeFileSync(tmpPath, items.map((i) => JSON.stringify(i)).join("\n") + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     renameSync(tmpPath, this.filePath);
     this.cachedSize = items.length;
   }

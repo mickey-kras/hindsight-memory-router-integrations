@@ -7,9 +7,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   AGENT_HEADER,
   AuthenticatedClientFactory,
+  type RouterClient,
   RouterUrlError,
   validateRouterUrl,
-  type RouterClient,
 } from "../src/shared/authenticated-client-factory.js";
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
@@ -37,6 +37,7 @@ describe("validateRouterUrl", () => {
 });
 
 describe("AuthenticatedClientFactory", () => {
+  const access = { writeBank: "main", additionalReadBanks: ["main"] };
   it("builds per-agent clients with that agent's token and agent header", () => {
     const built: Array<{
       baseUrl: string;
@@ -67,7 +68,10 @@ describe("AuthenticatedClientFactory", () => {
       construct: () => ({}) as RouterClient,
     });
     const a1 = factory.forAgent({ principalId: "main", token: TOKEN_MAIN });
-    const b1 = factory.forAgent({ principalId: "backend", token: TOKEN_BACKEND });
+    const b1 = factory.forAgent({
+      principalId: "backend",
+      token: TOKEN_BACKEND,
+    });
     const a2 = factory.forAgent({ principalId: "main", token: TOKEN_MAIN });
     expect(a1).not.toBe(b1);
     expect(a1).toBe(a2);
@@ -80,8 +84,23 @@ describe("AuthenticatedClientFactory", () => {
       construct: () => ({}) as RouterClient,
     });
     const first = factory.forAgent({ principalId: "main", token: TOKEN_MAIN });
-    const rotated = factory.forAgent({ principalId: "main", token: TOKEN_BACKEND });
+    const rotated = factory.forAgent({
+      principalId: "main",
+      token: TOKEN_BACKEND,
+    });
     expect(rotated).not.toBe(first);
+  });
+
+  it("caches production transports by principal and token", () => {
+    const factory = new AuthenticatedClientFactory({
+      routerUrl: "https://router.example.test",
+      userAgent: "test-agent/0",
+    });
+    const credentials = { principalId: "main", token: TOKEN_MAIN, access };
+    const first = factory.transportFor(credentials);
+    expect(factory.transportFor(credentials)).toBe(first);
+    expect(factory.transportFor({ ...credentials, token: TOKEN_BACKEND })).not.toBe(first);
+    expect(() => factory.transportFor({ principalId: "none", token: TOKEN_MAIN })).toThrow("memory access denied");
   });
 });
 
@@ -107,7 +126,9 @@ describe("transport: redirect authorization stripping (Node >=22 undici)", () =>
     redirector = createServer((req, res) => {
       if (req.url === "/cross") {
         // Different host name -> cross-origin per fetch spec.
-        res.writeHead(302, { location: `http://localhost:${echoPort}/landing` });
+        res.writeHead(302, {
+          location: `http://localhost:${echoPort}/landing`,
+        });
         res.end();
       } else if (req.url === "/same") {
         res.writeHead(302, { location: "/landing" });

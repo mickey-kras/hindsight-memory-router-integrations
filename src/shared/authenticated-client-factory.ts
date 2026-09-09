@@ -1,13 +1,13 @@
 /** Creates one HTTPS Memory Router client per agent and active token. */
 
-import { RouterTransport } from "./router-transport.js";
 import { AccessDeniedError } from "./bank-access.js";
-
 import type { PrincipalCredentials } from "./principal-credential-resolver.js";
+import { RouterTransport } from "./router-transport.js";
 
 export const AGENT_HEADER = "x-memory-router-agent";
 
 export { RouterUrlError, validateRouterUrl } from "./router-url.js";
+
 import { validateRouterUrl } from "./router-url.js";
 
 /** The subset of HindsightClient the routing layer depends on. */
@@ -51,6 +51,7 @@ export class AuthenticatedClientFactory {
   private readonly userAgent: string;
   private readonly construct?: ClientConstructor;
   private readonly cache = new Map<string, { token: string; client: RouterClient }>();
+  private readonly transportCache = new Map<string, { token: string; transport: RouterTransport }>();
 
   constructor(options: {
     routerUrl: unknown;
@@ -77,17 +78,31 @@ export class AuthenticatedClientFactory {
           headers: { [AGENT_HEADER]: credentials.principalId },
         })
       : this.createClient(credentials);
-    this.cache.set(credentials.principalId, { token: credentials.token, client });
+    this.cache.set(credentials.principalId, {
+      token: credentials.token,
+      client,
+    });
     return client;
   }
-  private createClient(credentials: PrincipalCredentials): RouterClient {
+  transportFor(credentials: PrincipalCredentials): RouterTransport {
     if (!credentials.access) throw new AccessDeniedError();
+    const cached = this.transportCache.get(credentials.principalId);
+    if (cached?.token === credentials.token) return cached.transport;
     const transport = new RouterTransport({
       routerUrl: this.baseUrl,
       access: credentials.access,
       principalId: credentials.principalId,
       token: () => credentials.token,
     });
+    this.transportCache.set(credentials.principalId, {
+      token: credentials.token,
+      transport,
+    });
+    return transport;
+  }
+  private createClient(credentials: PrincipalCredentials): RouterClient {
+    if (!credentials.access) throw new AccessDeniedError();
+    const transport = this.transportFor(credentials);
     return {
       async retain(bank, content, options) {
         const response = await transport.request(transport.bankUrl(bank, "/memories"), {
@@ -108,7 +123,6 @@ export class AuthenticatedClientFactory {
             operation_id: options?.operationId,
           }),
         });
-        if (!response.ok) throw new Error("memory retain unavailable");
         return response.json();
       },
       async recall(bank, query, options) {
@@ -123,7 +137,6 @@ export class AuthenticatedClientFactory {
             prefer_observations: options?.preferObservations,
           }),
         });
-        if (!response.ok) throw new Error("memory read unavailable");
         return response.json() as Promise<{ results?: unknown[] }>;
       },
     };
