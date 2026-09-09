@@ -66,7 +66,10 @@ function fetchMetadata(pull, repository, metadataPath) {
       timeout: 90000,
       maxBuffer: 4 * 1024 * 1024,
       env: {
-        ...process.env,
+        HOME: process.env.HOME,
+        PATH: process.env.PATH,
+        RUNNER_TEMP: process.env.RUNNER_TEMP,
+        NODE_OPTIONS: process.env.NODE_OPTIONS,
         GITHUB_REPOSITORY: repository,
         GITHUB_EVENT_NAME: "pull_request_target",
         GITHUB_EVENT_PATH: event,
@@ -118,7 +121,11 @@ async function ensureMainRun({ github, context, core, branch, mainWorkflow }) {
     )
   )
     return;
-  await github.rest.actions.createWorkflowDispatch({ ...repo, workflow_id: mainWorkflow, ref: branch });
+  await github.rest.actions.createWorkflowDispatch({
+    ...repo,
+    workflow_id: mainWorkflow,
+    ref: branch,
+  });
   core.info(`Requested ${mainWorkflow} for the Dependabot merge at ${sha}`);
 }
 
@@ -159,7 +166,10 @@ async function run({
         core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
         continue;
       }
-      const commits = await github.paginate(github.rest.pulls.listCommits, { ...params, per_page: 100 });
+      const commits = await github.paginate(github.rest.pulls.listCommits, {
+        ...params,
+        per_page: 100,
+      });
       if (!verifiedCommits(commits)) {
         core.info(`#${pull.number}: unsigned or non-Dependabot commits require manual review`);
         continue;
@@ -186,4 +196,11 @@ async function run({
   if (failed) core.setFailed("Some Dependabot PRs could not be evaluated; see warnings");
 }
 
-module.exports = { run, eligibility, trustedPull, readDependencies, ensureMainRun, fetchMetadata };
+module.exports = {
+  run,
+  eligibility,
+  trustedPull,
+  readDependencies,
+  ensureMainRun,
+  fetchMetadata,
+};

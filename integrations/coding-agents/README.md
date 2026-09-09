@@ -1,7 +1,6 @@
-# Coding agents
+# Coding-agent deployment
 
-Source: `vectorize-io/hindsight/hindsight-integrations/coding-agents`, v0.5.1.
-The superseded per-agent integrations are not imported.
+Canonical source provenance and deviations live in `UPSTREAM.json`, `LOCAL_CHANGES.json`, `router.patch`, and `src/upstream/coding-agents/DEVIATIONS.md`.
 
 Set `HINDSIGHT_ROUTER_CONFIG` to an absolute, operator-managed JSON file:
 
@@ -51,7 +50,5 @@ Recall has a 15-second deadline; reflect uses the upstream caller's timeout.
 Transient failures return partial results with a diagnostic. Any 401/403 discards all results.
 Other bank/config/page reads use an explicit assigned bank; mutations cannot target additional read banks.
 
-See `DEVIATIONS.md` for intentional differences and `UPSTREAM.json` for exact provenance.
-
 Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back.
-Memory content is not reused from session caches; lifecycle flags remain cached. Authorization failures disable that client until restart.
+Memory content is not reused from session caches; lifecycle flags remain cached. A denied token remains blocked until its value changes.

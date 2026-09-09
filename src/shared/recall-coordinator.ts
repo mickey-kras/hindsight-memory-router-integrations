@@ -3,15 +3,10 @@
 import { createHash } from "node:crypto";
 
 import type { RouterClient } from "./authenticated-client-factory.js";
+import { type RecallItem, recallItemText } from "./recall-item.js";
+import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
 
-export interface RecallItem {
-  id?: string;
-  content?: string;
-  text?: string;
-  score?: number;
-  type?: string;
-  [key: string]: unknown;
-}
+export type { RecallItem } from "./recall-item.js";
 
 export interface CoordinatedRecallRequest {
   query: string;
@@ -41,11 +36,6 @@ export class RecallAuthorizationError extends Error {
   }
 }
 
-function isAuthzError(error: unknown): boolean {
-  const status = (error as { statusCode?: unknown })?.statusCode;
-  return status === 401 || status === 403;
-}
-
 function timeoutAfter(
   ms: number,
   controller: AbortController,
@@ -53,29 +43,25 @@ function timeoutAfter(
   promise: Promise<never>;
   timer: ReturnType<typeof setTimeout>;
 } {
-  let timer: ReturnType<typeof setTimeout>;
+  let rejectTimeout!: (reason: DOMException) => void;
   const promise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new DOMException(`recall timed out after ${ms}ms`, "TimeoutError"));
-    }, ms);
+    rejectTimeout = reject;
   });
-  return { promise, timer: timer! };
-}
-
-function itemContent(item: RecallItem): string {
-  const value = item.content ?? item.text;
-  return typeof value === "string" ? value : JSON.stringify(item);
+  const timer = setTimeout(() => {
+    controller.abort();
+    rejectTimeout(new DOMException(`recall timed out after ${ms}ms`, "TimeoutError"));
+  }, ms);
+  return { promise, timer };
 }
 
 function dedupeKey(item: RecallItem): string {
-  const normalized = itemContent(item).trim().toLowerCase().replaceAll(/\s+/g, " ");
+  const normalized = recallItemText(item).trim().toLowerCase().replaceAll(/\s+/g, " ");
   return createHash("sha256").update(normalized).digest("hex");
 }
 
 /** Rough token estimate for budget trimming (~4 chars per token). */
 function estimateTokens(item: RecallItem): number {
-  return Math.max(1, Math.ceil(itemContent(item).length / 4));
+  return Math.max(1, Math.ceil(recallItemText(item).length / 4));
 }
 
 interface BankRecallResult {
@@ -98,11 +84,8 @@ function mergeSettledResults(
   settled.forEach((outcome, index) => {
     const bank = banks[index];
     if (outcome.status === "rejected") {
-      if (isAuthzError(outcome.reason)) throw new RecallAuthorizationError(bank);
-      const status = (outcome.reason as { statusCode?: number })?.statusCode;
-      if (status !== undefined && status !== 408 && status !== 429 && status < 500) {
-        throw new Error("memory read failed");
-      }
+      if (isAuthorizationError(outcome.reason)) throw new RecallAuthorizationError(bank);
+      if (!isTransientRequestError(outcome.reason)) throw outcome.reason;
       failedBanks.push(bank);
       return;
     }
@@ -122,8 +105,8 @@ function compareBankItems(a: BankItem, b: BankItem): number {
   const scoreB = typeof b.item.score === "number" ? b.item.score : Number.NEGATIVE_INFINITY;
   if (scoreA !== scoreB) return scoreB - scoreA;
   if (a.bank !== b.bank) return a.bank < b.bank ? -1 : 1;
-  const contentA = itemContent(a.item);
-  const contentB = itemContent(b.item);
+  const contentA = recallItemText(a.item);
+  const contentB = recallItemText(b.item);
   if (contentA === contentB) return 0;
   return contentA < contentB ? -1 : 1;
 }

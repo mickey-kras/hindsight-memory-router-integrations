@@ -1019,6 +1019,11 @@ jobs:
               if properties.get('sonar.javascript.lcov.reportPaths') != 'coverage/lcov.info':
                   fail('sonar-project.properties: coverage import must stay configured')
 
+          def gate_checksum_file(path, content):
+              lines = [line for line in content.splitlines() if line.strip()]
+              if not lines:
+                  fail(f'{path}: checksum file must not be empty')
+
           # Only the reviewed Dependabot workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
@@ -1062,6 +1067,8 @@ jobs:
               'package.json': gate_package_json,
               'vitest.config.ts': gate_vitest,
               'sonar-project.properties': gate_sonar,
+              'PACKAGE_SHA256': gate_checksum_file,
+              'PACKAGE_NIX_HASHES': gate_checksum_file,
           }
 
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
@@ -1175,7 +1182,9 @@ jobs:
                   if entry.get('status') == 'renamed' and isinstance(previous, str):
                       removed_or_renamed.add(previous)
 
-              if changed & protected:
+              protected_package_change = any(path.startswith('packages/') for path in changed)
+
+              if changed & protected or protected_package_change:
                   if (
                       author_association.upper() not in TRUSTED_ASSOCIATIONS
                       and author_login != DEPENDABOT_LOGIN

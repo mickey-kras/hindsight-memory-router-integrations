@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
 const root = new URL("../integrations/coding-agents/", import.meta.url);
 const upstream = JSON.parse(readFileSync(new URL("UPSTREAM.json", root), "utf8"));
 const changes = JSON.parse(readFileSync(new URL("LOCAL_CHANGES.json", root), "utf8"));
-for (const [file, expected] of Object.entries({ ...upstream.files, ...changes })) {
+for (const [file, expected] of Object.entries({
+  ...upstream.files,
+  ...changes,
+})) {
   if (expected === null) {
     if (existsSync(new URL(join("../../src/upstream/coding-agents", file), root)))
       throw new Error(`removed upstream file restored: ${file}`);

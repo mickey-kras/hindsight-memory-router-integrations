@@ -8,7 +8,6 @@
  * not break the hook.
  */
 import { spawn as realSpawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 

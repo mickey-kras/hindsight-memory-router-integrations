@@ -1,5 +1,3 @@
-/** Shared transcript-rendering helpers used by both the Claude (transcript.ts) and Codex
- *  (transcript-codex.ts) session readers. */
 
 /** Cap on any single rendered tool input or tool result (mirrors v1's 2000-char cap): small
  *  edits/commands are captured verbatim while a giant Write/output is bounded. */

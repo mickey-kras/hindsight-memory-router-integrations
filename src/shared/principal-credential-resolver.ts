@@ -1,4 +1,5 @@
-import { visibleBanks, type BankAccess } from "./bank-access.js";
+import { type BankAccess, visibleBanks } from "./bank-access.js";
+import { BANK_ID_PATTERN, PRINCIPAL_ID_PATTERN, TOKEN_FORMAT_PATTERN } from "./patterns.js";
 /** Maps trusted runtime agent IDs to tokens and routes. No fallback identity. */
 
 export interface PrincipalConfig {
@@ -53,9 +54,11 @@ export class CredentialResolutionError extends Error {
   }
 }
 
-export const PRINCIPAL_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
-export const TOKEN_FORMAT_PATTERN = /^mr_[A-Za-z0-9._-]{1,64}_[0-9a-f]{64}$/;
-export const BANK_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+export {
+  BANK_ID_PATTERN,
+  PRINCIPAL_ID_PATTERN,
+  TOKEN_FORMAT_PATTERN,
+} from "./patterns.js";
 
 /**
  * A SecretRef that runtime did not resolve arrives as an object. Tokens must
@@ -102,10 +105,10 @@ export class PrincipalCredentialResolver {
     if (!principalId || !PRINCIPAL_ID_PATTERN.test(principalId) || principalId === "." || principalId === "..") {
       throw new UnknownPrincipalError(principalId);
     }
-    const entry = this.principals[principalId];
-    if (!Object.hasOwn(this.principals, principalId) || !entry) {
+    if (!Object.hasOwn(this.principals, principalId)) {
       throw new UnknownPrincipalError(principalId);
     }
+    const entry = this.principals[principalId];
     const token = entry.token;
     if (token === undefined || token === null || token === "") {
       throw new CredentialResolutionError("missing-token");
@@ -121,7 +124,10 @@ export class PrincipalCredentialResolver {
       additionalReadBanks: this.resolveReadBanks(principalId),
     };
     visibleBanks(access);
-    return Object.defineProperty({ principalId, access, token }, "token", { value: token, enumerable: false });
+    return Object.defineProperty({ principalId, access, token }, "token", {
+      value: token,
+      enumerable: false,
+    });
   }
 
   /** Resolve the agent's single default write bank. */
@@ -167,7 +173,10 @@ export class PrincipalCredentialResolver {
         banks.push(value);
       }
     }
-    return visibleBanks({ writeBank: write ?? undefined, additionalReadBanks: banks });
+    return visibleBanks({
+      writeBank: write ?? undefined,
+      additionalReadBanks: banks,
+    });
   }
 
   private requireEntry(principalId: string): PrincipalConfig {

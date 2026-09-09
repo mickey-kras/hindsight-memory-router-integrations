@@ -50,7 +50,10 @@
             },
             "additionalReadBanks": {
               "type": "array",
-              "items": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+              },
               "uniqueItems": true,
               "description": "Additional read-only banks. Effective reads include writeBank; an empty list adds no banks."
             }

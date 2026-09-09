@@ -12,7 +12,7 @@ export interface MoltbotPluginAPI {
   // OpenClaw hook handler signature: (event, ctx?) where ctx contains channel/sender info
   on(
     event: string,
-    handler: (event: any, ctx?: any) => void | Promise<void | PluginPromptHookResult>
+    handler: (event: PluginHookEvent, ctx?: PluginHookAgentContext) => void | Promise<void | PluginPromptHookResult>
   ): void;
   // Register a tool or tool factory for agents
   registerTool?(
@@ -25,6 +25,14 @@ export interface MoltbotPluginAPI {
     warn(msg: string): void;
     error(msg: string): void;
   };
+}
+
+export interface PluginHookEvent {
+  prompt?: unknown;
+  messages?: unknown;
+  rawMessage?: unknown;
+  sessionKey?: unknown;
+  context?: { sessionEntry?: { messages?: Array<{ role?: unknown; content?: unknown }> } };
 }
 
 export interface PluginToolContext {
@@ -168,10 +176,6 @@ export interface ServiceConfig {
   start(): Promise<void>;
   stop(): Promise<void>;
 }
-
-// -----------------------------------------------------------------------------
-// Hindsight API types
-// -----------------------------------------------------------------------------
 
 // MemoryResult / RecallResponse / ReflectResponse come from the generated
 // hindsight-client SDK. We alias MemoryResult → RecallResult so existing code
