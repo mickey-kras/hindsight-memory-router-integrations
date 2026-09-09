@@ -1,6 +1,9 @@
 """Exercise release policy against meaningful workflow and source mutations."""
 
 import json
+import os
+import sys
+import tempfile
 import subprocess
 import unittest
 from pathlib import Path
@@ -62,17 +65,36 @@ new AsyncFunction('github', 'context', 'core', 'require', input.script)(github, 
         run = step.get("run", "")
         if "cat <<'POLICY_SOURCE'" in run:
             source += run.split("\n", 2)[2].rsplit("\nPOLICY_SOURCE", 1)[0] + "\n"
-    namespace = {"__name__": "policy_test"}
-    exec(compile(source, str(GUARD), "exec"), namespace)
-    for path in PATHS:
-        content = files[path]
-        if path.endswith(".yml"):
-            doc = namespace["parse_yaml_file"](path, content)
-            if doc is not None:
-                namespace["check_workflow"](path, doc)
-        if path in namespace["GATES"]:
-            namespace["GATES"][path](path, content)
-    return namespace["failures"]
+    # Exercise the guard's existing fixture mode in its own process, including
+    # its real author checks and main entry point. Do not evaluate source in the
+    # test runner or disable the repository's dynamic-execution security rule.
+    with tempfile.TemporaryDirectory(prefix="release-policy-") as temporary:
+        directory = Path(temporary)
+        program = directory / "policy_guard.py"
+        program.write_text(source)
+        fixtures = directory / "fixtures"
+        fixtures.mkdir()
+        for path, content in files.items():
+            target = fixtures / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        for name, value in {
+            "head_sha": "a" * 40,
+            "author_association": "OWNER",
+            "author_login": "test-owner",
+        }.items():
+            (fixtures / name).write_text(value)
+        changed = directory / "files.json"
+        changed.write_text(json.dumps([{"filename": path, "status": "modified"} for path in PATHS]))
+        result = subprocess.run(
+            [sys.executable, str(program)],
+            env={**os.environ, "GUARD_FIXTURE_DIR": str(fixtures), "FILES_JSON": str(changed)},
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        return [] if result.returncode == 0 else [result.stdout + result.stderr]
 
 
 class ReleasePolicyTests(unittest.TestCase):
