@@ -13,6 +13,14 @@ permissions:
   contents: read
 
 jobs:
+  update-pr-branches:
+    name: update PR branches
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/pr-branch-updater.yml
+
   quality:
     name: quality
     if: github.ref == 'refs/heads/main'
@@ -88,4 +96,3 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
