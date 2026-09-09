@@ -1,7 +1,8 @@
 name: branch-policy
 
 on:
-  workflow_call:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
   contents: read
@@ -12,7 +13,6 @@ env:
 jobs:
   branch-name:
     name: branch name
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Validate same-repository branch name

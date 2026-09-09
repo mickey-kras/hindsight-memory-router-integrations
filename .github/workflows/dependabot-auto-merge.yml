@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
 
@@ -34,7 +34,16 @@ jobs:
           path: automation
           sparse-checkout: .github/scripts
 
-      - name: Queue verified Dependabot updates
+      - name: Read pinned Dependabot metadata action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dependabot/fetch-metadata
+          ref: 25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+          persist-credentials: false
+          path: metadata-action
+          sparse-checkout: dist
+
+      - name: Evaluate compatibility and queue eligible updates
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,5 +52,6 @@ jobs:
             const { run } = require('./automation/.github/scripts/dependabot-auto-merge.cjs');
             await run({
               github, context, core,
+              metadataPath: require('node:path').resolve('metadata-action'),
               mainWorkflow: 'main.yml',
             });

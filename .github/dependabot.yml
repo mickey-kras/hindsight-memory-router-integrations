@@ -3,8 +3,7 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: cron
-      cronjob: "3 1 * * *"
+      interval: weekly
     cooldown:
       default-days: 7
     rebase-strategy: auto
@@ -17,8 +16,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: cron
-      cronjob: "3 3 * * *"
+      interval: weekly
     cooldown:
       default-days: 7
     rebase-strategy: auto
@@ -31,8 +29,7 @@ updates:
   - package-ecosystem: npm
     directory: /src/upstream/coding-agents
     schedule:
-      interval: cron
-      cronjob: "3 5 * * *"
+      interval: weekly
     cooldown:
       default-days: 7
     rebase-strategy: auto
