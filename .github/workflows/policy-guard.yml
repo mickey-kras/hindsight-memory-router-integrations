@@ -691,12 +691,13 @@ jobs:
               if doc is None:
                   return
               events = workflow_events(doc)
-              require_job_set(path, doc, ('quality', 'aislop', 'codeql', 'sonar'))
+              require_job_set(path, doc, ('update-pr-branches', 'quality', 'aislop', 'codeql', 'sonar'))
               if 'push' not in events:
                   fail('main.yml: push trigger must stay enabled')
               if 'pull_request' in events or GUARD_EVENT in events:
                   fail('main.yml: trusted main workflow must stay isolated from PRs')
               expected_uses = {
+                  'update-pr-branches': './.github/workflows/pr-branch-updater.yml',
                   'quality': './.github/workflows/ci.yml',
                   'aislop': './.github/workflows/aislop.yml',
                   'codeql': './.github/workflows/codeql.yml',
@@ -1024,7 +1025,7 @@ jobs:
               if not lines:
                   fail(f'{path}: checksum file must not be empty')
 
-          # Only the reviewed Dependabot workflow shapes may write or use
+          # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
               '.github/workflows/dependabot-auto-merge.yml': (
