@@ -1,7 +1,6 @@
 name: codeql
 
 on:
-  pull_request:
   workflow_call:
   schedule:
     - cron: "31 3 * * 1"
