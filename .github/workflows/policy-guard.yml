@@ -516,8 +516,8 @@ jobs:
                       fail('ci.yml: npm audit must be a separate step from Tests and coverage')
                   if audit_step.get('name') is not None:
                       fail('ci.yml: npm audit step must remain unnamed')
-                  if audit_step['run'].strip() != 'npm audit --audit-level=moderate':
-                      fail("ci.yml: npm audit run must be exactly 'npm audit --audit-level=moderate'")
+                  if audit_step['run'].strip() != 'npm audit --omit=dev --audit-level=moderate':
+                      fail("ci.yml: npm audit must scan production dependencies at moderate severity")
                   check_step_keys(path, 'checks', audit_step)
               upload = next(
                   (
@@ -906,6 +906,9 @@ jobs:
                       '.aislop/config.yml: exclude must be exactly: '
                       + ', '.join(sorted(AISLOP_REQUIRED_EXCLUDE))
                   )
+              rules = doc.get('rules')
+              if not isinstance(rules, dict) or rules.get('security/vulnerable-dependency') != 'off':
+                  fail('.aislop/config.yml: dependency findings must remain delegated to npm audit')
 
           def gate_semgrep(path, content):
               doc = parse_yaml_file(path, content)

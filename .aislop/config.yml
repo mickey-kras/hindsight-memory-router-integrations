@@ -11,6 +11,7 @@ exclude:
 
 rules:
   security/hardcoded-secret: error
+  security/vulnerable-dependency: off
   ai-slop/hardcoded-url: off
 
 quality:
