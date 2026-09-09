@@ -5,22 +5,14 @@ const { execFileSync } = require("node:child_process");
 
 const MINIMUM_SCORE = 75;
 const BOT = { login: "dependabot[bot]", id: 49699333 };
-const UPDATE_TYPES = new Set([
-  "version-update:semver-patch",
-  "version-update:semver-minor",
-]);
+const UPDATE_TYPES = new Set(["version-update:semver-patch", "version-update:semver-minor"]);
 
 function isDependabot(user) {
   return user?.login === BOT.login && user?.id === BOT.id;
 }
 
 function verifiedCommits(commits) {
-  return (
-    commits.length > 0 &&
-    commits.every(
-      (c) => isDependabot(c.author) && c.commit.verification?.verified,
-    )
-  );
+  return commits.length > 0 && commits.every((c) => isDependabot(c.author) && c.commit.verification?.verified);
 }
 
 function trustedPull(pull, repository, branch) {
@@ -38,13 +30,10 @@ function eligibility(commits, dependencies) {
   if (!verifiedCommits(commits)) {
     return "Unsigned or non-Dependabot commits require manual review";
   }
-  if (!Array.isArray(dependencies) || !dependencies.length)
-    return "No dependency metadata";
+  if (!Array.isArray(dependencies) || !dependencies.length) return "No dependency metadata";
   for (const dependency of dependencies) {
-    if (!UPDATE_TYPES.has(dependency.updateType))
-      return "Major or unknown update type requires manual review";
-    if (!dependency.prevVersion || !dependency.newVersion)
-      return "Missing version pair";
+    if (!UPDATE_TYPES.has(dependency.updateType)) return "Major or unknown update type requires manual review";
+    if (!dependency.prevVersion || !dependency.newVersion) return "Missing version pair";
     const score = dependency.compatScore;
     if (!Number.isInteger(score) || score < MINIMUM_SCORE || score > 100) {
       return `Every dependency needs a known compatibility score of at least ${MINIMUM_SCORE}%`;
@@ -57,8 +46,7 @@ function readDependencies(output) {
   const lines = output.split(/\r?\n/);
   const marker = "updated-dependencies-json<<";
   const start = lines.findIndex((line) => line.startsWith(marker));
-  if (start < 0)
-    throw new Error("Metadata action did not return dependency details");
+  if (start < 0) throw new Error("Metadata action did not return dependency details");
   const delimiter = lines[start].slice(marker.length);
   const end = lines.indexOf(delimiter, start + 1);
   if (!delimiter || end < 0) throw new Error("Incomplete metadata output");
@@ -100,37 +88,22 @@ function fetchMetadata(pull, repository, metadataPath) {
 }
 
 function mergeCommand(repository, number, options) {
-  execFileSync(
-    "gh",
-    ["pr", "merge", String(number), "--repo", repository, ...options],
-    {
-      timeout: 30000,
-      stdio: "pipe",
-    },
-  );
+  execFileSync("gh", ["pr", "merge", String(number), "--repo", repository, ...options], {
+    timeout: 30000,
+    stdio: "pipe",
+  });
 }
 
 async function ensureMainRun({ github, context, core, branch, mainWorkflow }) {
   const repo = context.repo;
   const { data: tip } = await github.rest.repos.getBranch({ ...repo, branch });
   const sha = tip.commit.sha;
-  const pulls = await github.paginate(
-    github.rest.repos.listPullRequestsAssociatedWithCommit,
-    {
-      ...repo,
-      commit_sha: sha,
-      per_page: 100,
-    },
-  );
-  if (
-    !pulls.some(
-      (p) =>
-        isDependabot(p.user) &&
-        p.merged_at &&
-        p.merge_commit_sha === sha &&
-        p.base.ref === branch,
-    )
-  )
+  const pulls = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+    ...repo,
+    commit_sha: sha,
+    per_page: 100,
+  });
+  if (!pulls.some((p) => isDependabot(p.user) && p.merged_at && p.merge_commit_sha === sha && p.base.ref === branch))
     return;
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
     ...repo,
@@ -169,10 +142,7 @@ async function run({
   const { data: repo } = await github.rest.repos.get(context.repo);
   const branch = repo.default_branch;
   // Dispatches from a work branch must never run merge automation.
-  if (
-    !["pull_request_target", "workflow_call"].includes(context.eventName) &&
-    context.ref !== `refs/heads/${branch}`
-  )
+  if (!["pull_request_target", "workflow_call"].includes(context.eventName) && context.ref !== `refs/heads/${branch}`)
     throw new Error("Automation requires the default branch");
   const number = context.payload.pull_request?.number;
   const pulls = number
@@ -193,9 +163,7 @@ async function run({
       if (pull.auto_merge?.enabled_by.login === "github-actions[bot]") {
         merge(repository, pull.number, ["--disable-auto"]);
       } else if (pull.auto_merge) {
-        core.info(
-          `#${pull.number}: preserving the owner's manual auto-merge decision`,
-        );
+        core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
         continue;
       }
       const commits = await github.paginate(github.rest.pulls.listCommits, {
@@ -203,9 +171,7 @@ async function run({
         per_page: 100,
       });
       if (!verifiedCommits(commits)) {
-        core.info(
-          `#${pull.number}: unsigned or non-Dependabot commits require manual review`,
-        );
+        core.info(`#${pull.number}: unsigned or non-Dependabot commits require manual review`);
         continue;
       }
       const dependencies = metadata(pull, repository, metadataPath);
@@ -215,34 +181,19 @@ async function run({
         continue;
       }
       const { data: current } = await github.rest.pulls.get(params);
-      if (
-        !trustedPull(current, repository, branch) ||
-        current.head.sha !== pull.head.sha
-      ) {
-        core.info(
-          `#${pull.number}: changed during evaluation; retry on the next event or refresh`,
-        );
+      if (!trustedPull(current, repository, branch) || current.head.sha !== pull.head.sha) {
+        core.info(`#${pull.number}: changed during evaluation; retry on the next event or refresh`);
         continue;
       }
-      merge(repository, pull.number, [
-        "--auto",
-        "--squash",
-        "--match-head-commit",
-        pull.head.sha,
-      ]);
-      core.info(
-        `#${pull.number}: eligible, minimum score ${Math.min(...dependencies.map((d) => d.compatScore))}%`,
-      );
+      merge(repository, pull.number, ["--auto", "--squash", "--match-head-commit", pull.head.sha]);
+      core.info(`#${pull.number}: eligible, minimum score ${Math.min(...dependencies.map((d) => d.compatScore))}%`);
     } catch (error) {
       failed = true;
-      core.warning(
-        `#${candidate.number}: auto-merge evaluation failed (${error.name}); left for retry`,
-      );
+      core.warning(`#${candidate.number}: auto-merge evaluation failed (${error.name}); left for retry`);
     }
   }
   await ensureMainRun({ github, context, core, branch, mainWorkflow });
-  if (failed)
-    core.setFailed("Some Dependabot PRs could not be evaluated; see warnings");
+  if (failed) core.setFailed("Some Dependabot PRs could not be evaluated; see warnings");
 }
 
 module.exports = {

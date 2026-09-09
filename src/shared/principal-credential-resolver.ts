@@ -1,9 +1,5 @@
 import { type BankAccess, visibleBanks } from "./bank-access.js";
-import {
-  BANK_ID_PATTERN,
-  PRINCIPAL_ID_PATTERN,
-  TOKEN_FORMAT_PATTERN,
-} from "./patterns.js";
+import { BANK_ID_PATTERN, PRINCIPAL_ID_PATTERN, TOKEN_FORMAT_PATTERN } from "./patterns.js";
 /** Maps trusted runtime agent IDs to tokens and routes. No fallback identity. */
 
 export interface PrincipalConfig {
@@ -37,11 +33,7 @@ export interface PrincipalCredentials {
 export class UnknownPrincipalError extends Error {
   readonly principalId: string | undefined;
   constructor(principalId: string | undefined) {
-    super(
-      principalId
-        ? "no routing entry for agent"
-        : "missing trusted agent identity",
-    );
+    super(principalId ? "no routing entry for agent" : "missing trusted agent identity");
     this.name = "UnknownPrincipalError";
     this.principalId = principalId;
   }
@@ -110,12 +102,7 @@ export class PrincipalCredentialResolver {
    * Throws UnknownPrincipalError / CredentialResolutionError; never returns null.
    */
   resolve(principalId: string | undefined): PrincipalCredentials {
-    if (
-      !principalId ||
-      !PRINCIPAL_ID_PATTERN.test(principalId) ||
-      principalId === "." ||
-      principalId === ".."
-    ) {
+    if (!principalId || !PRINCIPAL_ID_PATTERN.test(principalId) || principalId === "." || principalId === "..") {
       throw new UnknownPrincipalError(principalId);
     }
     if (!Object.hasOwn(this.principals, principalId)) {
@@ -159,12 +146,7 @@ export class PrincipalCredentialResolver {
     if (bank === undefined || bank === null || bank === "") {
       return null;
     }
-    if (
-      typeof bank !== "string" ||
-      !BANK_ID_PATTERN.test(bank) ||
-      bank === "." ||
-      bank === ".."
-    ) {
+    if (typeof bank !== "string" || !BANK_ID_PATTERN.test(bank) || bank === "." || bank === "..") {
       throw new CredentialResolutionError("invalid-bank");
     }
     return bank;
@@ -184,12 +166,7 @@ export class PrincipalCredentialResolver {
     const write = this.resolveOptionalWriteBank(principalId);
     const banks: string[] = [];
     for (const value of raw) {
-      if (
-        typeof value !== "string" ||
-        !BANK_ID_PATTERN.test(value) ||
-        value === "." ||
-        value === ".."
-      ) {
+      if (typeof value !== "string" || !BANK_ID_PATTERN.test(value) || value === "." || value === "..") {
         throw new CredentialResolutionError("invalid-bank");
       }
       if (!banks.includes(value)) {
@@ -203,12 +180,7 @@ export class PrincipalCredentialResolver {
   }
 
   private requireEntry(principalId: string): PrincipalConfig {
-    if (
-      !principalId ||
-      !PRINCIPAL_ID_PATTERN.test(principalId) ||
-      principalId === "." ||
-      principalId === ".."
-    ) {
+    if (!principalId || !PRINCIPAL_ID_PATTERN.test(principalId) || principalId === "." || principalId === "..") {
       throw new UnknownPrincipalError(principalId);
     }
     const entry = this.principals[principalId];

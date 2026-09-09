@@ -3,15 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  AuthenticatedClientFactory,
-  type RouterClient,
-} from "../src/shared/authenticated-client-factory.js";
+import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
-import {
-  RetainAuthorizationError,
-  RetainCoordinator,
-} from "../src/shared/retain-coordinator.js";
+import { RetainAuthorizationError, RetainCoordinator } from "../src/shared/retain-coordinator.js";
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
 const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
@@ -76,8 +70,7 @@ function makeStack(options: {
   return { retain, fakeClients };
 }
 
-const httpError = (statusCode: number) =>
-  Object.assign(new Error(`http ${statusCode}`), { statusCode });
+const httpError = (statusCode: number) => Object.assign(new Error(`http ${statusCode}`), { statusCode });
 
 describe("RetainCoordinator", () => {
   let queueDir: string;
@@ -107,9 +100,7 @@ describe("RetainCoordinator", () => {
         throw httpError(403);
       },
     });
-    await expect(retain.retain("main", { content: "hello" })).rejects.toThrow(
-      RetainAuthorizationError,
-    );
+    await expect(retain.retain("main", { content: "hello" })).rejects.toThrow(RetainAuthorizationError);
     const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
     expect(() => readFileSync(queueFile, "utf8")).toThrow();
   });
@@ -134,10 +125,7 @@ describe("RetainCoordinator", () => {
 
     // The queue file encodes the agent; the item encodes the bank. The raw
     // token is never persisted.
-    const raw = readFileSync(
-      join(queueDir, "hindsight-retain-queue.backend.jsonl"),
-      "utf8",
-    );
+    const raw = readFileSync(join(queueDir, "hindsight-retain-queue.backend.jsonl"), "utf8");
     const item = JSON.parse(raw.trim());
     expect(item.bankId).toBe("dev");
     expect(raw).not.toContain(TOKEN_BACKEND);
@@ -149,9 +137,7 @@ describe("RetainCoordinator", () => {
     await second.retain.flushQueues();
     expect(second.fakeClients.get("backend")?.retains).toHaveLength(1);
     expect(second.fakeClients.get("backend")?.retains[0].bank).toBe("dev");
-    expect(second.fakeClients.get("backend")?.retains[0].content).toBe(
-      "queued work",
-    );
+    expect(second.fakeClients.get("backend")?.retains[0].content).toBe("queued work");
     // Replay authenticated with the backend token, not any other agent's.
     expect(apiKeys).toEqual([TOKEN_BACKEND, TOKEN_BACKEND]);
   });
@@ -163,9 +149,7 @@ describe("RetainCoordinator", () => {
         throw httpError(400);
       },
     });
-    await expect(retain.retain("main", { content: "invalid" })).rejects.toThrow(
-      "http 400",
-    );
+    await expect(retain.retain("main", { content: "invalid" })).rejects.toThrow("http 400");
     const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
     expect(() => readFileSync(queueFile, "utf8")).toThrow();
   });
@@ -205,10 +189,7 @@ describe("RetainCoordinator", () => {
       logger: silentLog,
     });
     await retain.flushQueues();
-    const raw = readFileSync(
-      join(queueDir, "hindsight-retain-queue.main.jsonl"),
-      "utf8",
-    );
+    const raw = readFileSync(join(queueDir, "hindsight-retain-queue.main.jsonl"), "utf8");
     expect(raw.trim()).not.toBe("");
   });
 
@@ -234,14 +215,9 @@ describe("RetainCoordinator", () => {
     });
     await replay.retain.flushQueues();
 
-    expect(log.error).toHaveBeenCalledWith(
-      "retain replay denied for bank main; item stays queued for operator review",
-    );
+    expect(log.error).toHaveBeenCalledWith("retain replay denied for bank main; item stays queued for operator review");
     expect(attempts).toBe(1);
-    const raw = readFileSync(
-      join(queueDir, "hindsight-retain-queue.main.jsonl"),
-      "utf8",
-    ).trim();
+    const raw = readFileSync(join(queueDir, "hindsight-retain-queue.main.jsonl"), "utf8").trim();
     expect(raw.split("\n")).toHaveLength(2);
   });
 
@@ -252,12 +228,8 @@ describe("RetainCoordinator", () => {
         throw new Error("connection reset");
       },
     });
-    await expect(
-      retain.retain("main", { content: "offline work" }),
-    ).rejects.toThrow("connection reset");
-    expect(() =>
-      readFileSync(join(queueDir, "hindsight-retain-queue.main.jsonl"), "utf8"),
-    ).toThrow();
+    await expect(retain.retain("main", { content: "offline work" })).rejects.toThrow("connection reset");
+    expect(() => readFileSync(join(queueDir, "hindsight-retain-queue.main.jsonl"), "utf8")).toThrow();
   });
 
   it("queues the fetch network TypeError emitted by Node", async () => {
@@ -267,9 +239,7 @@ describe("RetainCoordinator", () => {
         throw new TypeError("fetch failed");
       },
     });
-    await expect(
-      retain.retain("main", { content: "offline" }),
-    ).resolves.toEqual({ queued: true, bank: "main" });
+    await expect(retain.retain("main", { content: "offline" })).resolves.toEqual({ queued: true, bank: "main" });
   });
 
   it("assigns and persists an operation id for replay identity", async () => {
@@ -280,26 +250,19 @@ describe("RetainCoordinator", () => {
     expect(String(options?.operationId)).not.toBe("");
   });
 
-  it.each([401, 408, 429, 503])(
-    "classifies HTTP %i correctly",
-    async (statusCode) => {
-      const { retain } = makeStack({
-        queueDir,
-        behavior: () => {
-          throw httpError(statusCode);
-        },
-      });
-      if (statusCode === 401) {
-        await expect(
-          retain.retain("main", { content: "work" }),
-        ).rejects.toThrow(RetainAuthorizationError);
-      } else {
-        await expect(
-          retain.retain("main", { content: "work" }),
-        ).resolves.toMatchObject({ queued: true });
-      }
-    },
-  );
+  it.each([401, 408, 429, 503])("classifies HTTP %i correctly", async (statusCode) => {
+    const { retain } = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(statusCode);
+      },
+    });
+    if (statusCode === 401) {
+      await expect(retain.retain("main", { content: "work" })).rejects.toThrow(RetainAuthorizationError);
+    } else {
+      await expect(retain.retain("main", { content: "work" })).resolves.toMatchObject({ queued: true });
+    }
+  });
 
   it("serializes supported metadata values and omits nullish values", async () => {
     const { retain, fakeClients } = makeStack({ queueDir });

@@ -67,8 +67,7 @@ const TOOL_SPECS: Record<string, ToolSpec> = {
   agent_knowledge_ingest: {
     read: false,
     request: (params) => {
-      if (typeof params.title !== "string" || params.title.trim() === "")
-        throw new TypeError("title is required");
+      if (typeof params.title !== "string" || params.title.trim() === "") throw new TypeError("title is required");
       return {
         read: false,
         method: "POST",
@@ -109,33 +108,18 @@ export function routedKnowledgeTools(transport: RouterTransport) {
     async execute(params: Record<string, unknown>) {
       const spec = TOOL_SPECS[tool.name];
       if (!spec) throw new AccessDeniedError();
-      const bank =
-        typeof params.bankId === "string"
-          ? params.bankId
-          : transport.access.writeBank;
+      const bank = typeof params.bankId === "string" ? params.bankId : transport.access.writeBank;
       if (!bank) throw new AccessDeniedError();
       requireBank(transport.access, bank, spec.read ? "read" : "write");
-      const page =
-        typeof params.page_id === "string"
-          ? encodeURIComponent(params.page_id)
-          : "";
+      const page = typeof params.page_id === "string" ? encodeURIComponent(params.page_id) : "";
       const request = spec.request(params, page);
-      const response = await transport.request(
-        transport.bankUrl(bank, request.suffix),
-        {
-          method: request.method,
-          body:
-            request.body === undefined
-              ? undefined
-              : JSON.stringify(request.body),
-        },
-      );
-      const data: unknown =
-        request.method === "DELETE" ? { success: true } : await response.json();
+      const response = await transport.request(transport.bankUrl(bank, request.suffix), {
+        method: request.method,
+        body: request.body === undefined ? undefined : JSON.stringify(request.body),
+      });
+      const data: unknown = request.method === "DELETE" ? { success: true } : await response.json();
       return {
-        content: [
-          { type: "text" as const, text: JSON.stringify(data, null, 2) },
-        ],
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     },
   }));

@@ -851,7 +851,6 @@ function stageRuntime(c: InstallCtx): InstallCtx {
 
 export type ServerMode = "cloud" | "self-hosted" | "daemon";
 
-const SERVER_MODES: ServerMode[] = ["cloud", "self-hosted", "daemon"];
 
 /** Value of `--name value` or `--name=value`. */
 export function flagValue(args: string[], name: string): string | undefined {
@@ -871,7 +870,6 @@ export function flagValueArgs(args: string[], names: string[]): Set<string> {
   return taken;
 }
 
-const CONFIG_RELATIVE = [".hindsight", "coding-agent.json"];
 
 /**
  * Ask which of the three connection modes to use, once.
@@ -891,34 +889,6 @@ const SERVER_CHOICES: { mode: ServerMode; label: string; hint: string }[] = [
   },
 ];
 
-function promptServerMode(c: InstallCtx): ServerMode | undefined {
-  // Preferred UX: arrow-key picker (digits still submit directly). It reports undefined when a
-  // raw TTY isn't available (no stty, exotic shell) — then the plain numbered menu below still
-  // works everywhere a line can be read.
-  if (c.selectPrompt) {
-    const picked = c.selectPrompt(
-      "Where should memory live?",
-      SERVER_CHOICES.map(({ label, hint }) => ({ label, hint })),
-      0
-    );
-    if (picked === null) {
-      c.log?.("no server chosen — leaving the server config unchanged");
-      return undefined;
-    }
-    if (picked !== undefined) return SERVER_CHOICES[picked].mode;
-  }
-  c.log?.(
-    `\nWhere should memory live?\n` +
-      SERVER_CHOICES.map((o, i) => `  ${i + 1}) ${o.label.padEnd(28)}— ${o.hint}`).join("\n") +
-      `\n`
-  );
-  const answer = readLineSync(c, "Choose [1-3] (default 1): ").trim();
-  if (answer === "") return "cloud";
-  const digit = Number.parseInt(answer, 10);
-  if (digit >= 1 && digit <= SERVER_CHOICES.length) return SERVER_CHOICES[digit - 1].mode;
-  c.log?.(`unrecognised choice "${answer}" — leaving the server config unchanged`);
-  return undefined;
-}
 
 /**
  * Read one line from stdin synchronously.
@@ -961,46 +931,7 @@ function configureServer(c: InstallCtx, args: string[], installing: readonly str
   return true;
 }
 
-/** Cloud tokens are mandatory: re-ask a couple of times rather than writing a config that 401s
- *  on the first session. Three blank answers mean the user doesn't have one at hand — give up
- *  and let the cloud branch abort with the actionable message. */
-function askToken(c: InstallCtx): string | undefined {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const token = readLineSync(c, "API token (required for Hindsight Cloud): ").trim();
-    if (token) return token;
-    c.log?.("  a token is required — find yours in the Hindsight Cloud dashboard");
-  }
-  return undefined;
-}
 
-/**
- * Daemon mode has two prerequisites the plugin can't supply. Report both up front rather than
- * letting the first session fail quietly with nothing but a diagnostic line.
- */
-function reportDaemonPrereqs(c: InstallCtx): void {
-  if (!(c.hasUvx ?? hasUvx)()) {
-    c.log?.(
-      `⚠️  \`uv\` is not on PATH. The daemon is fetched and run with it, so memory stays inert\n` +
-        `    until you install it: https://docs.astral.sh/uv/`
-    );
-  }
-  if (!(c.hasRust ?? hasRustToolchain)()) {
-    c.log?.(
-      `⚠️  macOS needs a current Rust toolchain to build the daemon's dependencies (litellm\n` +
-        `    publishes no macOS wheel). Install from https://rustup.rs, then\n` +
-        `    \`rustup default stable && rustup update\` — an OUT-OF-DATE toolchain fails too.`
-    );
-  }
-  const llm = (c.detectLlm ?? detectLlm)();
-  if (llm) {
-    c.log?.(`   local extraction will use ${llm.provider} (from ${llm.source})`);
-  } else {
-    c.log?.(
-      `⚠️  No LLM available for local fact extraction. Set OPENAI_API_KEY, ANTHROPIC_API_KEY or\n` +
-        `    GEMINI_API_KEY (or install the Claude Code CLI, which needs no key).`
-    );
-  }
-}
 
 const devin: HarnessInstaller = {
   name: "devin-cli",
@@ -1154,11 +1085,11 @@ const grok: HarnessInstaller = {
     const tomlString = (value: string) => JSON.stringify(value);
     const block =
       `\n${GROK_MARKER_START}\n` +
-      `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = \"command\"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
-      `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = \"command\"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
-      `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
-      `[mcp_servers.hindsight]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
-      `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
+      `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = "command"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
+      `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = "command"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
+      `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = "command"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
+      `[mcp_servers.hindsight]\ncommand = "node"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
+      `env = { HINDSIGHT_MCP_HARNESS = "grok-build" }\n${GROK_MARKER_END}\n`;
     if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
       copyFileSync(path, `${path}.hindsight-backup`);
     mkdirSync(dirname(path), { recursive: true });

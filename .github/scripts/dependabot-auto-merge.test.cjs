@@ -1,12 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {
-  run,
-  eligibility,
-  trustedPull,
-  readDependencies,
-  ensureMainRun,
-} = require("./dependabot-auto-merge.cjs");
+const { run, eligibility, trustedPull, readDependencies, ensureMainRun } = require("./dependabot-auto-merge.cjs");
 
 const bot = { login: "dependabot[bot]", id: 49699333 };
 const commits = [{ author: bot, commit: { verification: { verified: true } } }];
@@ -31,10 +25,7 @@ const pull = {
 
 for (const score of [75, 80, 100]) {
   test(`accepts known score ${score}`, () =>
-    assert.equal(
-      eligibility(commits, [{ ...dependency, compatScore: score }]),
-      null,
-    ));
+    assert.equal(eligibility(commits, [{ ...dependency, compatScore: score }]), null));
 }
 for (const score of [74, 0, undefined, null, "75", NaN, 101, 75.5]) {
   test(`rejects low or invalid score ${String(score)}`, () =>
@@ -81,12 +72,7 @@ test("all commits must have verified Dependabot authors", () => {
       [dependency],
     ),
   );
-  assert.ok(
-    eligibility(
-      [{ author: bot, commit: { verification: { verified: false } } }],
-      [dependency],
-    ),
-  );
+  assert.ok(eligibility([{ author: bot, commit: { verification: { verified: false } } }], [dependency]));
 });
 test("requires exact bot identity, origin, base and non-draft state", () => {
   assert.ok(trustedPull(pull, "owner/repo", "main"));
@@ -98,10 +84,7 @@ test("requires exact bot identity, origin, base and non-draft state", () => {
     { head: { ...pull.head, ref: "feat/update" } },
     { base: { ref: "release" } },
   ])
-    assert.equal(
-      trustedPull({ ...pull, ...change }, "owner/repo", "main"),
-      false,
-    );
+    assert.equal(trustedPull({ ...pull, ...change }, "owner/repo", "main"), false);
 });
 test("reads upstream multiline output and rejects missing/truncated data", () => {
   const output = `other=value\r\nupdated-dependencies-json<<ghadelimiter_example\r\n${JSON.stringify([dependency])}\r\nghadelimiter_example\r\n`;
@@ -124,16 +107,10 @@ function harness({
     failures = [];
   let reads = 0;
   const endpoints = Object.fromEntries(
-    [
-      "getRepo",
-      "getBranch",
-      "getPull",
-      "listPulls",
-      "listCommits",
-      "associated",
-      "runs",
-      "dispatch",
-    ].map((k) => [k, { name: k }]),
+    ["getRepo", "getBranch", "getPull", "listPulls", "listCommits", "associated", "runs", "dispatch"].map((k) => [
+      k,
+      { name: k },
+    ]),
   );
   const github = {
     rest: {
@@ -144,9 +121,7 @@ function harness({
       },
       pulls: {
         get: async ({ pull_number }) => ({
-          data:
-            (++reads > 1 && afterLookup) ||
-            pulls.find((p) => p.number === pull_number),
+          data: (++reads > 1 && afterLookup) || pulls.find((p) => p.number === pull_number),
         }),
         list: endpoints.listPulls,
         listCommits: endpoints.listCommits,
@@ -191,13 +166,7 @@ for (const event of ["pull_request_target", "schedule", "workflow_dispatch"]) {
   test(`${event} applies the same policy and matches the evaluated SHA`, async () => {
     const h = harness({ event });
     await run(h.options);
-    assert.deepEqual(h.commands, [
-      [
-        "owner/repo",
-        1,
-        ["--auto", "--squash", "--match-head-commit", pull.head.sha],
-      ],
-    ]);
+    assert.deepEqual(h.commands, [["owner/repo", 1, ["--auto", "--squash", "--match-head-commit", pull.head.sha]]]);
   });
 }
 test("a changed head cannot be queued", async () => {
@@ -209,9 +178,7 @@ test("a changed head cannot be queued", async () => {
 });
 test("lookup failure revokes an earlier bot queue decision", async () => {
   const h = harness({
-    pulls: [
-      { ...pull, auto_merge: { enabled_by: { login: "github-actions[bot]" } } },
-    ],
+    pulls: [{ ...pull, auto_merge: { enabled_by: { login: "github-actions[bot]" } } }],
     metadataError: true,
   });
   await run(h.options);
@@ -251,9 +218,7 @@ const associated = [
 test("dispatches missing main validation only after a confirmed Dependabot merge", async () => {
   const h = harness({ associated });
   await ensureMainRun({ ...h.options, branch: "main" });
-  assert.deepEqual(h.dispatches, [
-    { owner: "owner", repo: "repo", workflow_id: "publish.yml", ref: "main" },
-  ]);
+  assert.deepEqual(h.dispatches, [{ owner: "owner", repo: "repo", workflow_id: "publish.yml", ref: "main" }]);
   const noMerge = harness();
   await ensureMainRun({ ...noMerge.options, branch: "main" });
   assert.deepEqual(noMerge.dispatches, []);
@@ -275,17 +240,13 @@ test("closed Dependabot merge dispatches missing main validation", async () => {
   h.options.mainWorkflow = "main.yml";
   await run(h.options);
   assert.deepEqual(h.commands, []);
-  assert.deepEqual(h.dispatches, [
-    { owner: "owner", repo: "repo", workflow_id: "main.yml", ref: "main" },
-  ]);
+  assert.deepEqual(h.dispatches, [{ owner: "owner", repo: "repo", workflow_id: "main.yml", ref: "main" }]);
 });
 for (const conclusion of [null, "success", "failure"]) {
   test(`does not duplicate existing main run (${conclusion})`, async () => {
     const h = harness({
       associated,
-      runs: [
-        { head_sha: "b".repeat(40), event: "workflow_dispatch", conclusion },
-      ],
+      runs: [{ head_sha: "b".repeat(40), event: "workflow_dispatch", conclusion }],
     });
     await ensureMainRun({ ...h.options, branch: "main" });
     assert.deepEqual(h.dispatches, []);

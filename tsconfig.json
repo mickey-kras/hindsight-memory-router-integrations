@@ -22,10 +22,5 @@
     "src/upstream/src/session-patterns.ts",
     "src/upstream/src/types.ts"
   ],
-  "exclude": [
-    "src/upstream/**/__tests__/**",
-    "src/upstream/**/*.test.ts",
-    "node_modules",
-    "dist"
-  ]
+  "exclude": ["src/upstream/**/__tests__/**", "src/upstream/**/*.test.ts", "node_modules", "dist"]
 }

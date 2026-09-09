@@ -17,27 +17,17 @@ const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
 
 describe("validateRouterUrl", () => {
   it("accepts https URLs", () => {
-    expect(validateRouterUrl("https://router.example.test/")).toBe(
-      "https://router.example.test",
-    );
+    expect(validateRouterUrl("https://router.example.test/")).toBe("https://router.example.test");
   });
 
   it("rejects http URLs: no HTTP fallback", () => {
-    expect(() => validateRouterUrl("http://router.example.test")).toThrow(
-      RouterUrlError,
-    );
-    expect(() => validateRouterUrl("http://router.example.test")).toThrow(
-      "not-https",
-    );
+    expect(() => validateRouterUrl("http://router.example.test")).toThrow(RouterUrlError);
+    expect(() => validateRouterUrl("http://router.example.test")).toThrow("not-https");
   });
 
   it("rejects credentials in URLs", () => {
-    expect(() =>
-      validateRouterUrl("https://user:pass@router.example.test"),
-    ).toThrow("userinfo");
-    expect(() =>
-      validateRouterUrl("https://token@router.example.test"),
-    ).toThrow("userinfo");
+    expect(() => validateRouterUrl("https://user:pass@router.example.test")).toThrow("userinfo");
+    expect(() => validateRouterUrl("https://token@router.example.test")).toThrow("userinfo");
   });
 
   it("rejects missing/invalid URLs", () => {
@@ -109,12 +99,8 @@ describe("AuthenticatedClientFactory", () => {
     const credentials = { principalId: "main", token: TOKEN_MAIN, access };
     const first = factory.transportFor(credentials);
     expect(factory.transportFor(credentials)).toBe(first);
-    expect(
-      factory.transportFor({ ...credentials, token: TOKEN_BACKEND }),
-    ).not.toBe(first);
-    expect(() =>
-      factory.transportFor({ principalId: "none", token: TOKEN_MAIN }),
-    ).toThrow("memory access denied");
+    expect(factory.transportFor({ ...credentials, token: TOKEN_BACKEND })).not.toBe(first);
+    expect(() => factory.transportFor({ principalId: "none", token: TOKEN_MAIN })).toThrow("memory access denied");
   });
 });
 
@@ -132,9 +118,7 @@ describe("transport: redirect authorization stripping (Node >=22 undici)", () =>
   it("strips Authorization on cross-origin redirect, keeps it same-origin", async () => {
     echo = createServer((req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({ authorization: req.headers.authorization ?? null }),
-      );
+      res.end(JSON.stringify({ authorization: req.headers.authorization ?? null }));
     });
     await new Promise<void>((resolve) => echo.listen(0, "127.0.0.1", resolve));
     echoPort = (echo.address() as AddressInfo).port;
@@ -151,14 +135,10 @@ describe("transport: redirect authorization stripping (Node >=22 undici)", () =>
         res.end();
       } else {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(
-          JSON.stringify({ authorization: req.headers.authorization ?? null }),
-        );
+        res.end(JSON.stringify({ authorization: req.headers.authorization ?? null }));
       }
     });
-    await new Promise<void>((resolve) =>
-      redirector.listen(0, "127.0.0.1", resolve),
-    );
+    await new Promise<void>((resolve) => redirector.listen(0, "127.0.0.1", resolve));
     redirectorPort = (redirector.address() as AddressInfo).port;
 
     const cross = await fetch(`http://127.0.0.1:${redirectorPort}/cross`, {
@@ -180,9 +160,7 @@ describe("transport: redirect authorization stripping (Node >=22 undici)", () =>
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ results: [] }));
     });
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
       const port = (server.address() as AddressInfo).port;
       const client = new HindsightClient({

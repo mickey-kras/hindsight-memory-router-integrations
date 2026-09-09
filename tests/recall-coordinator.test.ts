@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RouterClient } from "../src/shared/authenticated-client-factory.js";
-import {
-  RecallAuthorizationError,
-  RecallCoordinator,
-  type RecallItem,
-} from "../src/shared/recall-coordinator.js";
+import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "../src/shared/recall-coordinator.js";
 import { recallItemText } from "../src/shared/recall-item.js";
 
 it("uses one item-text precedence for display, dedupe, and budgeting", () => {
@@ -15,11 +11,7 @@ it("uses one item-text precedence for display, dedupe, and budgeting", () => {
 });
 
 function fakeClient(
-  perBank: Record<
-    string,
-    | { results: RecallItem[]; delayMs?: number }
-    | { error: Error & { statusCode?: number } }
-  >,
+  perBank: Record<string, { results: RecallItem[]; delayMs?: number } | { error: Error & { statusCode?: number } }>,
 ): RouterClient & {
   calls: Array<{ bank: string; options?: { maxTokens?: number } }>;
 } {
@@ -46,8 +38,7 @@ function fakeClient(
   };
 }
 
-const httpError = (statusCode: number) =>
-  Object.assign(new Error(`http ${statusCode}`), { statusCode });
+const httpError = (statusCode: number) => Object.assign(new Error(`http ${statusCode}`), { statusCode });
 
 describe("RecallCoordinator", () => {
   it("fans out to all configured recall banks", async () => {
@@ -62,11 +53,7 @@ describe("RecallCoordinator", () => {
       banks: ["main", "dev", "creative"],
       timeoutMs: 1000,
     });
-    expect(client.calls.map((c) => c.bank)).toEqual([
-      "main",
-      "dev",
-      "creative",
-    ]);
+    expect(client.calls.map((c) => c.bank)).toEqual(["main", "dev", "creative"]);
     expect(result.results.map((r) => r.text)).toEqual(["a", "b", "c"]);
     expect(result.partial).toBe(false);
   });
@@ -249,43 +236,34 @@ describe("RecallCoordinator", () => {
     expect(result).toEqual({ results: [], partial: false, failedBanks: [] });
   });
 
-  it.each([0, -1, 1.5, Number.NaN])(
-    "rejects invalid timeout %s",
-    async (timeoutMs) => {
-      await expect(
-        new RecallCoordinator().recall(fakeClient({ main: { results: [] } }), {
-          query: "q",
-          banks: ["main"],
-          timeoutMs,
-        }),
-      ).rejects.toThrow("recall timeout must be a positive integer");
-    },
-  );
+  it.each([0, -1, 1.5, Number.NaN])("rejects invalid timeout %s", async (timeoutMs) => {
+    await expect(
+      new RecallCoordinator().recall(fakeClient({ main: { results: [] } }), {
+        query: "q",
+        banks: ["main"],
+        timeoutMs,
+      }),
+    ).rejects.toThrow("recall timeout must be a positive integer");
+  });
 
-  it.each([0, -1, 1.5, Number.NaN])(
-    "rejects invalid token budget %s",
-    async (maxTokens) => {
-      await expect(
-        new RecallCoordinator().recall(fakeClient({ main: { results: [] } }), {
-          query: "q",
-          banks: ["main"],
-          timeoutMs: 100,
-          maxTokens,
-        }),
-      ).rejects.toThrow("recall token budget must be a positive integer");
-    },
-  );
+  it.each([0, -1, 1.5, Number.NaN])("rejects invalid token budget %s", async (maxTokens) => {
+    await expect(
+      new RecallCoordinator().recall(fakeClient({ main: { results: [] } }), {
+        query: "q",
+        banks: ["main"],
+        timeoutMs: 100,
+        maxTokens,
+      }),
+    ).rejects.toThrow("recall token budget must be a positive integer");
+  });
 
   it("fails closed on non-retryable read errors", async () => {
     await expect(
-      new RecallCoordinator().recall(
-        fakeClient({ main: { error: httpError(400) } }),
-        {
-          query: "q",
-          banks: ["main"],
-          timeoutMs: 100,
-        },
-      ),
+      new RecallCoordinator().recall(fakeClient({ main: { error: httpError(400) } }), {
+        query: "q",
+        banks: ["main"],
+        timeoutMs: 100,
+      }),
     ).rejects.toThrow("memory read failed");
   });
 
@@ -293,37 +271,26 @@ describe("RecallCoordinator", () => {
     const result = await new RecallCoordinator().recall(
       fakeClient({
         main: {
-          results: [
-            { id: "b" },
-            { id: "a" },
-            { text: "same" },
-            { content: "same" },
-          ],
+          results: [{ id: "b" }, { id: "a" }, { text: "same" }, { content: "same" }],
         },
       }),
       { query: "q", banks: ["main"], timeoutMs: 100 },
     );
-    expect(result.results).toEqual([
-      { text: "same" },
-      { id: "a" },
-      { id: "b" },
-    ]);
+    expect(result.results).toEqual([{ text: "same" }, { id: "a" }, { id: "b" }]);
   });
 
-  it.each([408, 429])(
-    "returns partial recall for HTTP %i",
-    async (statusCode) => {
-      const result = await new RecallCoordinator().recall(
-        fakeClient({ main: { error: httpError(statusCode) } }),
-        { query: "q", banks: ["main"], timeoutMs: 1000 },
-      );
-      expect(result).toEqual({
-        results: [],
-        partial: true,
-        failedBanks: ["main"],
-      });
-    },
-  );
+  it.each([408, 429])("returns partial recall for HTTP %i", async (statusCode) => {
+    const result = await new RecallCoordinator().recall(fakeClient({ main: { error: httpError(statusCode) } }), {
+      query: "q",
+      banks: ["main"],
+      timeoutMs: 1000,
+    });
+    expect(result).toEqual({
+      results: [],
+      partial: true,
+      failedBanks: ["main"],
+    });
+  });
 
   it("handles missing result arrays", async () => {
     const result = await new RecallCoordinator().recall(

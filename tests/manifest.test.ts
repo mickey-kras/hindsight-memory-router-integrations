@@ -3,24 +3,16 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { PLUGIN_VERSION } from "../src/plugin.js";
 
-const manifest = JSON.parse(
-  readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"),
-);
-const packageMetadata = JSON.parse(
-  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-);
+const manifest = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"));
+const packageMetadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 describe("openclaw.plugin.json", () => {
   it("declares the per-agent token SecretRef wildcard contract", () => {
-    expect(manifest.configContracts.secretInputs.paths).toEqual([
-      { path: "agents.*.token", expected: "string" },
-    ]);
+    expect(manifest.configContracts.secretInputs.paths).toEqual([{ path: "agents.*.token", expected: "string" }]);
   });
 
   it("declares no other secret input (no global fallback token)", () => {
-    const paths = manifest.configContracts.secretInputs.paths.map(
-      (entry: { path: string }) => entry.path,
-    );
+    const paths = manifest.configContracts.secretInputs.paths.map((entry: { path: string }) => entry.path);
     expect(paths).toEqual(["agents.*.token"]);
     expect(JSON.stringify(manifest)).not.toContain("hindsightApiToken");
   });

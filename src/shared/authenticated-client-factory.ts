@@ -50,14 +50,8 @@ export class AuthenticatedClientFactory {
   private readonly baseUrl: string;
   private readonly userAgent: string;
   private readonly construct?: ClientConstructor;
-  private readonly cache = new Map<
-    string,
-    { token: string; client: RouterClient }
-  >();
-  private readonly transportCache = new Map<
-    string,
-    { token: string; transport: RouterTransport }
-  >();
+  private readonly cache = new Map<string, { token: string; client: RouterClient }>();
+  private readonly transportCache = new Map<string, { token: string; transport: RouterTransport }>();
 
   constructor(options: {
     routerUrl: unknown;
@@ -111,44 +105,38 @@ export class AuthenticatedClientFactory {
     const transport = this.transportFor(credentials);
     return {
       async retain(bank, content, options) {
-        const response = await transport.request(
-          transport.bankUrl(bank, "/memories"),
-          {
-            method: "POST",
-            signal: options?.signal,
-            body: JSON.stringify({
-              items: [
-                {
-                  content,
-                  document_id: options?.documentId,
-                  context: options?.context,
-                  metadata: options?.metadata,
-                  tags: options?.tags,
-                  update_mode: options?.updateMode,
-                },
-              ],
-              async: options?.async,
-              operation_id: options?.operationId,
-            }),
-          },
-        );
+        const response = await transport.request(transport.bankUrl(bank, "/memories"), {
+          method: "POST",
+          signal: options?.signal,
+          body: JSON.stringify({
+            items: [
+              {
+                content,
+                document_id: options?.documentId,
+                context: options?.context,
+                metadata: options?.metadata,
+                tags: options?.tags,
+                update_mode: options?.updateMode,
+              },
+            ],
+            async: options?.async,
+            operation_id: options?.operationId,
+          }),
+        });
         return response.json();
       },
       async recall(bank, query, options) {
-        const response = await transport.request(
-          transport.bankUrl(bank, "/memories/recall"),
-          {
-            method: "POST",
-            signal: options?.signal,
-            body: JSON.stringify({
-              query,
-              max_tokens: options?.maxTokens,
-              budget: options?.budget,
-              types: options?.types,
-              prefer_observations: options?.preferObservations,
-            }),
-          },
-        );
+        const response = await transport.request(transport.bankUrl(bank, "/memories/recall"), {
+          method: "POST",
+          signal: options?.signal,
+          body: JSON.stringify({
+            query,
+            max_tokens: options?.maxTokens,
+            budget: options?.budget,
+            types: options?.types,
+            prefer_observations: options?.preferObservations,
+          }),
+        });
         return response.json() as Promise<{ results?: unknown[] }>;
       },
     };

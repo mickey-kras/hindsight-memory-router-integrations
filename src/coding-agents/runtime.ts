@@ -1,11 +1,6 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
-import {
-  AccessDeniedError,
-  type BankAccess,
-  requireBank,
-  visibleBanks,
-} from "../shared/bank-access.js";
+import { AccessDeniedError, type BankAccess, requireBank, visibleBanks } from "../shared/bank-access.js";
 import { RouterTransport } from "../shared/router-transport.js";
 
 interface HarnessPrincipal extends BankAccess {
@@ -25,14 +20,9 @@ function managed(harness: string | undefined): {
     const path = process.env.HINDSIGHT_ROUTER_CONFIG;
     if (!path || !isAbsolute(path) || !harness) throw new AccessDeniedError();
     const config = JSON.parse(readFileSync(path, "utf8")) as ManagedConfig;
-    if (!Object.hasOwn(config.principals, harness))
-      throw new AccessDeniedError();
+    if (!Object.hasOwn(config.principals, harness)) throw new AccessDeniedError();
     const principal = config.principals[harness];
-    if (
-      !/^[A-Z_][A-Z0-9_]*$/.test(principal.tokenEnv) ||
-      "token" in principal ||
-      "apiToken" in principal
-    )
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(principal.tokenEnv) || "token" in principal || "apiToken" in principal)
       throw new AccessDeniedError();
     visibleBanks(principal);
     return { config, principal };
@@ -77,10 +67,7 @@ export function managedSettings(harness: string | undefined) {
   };
 }
 
-export function managedBank(
-  harness: string | undefined,
-  directory: string,
-): string {
+export function managedBank(harness: string | undefined, directory: string): string {
   const { principal } = managed(harness);
   harnessTransport(harness);
   if (!directory) throw new AccessDeniedError();

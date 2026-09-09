@@ -292,9 +292,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         sessionId:
           (ev.conversation_id as string | undefined) ?? (ev.session_id as string | undefined),
       }),
-      emit: (out) => ({
-        ...(out.additionalContext ? { additional_context: out.additionalContext } : {}),
-      }),
+      emit: (out) => ((out.additionalContext ? { additional_context: out.additionalContext } : {})),
     },
     prompt: cursorPrompt,
     retain: {
@@ -327,9 +325,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
       // quiet rather than auto-submitting a synthetic prompt or showing an OS notification. When
       // Copilot exposes a real TUI extension point, add the banner there without changing this
       // shared lifecycle output.
-      emit: (out) => ({
-        ...(out.additionalContext ? { additionalContext: out.additionalContext } : {}),
-      }),
+      emit: (out) => ((out.additionalContext ? { additionalContext: out.additionalContext } : {})),
     },
     prompt: copilotPrompt,
     retain: {

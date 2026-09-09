@@ -17,14 +17,11 @@ export async function readAcrossBanks(
         throw new Error("read-only execution");
       },
       async recall(bank, _query, request) {
-        const response = await transport.request(
-          transport.bankUrl(bank, suffix),
-          {
-            method: "POST",
-            signal: request?.signal,
-            body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
-          },
-        );
+        const response = await transport.request(transport.bankUrl(bank, suffix), {
+          method: "POST",
+          signal: request?.signal,
+          body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
+        });
         if (!response.ok) throw new Error("memory read unavailable");
         const data = (await response.json()) as {
           text?: string;

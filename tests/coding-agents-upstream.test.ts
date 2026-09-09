@@ -1,27 +1,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { deriveBankId } from "../src/upstream/coding-agents/src/core/bank";
-import {
-  applyBankConfig,
-  loadConfig,
-  resolveConfig,
-} from "../src/upstream/coding-agents/src/core/config";
+import { applyBankConfig, loadConfig, resolveConfig } from "../src/upstream/coding-agents/src/core/config";
 import { HindsightClient } from "../src/upstream/coding-agents/src/core/hindsight";
 import { buildHookOutput } from "../src/upstream/coding-agents/src/core/hook";
 import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/knowledge-tools";
-import {
-  readSessionCache,
-  writeSessionCache,
-} from "../src/upstream/coding-agents/src/core/session-cache";
+import { readSessionCache, writeSessionCache } from "../src/upstream/coding-agents/src/core/session-cache";
 import { run as install } from "../src/upstream/coding-agents/src/installer";
 
 const dirs: string[] = [];
@@ -83,18 +70,14 @@ it("upstream config cannot override harness, credentials, endpoint or bank assig
     bankId: "A",
     cfg: { apiToken: undefined, apiUrl: "https://router.test" },
   });
-  expect(() => deriveBankId(cfg, "/unmapped", "codex")).toThrow(
-    "memory access denied",
-  );
+  expect(() => deriveBankId(cfg, "/unmapped", "codex")).toThrow("memory access denied");
 });
 it("upstream client uses managed authentication, fans out reflect, and guards arbitrary requests", async () => {
   setup();
   const fetch = vi
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (_url, init) =>
-      Response.json(
-        init?.method === "POST" ? { text: "memory", operation_id: "op" } : {},
-      ),
+      Response.json(init?.method === "POST" ? { text: "memory", operation_id: "op" } : {}),
     );
   const client = new HindsightClient({
     routerHarness: "codex",
@@ -104,31 +87,24 @@ it("upstream client uses managed authentication, fans out reflect, and guards ar
   });
   expect(await client.reflect("query", { timeoutMs: 100 })).toBe("memory");
   expect(fetch.mock.calls.map(([url]) => url)).toEqual(
-    ["A", "B"].map(
-      (bank) => `https://router.test/v1/default/banks/${bank}/reflect`,
-    ),
+    ["A", "B"].map((bank) => `https://router.test/v1/default/banks/${bank}/reflect`),
   );
   await client.retain("text", "context", "doc", [], "conversation");
   expect(client.opIds).toEqual(["op"]);
-  await expect(
-    client.req("PATCH", "https://router.test/v1/default/banks/B/config", {}),
-  ).rejects.toThrow("memory access denied");
-  await expect(
-    client.req("GET", "https://router.test/v1/default/banks/hidden/config"),
-  ).rejects.toThrow("memory access denied");
+  await expect(client.req("PATCH", "https://router.test/v1/default/banks/B/config", {})).rejects.toThrow(
+    "memory access denied",
+  );
+  await expect(client.req("GET", "https://router.test/v1/default/banks/hidden/config")).rejects.toThrow(
+    "memory access denied",
+  );
   expect(JSON.stringify(client)).not.toContain(token);
   expect(
-    fetch.mock.calls.every(
-      ([, init]) =>
-        new Headers(init?.headers).get("authorization") === `Bearer ${token}`,
-    ),
+    fetch.mock.calls.every(([, init]) => new Headers(init?.headers).get("authorization") === `Bearer ${token}`),
   ).toBe(true);
 });
 it("upstream client requires a known harness and discards all reads on authorization failure", async () => {
   setup();
-  expect(
-    () => new HindsightClient({ apiUrl: "https://router.test", bank: "A" }),
-  ).toThrow("memory access denied");
+  expect(() => new HindsightClient({ apiUrl: "https://router.test", bank: "A" })).toThrow("memory access denied");
   vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(Response.json({ text: "must disappear" }))
     .mockResolvedValueOnce(new Response("forbidden", { status: 403 }));
@@ -172,33 +148,20 @@ it("drops cached memory and suppresses successful reflect when page access is de
 
 it("lets page tools address assigned read banks while denying hidden banks and mutations", async () => {
   setup();
-  const fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockImplementation(async () => Response.json({ content: "page" }));
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ content: "page" }));
   const client = new HindsightClient({
     routerHarness: "codex",
     apiUrl: "https://router.test",
     bank: "A",
   });
   const tools = buildKnowledgeTools(client, "A", { harness: "codex" });
-  const read = tools.find(
-    (tool) => tool.name === "hindsight_read_knowledge_page",
-  )!;
+  const read = tools.find((tool) => tool.name === "hindsight_read_knowledge_page")!;
   const result = await read.handler({ bankId: "B", page_id: "page" });
   expect(result.isError).not.toBe(true);
-  expect(fetch.mock.calls[0][0]).toContain(
-    "/banks/B/knowledge-base/pages/page",
-  );
-  expect(
-    (await read.handler({ bankId: "hidden", page_id: "page" })).isError,
-  ).toBe(true);
-  const write = tools.find(
-    (tool) => tool.name === "hindsight_ingest_document",
-  )!;
-  expect(
-    (await write.handler({ bankId: "B", title: "doc", content: "text" }))
-      .isError,
-  ).toBe(true);
+  expect(fetch.mock.calls[0][0]).toContain("/banks/B/knowledge-base/pages/page");
+  expect((await read.handler({ bankId: "hidden", page_id: "page" })).isError).toBe(true);
+  const write = tools.find((tool) => tool.name === "hindsight_ingest_document")!;
+  expect((await write.handler({ bankId: "B", title: "doc", content: "text" })).isError).toBe(true);
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
@@ -206,10 +169,8 @@ it("installs harness-specific MCP identities without migrating or storing tokens
   const dir = setup();
   execFileSync("tar", [
     "-xzf",
-    new URL(
-      "../packages/mickey-kras-hindsight-memory-router-coding-agents-0.5.1-router.2.tgz",
-      import.meta.url,
-    ).pathname,
+    new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.5.1-router.2.tgz", import.meta.url)
+      .pathname,
     "-C",
     dir,
   ]);
@@ -226,29 +187,19 @@ it("installs harness-specific MCP identities without migrating or storing tokens
       throw new Error("must not migrate old credentials");
     }),
   };
-  expect(
-    install(["install", "codex", "claude-code", "opencode"], context),
-  ).toBe(0);
+  expect(install(["install", "codex", "claude-code", "opencode"], context)).toBe(0);
   expect(context.readLegacy).not.toHaveBeenCalled();
-  expect(readFileSync(join(dir, ".codex", "config.toml"), "utf8")).toContain(
-    "codex",
-  );
-  expect(cli.mock.calls.flat(2).join(" ")).toContain(
-    "HINDSIGHT_MCP_HARNESS=claude-code",
-  );
-  expect(() =>
-    install(["install", "codex", "--api-token", "plaintext"], context),
-  ).toThrow("tokenEnv");
+  expect(readFileSync(join(dir, ".codex", "config.toml"), "utf8")).toContain("codex");
+  expect(cli.mock.calls.flat(2).join(" ")).toContain("HINDSIGHT_MCP_HARNESS=claude-code");
+  expect(() => install(["install", "codex", "--api-token", "plaintext"], context)).toThrow("tokenEnv");
 });
 
 it("runs the packaged Codex hook with harness-bound credentials and fails closed without them", () => {
   const dir = setup();
   execFileSync("tar", [
     "-xzf",
-    new URL(
-      "../packages/mickey-kras-hindsight-memory-router-coding-agents-0.5.1-router.2.tgz",
-      import.meta.url,
-    ).pathname,
+    new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.5.1-router.2.tgz", import.meta.url)
+      .pathname,
     "-C",
     dir,
   ]);
@@ -272,11 +223,7 @@ it("runs the packaged Codex hook with harness-bound credentials and fails closed
       return Response.json(String(url).endsWith('/reflect') ? { text: 'packaged memory' } : { roots: [] });
     };`,
   );
-  const args = [
-    "--import",
-    shim,
-    join(dir, "package", "dist", "codex-hook.js"),
-  ];
+  const args = ["--import", shim, join(dir, "package", "dist", "codex-hook.js")];
   const env = {
     ...process.env,
     HINDSIGHT_CONFIG: normal,
@@ -305,9 +252,7 @@ it("runs the packaged Codex hook with harness-bound credentials and fails closed
     "https://router.test/v1/default/banks/B/reflect",
     "https://router.test/v1/default/banks/A/knowledge-base/tree",
   ]);
-  expect(
-    requests.every((request) => request.authorization === `Bearer ${token}`),
-  ).toBe(true);
+  expect(requests.every((request) => request.authorization === `Bearer ${token}`)).toBe(true);
   const denied = spawnSync(process.execPath, args, {
     input,
     env: { ...env, UPSTREAM_TEST_TOKEN: "" },
@@ -319,29 +264,22 @@ it("runs the packaged Codex hook with harness-bound credentials and fails closed
   expect(readFileSync(trace, "utf8").trim().split("\n")).toHaveLength(3);
 });
 
-it.each(["", "\n"])(
-  "Codex uninstall preserves adjacent tables with EOF suffix %j",
-  (ending) => {
-    const dir = setup();
-    mkdirSync(join(dir, ".codex"));
-    const path = join(dir, ".codex", "config.toml");
-    const kept =
-      '[mcp_servers.other]\ncommand = "other"\n\n[features]\nhooks = true\n';
-    writeFileSync(
-      path,
-      '[mcp_servers.hindsight]\ncommand = "old"\n\n' +
-        kept +
-        '[mcp_servers.hindsight.env]\nTOKEN = "old"' +
-        ending,
-    );
-    expect(
-      install(["uninstall", "codex"], {
-        home: dir,
-        pkgRoot: dir,
-        dist: join(dir, "dist"),
-        interactive: false,
-      }),
-    ).toBe(0);
-    expect(readFileSync(path, "utf8")).toBe(kept);
-  },
-);
+it.each(["", "\n"])("Codex uninstall preserves adjacent tables with EOF suffix %j", (ending) => {
+  const dir = setup();
+  mkdirSync(join(dir, ".codex"));
+  const path = join(dir, ".codex", "config.toml");
+  const kept = '[mcp_servers.other]\ncommand = "other"\n\n[features]\nhooks = true\n';
+  writeFileSync(
+    path,
+    '[mcp_servers.hindsight]\ncommand = "old"\n\n' + kept + '[mcp_servers.hindsight.env]\nTOKEN = "old"' + ending,
+  );
+  expect(
+    install(["uninstall", "codex"], {
+      home: dir,
+      pkgRoot: dir,
+      dist: join(dir, "dist"),
+      interactive: false,
+    }),
+  ).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(kept);
+});

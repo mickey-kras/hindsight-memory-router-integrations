@@ -177,10 +177,6 @@ export interface ServiceConfig {
   stop(): Promise<void>;
 }
 
-// -----------------------------------------------------------------------------
-// Hindsight API types
-// -----------------------------------------------------------------------------
-
 // MemoryResult / RecallResponse / ReflectResponse come from the generated
 // hindsight-client SDK. We alias MemoryResult → RecallResult so existing code
 // paths (formatMemories, etc.) keep the old name.

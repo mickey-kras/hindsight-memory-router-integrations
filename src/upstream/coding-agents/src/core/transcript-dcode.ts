@@ -158,11 +158,6 @@ export function dcodeAssistantText(raw: string): string {
   return contentText(parsed.value);
 }
 
-/**
- * Read Dcode's materialized transcript into the normalized chat shape used by retention.
- * Tool results are mechanical noise; tool records become compact action turns when a name exists.
- * Invalid records are skipped so a partially-written Stop transcript remains fail-open.
- */
 export function readDcodeTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
   for (const rawLine of readJsonlTail(path, { scope: "dcode" }).lines) {

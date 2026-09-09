@@ -59,11 +59,6 @@ const textOf = (parts: Part[]) =>
     .join("\n")
     .trim();
 
-// ── backfill: read opencode's past sessions ─────────────────────────────────────
-// Same normalized JSON export every harness uses — kept here only so a real opencodeAdapter (used
-// by index.ts) is a complete HarnessAdapter; the registry never routes through this file to get it
-// (see harness/registry.ts's getHarness("opencode")), so this line pulling in "./registry" never
-// drags @opencode-ai/plugin along for backfill's sake.
 const chatReader = jsonChatReader("opencode");
 
 /**

@@ -12,8 +12,5 @@
     "tests/**/*.ts",
     "vitest.config.ts"
   ],
-  "exclude": [
-    "src/upstream/coding-agents/**",
-    "tests/coding-agents-upstream.test.ts"
-  ]
+  "exclude": ["src/upstream/coding-agents/**", "tests/coding-agents-upstream.test.ts"]
 }

@@ -144,8 +144,6 @@ export class RetainQueue {
     /* nothing to close */
   }
 
-  // -------------------------------------------------------------------------
-
   private readAll(): QueuedRetain[] {
     if (!existsSync(this.filePath)) return [];
     const content = readFileSync(this.filePath, "utf8").trim();

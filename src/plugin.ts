@@ -14,20 +14,10 @@ import {
   type RouterPluginConfig,
   UnknownPrincipalError,
 } from "./shared/principal-credential-resolver.js";
-import {
-  RecallAuthorizationError,
-  RecallCoordinator,
-  type RecallItem,
-} from "./shared/recall-coordinator.js";
+import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "./shared/recall-coordinator.js";
 import { recallItemText } from "./shared/recall-item.js";
-import {
-  RetainAuthorizationError,
-  RetainCoordinator,
-} from "./shared/retain-coordinator.js";
-import {
-  compileSessionPatterns,
-  matchesSessionPattern,
-} from "./upstream/src/session-patterns.js";
+import { RetainAuthorizationError, RetainCoordinator } from "./shared/retain-coordinator.js";
+import { compileSessionPatterns, matchesSessionPattern } from "./upstream/src/session-patterns.js";
 import type {
   MoltbotPluginAPI,
   PluginHookAgentContext,
@@ -50,10 +40,7 @@ const DEFAULT_RETAIN_CONTEXT =
 const PROCESS_ID = randomUUID();
 
 interface RuntimePluginConfig extends RouterPluginConfig {
-  agents?: Record<
-    string,
-    import("./shared/principal-credential-resolver.js").PrincipalConfig
-  >;
+  agents?: Record<string, import("./shared/principal-credential-resolver.js").PrincipalConfig>;
   autoRecall?: boolean;
   autoRetain?: boolean;
   recallBudget?: "low" | "mid" | "high";
@@ -99,20 +86,13 @@ function formatMemories(results: RecallItem[]): string {
     .map((item) => {
       const text = recallItemText(item);
       const type = typeof item.type === "string" ? ` [${item.type}]` : "";
-      const doc =
-        typeof item.document_id === "string"
-          ? ` [doc:${item.document_id}]`
-          : "";
+      const doc = typeof item.document_id === "string" ? ` [doc:${item.document_id}]` : "";
       return `- ${text}${type}${doc}`;
     })
     .join("\n\n");
 }
 
-function extractPrompt(event: {
-  prompt?: unknown;
-  messages?: unknown;
-  rawMessage?: unknown;
-}): string | null {
+function extractPrompt(event: { prompt?: unknown; messages?: unknown; rawMessage?: unknown }): string | null {
   const candidates = [event.rawMessage, event.prompt];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim().length >= 5) {
@@ -135,8 +115,7 @@ function extractPrompt(event: {
       return last.trim();
     }
     if (last && typeof last === "object") {
-      const content =
-        messageText((last as { content?: unknown }).content) ?? "";
+      const content = messageText((last as { content?: unknown }).content) ?? "";
       if (content.trim().length >= 5) {
         return content.trim();
       }
@@ -153,12 +132,7 @@ function messageText(content: unknown): string | null {
     return null;
   }
   const text = content
-    .filter(
-      (block) =>
-        block &&
-        typeof block === "object" &&
-        (block as { type?: unknown }).type === "text",
-    )
+    .filter((block) => block && typeof block === "object" && (block as { type?: unknown }).type === "text")
     .map((block) => (block as { text?: unknown }).text)
     .filter((value): value is string => typeof value === "string")
     .join("\n");
@@ -166,9 +140,7 @@ function messageText(content: unknown): string | null {
 }
 
 function stripInjectedMemories(content: string): string {
-  return content
-    .replaceAll(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/gi, "")
-    .trim();
+  return content.replaceAll(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/gi, "").trim();
 }
 
 function extractTranscript(event: {
@@ -186,11 +158,7 @@ function extractTranscript(event: {
   let lastUser = -1;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
-    if (
-      message &&
-      typeof message === "object" &&
-      (message as { role?: unknown }).role === "user"
-    ) {
+    if (message && typeof message === "object" && (message as { role?: unknown }).role === "user") {
       lastUser = index;
       break;
     }
@@ -208,20 +176,13 @@ function extractTranscript(event: {
   return normalized.length > 0 ? JSON.stringify(normalized) : null;
 }
 
-function sanitizeDocumentIdPart(
-  value: string | undefined,
-  fallback: string,
-): string {
+function sanitizeDocumentIdPart(value: string | undefined, fallback: string): string {
   const normalized = (value || "").trim();
   if (!normalized) {
     return fallback;
   }
-  const sanitized = normalized
-    .replaceAll(/[^a-zA-Z0-9:_-]+/g, "_")
-    .replaceAll(/_+/g, "_");
-  const withoutLeadingUnderscore = sanitized.startsWith("_")
-    ? sanitized.slice(1)
-    : sanitized;
+  const sanitized = normalized.replaceAll(/[^a-zA-Z0-9:_-]+/g, "_").replaceAll(/_+/g, "_");
+  const withoutLeadingUnderscore = sanitized.startsWith("_") ? sanitized.slice(1) : sanitized;
   const withoutEdgeUnderscores = withoutLeadingUnderscore.endsWith("_")
     ? withoutLeadingUnderscore.slice(0, -1)
     : withoutLeadingUnderscore;
@@ -232,22 +193,14 @@ function sanitizeDocumentIdPart(
 }
 
 function isIdentityError(error: unknown): boolean {
-  return (
-    error instanceof UnknownPrincipalError ||
-    error instanceof CredentialResolutionError
-  );
+  return error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError;
 }
 
 function memoryErrorMessage(error: unknown): string {
-  return isIdentityError(error)
-    ? (error as Error).message
-    : "memory operation failed";
+  return isIdentityError(error) ? (error as Error).message : "memory operation failed";
 }
 
-function sessionKeyFor(
-  event: PluginHookEvent,
-  ctx: PluginHookAgentContext | undefined,
-): string | undefined {
+function sessionKeyFor(event: PluginHookEvent, ctx: PluginHookAgentContext | undefined): string | undefined {
   if (typeof ctx?.sessionKey === "string") {
     return ctx.sessionKey;
   }
@@ -261,21 +214,11 @@ function shouldSkipRetain(
   ignorePatterns: RegExp[],
   statelessPatterns: RegExp[],
 ): boolean {
-  const ignoredSession =
-    sessionKey !== undefined &&
-    matchesSessionPattern(sessionKey, ignorePatterns);
-  const statelessSession =
-    sessionKey !== undefined &&
-    matchesSessionPattern(sessionKey, statelessPatterns);
+  const ignoredSession = sessionKey !== undefined && matchesSessionPattern(sessionKey, ignorePatterns);
+  const statelessSession = sessionKey !== undefined && matchesSessionPattern(sessionKey, statelessPatterns);
   const excludedProvider =
-    ctx?.messageProvider !== undefined &&
-    config.excludeProviders?.includes(ctx.messageProvider) === true;
-  return (
-    config.autoRetain === false ||
-    ignoredSession ||
-    statelessSession ||
-    excludedProvider
-  );
+    ctx?.messageProvider !== undefined && config.excludeProviders?.includes(ctx.messageProvider) === true;
+  return config.autoRetain === false || ignoredSession || statelessSession || excludedProvider;
 }
 
 function setBounded<K, V>(map: Map<K, V>, key: K, value: V): void {
@@ -307,9 +250,7 @@ export function buildRoutingStack(
   const retain = new RetainCoordinator({
     credentials,
     clients,
-    queueDir:
-      config.queueDir ??
-      join(homedir(), ".openclaw", "data", "hindsight-retain-queue"),
+    queueDir: config.queueDir ?? join(homedir(), ".openclaw", "data", "hindsight-retain-queue"),
     queueMaxAgeMs: config.retainQueueMaxAgeMs,
     logger,
   });
@@ -322,9 +263,7 @@ export function buildRoutingStack(
   };
 }
 
-export default function hindsightMemoryRouterPlugin(
-  api: MoltbotPluginAPI,
-): void {
+export default function hindsightMemoryRouterPlugin(api: MoltbotPluginAPI): void {
   const log = api.logger;
   const config = getPluginConfig(api);
   let stack: RoutingStack;
@@ -339,10 +278,7 @@ export default function hindsightMemoryRouterPlugin(
 }
 
 /** Registration, separated from stack construction for tests. */
-export function registerWithStack(
-  api: MoltbotPluginAPI,
-  stack: RoutingStack,
-): void {
+export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): void {
   registerRecallHook(api, stack);
   registerRetainHooks(api, stack);
   registerKnowledgeTools(api, stack);
@@ -353,19 +289,14 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const config = stack.config;
   api.on(
     "before_prompt_build",
-    async (
-      event: PluginHookEvent,
-      ctx?: PluginHookAgentContext,
-    ): Promise<PluginPromptHookResult | undefined> => {
+    async (event: PluginHookEvent, ctx?: PluginHookAgentContext): Promise<PluginPromptHookResult | undefined> => {
       if (config.autoRecall === false) {
         return;
       }
       const agentId = ctx?.agentId;
       try {
         const credentials = stack.credentials.resolve(agentId);
-        const banks = stack.credentials.resolveReadBanks(
-          credentials.principalId,
-        );
+        const banks = stack.credentials.resolveReadBanks(credentials.principalId);
         if (banks.length === 0) {
           return;
         }
@@ -384,13 +315,9 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
           preferObservations: config.preferObservations,
         });
         if (recalled.partial) {
-          log.warn(
-            `partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`,
-          );
+          log.warn(`partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`);
         }
-        const ranked = config.recallTopK
-          ? recalled.results.slice(0, config.recallTopK)
-          : recalled.results;
+        const ranked = config.recallTopK ? recalled.results.slice(0, config.recallTopK) : recalled.results;
         if (ranked.length === 0) {
           return;
         }
@@ -423,12 +350,8 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
 function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const log = api.logger;
   const config = stack.config;
-  const ignorePatterns = compileSessionPatterns(
-    config.ignoreSessionPatterns ?? [],
-  );
-  const statelessPatterns = compileSessionPatterns(
-    config.statelessSessionPatterns ?? [],
-  );
+  const ignorePatterns = compileSessionPatterns(config.ignoreSessionPatterns ?? []);
+  const statelessPatterns = compileSessionPatterns(config.statelessSessionPatterns ?? []);
   const sessionSequences = new Map<string, number>();
   const retainedDigests = new Map<string, string>();
 
@@ -439,24 +362,13 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   ): Promise<void> => {
     const agentId = ctx?.agentId;
     const sessionKey = sessionKeyFor(event, ctx);
-    if (
-      shouldSkipRetain(
-        sessionKey,
-        ctx,
-        config,
-        ignorePatterns,
-        statelessPatterns,
-      )
-    ) {
+    if (shouldSkipRetain(sessionKey, ctx, config, ignorePatterns, statelessPatterns)) {
       return;
     }
     let sequenceKey: string | undefined;
     try {
       const credentials = stack.credentials.resolve(agentId);
-      if (
-        stack.credentials.resolveOptionalWriteBank(credentials.principalId) ===
-        null
-      ) {
+      if (stack.credentials.resolveOptionalWriteBank(credentials.principalId) === null) {
         return;
       }
       const transcript = extractTranscript(event ?? {});
@@ -479,17 +391,11 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
           agent: credentials.principalId,
           hook: hookName,
         },
-        tags: [
-          ...(config.retainTags ?? []),
-          "source_system:openclaw",
-          `agent:${credentials.principalId}`,
-        ],
+        tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.principalId}`],
       });
       setBounded(retainedDigests, sequenceKey, digest);
       if (outcome.queued) {
-        log.warn(
-          `retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`,
-        );
+        log.warn(`retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`);
       }
     } catch (error) {
       if (isIdentityError(error)) {
@@ -533,16 +439,10 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   });
 }
 
-function registerKnowledgeTools(
-  api: MoltbotPluginAPI,
-  stack: RoutingStack,
-): void {
+function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const log = api.logger;
   const config = stack.config;
-  if (
-    config.enableKnowledgeTools === true &&
-    typeof api.registerTool === "function"
-  ) {
+  if (config.enableKnowledgeTools === true && typeof api.registerTool === "function") {
     api.registerTool(
       (ctx: PluginToolContext) => {
         let credentials: ReturnType<PrincipalCredentialResolver["resolve"]>;
@@ -550,12 +450,8 @@ function registerKnowledgeTools(
         let recallBanks: string[];
         try {
           credentials = stack.credentials.resolve(ctx.agentId);
-          writeBank = stack.credentials.resolveOptionalWriteBank(
-            credentials.principalId,
-          );
-          recallBanks = stack.credentials.resolveReadBanks(
-            credentials.principalId,
-          );
+          writeBank = stack.credentials.resolveOptionalWriteBank(credentials.principalId);
+          recallBanks = stack.credentials.resolveReadBanks(credentials.principalId);
           if (writeBank === null && recallBanks.length === 0) {
             return null;
           }
@@ -566,17 +462,11 @@ function registerKnowledgeTools(
           }
           throw error;
         }
-        const tools = routedKnowledgeTools(
-          stack.clients.transportFor(credentials),
-        );
+        const tools = routedKnowledgeTools(stack.clients.transportFor(credentials));
         return tools
           .filter((tool) => {
             if (
-              [
-                "agent_knowledge_recall",
-                "agent_knowledge_list_pages",
-                "agent_knowledge_get_page",
-              ].includes(tool.name)
+              ["agent_knowledge_recall", "agent_knowledge_list_pages", "agent_knowledge_get_page"].includes(tool.name)
             )
               return recallBanks.length > 0;
             return writeBank !== null;
@@ -601,32 +491,25 @@ function registerKnowledgeTools(
               description: tool.description,
               parameters: tool.parameters,
               async execute(_id: string, params: Record<string, unknown>) {
-                const query =
-                  typeof params.query === "string" ? params.query : "";
+                const query = typeof params.query === "string" ? params.query : "";
                 const client = stack.clients.forAgent(credentials);
                 const recalled = await stack.recall.recall(client, {
                   query,
                   banks: recallBanks,
-                  timeoutMs:
-                    config.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS,
-                  maxTokens:
-                    config.recallMaxTokens ?? DEFAULT_RECALL_MAX_TOKENS,
+                  timeoutMs: config.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS,
+                  maxTokens: config.recallMaxTokens ?? DEFAULT_RECALL_MAX_TOKENS,
                   budget: config.recallBudget,
                   types: config.recallTypes,
                   preferObservations: config.preferObservations,
                 });
                 if (recalled.partial) {
-                  log.warn(
-                    `partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`,
-                  );
+                  log.warn(`partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`);
                 }
                 return {
                   content: [
                     {
                       type: "text",
-                      text:
-                        formatMemories(recalled.results) ||
-                        "No memories found.",
+                      text: formatMemories(recalled.results) || "No memories found.",
                     },
                   ],
                   details: {},

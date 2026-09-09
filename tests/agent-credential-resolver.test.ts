@@ -65,9 +65,7 @@ describe("PrincipalCredentialResolver", () => {
       // @ts-expect-error deliberately smuggled legacy global token
       token: TOKEN_B,
     });
-    expect(() => withFallback.resolve("backend")).toThrow(
-      UnknownPrincipalError,
-    );
+    expect(() => withFallback.resolve("backend")).toThrow(UnknownPrincipalError);
     expect(withFallback.resolve("main").token).toBe(TOKEN_A);
   });
 
@@ -94,9 +92,7 @@ describe("PrincipalCredentialResolver", () => {
   it("accepts the spec token format mr_<key-id>_<64-hex>", () => {
     expect(TOKEN_FORMAT_PATTERN.test(TOKEN_A)).toBe(true);
     expect(TOKEN_FORMAT_PATTERN.test(`mr_k_${"0".repeat(63)}`)).toBe(false);
-    expect(
-      TOKEN_FORMAT_PATTERN.test(`mr_k_${"a".repeat(64).toUpperCase()}`),
-    ).toBe(false);
+    expect(TOKEN_FORMAT_PATTERN.test(`mr_k_${"a".repeat(64).toUpperCase()}`)).toBe(false);
   });
 
   it("resolves the configured write bank and recall banks", () => {
@@ -104,10 +100,7 @@ describe("PrincipalCredentialResolver", () => {
     expect(r.resolveWriteBank("main")).toBe("main");
     expect(r.resolveWriteBank("backend")).toBe("dev");
     expect(r.resolveReadBanks("main")).toEqual(["main", "dev", "creative"]);
-    expect(r.resolveReadBanks("backend")).toEqual([
-      "dev",
-      "dev-best-practices",
-    ]);
+    expect(r.resolveReadBanks("backend")).toEqual(["dev", "dev-best-practices"]);
   });
 
   it("supports read-only agents without a write bank", () => {
@@ -135,21 +128,15 @@ describe("PrincipalCredentialResolver", () => {
       },
     });
     expect(r.resolveReadBanks("main")).toEqual(["main", "dev"]);
-    expect(() => r.resolveWriteBank("broken")).toThrow(
-      CredentialResolutionError,
-    );
+    expect(() => r.resolveWriteBank("broken")).toThrow(CredentialResolutionError);
   });
 
   it("validates startup configuration and route presence", () => {
-    expect(() =>
-      new PrincipalCredentialResolver({}).validateConfiguredPrincipals(),
-    ).toThrow(UnknownPrincipalError);
+    expect(() => new PrincipalCredentialResolver({}).validateConfiguredPrincipals()).toThrow(UnknownPrincipalError);
     const noRoute = new PrincipalCredentialResolver({
       principals: { main: { token: TOKEN_A } },
     });
-    expect(() => noRoute.validateConfiguredPrincipals()).toThrow(
-      "missing-route",
-    );
+    expect(() => noRoute.validateConfiguredPrincipals()).toThrow("missing-route");
     expect(resolver().has("main")).toBe(true);
     expect(resolver().has("missing")).toBe(false);
   });
@@ -198,9 +185,7 @@ describe("PrincipalCredentialResolver", () => {
       const invalidBank = new PrincipalCredentialResolver({
         principals: { main: { token: TOKEN_A, writeBank } },
       });
-      expect(() => invalidBank.resolveOptionalWriteBank("main")).toThrow(
-        "invalid-bank",
-      );
+      expect(() => invalidBank.resolveOptionalWriteBank("main")).toThrow("invalid-bank");
     }
   });
 });
