@@ -1,4 +1,4 @@
-import { BANK_ID_PATTERN } from "./principal-credential-resolver.js";
+import { BANK_ID_PATTERN } from "./patterns.js";
 
 export interface BankAccess {
   readonly writeBank?: string;

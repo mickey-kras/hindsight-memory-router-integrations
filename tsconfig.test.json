@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/plugin.ts", "src/shared/**/*.ts", "src/coding-agents/**/*.ts", "src/upstream/src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
+  "exclude": ["src/upstream/coding-agents/**", "tests/coding-agents-upstream.test.ts"]
+}

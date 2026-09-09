@@ -66,7 +66,10 @@ function fetchMetadata(pull, repository, metadataPath) {
       timeout: 90000,
       maxBuffer: 4 * 1024 * 1024,
       env: {
-        ...process.env,
+        HOME: process.env.HOME,
+        PATH: process.env.PATH,
+        RUNNER_TEMP: process.env.RUNNER_TEMP,
+        NODE_OPTIONS: process.env.NODE_OPTIONS,
         GITHUB_REPOSITORY: repository,
         GITHUB_EVENT_NAME: "pull_request_target",
         GITHUB_EVENT_PATH: event,

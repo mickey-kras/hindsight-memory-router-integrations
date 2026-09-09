@@ -2,12 +2,14 @@
 
 import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
-import { RetainQueue, type QueuedRetainPayload } from "../upstream/src/retain-queue.js";
-import { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
-import { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
-import { WriteBankResolver } from "./write-bank-resolver.js";
+import {
+  type QueuedRetainPayload,
+  RetainQueue,
+} from "../upstream/src/retain-queue.js";
+import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
+import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 
 export interface RetainRequestPayload extends QueuedRetainPayload {}
 
@@ -32,6 +34,7 @@ export interface CoordinatorLogger {
 
 const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
 const QUEUE_FILE_SUFFIX = ".jsonl";
+const MAX_REPLAY_ATTEMPTS = 5;
 
 function isAuthzError(error: unknown): boolean {
   const status = (error as { statusCode?: unknown })?.statusCode;
@@ -40,15 +43,19 @@ function isAuthzError(error: unknown): boolean {
 
 function isTransientError(error: unknown): boolean {
   const status = (error as { statusCode?: unknown })?.statusCode;
-  if (status === undefined) {
-    return true;
-  }
-  return status === 408 || status === 429 || (typeof status === "number" && status >= 500);
+  if (error instanceof DOMException)
+    return ["AbortError", "NetworkError", "TimeoutError"].includes(error.name);
+  if (error instanceof TypeError) return error.message === "fetch failed";
+  if (status === undefined) return false;
+  return (
+    status === 408 ||
+    status === 429 ||
+    (typeof status === "number" && status >= 500)
+  );
 }
 
 export class RetainCoordinator {
   private readonly credentials: PrincipalCredentialResolver;
-  private readonly writeBanks: WriteBankResolver;
   private readonly clients: AuthenticatedClientFactory;
   private readonly queueDir: string;
   private readonly queueMaxAgeMs: number;
@@ -56,15 +63,15 @@ export class RetainCoordinator {
 
   constructor(options: {
     credentials: PrincipalCredentialResolver;
-    writeBanks: WriteBankResolver;
     clients: AuthenticatedClientFactory;
     queueDir: string;
     queueMaxAgeMs?: number;
     logger: CoordinatorLogger;
   }) {
     this.credentials = options.credentials;
-    this.writeBanks = options.writeBanks;
     this.clients = options.clients;
+    if (!isAbsolute(options.queueDir))
+      throw new TypeError("queueDir must be absolute");
     this.queueDir = options.queueDir;
     this.queueMaxAgeMs = options.queueMaxAgeMs ?? -1;
     this.log = options.logger;
@@ -74,15 +81,21 @@ export class RetainCoordinator {
     // principalId is validated against PRINCIPAL_ID_PATTERN by the resolver before any
     // queue file is touched, so no path separators can reach this join.
     return new RetainQueue({
-      filePath: join(this.queueDir, `${QUEUE_FILE_PREFIX}${principalId}${QUEUE_FILE_SUFFIX}`),
+      filePath: join(
+        this.queueDir,
+        `${QUEUE_FILE_PREFIX}${principalId}${QUEUE_FILE_SUFFIX}`,
+      ),
       maxAgeMs: this.queueMaxAgeMs,
     });
   }
 
   /** Retain into the agent's default write bank; queue on transient failure. */
-  async retain(principalId: string, request: RetainRequestPayload): Promise<RetainOutcome> {
+  async retain(
+    principalId: string,
+    request: RetainRequestPayload,
+  ): Promise<RetainOutcome> {
     const credentials = this.credentials.resolve(principalId);
-    const bank = this.writeBanks.resolve(principalId);
+    const bank = this.credentials.resolveWriteBank(principalId);
     const client = this.clients.forAgent(credentials);
     try {
       await client.retain(bank, request.content, {
@@ -118,7 +131,10 @@ export class RetainCoordinator {
       return; // no queue directory yet
     }
     for (const file of files) {
-      if (!file.startsWith(QUEUE_FILE_PREFIX) || !file.endsWith(QUEUE_FILE_SUFFIX)) {
+      if (
+        !file.startsWith(QUEUE_FILE_PREFIX) ||
+        !file.endsWith(QUEUE_FILE_SUFFIX)
+      ) {
         continue;
       }
       await this.flushQueueFile(file);
@@ -126,12 +142,17 @@ export class RetainCoordinator {
   }
 
   private async flushQueueFile(file: string): Promise<void> {
-    const principalId = file.slice(QUEUE_FILE_PREFIX.length, -QUEUE_FILE_SUFFIX.length);
-    let credentials;
+    const principalId = file.slice(
+      QUEUE_FILE_PREFIX.length,
+      -QUEUE_FILE_SUFFIX.length,
+    );
+    let credentials: ReturnType<PrincipalCredentialResolver["resolve"]>;
     try {
       credentials = this.credentials.resolve(principalId);
     } catch {
-      this.log.error(`retain queue replay skipped: no routing entry for agent ${principalId}`);
+      this.log.error(
+        `retain queue replay skipped: no routing entry for agent ${principalId}`,
+      );
       return; // fail closed: unknown agent's items stay queued
     }
     const client = this.clients.forAgent(credentials);
@@ -140,10 +161,13 @@ export class RetainCoordinator {
     const delivered: string[] = [];
     for (const item of queue.peek(50)) {
       try {
-        if (item.bankId !== this.writeBanks.resolve(principalId)) {
+        if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
           throw new RetainAuthorizationError(item.bankId);
         }
-        const operationId = queue.ensureOperationId(item.id, item.operationId ?? randomUUID());
+        const operationId = queue.ensureOperationId(
+          item.id,
+          item.operationId ?? randomUUID(),
+        );
         await client.retain(item.bankId, item.content, {
           documentId: item.documentId,
           context: item.context,
@@ -156,7 +180,21 @@ export class RetainCoordinator {
         delivered.push(item.id);
       } catch (error) {
         if (isAuthzError(error)) {
-          this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
+          this.log.error(
+            `retain replay denied for bank ${item.bankId}; item stays queued for operator review`,
+          );
+        } else if (isTransientError(error)) {
+          const attempts = queue.incrementReplayAttempts(item.id);
+          if (attempts >= MAX_REPLAY_ATTEMPTS) {
+            delivered.push(item.id);
+            this.log.error(
+              `retain replay abandoned after ${attempts} attempts for bank ${item.bankId}`,
+            );
+          }
+        } else {
+          this.log.error(
+            `retain replay failed permanently for bank ${item.bankId}; item stays queued for review`,
+          );
         }
         break; // preserve FIFO ordering; retry next flush
       }
@@ -172,13 +210,19 @@ function stringifyMetadataValue(value: unknown): string {
   if (typeof value === "object") {
     return JSON.stringify(value) ?? "";
   }
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "symbol") {
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "symbol"
+  ) {
     return value.toString();
   }
   return "";
 }
 
-function toStringMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> | undefined {
+function toStringMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, string> | undefined {
   if (!metadata) {
     return undefined;
   }
@@ -187,7 +231,8 @@ function toStringMetadata(metadata: Record<string, unknown> | undefined): Record
     if (value === undefined || value === null) {
       continue;
     }
-    out[key] = typeof value === "string" ? value : stringifyMetadataValue(value);
+    out[key] =
+      typeof value === "string" ? value : stringifyMetadataValue(value);
   }
   return out;
 }

@@ -29,16 +29,14 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 22.20.0
           cache: npm
           cache-dependency-path: npm-shrinkwrap.json
 
       - run: npm ci
       - run: npm ci --prefix src/upstream/coding-agents
-      - uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2
-        with:
-          version: 2.5.12
-      - run: biome lint . --max-diagnostics=none
+      - run: npm exec -- biome lint . --max-diagnostics=none
+      - run: npm run typecheck
       - name: Tests and coverage
         run: npm run test:coverage
       - run: npm run build
@@ -47,7 +45,8 @@ jobs:
       - run: npm test --prefix src/upstream/coding-agents
       - run: npm run audit:coding-agents
       - run: node scripts/verify-coding-upstream.mjs
-      - run: npm audit --audit-level=moderate
+      - run: node scripts/verify-openclaw-overlay.mjs
+      - run: npm run audit:root
 
       - name: Verify package
         run: |
@@ -62,6 +61,15 @@ jobs:
           tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
             -cf "$RUNNER_TEMP/committed-root.tar" -C "$RUNNER_TEMP/committed-root" .
           cmp "$RUNNER_TEMP/generated-root.tar" "$RUNNER_TEMP/committed-root.tar"
+          coding_artifact="$(cd src/upstream/coding-agents && npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
+          mkdir "$RUNNER_TEMP/generated-coding" "$RUNNER_TEMP/committed-coding"
+          tar -xzf "$RUNNER_TEMP/$coding_artifact" -C "$RUNNER_TEMP/generated-coding"
+          tar -xzf "packages/$coding_artifact" -C "$RUNNER_TEMP/committed-coding"
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            -cf "$RUNNER_TEMP/generated-coding.tar" -C "$RUNNER_TEMP/generated-coding" .
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            -cf "$RUNNER_TEMP/committed-coding.tar" -C "$RUNNER_TEMP/committed-coding" .
+          cmp "$RUNNER_TEMP/generated-coding.tar" "$RUNNER_TEMP/committed-coding.tar"
           sha256sum --check PACKAGE_SHA256
 
       - name: Install Nix
@@ -69,7 +77,7 @@ jobs:
 
       - name: Nix dependency hash
         run: |
-          artifact="packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.2.tgz"
+          artifact="packages/$(npm pack --dry-run --json | jq -r '.[0].filename')"
           expected_source="$(sed -n 's/^source=//p' PACKAGE_NIX_HASHES)"
           expected_deps="$(sed -n 's/^npm_deps=//p' PACKAGE_NIX_HASHES)"
           test "$(nix hash file "$artifact")" = "$expected_source"

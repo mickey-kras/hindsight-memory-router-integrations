@@ -3,18 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import plugin, {
   PLUGIN_ID,
-  registerWithStack,
   type RoutingStack,
+  registerWithStack,
 } from "../src/plugin.js";
-import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import {
   AuthenticatedClientFactory,
   type RouterClient,
 } from "../src/shared/authenticated-client-factory.js";
-import { ReadBankResolver } from "../src/shared/read-bank-resolver.js";
+import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import {
   RecallAuthorizationError,
   RecallCoordinator,
@@ -23,7 +21,12 @@ import {
   RetainAuthorizationError,
   RetainCoordinator,
 } from "../src/shared/retain-coordinator.js";
-import { WriteBankResolver } from "../src/shared/write-bank-resolver.js";
+import type {
+  MoltbotPluginAPI,
+  PluginHookAgentContext,
+  PluginHookEvent,
+  PluginToolContext,
+} from "../src/upstream/src/types.js";
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
 const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
@@ -32,7 +35,11 @@ function pluginConfig(queueDir: string) {
   return {
     routerUrl: "https://router.example.test",
     agents: {
-      main: { token: TOKEN_MAIN, writeBank: "main", additionalReadBanks: ["main", "dev"] },
+      main: {
+        token: TOKEN_MAIN,
+        writeBank: "main",
+        additionalReadBanks: ["main", "dev"],
+      },
       backend: {
         token: TOKEN_BACKEND,
         writeBank: "dev",
@@ -44,24 +51,45 @@ function pluginConfig(queueDir: string) {
   };
 }
 
-interface FakeApi {
-  config: any;
+interface FakeApi extends MoltbotPluginAPI {
   logger: {
-    info: ReturnType<typeof vi.fn>;
-    warn: ReturnType<typeof vi.fn>;
-    error: ReturnType<typeof vi.fn>;
+    info: ReturnType<typeof vi.fn<(msg: string) => void>>;
+    warn: ReturnType<typeof vi.fn<(msg: string) => void>>;
+    error: ReturnType<typeof vi.fn<(msg: string) => void>>;
   };
-  handlers: Map<string, (event: any, ctx?: any) => unknown>;
-  services: Array<{ id: string; start(): Promise<void>; stop(): Promise<void> }>;
-  toolFactories: Array<{ factory: (ctx: any) => unknown; opts?: { names?: string[] } }>;
-  on(event: string, handler: (event: any, ctx?: any) => unknown): void;
-  registerService(service: { id: string; start(): Promise<void>; stop(): Promise<void> }): void;
-  registerTool(factory: (ctx: any) => unknown, opts?: { names?: string[] }): void;
+  handlers: Map<
+    string,
+    (event: PluginHookEvent, ctx?: PluginHookAgentContext) => unknown
+  >;
+  services: Array<{
+    id: string;
+    start(): Promise<void>;
+    stop(): Promise<void>;
+  }>;
+  toolFactories: Array<{
+    factory: (ctx: PluginToolContext) => unknown;
+    opts?: { names?: string[] };
+  }>;
+  on(
+    event: string,
+    handler: (event: PluginHookEvent, ctx?: PluginHookAgentContext) => unknown,
+  ): void;
+  registerService(service: {
+    id: string;
+    start(): Promise<void>;
+    stop(): Promise<void>;
+  }): void;
+  registerTool(
+    factory: (ctx: PluginToolContext) => unknown,
+    opts?: { names?: string[] },
+  ): void;
 }
 
 function makeApi(queueDir: string): FakeApi {
   const api: FakeApi = {
-    config: { plugins: { entries: { [PLUGIN_ID]: { config: pluginConfig(queueDir) } } } },
+    config: {
+      plugins: { entries: { [PLUGIN_ID]: { config: pluginConfig(queueDir) } } },
+    },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     handlers: new Map(),
     services: [],
@@ -86,11 +114,17 @@ function instrumentedStack(
     constructed: Array<{ apiKey: string; agentHeader: string }>;
     recalls: Array<{ bank: string; query: string }>;
     retains: Array<{ bank: string; content: string }>;
-    recallResults?: Record<string, Array<{ text: string; score: number }>>;
-  }
+    recallResults?: Record<
+      string,
+      Array<{ text?: string; content?: string; type?: string; score: number }>
+    >;
+  },
 ): RoutingStack {
   const config = pluginConfig(queueDir);
-  const credentials = new PrincipalCredentialResolver({ ...config, principals: config.agents });
+  const credentials = new PrincipalCredentialResolver({
+    ...config,
+    principals: config.agents,
+  });
   const clients = new AuthenticatedClientFactory({
     routerUrl: config.routerUrl,
     userAgent: "test/0",
@@ -117,12 +151,9 @@ function instrumentedStack(
     config,
     credentials,
     clients,
-    recallBanks: new ReadBankResolver(credentials),
-    writeBanks: new WriteBankResolver(credentials),
     recall: new RecallCoordinator(),
     retain: new RetainCoordinator({
       credentials,
-      writeBanks: new WriteBankResolver(credentials),
       clients,
       queueDir,
       logger,
@@ -141,7 +172,7 @@ describe("plugin wiring", () => {
 
   it("registers hooks, service, and knowledge tools", () => {
     const api = makeApi(queueDir);
-    plugin(api as any);
+    plugin(api);
     expect(api.handlers.has("before_prompt_build")).toBe(true);
     expect(api.handlers.has("agent_end")).toBe(true);
     expect(api.handlers.has("session_end")).toBe(true);
@@ -160,14 +191,16 @@ describe("plugin wiring", () => {
         dev: [{ text: "dev memory", score: 0.8 }],
       },
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
 
     const result = (await api.handlers.get("before_prompt_build")!(
       { prompt: "what do you remember?" },
-      { agentId: "main" }
+      { agentId: "main" },
     )) as { prependContext?: string };
 
-    expect(sink.constructed).toEqual([{ apiKey: TOKEN_MAIN, agentHeader: "main" }]);
+    expect(sink.constructed).toEqual([
+      { apiKey: TOKEN_MAIN, agentHeader: "main" },
+    ]);
     expect(sink.recalls.map((r) => r.bank)).toEqual(["main", "dev"]);
     expect(result.prependContext).toContain("<hindsight_memories>");
     expect(result.prependContext).toContain("main memory");
@@ -181,18 +214,22 @@ describe("plugin wiring", () => {
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
 
     await api.handlers.get("agent_end")!(
       {
         context: {
-          sessionEntry: { messages: [{ role: "user", content: "remember this" }] },
+          sessionEntry: {
+            messages: [{ role: "user", content: "remember this" }],
+          },
         },
       },
-      { agentId: "backend", sessionKey: "agent:backend:telegram:dm:1" }
+      { agentId: "backend", sessionKey: "agent:backend:telegram:dm:1" },
     );
 
-    expect(sink.constructed).toEqual([{ apiKey: TOKEN_BACKEND, agentHeader: "backend" }]);
+    expect(sink.constructed).toEqual([
+      { apiKey: TOKEN_BACKEND, agentHeader: "backend" },
+    ]);
     expect(sink.retains).toHaveLength(1);
     expect(sink.retains[0].bank).toBe("dev");
     expect(sink.retains[0].content).toContain("remember this");
@@ -205,7 +242,7 @@ describe("plugin wiring", () => {
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
     const event = {
       messages: [
         { role: "user", content: [{ type: "text", text: "remember this" }] },
@@ -232,10 +269,10 @@ describe("plugin wiring", () => {
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
     const result = await api.handlers.get("before_prompt_build")!(
       { prompt: "hello there" },
-      { agentId: "unknown-agent" }
+      { agentId: "unknown-agent" },
     );
     expect(result).toBeUndefined();
     expect(sink.constructed).toHaveLength(0);
@@ -249,12 +286,18 @@ describe("plugin wiring", () => {
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
     expect(
-      await api.handlers.get("before_prompt_build")!({ prompt: "hello there" }, undefined)
+      await api.handlers.get("before_prompt_build")!(
+        { prompt: "hello there" },
+        undefined,
+      ),
     ).toBeUndefined();
     expect(
-      await api.handlers.get("before_prompt_build")!({ prompt: "hello there" }, {})
+      await api.handlers.get("before_prompt_build")!(
+        { prompt: "hello there" },
+        {},
+      ),
     ).toBeUndefined();
     expect(sink.constructed).toHaveLength(0);
   });
@@ -266,10 +309,14 @@ describe("plugin wiring", () => {
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
     await api.handlers.get("agent_end")!(
-      { context: { sessionEntry: { messages: [{ role: "user", content: "hi there" }] } } },
-      { agentId: "ghost" }
+      {
+        context: {
+          sessionEntry: { messages: [{ role: "user", content: "hi there" }] },
+        },
+      },
+      { agentId: "ghost" },
     );
     expect(sink.constructed).toHaveLength(0);
     expect(sink.retains).toHaveLength(0);
@@ -282,7 +329,7 @@ describe("plugin wiring", () => {
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
     const { factory, opts } = api.toolFactories[0];
     expect(opts?.names).toContain("agent_knowledge_recall");
 
@@ -306,16 +353,21 @@ describe("plugin wiring", () => {
         "dev-best-practices": [{ text: "bp note", score: 0.8 }],
       },
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
     const { factory } = api.toolFactories[0];
     const tools = factory({ agentId: "backend" }) as Array<{
       name: string;
-      execute(id: string, params: Record<string, unknown>): Promise<any>;
+      execute(id: string, params: Record<string, unknown>): Promise<{ content: Array<{ text: string }>; details: object }>;
     }>;
     const recallTool = tools.find((t) => t.name === "agent_knowledge_recall")!;
     const response = await recallTool.execute("call-1", { query: "testing" });
-    expect(sink.constructed).toEqual([{ apiKey: TOKEN_BACKEND, agentHeader: "backend" }]);
-    expect(sink.recalls.map((r) => r.bank)).toEqual(["dev", "dev-best-practices"]);
+    expect(sink.constructed).toEqual([
+      { apiKey: TOKEN_BACKEND, agentHeader: "backend" },
+    ]);
+    expect(sink.recalls.map((r) => r.bank)).toEqual([
+      "dev",
+      "dev-best-practices",
+    ]);
     expect(response.content[0].text).toContain("dev note");
     expect(response.content[0].text).toContain("bp note");
   });
@@ -331,13 +383,20 @@ describe("plugin wiring", () => {
     stack.config.agents = {
       reader: { token: TOKEN_MAIN, additionalReadBanks: ["main"] },
     };
-    const credentials = new PrincipalCredentialResolver({ ...stack.config, principals: stack.config.agents });
+    const credentials = new PrincipalCredentialResolver({
+      ...stack.config,
+      principals: stack.config.agents,
+    });
     stack.credentials = credentials;
-    stack.recallBanks = new ReadBankResolver(credentials);
-    stack.writeBanks = new WriteBankResolver(credentials);
-    registerWithStack(api as any, stack);
-    const tools = api.toolFactories[0].factory({ agentId: "reader" }) as Array<{ name: string }>;
-    expect(tools.map((tool) => tool.name)).toEqual(["agent_knowledge_list_pages", "agent_knowledge_get_page", "agent_knowledge_recall"]);
+    registerWithStack(api, stack);
+    const tools = api.toolFactories[0].factory({ agentId: "reader" }) as Array<{
+      name: string;
+    }>;
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "agent_knowledge_list_pages",
+      "agent_knowledge_get_page",
+      "agent_knowledge_recall",
+    ]);
   });
 
   it("never logs raw tokens in warnings or errors", async () => {
@@ -347,11 +406,18 @@ describe("plugin wiring", () => {
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
-    await api.handlers.get("before_prompt_build")!({ prompt: "hello there" }, { agentId: "main" });
+    registerWithStack(api, instrumentedStack(queueDir, sink));
+    await api.handlers.get("before_prompt_build")!(
+      { prompt: "hello there" },
+      { agentId: "main" },
+    );
     await api.handlers.get("agent_end")!(
-      { context: { sessionEntry: { messages: [{ role: "user", content: "hi" }] } } },
-      { agentId: "backend" }
+      {
+        context: {
+          sessionEntry: { messages: [{ role: "user", content: "hi" }] },
+        },
+      },
+      { agentId: "backend" },
     );
     const sinkText = [
       ...api.logger.warn.mock.calls,
@@ -371,27 +437,32 @@ describe("plugin wiring", () => {
       constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
-      recallResults: { main: [{ content: "structured memory", type: "fact", score: 1 }] },
+      recallResults: {
+        main: [{ content: "structured memory", type: "fact", score: 1 }],
+      },
     };
     const stack = instrumentedStack(queueDir, sink);
     stack.config.recallInjectionPosition = "append";
-    registerWithStack(api as any, stack);
+    registerWithStack(api, stack);
 
     const append = (await api.handlers.get("before_prompt_build")!(
       {
         messages: [
           { role: "assistant", content: "not the query" },
-          { role: "user", content: [{ type: "text", text: "structured query" }] },
+          {
+            role: "user",
+            content: [{ type: "text", text: "structured query" }],
+          },
         ],
       },
-      { agentId: "main" }
+      { agentId: "main" },
     )) as { appendSystemContext?: string };
     expect(append.appendSystemContext).toContain("structured memory [fact]");
 
     stack.config.recallInjectionPosition = "prepend";
     const prepend = (await api.handlers.get("before_prompt_build")!(
       { messages: ["plain string query"] },
-      { agentId: "main" }
+      { agentId: "main" },
     )) as { prependSystemContext?: string };
     expect(prepend.prependSystemContext).toContain("structured memory");
     expect(sink.recalls.at(-1)?.query).toBe("plain string query");
@@ -406,35 +477,37 @@ describe("plugin wiring", () => {
     const disabledApi = makeApi(queueDir);
     const disabledStack = instrumentedStack(queueDir, sink);
     disabledStack.config.autoRecall = false;
-    registerWithStack(disabledApi as any, disabledStack);
+    registerWithStack(disabledApi, disabledStack);
     expect(
       await disabledApi.handlers.get("before_prompt_build")!(
         { prompt: "ignored prompt" },
-        { agentId: "main" }
-      )
+        { agentId: "main" },
+      ),
     ).toBeUndefined();
 
     const api = makeApi(queueDir);
     const stack = instrumentedStack(queueDir, sink);
     stack.config.agents = { writer: { token: TOKEN_MAIN, writeBank: "main" } };
-    stack.credentials = new PrincipalCredentialResolver({ ...stack.config, principals: stack.config.agents });
-    stack.recallBanks = new ReadBankResolver(stack.credentials);
-    registerWithStack(api as any, stack);
+    stack.credentials = new PrincipalCredentialResolver({
+      ...stack.config,
+      principals: stack.config.agents,
+    });
+    registerWithStack(api, stack);
     expect(
       await api.handlers.get("before_prompt_build")!(
         { prompt: "valid prompt" },
-        { agentId: "writer" }
-      )
+        { agentId: "writer" },
+      ),
     ).toBeUndefined();
 
     const noPromptApi = makeApi(queueDir);
     const noPromptStack = instrumentedStack(queueDir, sink);
-    registerWithStack(noPromptApi as any, noPromptStack);
+    registerWithStack(noPromptApi, noPromptStack);
     expect(
       await noPromptApi.handlers.get("before_prompt_build")!(
         { messages: [{ role: "assistant", content: "no user prompt" }] },
-        { agentId: "main" }
-      )
+        { agentId: "main" },
+      ),
     ).toBeUndefined();
   });
 
@@ -455,17 +528,27 @@ describe("plugin wiring", () => {
       })
       .mockRejectedValueOnce(new RecallAuthorizationError("main"))
       .mockRejectedValueOnce(new Error("network down"));
-    registerWithStack(api as any, stack);
+    registerWithStack(api, stack);
     const handler = api.handlers.get("before_prompt_build")!;
 
-    expect(await handler({ prompt: "first query" }, { agentId: "main" })).toBeDefined();
-    expect(api.logger.warn).toHaveBeenCalledWith("partial recall: banks unavailable: dev");
-    expect(await handler({ prompt: "second query" }, { agentId: "main" })).toBeUndefined();
-    expect(api.logger.error).toHaveBeenCalledWith(
-      "auto-recall denied: recall authorization denied for bank main"
+    expect(
+      await handler({ prompt: "first query" }, { agentId: "main" }),
+    ).toBeDefined();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      "partial recall: banks unavailable: dev",
     );
-    expect(await handler({ prompt: "third query" }, { agentId: "main" })).toBeUndefined();
-    expect(api.logger.warn).toHaveBeenCalledWith("auto-recall failed: memory operation failed");
+    expect(
+      await handler({ prompt: "second query" }, { agentId: "main" }),
+    ).toBeUndefined();
+    expect(api.logger.error).toHaveBeenCalledWith(
+      "auto-recall denied: recall authorization denied for bank main",
+    );
+    expect(
+      await handler({ prompt: "third query" }, { agentId: "main" }),
+    ).toBeUndefined();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      "auto-recall failed: memory operation failed",
+    );
   });
 
   it("enforces retain filters, reports failures, and manages the flush service", async () => {
@@ -486,7 +569,7 @@ describe("plugin wiring", () => {
       .mockRejectedValueOnce(new Error("retain unavailable"));
     stack.retain.retain = retainMock;
     const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
-    registerWithStack(api as any, stack);
+    registerWithStack(api, stack);
     const handler = api.handlers.get("agent_end")!;
     const event = { messages: [{ role: "user", content: "remember this" }] };
 
@@ -497,18 +580,27 @@ describe("plugin wiring", () => {
       sessionKey: "normal:one",
       messageProvider: "blocked",
     });
-    await handler({ messages: [] }, { agentId: "main", sessionKey: "normal:empty" });
+    await handler(
+      { messages: [] },
+      { agentId: "main", sessionKey: "normal:empty" },
+    );
     await handler(event, { agentId: "main", sessionKey: "normal:queued" });
-    expect(api.logger.warn).toHaveBeenCalledWith("retain buffered for agent main (bank: main)");
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      "retain buffered for agent main (bank: main)",
+    );
     await handler(event, { agentId: "main", sessionKey: "normal:denied" });
     expect(api.logger.error).toHaveBeenCalledWith(
-      "retain denied: retain authorization denied for bank main"
+      "retain denied: retain authorization denied for bank main",
     );
     await handler(event, { agentId: "main", sessionKey: "normal:failed" });
-    expect(api.logger.error).toHaveBeenCalledWith("retain failed: memory operation failed");
+    expect(api.logger.error).toHaveBeenCalledWith(
+      "retain failed: memory operation failed",
+    );
 
     expect(retainMock).toHaveBeenCalledTimes(3);
-    expect(retainMock.mock.calls.map(([, request]) => request.documentId)).toEqual([
+    expect(
+      retainMock.mock.calls.map(([, request]) => request.documentId),
+    ).toEqual([
       expect.stringContaining("openclaw:normal:queued:"),
       expect.stringContaining("openclaw:normal:denied:"),
       expect.stringContaining("openclaw:normal:failed:"),
@@ -529,10 +621,16 @@ describe("plugin wiring", () => {
     const stack = instrumentedStack(queueDir, sink);
     stack.config.autoRetain = false;
     const retainSpy = vi.spyOn(stack.retain, "retain");
-    registerWithStack(api as any, stack);
+    registerWithStack(api, stack);
     await api.handlers.get("agent_end")!(
-      { context: { sessionEntry: { messages: [{ role: "user", content: "remember this" }] } } },
-      { agentId: "main", sessionKey: "agent:main:main" }
+      {
+        context: {
+          sessionEntry: {
+            messages: [{ role: "user", content: "remember this" }],
+          },
+        },
+      },
+      { agentId: "main", sessionKey: "agent:main:main" },
     );
     expect(retainSpy).not.toHaveBeenCalled();
     expect(sink.constructed).toHaveLength(0);
@@ -549,12 +647,21 @@ describe("plugin wiring", () => {
     stack.config.agents = {
       reader: { token: TOKEN_MAIN, additionalReadBanks: ["main"] },
     };
-    stack.credentials = new PrincipalCredentialResolver({ ...stack.config, principals: stack.config.agents });
+    stack.credentials = new PrincipalCredentialResolver({
+      ...stack.config,
+      principals: stack.config.agents,
+    });
     const retainSpy = vi.spyOn(stack.retain, "retain");
-    registerWithStack(api as any, stack);
+    registerWithStack(api, stack);
     await api.handlers.get("agent_end")!(
-      { context: { sessionEntry: { messages: [{ role: "user", content: "remember this" }] } } },
-      { agentId: "reader", sessionKey: "agent:reader:main" }
+      {
+        context: {
+          sessionEntry: {
+            messages: [{ role: "user", content: "remember this" }],
+          },
+        },
+      },
+      { agentId: "reader", sessionKey: "agent:reader:main" },
     );
     expect(retainSpy).not.toHaveBeenCalled();
     expect(sink.constructed).toHaveLength(0);
@@ -567,17 +674,19 @@ describe("plugin wiring", () => {
       recalls: [] as Array<{ bank: string; query: string }>,
       retains: [] as Array<{ bank: string; content: string }>,
     };
-    registerWithStack(api as any, instrumentedStack(queueDir, sink));
+    registerWithStack(api, instrumentedStack(queueDir, sink));
     const tools = api.toolFactories[0].factory({ agentId: "main" }) as Array<{
       name: string;
-      execute(id: string, params: Record<string, unknown>): Promise<any>;
+      execute(id: string, params: Record<string, unknown>): Promise<{ content: Array<{ text: string }>; details: object }>;
     }>;
-    const createPage = tools.find((t) => t.name === "agent_knowledge_create_page")!;
+    const createPage = tools.find(
+      (t) => t.name === "agent_knowledge_create_page",
+    )!;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ id: "preferences", name: "Preferences" }), {
         status: 200,
         headers: { "content-type": "application/json" },
-      })
+      }),
     );
     try {
       const result = await createPage.execute("call-1", {
@@ -589,7 +698,9 @@ describe("plugin wiring", () => {
       expect(result.content[0].text).toContain("preferences");
       const [url, init] = fetchMock.mock.calls[0];
       expect(url).toContain("/v1/default/banks/main/mental-models");
-      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${TOKEN_MAIN}`);
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        `Bearer ${TOKEN_MAIN}`,
+      );
     } finally {
       fetchMock.mockRestore();
     }

@@ -1,6 +1,12 @@
+import {
+  AccessDeniedError,
+  type BankAccess,
+  classifyOperation,
+  requireBank,
+  visibleBanks,
+} from "./bank-access.js";
+import { TOKEN_FORMAT_PATTERN } from "./patterns.js";
 import { validateRouterUrl } from "./router-url.js";
-import { AccessDeniedError, classifyOperation, requireBank, visibleBanks, type BankAccess } from "./bank-access.js";
-import { TOKEN_FORMAT_PATTERN } from "./principal-credential-resolver.js";
 
 export class RouterRequestError extends Error {
   constructor(readonly statusCode: number) {
@@ -11,7 +17,12 @@ export class RouterRequestError extends Error {
 
 const ROUTING_KEYS = ["bankId", "bank_id", "bank_ids"];
 
-function assertAuthorizedUrl(url: string, method: string, baseUrl: string, access: BankAccess): boolean {
+function assertAuthorizedUrl(
+  url: string,
+  method: string,
+  baseUrl: string,
+  access: BankAccess,
+): boolean {
   const listing = url === `${baseUrl}/v1/default/banks` && method === "GET";
   if (listing || (url === `${baseUrl}/version` && method === "GET")) {
     return listing;
@@ -26,23 +37,33 @@ function assertAuthorizedUrl(url: string, method: string, baseUrl: string, acces
   return false;
 }
 
-async function filterVisibleBanks(response: Response, access: BankAccess): Promise<Response> {
+async function filterVisibleBanks(
+  response: Response,
+  access: BankAccess,
+): Promise<Response> {
   const data = (await response.json()) as { banks?: unknown };
   if (!Array.isArray(data.banks)) throw new RouterRequestError(502);
   const allowed = new Set(visibleBanks(access));
   const banks = data.banks.filter(
     (bank: unknown) =>
-      bank !== null && typeof bank === "object" && allowed.has((bank as { bank_id?: string }).bank_id ?? ""),
+      bank !== null &&
+      typeof bank === "object" &&
+      allowed.has((bank as { bank_id?: string }).bank_id ?? ""),
   );
   return Response.json({ banks, total: banks.length });
 }
 
 function assertSafeRequest(url: string, body: RequestInit["body"]): URL {
-  if (/[\\#]/.test(url) || /%(?:2e|2f|5c|25)/i.test(url) || /\/\.\.?(?:\/|$|\?)/.test(url)) {
+  if (
+    /[\\#]/.test(url) ||
+    /%(?:2e|2f|5c|25)/i.test(url) ||
+    /\/\.\.?(?:\/|$|\?)/.test(url)
+  ) {
     throw new AccessDeniedError();
   }
   const parsed = new URL(url);
-  if (ROUTING_KEYS.some((key) => parsed.searchParams.has(key))) throw new AccessDeniedError();
+  if (ROUTING_KEYS.some((key) => parsed.searchParams.has(key)))
+    throw new AccessDeniedError();
   if (typeof body === "string") {
     let parsedBody: unknown;
     try {
@@ -50,7 +71,11 @@ function assertSafeRequest(url: string, body: RequestInit["body"]): URL {
     } catch {
       throw new AccessDeniedError();
     }
-    if (parsedBody && typeof parsedBody === "object" && ROUTING_KEYS.some((key) => Object.hasOwn(parsedBody, key))) {
+    if (
+      parsedBody &&
+      typeof parsedBody === "object" &&
+      ROUTING_KEYS.some((key) => Object.hasOwn(parsedBody, key))
+    ) {
       throw new AccessDeniedError();
     }
   }
@@ -64,7 +89,7 @@ export class RouterTransport {
   readonly #token: () => string | undefined;
   readonly #send: typeof fetch;
   readonly #principalId?: string;
-  #denied = false;
+  #deniedToken: string | undefined;
 
   constructor(options: {
     routerUrl: string;
@@ -78,7 +103,9 @@ export class RouterTransport {
     if (url.search || url.hash) throw new AccessDeniedError();
     this.access = Object.freeze({
       writeBank: options.access.writeBank,
-      additionalReadBanks: Object.freeze([...options.access.additionalReadBanks]),
+      additionalReadBanks: Object.freeze([
+        ...options.access.additionalReadBanks,
+      ]),
     });
     visibleBanks(this.access);
     this.#principalId = options.principalId;
@@ -97,13 +124,20 @@ export class RouterTransport {
   }
 
   assertAuthorized(): void {
-    if (this.#denied) throw new AccessDeniedError();
+    const token = this.#token();
+    if (
+      !token ||
+      !TOKEN_FORMAT_PATTERN.test(token) ||
+      this.#deniedToken === token
+    )
+      throw new AccessDeniedError();
+    if (this.#deniedToken !== undefined) this.#deniedToken = undefined;
   }
 
   private credential(): string {
     this.assertAuthorized();
     const token = this.#token();
-    if (!token || !TOKEN_FORMAT_PATTERN.test(token)) throw new AccessDeniedError();
+    if (!token) throw new AccessDeniedError();
     return token;
   }
 
@@ -120,18 +154,25 @@ export class RouterTransport {
     const listing = assertAuthorizedUrl(url, method, this.baseUrl, this.access);
     const response = await this.send(url, init, token);
     if (response.status === 401 || response.status === 403) {
-      this.#denied = true;
+      this.#deniedToken = token;
       throw new AccessDeniedError();
     }
     // Never expose server error bodies, which may echo credentials or bank existence.
-    if (!response.ok && (response.status !== 404 || method !== "GET")) throw new RouterRequestError(response.status);
+    if (!response.ok && (response.status !== 404 || method !== "GET"))
+      throw new RouterRequestError(response.status);
     if (listing && response.ok) {
       return filterVisibleBanks(response, this.access);
     }
-    return response.status === 404 ? new Response(null, { status: 404 }) : response;
+    return response.status === 404
+      ? new Response(null, { status: 404 })
+      : response;
   }
 
-  private async send(url: string, init: RequestInit, token: string): Promise<Response> {
+  private async send(
+    url: string,
+    init: RequestInit,
+    token: string,
+  ): Promise<Response> {
     try {
       return await this.#send(url, {
         ...init,
@@ -139,7 +180,9 @@ export class RouterTransport {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
-          ...(this.#principalId ? { "x-memory-router-agent": this.#principalId } : {}),
+          ...(this.#principalId
+            ? { "x-memory-router-agent": this.#principalId }
+            : {}),
         },
         signal: init.signal ?? AbortSignal.timeout(15_000),
       });

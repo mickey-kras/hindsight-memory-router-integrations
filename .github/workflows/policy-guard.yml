@@ -955,6 +955,8 @@ jobs:
                   fail('package.json: full-repository Aislop scan must stay configured')
               if scripts.get('test:coverage') != 'vitest run --coverage':
                   fail('package.json: coverage test command must stay configured')
+              if scripts.get('audit:root') != 'audit-ci --config audit-ci.jsonc':
+                  fail('package.json: root dependency audit must stay configured')
 
           def gate_vitest(path, content):
               stripped = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
@@ -977,6 +979,23 @@ jobs:
                   properties[key.strip()] = value.strip()
               if properties.get('sonar.javascript.lcov.reportPaths') != 'coverage/lcov.info':
                   fail('sonar-project.properties: coverage import must stay configured')
+
+          def gate_checksum_file(path, content):
+              lines = [line for line in content.splitlines() if line.strip()]
+              if not lines:
+                  fail(f'{path}: checksum file must not be empty')
+
+          def gate_audit_config(path, content):
+              stripped = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
+              try:
+                  doc = json.loads(stripped)
+              except json.JSONDecodeError as exc:
+                  fail(f'{path}: does not parse: {exc}')
+                  return
+              if doc.get('moderate') is not True:
+                  fail(f'{path}: moderate vulnerability gate must stay enabled')
+              if doc.get('allowlist') != ['GHSA-vwc7-r8mq-g2x9']:
+                  fail(f'{path}: only the reviewed no-fix Aislop advisory may be allowlisted')
 
           # Only the reviewed Dependabot workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
@@ -1017,6 +1036,9 @@ jobs:
               'package.json': gate_package_json,
               'vitest.config.ts': gate_vitest,
               'sonar-project.properties': gate_sonar,
+              'PACKAGE_SHA256': gate_checksum_file,
+              'PACKAGE_NIX_HASHES': gate_checksum_file,
+              'audit-ci.jsonc': gate_audit_config,
           }
 
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
@@ -1130,7 +1152,9 @@ jobs:
                   if entry.get('status') == 'renamed' and isinstance(previous, str):
                       removed_or_renamed.add(previous)
 
-              if changed & protected:
+              protected_package_change = any(path.startswith('packages/') for path in changed)
+
+              if changed & protected or protected_package_change:
                   if (
                       author_association.upper() not in TRUSTED_ASSOCIATIONS
                       and author_login != DEPENDABOT_LOGIN

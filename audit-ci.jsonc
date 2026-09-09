@@ -1,0 +1,7 @@
+{
+  "moderate": true,
+  "allowlist": [
+    // Dev-only Aislop transitive dependency; upstream adm-zip has no patched release as of 2026-09-09.
+    "GHSA-vwc7-r8mq-g2x9"
+  ]
+}
