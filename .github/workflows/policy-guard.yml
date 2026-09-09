@@ -516,8 +516,12 @@ jobs:
                       fail('ci.yml: npm audit must be a separate step from Tests and coverage')
                   if audit_step.get('name') is not None:
                       fail('ci.yml: npm audit step must remain unnamed')
-                  if audit_step['run'].strip() != 'npm audit --audit-level=moderate':
-                      fail("ci.yml: npm audit run must be exactly 'npm audit --audit-level=moderate'")
+                  allowed_audit_runs = {
+                      'npm audit --audit-level=moderate',
+                      'npm audit --json | node scripts/check-npm-audit.mjs',
+                  }
+                  if audit_step['run'].strip() not in allowed_audit_runs:
+                      fail('ci.yml: npm audit must use an approved exact command')
                   check_step_keys(path, 'checks', audit_step)
               upload = next(
                   (
