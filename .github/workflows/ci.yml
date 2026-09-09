@@ -47,7 +47,7 @@ jobs:
       - run: npm test --prefix src/upstream/coding-agents
       - run: npm run audit:coding-agents
       - run: node scripts/verify-coding-upstream.mjs
-      - run: npm audit --omit=dev --audit-level=moderate
+      - run: npm audit --json | node scripts/check-npm-audit.mjs
 
       - name: Verify package
         run: |

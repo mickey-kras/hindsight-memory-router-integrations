@@ -63,9 +63,16 @@ jobs:
 
           const sarif = JSON.parse(readFileSync('aislop.sarif', 'utf8'));
           const findings = sarif.runs.flatMap((run) => run.results ?? []);
-          if (findings.length > 0) {
-            const rules = [...new Set(findings.map((finding) => finding.ruleId ?? 'unknown'))];
-            console.error(`Aislop reported ${findings.length} finding(s): ${rules.join(', ')}`);
+          const exceptionExpires = Date.parse('2026-10-09T00:00:00Z');
+          const isTemporaryAdmZipFinding = (finding) =>
+            Date.now() < exceptionExpires &&
+            finding.ruleId === 'security/vulnerable-dependency' &&
+            finding.message?.text === 'adm-zip (moderate, dev-only) — no fix available' &&
+            finding.locations?.[0]?.physicalLocation?.artifactLocation?.uri === 'package.json';
+          const blockingFindings = findings.filter((finding) => !isTemporaryAdmZipFinding(finding));
+          if (blockingFindings.length > 0) {
+            const rules = [...new Set(blockingFindings.map((finding) => finding.ruleId ?? 'unknown'))];
+            console.error(`Aislop reported ${blockingFindings.length} finding(s): ${rules.join(', ')}`);
             process.exit(1);
           }
           NODE
