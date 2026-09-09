@@ -135,6 +135,7 @@ const EMOJI_KIND: Record<string, "ok" | "warn" | "error"> = {
 };
 
 export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
+  const sink = o.write ?? ((line: string) => console.log(line));
   // Track the last emitted line so spacer rails never double up (intro/outro/group all want a
   // blank `│` next to them, and any two of those can be adjacent).
   let lastLine = "";
