@@ -29,9 +29,17 @@ import type {
 export const PLUGIN_ID = "hindsight-memory-router";
 export const PLUGIN_VERSION = PACKAGE_VERSION;
 
-const DEFAULT_RECALL_TIMEOUT_MS = 5000;
-const DEFAULT_RECALL_MAX_TOKENS = 1024;
-const DEFAULT_FLUSH_INTERVAL_MS = 30000;
+export const RUNTIME_DEFAULTS = Object.freeze({
+  autoRecall: true,
+  autoRetain: true,
+  recallTimeoutMs: 5000,
+  recallMaxTokens: 1024,
+  recallInjectionPosition: "user" as const,
+  retainSource: "openclaw",
+  enableKnowledgeTools: false,
+  retainQueueFlushIntervalMs: 30000,
+  retainQueueMaxAgeMs: -1,
+});
 const MAX_SESSION_STATE_ENTRIES = 1000;
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
   "Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:";
@@ -218,7 +226,12 @@ function shouldSkipRetain(
   const statelessSession = sessionKey !== undefined && matchesSessionPattern(sessionKey, statelessPatterns);
   const excludedProvider =
     ctx?.messageProvider !== undefined && config.excludeProviders?.includes(ctx.messageProvider) === true;
-  return config.autoRetain === false || ignoredSession || statelessSession || excludedProvider;
+  return (
+    (config.autoRetain ?? RUNTIME_DEFAULTS.autoRetain) === false ||
+    ignoredSession ||
+    statelessSession ||
+    excludedProvider
+  );
 }
 
 function setBounded<K, V>(map: Map<K, V>, key: K, value: V): void {
@@ -270,7 +283,7 @@ export function buildRoutingStack(
     credentials,
     clients,
     queueDir: config.queueDir ?? join(homedir(), ".openclaw", "data", "hindsight-retain-queue"),
-    queueMaxAgeMs: config.retainQueueMaxAgeMs,
+    queueMaxAgeMs: config.retainQueueMaxAgeMs ?? RUNTIME_DEFAULTS.retainQueueMaxAgeMs,
     logger,
   });
   return {
@@ -309,7 +322,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
   api.on(
     "before_prompt_build",
     async (event: PluginHookEvent, ctx?: PluginHookAgentContext): Promise<PluginPromptHookResult | undefined> => {
-      if (config.autoRecall === false) {
+      if ((config.autoRecall ?? RUNTIME_DEFAULTS.autoRecall) === false) {
         return;
       }
       const agentId = ctx?.agentId;
@@ -327,8 +340,8 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
         const recalled = await stack.recall.recall(client, {
           query,
           banks,
-          timeoutMs: config.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS,
-          maxTokens: config.recallMaxTokens ?? DEFAULT_RECALL_MAX_TOKENS,
+          timeoutMs: config.recallTimeoutMs ?? RUNTIME_DEFAULTS.recallTimeoutMs,
+          maxTokens: config.recallMaxTokens ?? RUNTIME_DEFAULTS.recallMaxTokens,
           budget: config.recallBudget,
           types: config.recallTypes,
           preferObservations: config.preferObservations,
@@ -343,7 +356,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
         const contextMessage = `<hindsight_memories>\n${
           config.recallPromptPreamble || DEFAULT_RECALL_PROMPT_PREAMBLE
         }\nCurrent time - ${formatCurrentTimeForRecall()}\n\n${formatMemories(ranked)}\n</hindsight_memories>`;
-        switch (config.recallInjectionPosition ?? "user") {
+        switch (config.recallInjectionPosition ?? RUNTIME_DEFAULTS.recallInjectionPosition) {
           case "append":
             return { appendSystemContext: contextMessage };
           case "prepend":
@@ -406,7 +419,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
         documentId: `openclaw:${sanitizeDocumentIdPart(sessionKey, "session")}:${PROCESS_ID}:${sequence}`,
         context: config.retainContext ?? DEFAULT_RETAIN_CONTEXT,
         metadata: {
-          source: config.retainSource ?? "openclaw",
+          source: config.retainSource ?? RUNTIME_DEFAULTS.retainSource,
           agent: credentials.principalId,
           hook: hookName,
         },
@@ -445,7 +458,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
         void stack.retain.flushQueues().catch((error: unknown) => {
           log.error(`retain queue flush failed: ${memoryErrorMessage(error)}`);
         });
-      }, config.retainQueueFlushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS);
+      }, config.retainQueueFlushIntervalMs ?? RUNTIME_DEFAULTS.retainQueueFlushIntervalMs);
       flushTimer.unref?.();
       await stack.retain.flushQueues();
     },
@@ -461,7 +474,10 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
 function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const log = api.logger;
   const config = stack.config;
-  if (config.enableKnowledgeTools === true && typeof api.registerTool === "function") {
+  if (
+    (config.enableKnowledgeTools ?? RUNTIME_DEFAULTS.enableKnowledgeTools) === true &&
+    typeof api.registerTool === "function"
+  ) {
     api.registerTool(
       (ctx: PluginToolContext) => {
         let credentials: ReturnType<PrincipalCredentialResolver["resolve"]>;
@@ -515,8 +531,8 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
                 const recalled = await stack.recall.recall(client, {
                   query,
                   banks: recallBanks,
-                  timeoutMs: config.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS,
-                  maxTokens: config.recallMaxTokens ?? DEFAULT_RECALL_MAX_TOKENS,
+                  timeoutMs: config.recallTimeoutMs ?? RUNTIME_DEFAULTS.recallTimeoutMs,
+                  maxTokens: config.recallMaxTokens ?? RUNTIME_DEFAULTS.recallMaxTokens,
                   budget: config.recallBudget,
                   types: config.recallTypes,
                   preferObservations: config.preferObservations,

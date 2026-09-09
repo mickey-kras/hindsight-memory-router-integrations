@@ -94,7 +94,9 @@ describe("managed harness identities", () => {
   it("accepts only explicitly mapped paths and assigned banks", () => {
     const configPath = setup();
     const approved = join(configPath, "..", "approved");
+    vi.stubEnv("TEST_CODEX_TOKEN", "");
     expect(managedBank("codex", join(approved, "subdir"))).toBe("A");
+    vi.stubEnv("TEST_CODEX_TOKEN", token("codex"));
     const outside = mkdtempSync(join(tmpdir(), "router-outside-"));
     dirs.push(outside);
     const escapedPath = join(approved, "escape");

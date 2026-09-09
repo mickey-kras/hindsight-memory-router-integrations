@@ -34,7 +34,7 @@ jobs:
 
       - run: npm ci
       - run: npm ci --prefix src/upstream/coding-agents
-      - run: npm exec -- biome lint . --max-diagnostics=none
+      - run: npm run lint
       - run: npm run typecheck
       - name: Tests and coverage
         run: npm run test:coverage
@@ -44,6 +44,7 @@ jobs:
       - run: npm test --prefix src/upstream/coding-agents
       - run: node scripts/verify-coding-upstream.mjs
       - run: node scripts/verify-openclaw-overlay.mjs
+      - run: node --test scripts/verify-vendored-files.test.mjs
       - name: PR branch updater tests
         run: node --test .github/scripts/pr-branch-updater.test.cjs
       - name: Node tooling audit

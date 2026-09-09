@@ -21,5 +21,5 @@ Read-only page tools require an explicit assigned `bankId`.
 
 Retain queues: `~/.openclaw/data/hindsight-retain-queue/`. Revoked/moved bank entries remain queued for operator review.
 
-Artifact: `packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.3.tgz`.
+Artifact: `packages/mickey-kras-hindsight-memory-router-openclaw-0.11.1-router.4.tgz`.
 Nix hashes: `PACKAGE_NIX_HASHES`.

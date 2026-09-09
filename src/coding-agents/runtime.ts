@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
-import { AccessDeniedError, type BankAccess, visibleBanks } from "../shared/bank-access.js";
+import { AccessDeniedError, type BankAccess, requireBank, visibleBanks } from "../shared/bank-access.js";
 import { RouterTransport } from "../shared/router-transport.js";
 
 interface HarnessPrincipal extends BankAccess {
@@ -68,13 +68,7 @@ export function managedSettings(harness: string | undefined) {
 }
 
 export function managedBank(harness: string | undefined, directory: string): string {
-  const { config, principal } = managed(harness);
-  const transport = new RouterTransport({
-    routerUrl: config.routerUrl,
-    access: principal,
-    principalId: harness,
-    token: () => process.env[principal.tokenEnv],
-  });
+  const { principal } = managed(harness);
   if (!directory) throw new AccessDeniedError();
   let location: string;
   try {
@@ -94,6 +88,6 @@ export function managedBank(harness: string | undefined, directory: string): str
     .filter(([path]) => location === path || location.startsWith(path + sep))
     .sort(([a], [b]) => b.length - a.length)[0];
   if (!match) throw new AccessDeniedError();
-  transport.bankUrl(match[1]);
+  requireBank(principal, match[1], "read");
   return match[1];
 }

@@ -42,6 +42,8 @@ it("routes knowledge reads and mutations through the same bank guard", async () 
     token: () => token,
   });
   const tools = routedKnowledgeTools(transport);
+  const recall = tools.find((tool) => tool.name === "agent_knowledge_recall");
+  expect(recall?.parameters.properties).not.toHaveProperty("bankId");
   for (const action of ["list_pages", "get_page", "create_page", "update_page", "delete_page", "ingest"]) {
     const tool = tools.find((t) => t.name === `agent_knowledge_${action}`)!;
     const read = ["list_pages", "get_page"].includes(action);
