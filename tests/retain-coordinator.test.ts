@@ -267,7 +267,9 @@ describe("RetainCoordinator", () => {
         throw new TypeError("fetch failed");
       },
     });
-    await expect(retain.retain("main", { content: "offline" })).resolves.toEqual({ queued: true, bank: "main" });
+    await expect(
+      retain.retain("main", { content: "offline" }),
+    ).resolves.toEqual({ queued: true, bank: "main" });
   });
 
   it("assigns and persists an operation id for replay identity", async () => {

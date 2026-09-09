@@ -1,6 +1,6 @@
-import { RecallCoordinator, type RecallItem } from "./recall-coordinator.js";
-import { RouterTransport } from "./router-transport.js";
 import { visibleBanks } from "./bank-access.js";
+import { RecallCoordinator, type RecallItem } from "./recall-coordinator.js";
+import type { RouterTransport } from "./router-transport.js";
 
 /** Recall and reflect share deadlines, budgets, failure handling and deterministic merging. */
 export async function readAcrossBanks(
@@ -17,13 +17,19 @@ export async function readAcrossBanks(
         throw new Error("read-only execution");
       },
       async recall(bank, _query, request) {
-        const response = await transport.request(transport.bankUrl(bank, suffix), {
-          method: "POST",
-          signal: request?.signal,
-          body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
-        });
+        const response = await transport.request(
+          transport.bankUrl(bank, suffix),
+          {
+            method: "POST",
+            signal: request?.signal,
+            body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
+          },
+        );
         if (!response.ok) throw new Error("memory read unavailable");
-        const data = (await response.json()) as { text?: string; results?: RecallItem[] };
+        const data = (await response.json()) as {
+          text?: string;
+          results?: RecallItem[];
+        };
         if (operation === "reflect") {
           return { results: data.text ? [{ text: data.text }] : [] };
         }

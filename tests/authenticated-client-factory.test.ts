@@ -109,8 +109,12 @@ describe("AuthenticatedClientFactory", () => {
     const credentials = { principalId: "main", token: TOKEN_MAIN, access };
     const first = factory.transportFor(credentials);
     expect(factory.transportFor(credentials)).toBe(first);
-    expect(factory.transportFor({ ...credentials, token: TOKEN_BACKEND })).not.toBe(first);
-    expect(() => factory.transportFor({ principalId: "none", token: TOKEN_MAIN })).toThrow("memory access denied");
+    expect(
+      factory.transportFor({ ...credentials, token: TOKEN_BACKEND }),
+    ).not.toBe(first);
+    expect(() =>
+      factory.transportFor({ principalId: "none", token: TOKEN_MAIN }),
+    ).toThrow("memory access denied");
   });
 });
 

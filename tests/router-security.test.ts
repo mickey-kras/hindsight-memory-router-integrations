@@ -200,13 +200,11 @@ describe("bank isolation", () => {
   });
   it("intersects router bank visibility with configured IDs", async () => {
     const { client, send } = transport(
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(
-          Response.json({
-            banks: [{ bank_id: "A" }, { bank_id: "B" }, { bank_id: "hidden" }],
-          }),
-        ),
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json({
+          banks: [{ bank_id: "A" }, { bank_id: "B" }, { bank_id: "hidden" }],
+        }),
+      ),
     );
     expect(
       await (await client.request(`${url}/v1/default/banks`)).json(),

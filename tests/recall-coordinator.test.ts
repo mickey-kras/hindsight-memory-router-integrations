@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { RouterClient } from "../src/shared/authenticated-client-factory.js";
-import { recallItemText } from "../src/shared/recall-item.js";
 import {
   RecallAuthorizationError,
   RecallCoordinator,
   type RecallItem,
 } from "../src/shared/recall-coordinator.js";
+import { recallItemText } from "../src/shared/recall-item.js";
 
 it("uses one item-text precedence for display, dedupe, and budgeting", () => {
   expect(recallItemText({ text: "text", content: "content" })).toBe("text");

@@ -76,7 +76,9 @@ it("routes knowledge reads and mutations through the same bank guard", async () 
   }
   expect(fetch).toHaveBeenCalledTimes(6);
   const ingest = tools.find((tool) => tool.name === "agent_knowledge_ingest");
-  await expect(ingest?.execute({ bankId: "A", content: "body" })).rejects.toThrow("title is required");
+  await expect(
+    ingest?.execute({ bankId: "A", content: "body" }),
+  ).rejects.toThrow("title is required");
 });
 
 it("fails closed when production clients lack access or receive upstream failures", async () => {

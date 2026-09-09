@@ -47,7 +47,7 @@ function timeoutAfter(
   promise: Promise<never>;
   timer: ReturnType<typeof setTimeout>;
 } {
-  let rejectTimeout: (reason: DOMException) => void = () => {};
+  let rejectTimeout!: (reason: DOMException) => void;
   const promise = new Promise<never>((_, reject) => {
     rejectTimeout = reject;
   });

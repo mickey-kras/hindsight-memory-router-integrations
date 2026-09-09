@@ -357,7 +357,10 @@ describe("plugin wiring", () => {
     const { factory } = api.toolFactories[0];
     const tools = factory({ agentId: "backend" }) as Array<{
       name: string;
-      execute(id: string, params: Record<string, unknown>): Promise<{ content: Array<{ text: string }>; details: object }>;
+      execute(
+        id: string,
+        params: Record<string, unknown>,
+      ): Promise<{ content: Array<{ text: string }>; details: object }>;
     }>;
     const recallTool = tools.find((t) => t.name === "agent_knowledge_recall")!;
     const response = await recallTool.execute("call-1", { query: "testing" });
@@ -677,7 +680,10 @@ describe("plugin wiring", () => {
     registerWithStack(api, instrumentedStack(queueDir, sink));
     const tools = api.toolFactories[0].factory({ agentId: "main" }) as Array<{
       name: string;
-      execute(id: string, params: Record<string, unknown>): Promise<{ content: Array<{ text: string }>; details: object }>;
+      execute(
+        id: string,
+        params: Record<string, unknown>,
+      ): Promise<{ content: Array<{ text: string }>; details: object }>;
     }>;
     const createPage = tools.find(
       (t) => t.name === "agent_knowledge_create_page",

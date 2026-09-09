@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PrincipalCredentialResolver,
   CredentialResolutionError,
-  UnknownPrincipalError,
+  PrincipalCredentialResolver,
   TOKEN_FORMAT_PATTERN,
+  UnknownPrincipalError,
 } from "../src/shared/principal-credential-resolver.js";
 
 const TOKEN_A = `mr_main-key_${"a".repeat(64)}`;
@@ -14,8 +14,16 @@ function resolver() {
   return new PrincipalCredentialResolver({
     routerUrl: "https://router.example.test",
     principals: {
-      main: { token: TOKEN_A, writeBank: "main", additionalReadBanks: ["main", "dev", "creative"] },
-      backend: { token: TOKEN_B, writeBank: "dev", additionalReadBanks: ["dev", "dev-best-practices"] },
+      main: {
+        token: TOKEN_A,
+        writeBank: "main",
+        additionalReadBanks: ["main", "dev", "creative"],
+      },
+      backend: {
+        token: TOKEN_B,
+        writeBank: "dev",
+        additionalReadBanks: ["dev", "dev-best-practices"],
+      },
     },
   });
 }
@@ -23,8 +31,14 @@ function resolver() {
 describe("PrincipalCredentialResolver", () => {
   it("selects credentials by trusted agentId", () => {
     const r = resolver();
-    expect(r.resolve("main")).toMatchObject({ principalId: "main", token: TOKEN_A });
-    expect(r.resolve("backend")).toMatchObject({ principalId: "backend", token: TOKEN_B });
+    expect(r.resolve("main")).toMatchObject({
+      principalId: "main",
+      token: TOKEN_A,
+    });
+    expect(r.resolve("backend")).toMatchObject({
+      principalId: "backend",
+      token: TOKEN_B,
+    });
   });
 
   it("fails closed for unknown agents", () => {
@@ -40,7 +54,9 @@ describe("PrincipalCredentialResolver", () => {
   });
 
   it("has no global fallback token", () => {
-    const r = new PrincipalCredentialResolver({ routerUrl: "https://router.example.test" });
+    const r = new PrincipalCredentialResolver({
+      routerUrl: "https://router.example.test",
+    });
     expect(() => r.resolve("main")).toThrow(UnknownPrincipalError);
     // A config-level fallback token field is not honored even if present.
     const withFallback = new PrincipalCredentialResolver({
@@ -49,7 +65,9 @@ describe("PrincipalCredentialResolver", () => {
       // @ts-expect-error deliberately smuggled legacy global token
       token: TOKEN_B,
     });
-    expect(() => withFallback.resolve("backend")).toThrow(UnknownPrincipalError);
+    expect(() => withFallback.resolve("backend")).toThrow(
+      UnknownPrincipalError,
+    );
     expect(withFallback.resolve("main").token).toBe(TOKEN_A);
   });
 
@@ -76,7 +94,9 @@ describe("PrincipalCredentialResolver", () => {
   it("accepts the spec token format mr_<key-id>_<64-hex>", () => {
     expect(TOKEN_FORMAT_PATTERN.test(TOKEN_A)).toBe(true);
     expect(TOKEN_FORMAT_PATTERN.test(`mr_k_${"0".repeat(63)}`)).toBe(false);
-    expect(TOKEN_FORMAT_PATTERN.test(`mr_k_${"a".repeat(64).toUpperCase()}`)).toBe(false);
+    expect(
+      TOKEN_FORMAT_PATTERN.test(`mr_k_${"a".repeat(64).toUpperCase()}`),
+    ).toBe(false);
   });
 
   it("resolves the configured write bank and recall banks", () => {
@@ -84,7 +104,10 @@ describe("PrincipalCredentialResolver", () => {
     expect(r.resolveWriteBank("main")).toBe("main");
     expect(r.resolveWriteBank("backend")).toBe("dev");
     expect(r.resolveReadBanks("main")).toEqual(["main", "dev", "creative"]);
-    expect(r.resolveReadBanks("backend")).toEqual(["dev", "dev-best-practices"]);
+    expect(r.resolveReadBanks("backend")).toEqual([
+      "dev",
+      "dev-best-practices",
+    ]);
   });
 
   it("supports read-only agents without a write bank", () => {
@@ -99,29 +122,49 @@ describe("PrincipalCredentialResolver", () => {
   it("deduplicates recall banks and fails closed on malformed banks", () => {
     const r = new PrincipalCredentialResolver({
       principals: {
-        main: { token: TOKEN_A, writeBank: "main", additionalReadBanks: ["main", "main", "dev"] },
-        broken: { token: TOKEN_B, writeBank: "../escape", additionalReadBanks: [] },
+        main: {
+          token: TOKEN_A,
+          writeBank: "main",
+          additionalReadBanks: ["main", "main", "dev"],
+        },
+        broken: {
+          token: TOKEN_B,
+          writeBank: "../escape",
+          additionalReadBanks: [],
+        },
       },
     });
     expect(r.resolveReadBanks("main")).toEqual(["main", "dev"]);
-    expect(() => r.resolveWriteBank("broken")).toThrow(CredentialResolutionError);
+    expect(() => r.resolveWriteBank("broken")).toThrow(
+      CredentialResolutionError,
+    );
   });
 
   it("validates startup configuration and route presence", () => {
-    expect(() => new PrincipalCredentialResolver({}).validateConfiguredPrincipals()).toThrow(UnknownPrincipalError);
-    const noRoute = new PrincipalCredentialResolver({ principals: { main: { token: TOKEN_A } } });
-    expect(() => noRoute.validateConfiguredPrincipals()).toThrow("missing-route");
+    expect(() =>
+      new PrincipalCredentialResolver({}).validateConfiguredPrincipals(),
+    ).toThrow(UnknownPrincipalError);
+    const noRoute = new PrincipalCredentialResolver({
+      principals: { main: { token: TOKEN_A } },
+    });
+    expect(() => noRoute.validateConfiguredPrincipals()).toThrow(
+      "missing-route",
+    );
     expect(resolver().has("main")).toBe(true);
     expect(resolver().has("missing")).toBe(false);
   });
 
   it.each([undefined, null, ""])("rejects missing token value %s", (token) => {
-    const r = new PrincipalCredentialResolver({ principals: { main: { token, writeBank: "main" } } });
+    const r = new PrincipalCredentialResolver({
+      principals: { main: { token, writeBank: "main" } },
+    });
     expect(() => r.resolve("main")).toThrow("missing-token");
   });
 
   it("uses the write bank when read banks are omitted and validates direct lookups", () => {
-    const r = new PrincipalCredentialResolver({ principals: { main: { token: TOKEN_A, writeBank: "main" } } });
+    const r = new PrincipalCredentialResolver({
+      principals: { main: { token: TOKEN_A, writeBank: "main" } },
+    });
     expect(r.resolveReadBanks("main")).toEqual(["main"]);
     expect(() => r.resolveReadBanks("../bad")).toThrow(UnknownPrincipalError);
     expect(() => r.resolveReadBanks("missing")).toThrow(UnknownPrincipalError);
@@ -129,11 +172,19 @@ describe("PrincipalCredentialResolver", () => {
 
   it("rejects non-array and malformed read-bank configuration", () => {
     const wrongType = new PrincipalCredentialResolver({
-      principals: { main: { token: TOKEN_A, writeBank: "main", additionalReadBanks: "dev" } },
+      principals: {
+        main: { token: TOKEN_A, writeBank: "main", additionalReadBanks: "dev" },
+      },
     });
     expect(() => wrongType.resolveReadBanks("main")).toThrow("invalid-bank");
     const wrongItem = new PrincipalCredentialResolver({
-      principals: { main: { token: TOKEN_A, writeBank: "main", additionalReadBanks: [".."] } },
+      principals: {
+        main: {
+          token: TOKEN_A,
+          writeBank: "main",
+          additionalReadBanks: [".."],
+        },
+      },
     });
     expect(() => wrongItem.resolveReadBanks("main")).toThrow("invalid-bank");
   });
@@ -147,7 +198,9 @@ describe("PrincipalCredentialResolver", () => {
       const invalidBank = new PrincipalCredentialResolver({
         principals: { main: { token: TOKEN_A, writeBank } },
       });
-      expect(() => invalidBank.resolveOptionalWriteBank("main")).toThrow("invalid-bank");
+      expect(() => invalidBank.resolveOptionalWriteBank("main")).toThrow(
+        "invalid-bank",
+      );
     }
   });
 });
