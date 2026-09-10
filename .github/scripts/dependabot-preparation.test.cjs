@@ -1,5 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { join, resolve } = require("node:path");
 const {
   CODING,
   PROVENANCE,
@@ -15,6 +19,7 @@ const {
   requestPreparation,
   requestRecreate,
   publish,
+  waitForPublishedHead,
 } = require("./dependabot-preparation.cjs");
 const { requestValidation } = require("./dependabot-validation.cjs");
 
@@ -69,12 +74,14 @@ function harness() {
     graphql: async (query, input) => {
       if (query.startsWith("mutation")) {
         state.published.push(input);
+        state.pull = { ...state.pull, head: { ...state.pull.head, sha: generated } };
+        state.commits.push({ sha: generated });
         return { createCommitOnBranch: { commit: { oid: generated } } };
       }
       return { repository: { object: { signature: { isValid: true, wasSignedByGitHub: true } } } };
     },
     rest: {
-      git: { getRef: async () => ({ data: { object: { sha: base } } }) },
+      git: { getRef: async ({ ref }) => ({ data: { object: { sha: ref === "heads/main" ? base : generated } } }) },
       repos: {
         get: async () => ({ data: { default_branch: "main", full_name: "owner/repo" } }),
         getContent: async ({ path }) => ({
@@ -95,7 +102,7 @@ function harness() {
       },
       issues: { listComments: "comments", createComment: async (input) => state.messages.push(input) },
     },
-    paginate: async (endpoint) => state[endpoint],
+    paginate: async (endpoint, params) => endpoint === "checks" && params.filter !== "all" ? [] : state[endpoint],
   };
   const paths = generatedPaths(manifest, coding);
   const artifacts = {
@@ -235,6 +242,66 @@ test("publication limits files and uses expectedHeadOid for an atomic update", a
   assert.equal(await publish(h.github, context, h.payload, "unused", h.metadata), generated);
   assert.equal(h.state.published[0].input.expectedHeadOid, head);
   assert.deepEqual(h.state.published[0].input.fileChanges.additions, h.payload.files);
+});
+
+test("publication waits for lagging PR metadata and commit lists", async () => {
+  const h = harness();
+  const pauses = [];
+  h.github.rest.git.getRef = async () => ({ data: { object: { sha: pauses.length ? generated : head } } });
+  await waitForPublishedHead(h.github, context.repo, pull, generated, async (ms) => {
+    pauses.push(ms);
+    h.state.pull = { ...pull, head: { ...pull.head, sha: generated } };
+    if (pauses.length === 2) h.state.commits.push({ sha: generated });
+  });
+  assert.deepEqual(pauses, [2000, 2000]);
+});
+
+test("publication rejects genuine branch changes without retrying", async () => {
+  for (const mutate of [
+    h => { h.state.pull.head.sha = base; },
+    h => { h.state.pull.state = "closed"; },
+    h => { h.state.pull.base.sha = head; },
+    h => { h.github.rest.git.getRef = async () => ({ data: { object: { sha: base } } }); },
+  ]) {
+    const h = harness();
+    mutate(h);
+    let sleeps = 0;
+    await assert.rejects(waitForPublishedHead(h.github, context.repo, pull, generated, async () => { sleeps++; }), /PR changed/);
+    assert.equal(sleeps, 0);
+  }
+});
+
+test("publication stops waiting after a bounded metadata delay", async () => {
+  const h = harness();
+  let sleeps = 0;
+  await assert.rejects(waitForPublishedHead(h.github, context.repo, pull, generated, async () => { sleeps++; }), /not yet visible/);
+  assert.equal(sleeps, 9);
+});
+
+test("the refresh checkout can execute its trusted policy without the application checkout", () => {
+  const root = resolve(__dirname, "../..");
+  const directory = mkdtempSync(join(tmpdir(), "refresh-checkout-"));
+  try {
+    const selection = execFileSync("python3", ["-c", [
+      "import sys, yaml",
+      "with open(sys.argv[1]) as handle: workflow = yaml.safe_load(handle)",
+      "step = next(s for s in workflow['jobs']['enable-auto-merge']['steps'] if s.get('name') == 'Read automation from the trusted workflow revision')",
+      "print(step['with']['sparse-checkout'])",
+    ].join("\n"), join(root, ".github/workflows/dependabot-auto-merge.yml")], { encoding: "utf8" });
+    const checkout = join(directory, "automation");
+    for (const path of selection.trim().split("\n")) {
+      cpSync(join(root, path), join(checkout, path), { recursive: true });
+    }
+    const fixture = join(directory, "fixture");
+    mkdirSync(fixture);
+    for (const [name, value] of Object.entries({
+      "files.json": "[]", head_sha: generated, author_association: "NONE", author_login: bot.login,
+    })) writeFileSync(join(fixture, name), value);
+    const result = execFileSync("python3", [join(checkout, ".github/scripts/verify-prepared-policy.py"), fixture], { encoding: "utf8" });
+    assert.match(result, /Policy guard passed/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 function preparedHarness() {
