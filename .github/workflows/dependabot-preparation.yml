@@ -103,6 +103,11 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: [inspect, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+      checks: write
+      actions: write
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -126,18 +131,18 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           GH_TOKEN: ${{ github.token }}
-          UPDATE_TOKEN: ${{ secrets.DEPENDABOT_UPDATE_TOKEN }}
           PR_NUMBER: ${{ inputs.number }}
           EXPECTED_HEAD: ${{ needs.inspect.outputs.head }}
           EXPECTED_BASE: ${{ needs.inspect.outputs.base }}
         with:
           script: |
-            if (!process.env.UPDATE_TOKEN) throw new Error('Configure DEPENDABOT_UPDATE_TOKEN with repository Contents read/write');
             const fs = require('node:fs');
             if (fs.statSync('generated/dependency-artifacts.json').size > 64 * 1024 * 1024) throw new Error('Oversized preparation artifact');
             const payload = JSON.parse(fs.readFileSync('generated/dependency-artifacts.json', 'utf8'));
             if (payload.number !== Number(process.env.PR_NUMBER) || payload.head !== process.env.EXPECTED_HEAD || payload.base !== process.env.EXPECTED_BASE) throw new Error('Preparation identity mismatch');
             const { publish } = require('./.github/scripts/dependabot-preparation.cjs');
-            const writer = new github.constructor({ auth: process.env.UPDATE_TOKEN });
-            const sha = await publish(github, context, writer, payload, require('node:path').resolve('metadata-action'));
-            core.info(`Published generated files at ${sha}; waiting for fresh PR checks`);
+            const sha = await publish(github, context, payload, require('node:path').resolve('metadata-action'));
+            const { data: pull } = await github.rest.pulls.get({ ...context.repo, pull_number: payload.number });
+            if (pull.head.sha !== sha) throw new Error('PR changed after publication');
+            const { requestValidation } = require('./.github/scripts/dependabot-validation.cjs');
+            await requestValidation(github, context, pull, core);

@@ -184,6 +184,20 @@ test("artifact preparation runs before auto-merge", async () => {
   await run(h.options);
   assert.deepEqual(h.commands, []);
 });
+test("prepared updates recover validation before the compatibility-score decision", async () => {
+  const h = harness();
+  const paginate = h.options.github.paginate;
+  h.options.github.paginate = async (endpoint) => endpoint.name === "listCommits"
+    ? [...commits, { author: { login: "github-actions[bot]" } }]
+    : paginate(endpoint);
+  h.options.verify = async () => commits;
+  h.options.metadata = () => [{ ...dependency, compatScore: 0 }];
+  let validated = false;
+  h.options.validate = async () => { validated = true; };
+  await run(h.options);
+  assert.equal(validated, true);
+  assert.deepEqual(h.commands, []);
+});
 test("an unknown score allows preparation but never queues auto-merge", async () => {
   const h = harness();
   h.options.metadata = () => [{ ...dependency, compatScore: 0 }];

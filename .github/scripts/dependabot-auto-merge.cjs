@@ -149,6 +149,7 @@ async function run({
   verify = dependencyCommits,
   prepare = requestPreparation,
   recreate = requestRecreate,
+  validate = require("./dependabot-validation.cjs").requestValidation,
 }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`;
   const { data: repo } = await github.rest.repos.get(context.repo);
@@ -191,6 +192,7 @@ async function run({
       }
       if (await recreate(github, context, pull, core)) continue;
       if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
+      if (original.length !== commits.length) await validate(github, context, pull, core);
       const reason = eligibility(original, dependencies);
       if (reason) {
         core.info(`#${pull.number}: ${reason}`);
@@ -205,7 +207,7 @@ async function run({
       core.info(`#${pull.number}: eligible, minimum score ${Math.min(...dependencies.map((d) => d.compatScore))}%`);
     } catch (error) {
       failed = true;
-      core.warning(`#${candidate.number}: auto-merge evaluation failed (${error.name}); left for retry`);
+      core.warning(`#${candidate.number}: auto-merge evaluation failed: ${error.message}; left for retry`);
     }
   }
   await ensureMainRun({ github, context, core, branch, mainWorkflow });
