@@ -50,7 +50,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
-    "@types/node": "22.20.0",
+    "@types/node": "26.4.1",
     "@vitest/coverage-v8": "4.1.11",
     "aislop": "^0.16.1",
     "typescript": "^7.0.2",
