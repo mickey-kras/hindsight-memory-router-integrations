@@ -2,6 +2,7 @@ const { mkdtempSync, writeFileSync, readFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { dependencyCommits, requestPreparation, requestRecreate } = require("./dependabot-preparation.cjs");
 
 const MINIMUM_SCORE = 75;
 const BOT = { login: "dependabot[bot]", id: 49699333 };
@@ -26,14 +27,22 @@ function trustedPull(pull, repository, branch) {
   );
 }
 
-function eligibility(commits, dependencies) {
-  if (!verifiedCommits(commits)) {
-    return "Unsigned or non-Dependabot commits require manual review";
-  }
+function updateEligibility(dependencies) {
   if (!Array.isArray(dependencies) || !dependencies.length) return "No dependency metadata";
   for (const dependency of dependencies) {
     if (!UPDATE_TYPES.has(dependency.updateType)) return "Major or unknown update type requires manual review";
     if (!dependency.prevVersion || !dependency.newVersion) return "Missing version pair";
+  }
+  return null;
+}
+
+function eligibility(commits, dependencies) {
+  if (!verifiedCommits(commits)) {
+    return "Unsigned or non-Dependabot commits require manual review";
+  }
+  const reason = updateEligibility(dependencies);
+  if (reason) return reason;
+  for (const dependency of dependencies) {
     const score = dependency.compatScore;
     if (!Number.isInteger(score) || score < MINIMUM_SCORE || score > 100) {
       return `Every dependency needs a known compatibility score of at least ${MINIMUM_SCORE}%`;
@@ -137,6 +146,9 @@ async function run({
   mainWorkflow,
   metadata = fetchMetadata,
   merge = mergeCommand,
+  verify = dependencyCommits,
+  prepare = requestPreparation,
+  recreate = requestRecreate,
 }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`;
   const { data: repo } = await github.rest.repos.get(context.repo);
@@ -170,12 +182,16 @@ async function run({
         ...params,
         per_page: 100,
       });
-      if (!verifiedCommits(commits)) {
-        core.info(`#${pull.number}: unsigned or non-Dependabot commits require manual review`);
+      const original = await verify(github, context.repo, pull, commits);
+      const dependencies = metadata(pull, repository, metadataPath);
+      const updateReason = updateEligibility(dependencies);
+      if (updateReason) {
+        core.info(`#${pull.number}: ${updateReason}`);
         continue;
       }
-      const dependencies = metadata(pull, repository, metadataPath);
-      const reason = eligibility(commits, dependencies);
+      if (await recreate(github, context, pull, core)) continue;
+      if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
+      const reason = eligibility(original, dependencies);
       if (reason) {
         core.info(`#${pull.number}: ${reason}`);
         continue;
@@ -199,6 +215,7 @@ async function run({
 module.exports = {
   run,
   eligibility,
+  updateEligibility,
   trustedPull,
   readDependencies,
   ensureMainRun,
