@@ -41,7 +41,10 @@ async function dependencyCommits(github, repo, pull, commits) {
     !original.length ||
     !original.every(signedDependabot) ||
     generated.sha !== pull.head.sha ||
-    generated.author?.id !== pull.base.repo.owner.id ||
+    !(
+      generated.author?.id === pull.base.repo.owner.id ||
+      (generated.author?.login === "github-actions[bot]" && generated.author.id === 41898282)
+    ) ||
     !generated.commit.verification?.verified ||
     generated.commit.message.trim() !== `${COMMIT_TITLE}\n\nDependabot-Head: ${parent}`
   ) {
@@ -132,9 +135,10 @@ async function requestPreparation(github, context, pull, core) {
 }
 
 async function requestRecreate(github, context, pull, core) {
+  const { data: main } = await github.rest.git.getRef({ ...context.repo, ref: `heads/${pull.base.ref}` });
   const { data } = await github.rest.repos.compareCommitsWithBasehead({
     ...context.repo,
-    basehead: `${pull.head.sha}...${pull.base.sha}`,
+    basehead: `${pull.head.sha}...${main.object.sha}`,
   });
   if (data.ahead_by === 0) return false;
   if (!Number.isInteger(data.ahead_by) || data.ahead_by < 0) throw new Error("Invalid branch comparison");
@@ -150,7 +154,7 @@ async function requestRecreate(github, context, pull, core) {
   return true;
 }
 
-async function publish(github, context, writer, payload, metadataPath, metadata) {
+async function publish(github, context, payload, metadataPath, metadata) {
   const { pull, paths } = await inspect(github, context, payload.number, payload.head);
   const { fetchMetadata, updateEligibility } = require("./dependabot-auto-merge.cjs");
   const reason = updateEligibility(
@@ -194,9 +198,7 @@ async function publish(github, context, writer, payload, metadataPath, metadata)
   ) {
     throw new Error("Invalid package Nix hashes");
   }
-  const { data: actor } = await writer.rest.users.getAuthenticated();
-  if (actor.id !== pull.base.repo.owner.id) throw new Error("Preparation token must belong to the repository owner");
-  const result = await writer.graphql(
+  const result = await github.graphql(
     `mutation($input: CreateCommitOnBranchInput!) {
     createCommitOnBranch(input: $input) { commit { oid } }
   }`,

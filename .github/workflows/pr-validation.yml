@@ -3,6 +3,14 @@ name: PR validation
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      number:
+        description: Dependabot PR number
+        required: true
+      expected_head:
+        description: Prepared Dependabot commit
+        required: true
 
 permissions:
   contents: read
@@ -10,7 +18,7 @@ permissions:
   security-events: write
 
 concurrency:
-  group: pr-validation-${{ github.event.pull_request.number }}
+  group: pr-validation-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.number }}
   cancel-in-progress: true
 
 jobs:

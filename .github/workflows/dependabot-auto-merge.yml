@@ -9,6 +9,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  checks: write
 
 concurrency:
   group: dependabot-auto-merge-${{ github.repository }}
