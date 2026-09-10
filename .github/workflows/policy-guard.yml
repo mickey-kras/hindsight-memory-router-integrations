@@ -1085,7 +1085,7 @@ jobs:
               '.github/workflows/dependabot-auto-merge.yml': ('fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34', '602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19', 'ccfefaafd622388ee9362ce6b95d66079be875a6cd85684be592c6a8edb74a0e', '9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff', 'a4b213e59f85428e8cd204c6f4d01fc45da64fa1fe5b8fb0dc1373bdae6f1907', 'dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f'),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3', 'dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05', 'c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9'),
               '.github/workflows/pr-branch-updater.yml': ('077732d81e85b285a7cc33829c8876611f3fc9ff1068e628fe9cb54fb7e9ea48',),
-              '.github/workflows/pr-validation.yml': ('e771be1b2936354e13c4557f2f1c4702d17e44a84c492169d8c587ab741db4f3', '6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a', '306d0070aeb2a19b505b0dc05c2de9df2a0d3989cb19a414fb6fe8efc50af5ae', '6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a'),
+              '.github/workflows/pr-validation.yml': ('e771be1b2936354e13c4557f2f1c4702d17e44a84c492169d8c587ab741db4f3', '6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a', '306d0070aeb2a19b505b0dc05c2de9df2a0d3989cb19a414fb6fe8efc50af5ae'),
               '.github/workflows/branch-policy.yml': ('ffaa08e4de5cb84378bae286f5329450981ec51f3451b142f36c5d1ae529941c', 'e08d429ddd7b64f5c01602987580adae94570d54e42623efc01f11846a44b68f'),
           }
 
