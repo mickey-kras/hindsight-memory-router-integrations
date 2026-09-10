@@ -83,7 +83,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.26",
+    "@opencode-ai/plugin": "^1.18.27",
     "@opencode-ai/plugin-v2": "npm:@opencode-ai/plugin@0.0.0-beta-18743",
     "@opencode-ai/sdk": "^1.18.9",
     "@types/node": "22.20.0",
