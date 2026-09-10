@@ -12,12 +12,11 @@
 - `GITHUB_TOKEN` handles merging and main-workflow dispatch. No App or PAT.
 - npm updates regenerate provenance, packages and hashes in a read-only build.
   A separate job commits only generated files with `GITHUB_TOKEN` and
-  dispatches PR validation.
+  dispatches Guard and any missing PR validation.
 - Only signed Dependabot commits plus a GitHub-signed artifact commit from
   Actions or the owner qualify. Source and workflow edits stay manual.
-- Dispatched PR validation runs Guard as a job using the trusted main policy.
-  Its check belongs to that run and does not depend on approval of the separate
-  bot-triggered PR run. Policy failures remain required-check failures.
+- Guard runs separately using the trusted main policy. Existing PR validation
+  on the prepared commit is reused. Failed checks remain blocking.
 - The refresh recreates stale npm PRs and starts missing validation after
   preparation. Failed checks remain blocking; rerun after fixing the cause.
 - The refresh also starts missing main validation for the current default

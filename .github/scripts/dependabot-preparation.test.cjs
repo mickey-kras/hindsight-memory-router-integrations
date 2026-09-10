@@ -55,6 +55,7 @@ function harness() {
     commits: [structuredClone(commit)],
     files: [{ filename: `${CODING}/package.json`, status: "modified" }],
     runs: [],
+    guardRuns: [],
     dispatches: [],
     comments: [],
     messages: [],
@@ -82,7 +83,10 @@ function harness() {
     rest: {
       git: { getRef: async ({ ref }) => ({ data: { object: { sha: ref === "heads/main" ? base : generated } } }) },
       repos: {
-        get: async () => ({ data: { default_branch: "main", full_name: "owner/repo" } }),
+        get: async (repo) => {
+          assert.deepEqual(repo, context.repo);
+          return { data: { default_branch: "main", full_name: "owner/repo" } };
+        },
         getContent: async ({ path }) => ({
           data: { type: "file", encoding: "base64", content: Buffer.from(contents[path]).toString("base64") },
         }),
@@ -100,7 +104,7 @@ function harness() {
       },
       issues: { listComments: "comments", createComment: async (input) => state.messages.push(input) },
     },
-    paginate: async (endpoint) => state[endpoint],
+    paginate: async (endpoint, params) => state[endpoint === "runs" && params.workflow_id === "dependabot-guard.yml" ? "guardRuns" : endpoint],
   };
   const paths = generatedPaths(manifest, coding);
   const artifacts = {
@@ -307,15 +311,15 @@ test("the dispatched Guard checkout can execute its trusted policy without appli
         [
           "import sys, yaml",
           "with open(sys.argv[1]) as handle: workflow = yaml.safe_load(handle)",
-          "job = workflow['jobs']['prepared-policy']",
-          "assert job['if'] == \"github.event_name == 'workflow_dispatch'\"",
-          "assert job['name'] == '$' + \"{{ github.event_name == 'workflow_dispatch' && 'guard' || 'prepared dependency policy' }}\"",
+          "job = workflow['jobs']['guard']",
+          "assert job['name'] == 'guard' and 'if' not in job",
+          "assert set(workflow.get('on', workflow.get(True))) == {'workflow_dispatch'}",
           "assert job['permissions'] == {'contents': 'read', 'pull-requests': 'read'}",
           "step = next(s for s in job['steps'] if s.get('name') == 'Read the trusted main policy')",
           "assert step['with']['ref'] == 'main' and step['with']['persist-credentials'] is False",
           "print(step['with']['sparse-checkout'])",
         ].join("\n"),
-        join(root, ".github/workflows/pr-validation.yml"),
+        join(root, ".github/workflows/dependabot-guard.yml"),
       ],
       { encoding: "utf8" },
     );
@@ -370,6 +374,12 @@ test("prepared updates dispatch validation without posting checks into an approv
   assert.deepEqual(h.state.dispatches, [
     {
       ...context.repo,
+      workflow_id: "dependabot-guard.yml",
+      ref: pull.head.ref,
+      inputs: { number: "1", expected_head: generated },
+    },
+    {
+      ...context.repo,
       workflow_id: "pr-validation.yml",
       ref: pull.head.ref,
       inputs: { number: "1", expected_head: generated },
@@ -386,6 +396,43 @@ test("the dispatched job evaluates the prepared SHA with the trusted main policy
   assert.equal(evaluated, generated);
   assert.deepEqual(h.state.reported, []);
   assert.deepEqual(h.state.dispatches, []);
+});
+
+test("the dispatched policy preserves the Actions context repository getter", async () => {
+  const h = preparedHarness();
+  class ActionsContext {
+    get repo() {
+      return context.repo;
+    }
+  }
+  const { repo, ...fields } = dispatchedContext;
+  const actual = Object.assign(new ActionsContext(), fields);
+  assert.equal(Object.hasOwn(actual, "repo"), false);
+  let evaluated = false;
+  await runDispatchedPolicy(h.github, actual, { info() {} }, base, async (_github, repository) => {
+    assert.deepEqual(repository, repo);
+    evaluated = true;
+  });
+  assert.equal(evaluated, true);
+});
+
+test("prepared updates reuse PR validation while dispatching the required guard", async () => {
+  for (const conclusion of [null, "success", "failure"]) {
+    const h = preparedHarness();
+    h.state.runs = [{ head_sha: generated, event: "pull_request", conclusion }];
+    await requestValidation(h.github, context, h.state.pull, { info() {} });
+    assert.deepEqual(h.state.dispatches.map((dispatch) => dispatch.workflow_id), ["dependabot-guard.yml"]);
+  }
+});
+
+test("cancelled or approval-blocked validation is recovered without replacing failed gates", async () => {
+  for (const conclusion of ["cancelled", "skipped", "action_required", "stale"]) {
+    const h = preparedHarness();
+    h.state.runs = [{ head_sha: generated, event: "pull_request", conclusion }];
+    h.state.guardRuns = [{ head_sha: generated, event: "workflow_dispatch", conclusion: "failure" }];
+    await requestValidation(h.github, context, h.state.pull, { info() {} });
+    assert.deepEqual(h.state.dispatches.map((dispatch) => dispatch.workflow_id), ["pr-validation.yml"]);
+  }
 });
 
 test("a failed policy fails the dispatched job", async () => {
@@ -423,11 +470,12 @@ test("a head or base change or closed PR during policy evaluation fails the job"
 test("refresh recovers a missing dispatch and reuses active, successful and failed validation runs", async () => {
   const h = preparedHarness();
   await requestValidation(h.github, context, h.state.pull, { info() {} });
-  assert.equal(h.state.dispatches.length, 1);
+  assert.equal(h.state.dispatches.length, 2);
   for (const conclusion of [null, "success", "failure"]) {
-    h.state.runs = [{ head_sha: generated, conclusion }];
+    h.state.runs = [{ head_sha: generated, conclusion, event: "workflow_dispatch" }];
+    h.state.guardRuns = h.state.runs;
     await requestValidation(h.github, context, h.state.pull, { info() {} });
-    assert.equal(h.state.dispatches.length, 1);
+    assert.equal(h.state.dispatches.length, 2);
   }
   assert.deepEqual(h.state.reported, []);
 });

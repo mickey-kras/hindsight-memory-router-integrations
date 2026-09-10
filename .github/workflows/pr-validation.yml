@@ -22,36 +22,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prepared-policy:
-    name: ${{ github.event_name == 'workflow_dispatch' && 'guard' || 'prepared dependency policy' }}
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
-        with:
-          egress-policy: audit
-
-      - name: Read the trusted main policy
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-          persist-credentials: false
-          path: automation
-          sparse-checkout: .github
-
-      - name: Validate the prepared Dependabot commit
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        with:
-          script: |
-            const { execFileSync } = require('node:child_process');
-            const { runDispatchedPolicy } = require('./automation/.github/scripts/dependabot-validation.cjs');
-            const mainSha = execFileSync('git', ['-C', 'automation', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-            await runDispatchedPolicy(github, context, core, mainSha);
-
   quality:
     uses: ./.github/workflows/ci.yml
 
