@@ -7,16 +7,17 @@
 - Required repository checks still apply. The score reflects other projects'
   CI results; it does not replace this repository's tests.
 - PR events and the 30-minute refresh use the same implementation. A failed
-  lookup clears an earlier bot auto-merge decision; manually enabled
-  auto-merge is left to the owner.
+  lookup clears an earlier bot auto-merge decision. Manually enabled
+  auto-merge still gets branch refresh and validation recovery.
 - `GITHUB_TOKEN` handles merging and main-workflow dispatch. No App or PAT.
 - npm updates regenerate provenance, packages and hashes in a read-only build.
   A separate job commits only generated files with `GITHUB_TOKEN` and
-  dispatches Guard and any missing PR validation.
+  dispatches any missing PR validation, including guard.
 - Only signed Dependabot commits plus a GitHub-signed artifact commit from
   Actions or the owner qualify. Source and workflow edits stay manual.
-- Guard runs separately using the trusted main policy. Existing PR validation
-  on the prepared commit is reused. Failed checks remain blocking.
+- Guard runs inside PR validation on PR events and recovery dispatches,
+  using policy code from main with read-only permissions. Existing validation
+  is reused; failed checks remain blocking.
 - The refresh recreates stale npm PRs and starts missing validation after
   preparation. Failed checks remain blocking; rerun after fixing the cause.
 - The refresh also starts missing main validation for the current default

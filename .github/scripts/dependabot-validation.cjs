@@ -21,7 +21,7 @@ async function runPolicy(github, repo, pull, files) {
       "files.json": JSON.stringify(files),
     }))
       writeFileSync(join(fixture, name), value);
-    for (const file of files.filter((file) => !file.filename.endsWith(".tgz"))) {
+    for (const file of files.filter((file) => file.status !== "removed" && !file.filename.endsWith(".tgz"))) {
       const destination = join(fixture, file.filename);
       mkdirSync(dirname(destination), { recursive: true });
       writeFileSync(destination, await readFile(github, repo, file.filename, pull.head.sha));
@@ -94,7 +94,7 @@ async function runDispatchedPolicy(github, context, core, trustedMainSha, policy
 
 async function requestValidation(github, context, pull, core) {
   const { current } = await preparedValidation(github, context, pull);
-  for (const workflow of ["dependabot-guard.yml", "pr-validation.yml"]) {
+  for (const workflow of ["pr-validation.yml"]) {
     const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
       ...context.repo,
       workflow_id: workflow,
@@ -117,7 +117,7 @@ async function requestValidation(github, context, pull, core) {
       });
     }
   }
-  core.info(`#${current.number}: requested Guard and missing PR validation at ${current.head.sha}`);
+  core.info(`#${current.number}: requested PR validation including guard at ${current.head.sha}`);
 }
 
 module.exports = { requestValidation, runPolicy, runDispatchedPolicy };

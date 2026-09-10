@@ -175,15 +175,18 @@ async function run({
       // A previous bot decision must not survive a failed or lower-score lookup.
       if (pull.auto_merge?.enabled_by.login === "github-actions[bot]") {
         merge(repository, pull.number, ["--disable-auto"]);
-      } else if (pull.auto_merge) {
-        core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
-        continue;
       }
       const commits = await github.paginate(github.rest.pulls.listCommits, {
         ...params,
         per_page: 100,
       });
       const original = await verify(github, context.repo, pull, commits);
+      if (pull.auto_merge && pull.auto_merge.enabled_by.login !== "github-actions[bot]") {
+        if (await recreate(github, context, pull, core)) continue;
+        if (original.length !== commits.length) await validate(github, context, pull, core);
+        core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
+        continue;
+      }
       const dependencies = metadata(pull, repository, metadataPath);
       const updateReason = updateEligibility(dependencies);
       if (updateReason) {
