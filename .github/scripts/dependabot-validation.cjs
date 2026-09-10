@@ -78,7 +78,7 @@ async function runDispatchedPolicy(github, context, core, trustedMainSha, policy
   const { current, files } = await preparedValidation(
     github,
     {
-      ...context,
+      repo: context.repo,
       ref: "refs/heads/main",
       sha: trustedMainSha,
     },
@@ -94,23 +94,30 @@ async function runDispatchedPolicy(github, context, core, trustedMainSha, policy
 
 async function requestValidation(github, context, pull, core) {
   const { current } = await preparedValidation(github, context, pull);
-  const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-    ...context.repo,
-    workflow_id: "pr-validation.yml",
-    branch: current.head.ref,
-    head_sha: current.head.sha,
-    event: "workflow_dispatch",
-    per_page: 100,
-  });
-  if (!runs.some((run) => run.head_sha === current.head.sha && !["cancelled", "skipped"].includes(run.conclusion))) {
-    await github.rest.actions.createWorkflowDispatch({
+  for (const workflow of ["dependabot-guard.yml", "pr-validation.yml"]) {
+    const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
       ...context.repo,
-      workflow_id: "pr-validation.yml",
-      ref: current.head.ref,
-      inputs: { number: String(current.number), expected_head: current.head.sha },
+      workflow_id: workflow,
+      branch: current.head.ref,
+      head_sha: current.head.sha,
+      per_page: 100,
     });
+    const existing = runs.some(
+      (run) =>
+        run.head_sha === current.head.sha &&
+        (run.event === "workflow_dispatch" || (workflow === "pr-validation.yml" && run.event === "pull_request")) &&
+        !["cancelled", "skipped", "action_required", "stale"].includes(run.conclusion),
+    );
+    if (!existing) {
+      await github.rest.actions.createWorkflowDispatch({
+        ...context.repo,
+        workflow_id: workflow,
+        ref: current.head.ref,
+        inputs: { number: String(current.number), expected_head: current.head.sha },
+      });
+    }
   }
-  core.info(`#${current.number}: requested PR validation, including Guard, at ${current.head.sha}`);
+  core.info(`#${current.number}: requested Guard and missing PR validation at ${current.head.sha}`);
 }
 
 module.exports = { requestValidation, runPolicy, runDispatchedPolicy };
