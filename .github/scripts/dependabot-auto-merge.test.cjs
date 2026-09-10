@@ -231,12 +231,20 @@ test("lookup failure revokes an earlier bot queue decision", async () => {
   assert.deepEqual(h.commands, [["owner/repo", 1, ["--disable-auto"]]]);
   assert.equal(h.failures.length, 1);
 });
-test("manual owner queue decisions are preserved", async () => {
+test("manual owner queue decisions are preserved after preparation", async () => {
   const h = harness({
     pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }],
+    metadataError: true,
   });
+  let prepared = false;
+  h.options.prepare = async () => {
+    prepared = true;
+    return true;
+  };
   await run(h.options);
+  assert.equal(prepared, true);
   assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.failures, []);
 });
 
 test("manual auto-merge still recovers prepared validation without a metadata lookup", async () => {

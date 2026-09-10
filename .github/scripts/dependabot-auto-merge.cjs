@@ -183,6 +183,7 @@ async function run({
       const original = await verify(github, context.repo, pull, commits);
       if (pull.auto_merge && pull.auto_merge.enabled_by.login !== "github-actions[bot]") {
         if (await recreate(github, context, pull, core)) continue;
+        if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
         if (original.length !== commits.length) await validate(github, context, pull, core);
         core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
         continue;
