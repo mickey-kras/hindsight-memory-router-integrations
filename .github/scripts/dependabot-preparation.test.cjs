@@ -102,7 +102,7 @@ function harness() {
       },
       issues: { listComments: "comments", createComment: async (input) => state.messages.push(input) },
     },
-    paginate: async (endpoint) => state[endpoint],
+    paginate: async (endpoint, params) => endpoint === "checks" && params.filter !== "all" ? [] : state[endpoint],
   };
   const paths = generatedPaths(manifest, coding);
   const artifacts = {

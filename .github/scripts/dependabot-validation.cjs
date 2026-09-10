@@ -65,6 +65,8 @@ async function requestValidation(github, context, pull, core, policy = runPolicy
   const checks = await github.paginate(github.rest.checks.listForRef, {
     ...context.repo,
     ref: current.head.sha,
+    check_name: "guard",
+    filter: "all",
     per_page: 100,
   });
   const externalId = `prepared-policy:${current.head.sha}:${current.base.sha}`;
