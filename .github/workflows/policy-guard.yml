@@ -1066,7 +1066,7 @@ jobs:
           DEPENDENCY_PREPARATION_SCRIPTS = {
               '.github/scripts/dependabot-auto-merge.cjs': ('5da076a4e27a1bb7e657d30e0e6f79a19c0bdb0dd11b389c383304bdb483ef32', 'a3b44baec133791a81e25b8257597f7c92173ea89a0727bd5ed37976a30d3b3c'),
               '.github/scripts/dependency-files.cjs': ('401d0945695821073cedde61648e58537f56d05fbe52e5adeb502c397264363d',),
-              '.github/scripts/dependabot-preparation.cjs': ('62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f', 'ab8d460b0ebcd47633cf032c041f50daaf552486c0d960c13e9076e9cf62a528'),
+              '.github/scripts/dependabot-preparation.cjs': ('62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f', 'ab8d460b0ebcd47633cf032c041f50daaf552486c0d960c13e9076e9cf62a528', '2c9f962d15ef043ee72da9a2d55c2157bf425d922c90d9610fd074ef21e7dcb7'),
               '.github/scripts/refresh-dependency-artifacts.cjs': ('951ff6b864c238e2f1b7ce98906f572a6fe02f9680a63b9a425ee46518bd1cfd',),
               '.github/scripts/dependabot-validation.cjs': ('a6c1d925ac97e90f79129ad3fffcc2e6f4a9f59eaf74b92ef8f02c17bba58182',),
               '.github/scripts/verify-prepared-policy.py': ('ad9395f21d84f47bec414a977fe80375f1ffd26ffdec5b72769d31e7bd99a77c',),
@@ -1081,7 +1081,7 @@ jobs:
           AUTOMATION_SHAPES = {
               '.github/workflows/dependabot-preparation.yml': ('c8d826e549d44cdbb850df7580e681957b76c8755510a9be7517c0978447b171', '82cb9992e9aec4e8cd43a02d94cf114e95eb9421bc35acef60fd2fdb671f1d09'),
               '.github/workflows/dependabot-policy-tests.yml': ('157b9cac1669869fdacb9b9780bfaec7ffb5d01a63f803b3f1e09cbc7697b448',),
-              '.github/workflows/dependabot-auto-merge.yml': ('fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34', '602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19', 'ccfefaafd622388ee9362ce6b95d66079be875a6cd85684be592c6a8edb74a0e', '9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff', 'a4b213e59f85428e8cd204c6f4d01fc45da64fa1fe5b8fb0dc1373bdae6f1907'),
+              '.github/workflows/dependabot-auto-merge.yml': ('fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34', '602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19', 'ccfefaafd622388ee9362ce6b95d66079be875a6cd85684be592c6a8edb74a0e', '9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff', 'a4b213e59f85428e8cd204c6f4d01fc45da64fa1fe5b8fb0dc1373bdae6f1907', 'dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f'),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3', 'dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05', 'c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9'),
               '.github/workflows/pr-branch-updater.yml': ('077732d81e85b285a7cc33829c8876611f3fc9ff1068e628fe9cb54fb7e9ea48',),
               '.github/workflows/pr-validation.yml': ('e771be1b2936354e13c4557f2f1c4702d17e44a84c492169d8c587ab741db4f3', '6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a'),
