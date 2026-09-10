@@ -18,7 +18,8 @@
 - Guard runs inside PR validation on PR events and recovery dispatches,
   using policy code from main with read-only permissions. Existing validation
   is reused; failed checks remain blocking.
-- The refresh recreates stale npm PRs and starts missing validation after
+- Every main update asks Dependabot to recreate stale, verified dependency PRs;
+  the 30-minute refresh remains a retry path. Missing validation starts after
   preparation. Failed checks remain blocking; rerun after fixing the cause.
 - The refresh also starts missing main validation for the current default
   branch tip when it is a Dependabot merge. Existing push/dispatch runs are
