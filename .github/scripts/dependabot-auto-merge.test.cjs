@@ -238,6 +238,38 @@ test("manual owner queue decisions are preserved", async () => {
   await run(h.options);
   assert.deepEqual(h.commands, []);
 });
+
+test("manual auto-merge still recovers prepared validation without a metadata lookup", async () => {
+  const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }], metadataError: true });
+  h.options.verify = async () => commits.slice(0, -1);
+  let validated = false;
+  h.options.validate = async () => { validated = true; };
+  await run(h.options);
+  assert.equal(validated, true);
+  assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.failures, []);
+});
+
+test("manual auto-merge cannot hide a validation recovery failure", async () => {
+  const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }] });
+  h.options.verify = async () => commits.slice(0, -1);
+  h.options.validate = async () => { throw new Error("Validation failed"); };
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+  assert.equal(h.failures.length, 1);
+});
+
+test("manual auto-merge still refreshes stale prepared branches before validation", async () => {
+  const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }] });
+  h.options.verify = async () => commits.slice(0, -1);
+  let recreated = false;
+  h.options.recreate = async () => { recreated = true; return true; };
+  h.options.validate = async () => assert.fail("Must wait for the refreshed head");
+  await run(h.options);
+  assert.equal(recreated, true);
+  assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.failures, []);
+});
 test("a failed PR does not prevent evaluation of the next PR", async () => {
   const h = harness({ pulls: [pull, { ...pull, number: 2 }] });
   h.options.metadata = (p) => {
