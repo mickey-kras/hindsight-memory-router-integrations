@@ -10,7 +10,7 @@ Upgrades are commit-pinned and reproducible. Never import from a mutable tag or 
 2. Run `scripts/regen-upstream-hashes.sh` against that commit and review `src/upstream/SHA256SUMS`.
 3. Run `scripts/import-upstream.sh`. It verifies the pristine download before copying and preserves the reviewed adaptations listed in `integrations/openclaw/LOCAL_CHANGES.json`; update `VENDORED_PRISTINE_FILES.json` if another pristine file is intentionally retained.
 4. Reconcile the adapted files, run `scripts/regen-openclaw-overlay.mjs`, and review every hash change.
-5. Bump `router_revision`, update the root package version, rebuild, test, and replace the OpenClaw tarball.
+5. Bump the independent root package version, rebuild, test, and replace the OpenClaw tarball.
 6. Run `node scripts/verify-openclaw-overlay.mjs`; it verifies every vendored OpenClaw file against the reviewed overlay manifest.
 
 ## Coding agents
@@ -19,7 +19,7 @@ Upgrades are commit-pinned and reproducible. Never import from a mutable tag or 
 2. Materialize that exact upstream commit in a temporary directory.
 3. Apply `integrations/coding-agents/router.patch`; resolve rejected hunks explicitly.
 4. Rebuild `LOCAL_CHANGES.json` only after reviewing the resulting diff.
-5. Run `node scripts/verify-coding-upstream.mjs`, build and test the nested package, bump its router revision, and replace its tarball.
+5. Run `node scripts/verify-coding-upstream.mjs`, build and test the nested package, bump its independent package version, and replace its tarball.
 6. Regenerate `integrations/coding-agents/router.patch` from the pinned pristine tree and the reviewed adapted tree.
 
 ## Package verification

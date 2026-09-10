@@ -452,14 +452,16 @@ jobs:
                       return
 
           CI_REQUIRED_STEPS = (
-              'Release automation tests', 'Release policy tests',
+              'Release automation tests',
+              'Audit release tools', 'Release policy tests',
               'Tests and coverage', 'Verify package', 'Nix dependency hash',
               'Gitleaks', 'Semgrep', 'Trivy dependency gate', 'Setup Trivy',
+              'Sonar finding reporter tests',
           )
           # Name-only pins are not enough: each required step must still carry
           # the substance of its gate (checked on the normalized run text).
           CI_RUN_SIGNATURES = {
-              'Release automation tests': ('node --test .github/scripts/release.test.cjs',),
+              'Release automation tests': ('node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs',),
               'Release policy tests': ('python3 .github/scripts/release-policy.test.py',),
               'Verify package': (
                   'npm pack', 'sha256sum --check PACKAGE_SHA256',
@@ -473,6 +475,9 @@ jobs:
               'Trivy dependency gate': (
                   'trivy fs', '--exit-code 1', 'HIGH,CRITICAL',
                   '--severity HIGH,CRITICAL',
+              ),
+              'Sonar finding reporter tests': (
+                  'python3 -m unittest tests/test_sonar_finding_sync.py',
               ),
           }
           CI_USES_PREFIXES = {
@@ -493,7 +498,17 @@ jobs:
               if doc.get('name') != 'ci':
                   fail('ci.yml: workflow name must remain ci')
               require_events(path, doc, ('workflow_call',))
-              require_job_set(path, doc, ('checks',))
+              require_job_set(path, doc, ('checks', 'combination'))
+              combination = job_named(doc, 'combination')
+              if combination is None:
+                  fail('ci.yml: release combination gate is missing')
+              else:
+                  for step in iter_steps(combination):
+                      if isinstance(step.get('uses'), str):
+                          step['uses'] = re.sub(r'@[0-9a-f]{40}$', '@PINNED', step['uses'])
+                  digest = hashlib.sha256(json.dumps(combination, sort_keys=True).encode()).hexdigest()
+                  if digest != 'dce6a285344679f7cbbf110c80fdbaa37f84ac05e93846fe8c76a9ae46b58060':
+                      fail('ci.yml: release combination must retain its reviewed checks and pinned inputs')
               checks = job_named(doc, 'checks')
               if checks is None:
                   fail('ci.yml: jobs.checks must exist')
@@ -728,6 +743,24 @@ jobs:
                   fail('main.yml: sonar job must need quality, aislop and codeql')
               if step_named(sonar, 'SonarQube quality gate') is None:
                   fail('main.yml: SonarQube quality gate step must exist')
+              quality_gate = step_named(sonar, 'SonarQube quality gate')
+              if quality_gate is not None and quality_gate.get('id') != 'sonar-quality-gate':
+                  fail('main.yml: SonarQube quality gate must preserve its reporter id')
+              reporter = step_named(sonar, 'Synchronize SonarQube findings')
+              if reporter is None:
+                  fail('main.yml: SonarQube finding reporter must exist')
+              else:
+                  expected_if = (
+                      "failure() && steps.sonar-quality-gate.outcome == 'failure' "
+                      "&& github.ref == 'refs/heads/main'"
+                  )
+                  if normalize_condition(reporter.get('if', '')) != expected_if:
+                      fail('main.yml: SonarQube finding reporter condition must stay fail-closed')
+                  if normalize_run(reporter.get('run', '')) != (
+                      'python3 .github/scripts/sync-sonar-findings.py '
+                      '.scannerwork/report-task.txt'
+                  ):
+                      fail('main.yml: SonarQube finding reporter command must stay active')
               for name in ('SonarQube analysis', 'SonarQube quality gate'):
                   step = step_named(sonar, name)
                   if step is not None:
@@ -1028,6 +1061,17 @@ jobs:
               if properties.get('sonar.javascript.lcov.reportPaths') != 'coverage/lcov.info':
                   fail('sonar-project.properties: coverage import must stay configured')
 
+          def gate_sonar_reporter(path, content):
+              required = (
+                  'ISSUE_MARKER_PREFIX = "sonar-finding"',
+                  '"--state",\n            "all"',
+                  'self._run("gh", "issue", "reopen"',
+                  'sinceLeakPeriod=True',
+              )
+              missing = [contract for contract in required if contract not in content]
+              if missing:
+                  fail('sync-sonar-findings.py: required issue synchronization contract missing')
+
           def gate_checksum_file(path, content):
               lines = [line for line in content.splitlines() if line.strip()]
               if not lines:
@@ -1036,7 +1080,7 @@ jobs:
           # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
-              '.github/workflows/main.yml': ('a5da743f8c143aa36df30322113af7bfec4937a11cdf0961c6901747639408c5',),
+              '.github/workflows/main.yml': ('d0ea8d6df4e6543b5e64a15d55f96cdf585b9009b24105e81a5d8837362824f3',),
               '.github/workflows/release.yml': ('b8963c9f6c9c98888c1dc77dd60d7a69e10a27c8bf5c14c296dde272141040bf',),
 
               '.github/workflows/dependabot-auto-merge.yml': (
@@ -1065,11 +1109,16 @@ jobs:
                   fail(f'{path}: automation must match its reviewed workflow shape')
 
           RELEASE_SOURCE_HASHES = {
-              '.github/scripts/release.cjs': '4d61f95640ec9d284b27783512b4308aba523cfd287e58e0d9222cf7cf5ed9c5',
+              '.github/scripts/package.json': '9c5ae4358d83ef9a326dedb33bec455aed50f32107ba0f72b502059f92a95aa5',
+              '.github/scripts/package-lock.json': 'a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e',
+              '.github/scripts/combination.cjs': 'dad2f629eca60a28c0979d286edc1954ac487911a70355f5d9c83692ed15af0c',
+              '.github/scripts/combination-smoke.sh': '05783e5cf9a90f693a2273c611dd4693c64d23b48034b1f3920aabc2ca479ad3',
+              '.github/scripts/combination-smoke.mjs': '33dc4ddc02a28c18a6b9ccf5fde0ebb14950d228760727723ae6114e06b2d40a',
+              '.github/scripts/release.cjs': '3cdf59a0283e8dc84bcb83b1499cd7bece9c63d845b374faa332cbb62372bc8c',
               '.github/scripts/release-settings.cjs': 'c2502d720dc7c1355b3497a38ac7db825a16307aa0e146cdcf313871445f15ff',
-              '.github/scripts/release.test.cjs': '6559fac06661b1ad76f78bfe3d038b80279753c0a4dbec9fb8f659a03064a59a',
-              '.github/scripts/release-policy.test.py': '8c74868e4fe3ba1d46c1beb28f8bd3202c2fc35df9d5f9abbaa1b9e23d10bd80',
-              '.github/rulesets/protect-release-branches.json': '33ed81946431335f2ac50ac7b729471a62bcf3eb49986056d22595262170c312',
+              '.github/scripts/release.test.cjs': 'fe86bb1766225c20c13084857b7405879ab980791e83c4298d3a09fa796ac12a',
+              '.github/scripts/release-policy.test.py': '0bbbbb3ac61af2f357cc88ba9b99f246c22ec7ded621704c93c8634e113285d8',
+              '.github/rulesets/protect-release-branches.json': '44d18bc698688aef02d6c7fe3c37323ca3c8c771826c874773d47867c0564a85',
           }
 
           def gate_release_source(path, content):
@@ -1086,6 +1135,7 @@ jobs:
               '.github/workflows/branch-policy.yml': gate_branch_policy,
               '.aislop/config.yml': gate_aislop_config,
               '.github/scripts/npm-audit.cjs': gate_npm_audit_script,
+              '.github/scripts/sync-sonar-findings.py': gate_sonar_reporter,
               '.semgrep.yml': gate_semgrep,
               '.github/dependabot.yml': gate_dependabot,
               'package.json': gate_package_json,

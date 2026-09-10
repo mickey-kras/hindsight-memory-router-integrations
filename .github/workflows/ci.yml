@@ -45,13 +45,17 @@ jobs:
       - run: node scripts/verify-coding-upstream.mjs
       - run: node scripts/verify-openclaw-overlay.mjs
       - run: node --test scripts/verify-vendored-files.test.mjs
+      - name: Audit release tools
+        run: npm audit --prefix .github/scripts --audit-level=moderate
       - name: Release automation tests
-        run: node --test .github/scripts/release.test.cjs
+        run: node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs
       - name: Release policy tests
         run: python3 .github/scripts/release-policy.test.py
 
       - name: PR branch updater tests
         run: node --test .github/scripts/pr-branch-updater.test.cjs
+      - name: Sonar finding reporter tests
+        run: python3 -m unittest tests/test_sonar_finding_sync.py
       - name: Node tooling audit
         run: |
           node --test .github/scripts/npm-audit.test.cjs
@@ -153,3 +157,37 @@ jobs:
           trivy fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL
           --ignore-unfixed --skip-dirs .cache --skip-dirs node_modules
           --skip-dirs coverage --skip-dirs dist .
+
+  combination:
+    name: release combination
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.20.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - name: Resolve tested combination
+        id: pins
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: await require('./.github/scripts/combination.cjs')({ github, context, core });
+      - name: Check out router test harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: mickey-kras/hindsight-memory-router
+          ref: ${{ steps.pins.outputs.router_sha }}
+          path: .router
+          persist-credentials: false
+      - name: Test packaged clients against router and Hindsight
+        env:
+          ROUTER_TEST_IMAGE: ${{ steps.pins.outputs.router_image }}
+          ROUTER_TEST_VERSION: ${{ steps.pins.outputs.router_version }}
+          HINDSIGHT_TEST_IMAGE: ${{ steps.pins.outputs.image }}
+        run: bash .github/scripts/combination-smoke.sh

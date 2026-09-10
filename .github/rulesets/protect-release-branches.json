@@ -58,6 +58,10 @@
           {
             "context": "branch-policy / branch name",
             "integration_id": 15368
+          },
+          {
+            "context": "quality / release combination",
+            "integration_id": 15368
           }
         ]
       }

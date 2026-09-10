@@ -57,6 +57,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      issues: write
     needs: [quality, aislop, codeql]
     runs-on: ubuntu-latest
     steps:
@@ -95,6 +96,7 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: SonarQube quality gate
+        id: sonar-quality-gate
         timeout-minutes: 6
         uses: SonarSource/sonarqube-quality-gate-action@7a5fffe8e523c40e0c740b6bc2712ab503e52efa # v1
         with:
@@ -102,6 +104,14 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: Synchronize SonarQube findings
+        if: failure() && steps.sonar-quality-gate.outcome == 'failure' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: python3 .github/scripts/sync-sonar-findings.py .scannerwork/report-task.txt
 
   prepare-release:
     name: create release branch
@@ -124,6 +134,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - name: Install release tools
+        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Release App token
         id: app
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
@@ -170,6 +182,8 @@ jobs:
         with:
           subject-path: packages/*.tgz
           create-storage-record: false
+      - name: Install release tools
+        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Release App token
         id: app
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349

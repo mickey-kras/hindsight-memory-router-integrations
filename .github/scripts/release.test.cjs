@@ -38,7 +38,8 @@ async function fixture(fn) {
   mkdirSync("compat");
   writeFileSync(".github/rulesets/protect-release-branches.json", template);
   put("compat/hindsight.json", { channel: "latest" });
-  writeFileSync("pyproject.toml", '[project]\nversion = "0.0.0"\n');
+  put("release-version.json", { version: "0.1.0" });
+  writeFileSync("pyproject.toml", '[project]\nversion = "0.1.0"\n');
   try {
     await fn();
   } finally {
@@ -150,16 +151,16 @@ function mock() {
 }
 
 function prepared(m) {
-  const manifest = { schema: 1, version: "0.9.2-router.1", base, preparation_run: 5, hindsight: pin, packages: [] };
+  const manifest = { schema: 2, version: "0.1.0", base, preparation_run: 5, hindsight: pin, packages: [] };
   m.state.prepared = structuredClone(manifest);
-  m.context.ref = "refs/heads/release/0.9.2-router.1";
+  m.context.ref = "refs/heads/release/0.1.0";
   m.context.sha = sha;
   m.context.eventName = "push";
   m.context.workflow = "release";
-  m.state.refs["heads/release/0.9.2-router.1"] = { object: { type: "commit", sha } };
+  m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
   put("release.json", manifest);
   put("compat/hindsight.json", { channel: "release", ...pin });
-  writeFileSync("pyproject.toml", '[project]\nversion = "0.9.2+router.1"\n');
+  writeFileSync("pyproject.toml", '[project]\nversion = "0.1.0"\n');
   writeFileSync("image-digests.txt", `ghcr=${digest}\ndockerhub=${digest}\n`);
   return manifest;
 }
@@ -198,7 +199,7 @@ test("main and release PRs resolve consistently; release never queries moving up
     assert.deepEqual(await release.resolve(m), pin);
     assert.equal(m.outputs.image, pin.image);
     put("compat/hindsight.json", { channel: "release", ...pin });
-    m.context.payload.pull_request = { base: { ref: "release/0.9.2-router.1" } };
+    m.context.payload.pull_request = { base: { ref: "release/0.1.0" } };
     m.github.rest.repos.getLatestRelease = () => {
       throw new Error("must not query latest");
     };
@@ -207,15 +208,22 @@ test("main and release PRs resolve consistently; release never queries moving up
     await assert.rejects(release.resolve(m), /frozen/);
   }));
 
-test("revision allocation reserves failed release branches and cannot reuse a number", () => {
-  assert.equal(release.nextRevision("0.9.2", [{ name: "v0.9.2-router.4" }], [{ name: "release/0.9.2-router.6" }]), 7);
-  assert.equal(release.nextRevision("0.9.3", [{ name: "v0.9.2-router.4" }], []), 1);
-});
+test("reviewed versions are independent of upstream and cannot reuse reserved branches or tags", () =>
+  fixture(async () => {
+    assert.equal(release.releaseVersion([], []), "0.1.0");
+    assert.throws(() => release.releaseVersion([{ name: "v0.1.0" }], []), /reserved/);
+    assert.throws(() => release.releaseVersion([], [{ name: "release/0.1.0" }]), /reserved/);
+    for (const version of ["0.1.0-router.1", "0.1.0+build.1", "01.1.0", "main", "0.1.0\n"]) {
+      put("release-version.json", { version });
+      assert.throws(() => release.releaseVersion([], []), /plain/);
+    }
+  }));
 
-test("only the newest stable downstream line promotes latest", () => {
-  assert.equal(release.shouldPromote("0.9.2-router.10", [{ tag_name: "v0.9.2-router.9" }]), true);
-  assert.equal(release.shouldPromote("0.9.2-router.10", [{ tag_name: "v0.9.3-router.1" }]), false);
-  assert.equal(release.shouldPromote("0.9.2-router.1", [{ tag_name: "v0.9.3-router.1", draft: true }]), true);
+test("latest follows component release versions, ignoring older releases and drafts", () => {
+  assert.equal(release.shouldPromote("0.1.10", [{ tag_name: "v0.1.9" }]), true);
+  assert.equal(release.shouldPromote("0.1.10", [{ tag_name: "v0.2.0" }]), false);
+  assert.equal(release.shouldPromote("0.1.0", [{ tag_name: "v0.2.0", draft: true }]), true);
+  assert.equal(release.shouldPromote("0.1.0", [{ tag_name: "v0.2.0", prerelease: true }]), true);
 });
 
 test("rules require creation-only App bypass and retain branch/tag protection", () =>
@@ -241,16 +249,17 @@ test("disabled naming exception and reduced scanning protections fail closed", (
     await assert.rejects(release.checkRules(m.github, m.context.repo, 123), /scanning/);
   }));
 
-test("preparation writes pins and Python metadata before creating the branch", () =>
+test("preparation freezes inputs and retains the reviewed independent version", () =>
   fixture(async () => {
     const m = mock();
     await release.prepare(m);
-    assert.deepEqual(m.state.calls, ["tree", "commit", "refs/heads/release/0.9.2-router.1"]);
+    assert.deepEqual(m.state.calls, ["tree", "commit", "refs/heads/release/0.1.0"]);
     const files = Object.fromEntries(m.state.tree.map((item) => [item.path, item.content]));
     assert.deepEqual(JSON.parse(files["compat/hindsight.json"]), { channel: "release", ...pin });
-    assert.match(files["pyproject.toml"], /0\.9\.2\+router\.1/);
+    assert.equal(files["pyproject.toml"], undefined);
+    assert.equal(JSON.parse(files["release.json"]).version, "0.1.0");
     m.state.prepared = JSON.parse(files["release.json"]);
-    m.state.branches = [{ name: "release/0.9.2-router.1" }];
+    m.state.branches = [{ name: "release/0.1.0" }];
     await release.prepare(m);
     assert.equal(m.state.calls.length, 3, "rerunning preparation must not create another branch");
   }));
@@ -279,10 +288,10 @@ test("release validation rejects changed pins, workflow changes, stale heads and
     m.state.comparison.files.push({ filename: ".github/workflows/release.yml" });
     await assert.rejects(release.validate(m), /automation/);
     m.state.comparison.files.pop();
-    m.state.refs["heads/release/0.9.2-router.1"].object.sha = base;
+    m.state.refs["heads/release/0.1.0"].object.sha = base;
     await assert.rejects(release.validate(m), /advanced/);
     prepared(m);
-    m.state.refs["tags/v0.9.2-router.1"] = { object: { type: "commit", sha: base } };
+    m.state.refs["tags/v0.1.0"] = { object: { type: "commit", sha: base } };
     await assert.rejects(release.validate(m), /another commit/);
   }));
 
@@ -292,7 +301,7 @@ test("finalization publishes only after uploading assets and never moves or recr
     prepared(m);
     await release.finalize(m);
     assert.deepEqual(m.state.calls, [
-      "refs/tags/v0.9.2-router.1",
+      "refs/tags/v0.1.0",
       "draft",
       "asset:release.json",
       "asset:image-digests.txt",
@@ -333,20 +342,37 @@ test("integration package fixes can update tested assets while upstream pins rem
     const m = mock();
     const manifest = prepared(m);
     m.context.repo.repo = "hindsight-memory-router-integrations";
-    writeFileSync("UPSTREAM_VERSION", "test fixture\n");
+    writeFileSync(
+      "UPSTREAM_VERSION",
+      `upstream_repo=vectorize-io/hindsight\nupstream_version=0.11.1\nupstream_commit=${base}\nupstream_path=hindsight-integrations/openclaw\n`,
+    );
+    mkdirSync("integrations/coding-agents", { recursive: true });
+    put("integrations/coding-agents/UPSTREAM.json", {
+      source: "https://github.com/vectorize-io/hindsight",
+      version: "0.5.1",
+      commit: base,
+      path: "hindsight-integrations/coding-agents",
+    });
     mkdirSync("src/upstream/coding-agents", { recursive: true });
     mkdirSync("packages");
-    put("package.json", { name: "@example/openclaw", version: "0.11.1-router.4" });
-    put("src/upstream/coding-agents/package.json", { name: "@example/coding-agents", version: "0.5.1-router.3" });
-    writeFileSync("packages/example-openclaw-0.11.1-router.4.tgz", "original test fixture");
-    writeFileSync("packages/example-coding-agents-0.5.1-router.3.tgz", "coding test fixture");
+    put("package.json", { name: "@example/openclaw", version: "0.12.0" });
+    put("src/upstream/coding-agents/package.json", { name: "@example/coding-agents", version: "0.6.0" });
+    writeFileSync("packages/example-openclaw-0.12.0.tgz", "original test fixture");
+    writeFileSync("packages/example-coding-agents-0.6.0.tgz", "coding test fixture");
     manifest.packages = release.packageAssets();
     manifest.nix_openclaw = base;
+    manifest.router = {
+      version: "0.1.0",
+      sha: base,
+      image: `ghcr.io/mickey-kras/hindsight-memory-router@${digest}`,
+      dockerhub_image: `docker.io/mickeykrasilnikov/hindsight-memory-router@${digest}`,
+    };
+    manifest.integration_upstreams = release.integrationUpstreams();
     m.state.prepared = structuredClone(manifest);
     put("release.json", manifest);
     await release.validate(m);
-    put("package.json", { name: "@example/openclaw", version: "0.11.1-router.5" });
-    writeFileSync("packages/example-openclaw-0.11.1-router.5.tgz", "fixed test fixture");
+    put("package.json", { name: "@example/openclaw", version: "0.12.1" });
+    writeFileSync("packages/example-openclaw-0.12.1.tgz", "fixed test fixture");
     await assert.rejects(release.validate(m), /Refresh release.json/);
     manifest.packages = release.packageAssets();
     put("release.json", manifest);
@@ -355,3 +381,55 @@ test("integration package fixes can update tested assets while upstream pins rem
     put("release.json", manifest);
     await assert.rejects(release.validate(m), /immutable/);
   }));
+
+test("router pins reject floating images and mismatched registry digests", () => {
+  const pin = {
+    version: "0.1.0",
+    sha: base,
+    image: `ghcr.io/mickey-kras/hindsight-memory-router@${digest}`,
+    dockerhub_image: `docker.io/mickeykrasilnikov/hindsight-memory-router@${digest}`,
+  };
+  release.validateRouter(pin);
+  for (const change of [
+    { image: "ghcr.io/mickey-kras/hindsight-memory-router:latest" },
+    { sha: "main" },
+    { dockerhub_image: pin.dockerhub_image.replace("cccc", "dddd") },
+  ]) {
+    assert.throws(() => release.validateRouter({ ...pin, ...change }));
+  }
+});
+
+test("integration preparation requires a published immutable router for exactly the same Hindsight", async () => {
+  const m = mock();
+  const bytes = Buffer.from(
+    `commit=${sha}\nversion=0.1.0\nghcr=ghcr.io/mickey-kras/hindsight-memory-router@${digest}\ndockerhub=docker.io/mickeykrasilnikov/hindsight-memory-router@${digest}\n`,
+  );
+  const published = { id: 8, tag_name: "v0.1.0", immutable: true, draft: false, prerelease: false };
+  m.github.rest.repos.getLatestRelease = () => ({ data: published });
+  m.state.refs["tags/v0.1.0"] = { object: { type: "commit", sha } };
+  m.state.prepared = { schema: 2, version: "0.1.0", hindsight: pin, packages: [] };
+  m.state.assets = [
+    { id: 9, name: "image-digests.txt", digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}` },
+  ];
+  m.github.rest.repos.getReleaseAsset = () => ({ data: bytes });
+  assert.equal((await release.releasedRouter(m.github, pin)).sha, sha);
+  await assert.rejects(release.releasedRouter(m.github, { ...pin, sha }), /current Hindsight/);
+  published.immutable = false;
+  await assert.rejects(release.releasedRouter(m.github, pin), /immutable router/);
+  published.immutable = true;
+  m.state.assets[0].digest = digest;
+  await assert.rejects(release.releasedRouter(m.github, pin), /checksum/);
+});
+
+test("unchanged integration artifacts can be reused but changed bytes need a new package version", async () => {
+  const m = mock();
+  m.state.releases = [{ id: 1, tag_name: "v0.1.0", draft: false }];
+  const pkg = { path: "packages/example-0.12.0.tgz", sha256: "c".repeat(64) };
+  m.state.assets = [{ name: "example-0.12.0.tgz", digest }];
+  await release.checkPackageReuse(m.github, m.context.repo, [pkg]);
+  await assert.rejects(
+    release.checkPackageReuse(m.github, m.context.repo, [{ ...pkg, sha256: "f".repeat(64) }]),
+    /different bytes/,
+  );
+  await release.checkPackageReuse(m.github, m.context.repo, [{ ...pkg, path: "packages/example-0.12.1.tgz" }]);
+});

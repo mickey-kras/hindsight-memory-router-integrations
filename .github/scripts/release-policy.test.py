@@ -31,7 +31,7 @@ def policy(overrides=None):
     files = {
         str(path.relative_to(ROOT)): path.read_text()
         for path in (ROOT / ".github").rglob("*")
-        if path.is_file() and path.suffix in {".yml", ".yaml", ".cjs", ".py", ".sh", ".json"}
+        if path.is_file() and path.suffix in {".yml", ".yaml", ".cjs", ".mjs", ".py", ".sh", ".json"}
     }
     files["package.json"] = (ROOT / "package.json").read_text()
     files.update(overrides or {})
@@ -191,6 +191,13 @@ class ReleasePolicyTests(unittest.TestCase):
                 f"      - name: {name}", f"      - continue-on-error: true\n        name: {name}"
             )
         )
+        self.assertTrue(policy({path: changed}))
+
+    def test_combination_cannot_use_floating_router_images(self):
+        path = ".github/workflows/ci.yml"
+        original = (ROOT / path).read_text()
+        changed = original.replace("${{ steps.pins.outputs.router_image }}", "latest")
+        self.assertNotEqual(changed, original)
         self.assertTrue(policy({path: changed}))
 
     def test_full_action_pin_refresh_is_allowed(self):
