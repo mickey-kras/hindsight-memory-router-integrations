@@ -1,4 +1,5 @@
 const { isDeepStrictEqual } = require("node:util");
+const { setTimeout: pause } = require("node:timers/promises");
 const {
   CODING,
   PROVENANCE,
@@ -211,7 +212,31 @@ async function publish(github, context, payload, metadataPath, metadata) {
       },
     },
   );
-  return result.createCommitOnBranch.commit.oid;
+  const sha = result.createCommitOnBranch.commit.oid;
+  await waitForPublishedHead(github, context.repo, pull, sha);
+  return sha;
 }
 
-module.exports = { dependencyCommits, inspect, requestPreparation, requestRecreate, publish };
+async function waitForPublishedHead(github, repo, pull, expectedHead, sleep = pause) {
+  const params = { ...repo, pull_number: pull.number };
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const { data: ref } = await github.rest.git.getRef({ ...repo, ref: `heads/${pull.head.ref}` });
+    const { data: current } = await github.rest.pulls.get(params);
+    if (
+      ![pull.head.sha, expectedHead].includes(ref.object.sha) ||
+      current.state !== "open" ||
+      current.base.sha !== pull.base.sha ||
+      ![pull.head.sha, expectedHead].includes(current.head.sha)
+    ) {
+      throw new Error("PR changed after publication");
+    }
+    if (ref.object.sha === expectedHead && current.head.sha === expectedHead) {
+      const commits = await github.paginate(github.rest.pulls.listCommits, { ...params, per_page: 100 });
+      if (commits.at(-1)?.sha === expectedHead) return;
+    }
+    if (attempt < 9) await sleep(2000);
+  }
+  throw new Error("Published commit is not yet visible in PR metadata; validation will retry on refresh");
+}
+
+module.exports = { dependencyCommits, inspect, requestPreparation, requestRecreate, publish, waitForPublishedHead };
