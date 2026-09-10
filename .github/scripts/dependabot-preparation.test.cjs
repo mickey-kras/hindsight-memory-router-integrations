@@ -207,6 +207,14 @@ test("stale updates request one Dependabot recreation per head", async () => {
   assert.equal(h.state.messages.length, 1);
 });
 
+test("a changed head is not recreated", async () => {
+  const h = harness();
+  h.state.ahead = 1;
+  h.state.pull.head.sha = generated;
+  await requestRecreate(h.github, context, pull, { info() {} });
+  assert.deepEqual(h.state.messages, []);
+});
+
 test("publication limits files and uses expectedHeadOid for an atomic update", async () => {
   const h = harness();
   assert.equal(await publish(h.github, context, h.writer, h.payload, "unused", h.metadata), generated);
@@ -253,6 +261,12 @@ for (const [name, mutate] of [
       h.payload.files[1].contents = Buffer.from("wrong").toString("base64");
     },
   ],
+  ["incorrect Nix source hash", (h) => {
+    h.payload.files[2].contents = Buffer.from(`source=sha256-${hash("other", "base64")}\nnpm_deps=sha256-${hash("deps", "base64")}\n`).toString("base64");
+  }],
+  ["extra Nix hash field", (h) => {
+    h.payload.files[2].contents = Buffer.from(`${Buffer.from(h.payload.files[2].contents, "base64")}extra=value\n`).toString("base64");
+  }],
   [
     "wrong token owner",
     (h) => {

@@ -142,6 +142,8 @@ async function requestRecreate(github, context, pull, core) {
   const body = `@dependabot recreate\n\n<!-- dependency-refresh:${pull.head.sha} -->`;
   const comments = await github.paginate(github.rest.issues.listComments, { ...params, per_page: 100 });
   if (!comments.some((comment) => comment.body === body && comment.user.id === 41898282)) {
+    const { data: current } = await github.rest.pulls.get({ ...context.repo, pull_number: pull.number });
+    if (current.state !== "open" || current.head.sha !== pull.head.sha) return true;
     await github.rest.issues.createComment({ ...params, body });
   }
   core.info(`#${pull.number}: waiting for Dependabot to recreate on current main`);
@@ -185,10 +187,10 @@ async function publish(github, context, writer, payload, metadataPath, metadata)
     .join("");
   if (files.get("PACKAGE_SHA256").toString() !== checksums) throw new Error("Package checksum mismatch");
   const nixHashes = files.get("PACKAGE_NIX_HASHES").toString();
+  const sourceHash = `source=sha256-${hash(files.get(paths[3]), "base64")}\n`;
   if (
-    !new RegExp(
-      `^source=sha256-${hash(files.get(paths[3]), "base64").replace(/[+]/g, "\\+")}\\nnpm_deps=sha256-[A-Za-z0-9+/]{43}=\\n$`,
-    ).test(nixHashes)
+    !nixHashes.startsWith(sourceHash) ||
+    !/^npm_deps=sha256-[A-Za-z0-9+/]{43}=\n$/.test(nixHashes.slice(sourceHash.length))
   ) {
     throw new Error("Invalid package Nix hashes");
   }

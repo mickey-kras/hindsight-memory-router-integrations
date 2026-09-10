@@ -1066,7 +1066,7 @@ jobs:
           DEPENDENCY_PREPARATION_SCRIPTS = {
               '.github/scripts/dependabot-auto-merge.cjs': '5da076a4e27a1bb7e657d30e0e6f79a19c0bdb0dd11b389c383304bdb483ef32',
               '.github/scripts/dependency-files.cjs': '401d0945695821073cedde61648e58537f56d05fbe52e5adeb502c397264363d',
-              '.github/scripts/dependabot-preparation.cjs': 'ae17e41edfbd7912b12c5226203f9d659fb3ae8a446971e896989926b271a33b',
+              '.github/scripts/dependabot-preparation.cjs': '62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f',
               '.github/scripts/refresh-dependency-artifacts.cjs': '951ff6b864c238e2f1b7ce98906f572a6fe02f9680a63b9a425ee46518bd1cfd',
           }
 
