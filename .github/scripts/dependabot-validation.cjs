@@ -36,7 +36,7 @@ async function runPolicy(github, repo, pull, files) {
   }
 }
 
-async function requestValidation(github, context, pull, core, policy = runPolicy) {
+async function preparedValidation(github, context, pull) {
   const { data: repository } = await github.rest.repos.get(context.repo);
   const { trustedPull } = require("./dependabot-auto-merge.cjs");
   const params = { ...context.repo, pull_number: pull.number };
@@ -62,66 +62,38 @@ async function requestValidation(github, context, pull, core, policy = runPolicy
   if (!files.length || files.some((file) => file.status !== "modified" || !allowed.includes(file.filename))) {
     throw new Error("Prepared PR contains changes outside dependencies and generated artifacts");
   }
-  const checks = await github.paginate(github.rest.checks.listForRef, {
-    ...context.repo,
-    ref: current.head.sha,
-    check_name: "guard",
-    filter: "all",
-    per_page: 100,
-  });
-  const externalId = `prepared-policy:${current.head.sha}:${current.base.sha}`;
-  const existing = checks.find((check) => check.name === "guard" && check.external_id === externalId);
-  if (!existing || existing.status !== "completed") {
-    if (existing) {
-      const runId = existing.details_url?.match(/\/actions\/runs\/([0-9]+)$/)?.[1];
-      if (!runId) throw new Error("Cannot resolve the policy check's workflow run");
-      const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: Number(runId) });
-      if (run.status !== "completed") {
-        core.info(`#${current.number}: policy validation is still running`);
-        return;
-      }
-    }
-    const check =
-      existing ??
-      (
-        await github.rest.checks.create({
-          ...context.repo,
-          name: "guard",
-          head_sha: current.head.sha,
-          external_id: externalId,
-          status: "in_progress",
-          details_url: `${context.serverUrl}/${repository.full_name}/actions/runs/${context.runId}`,
-        })
-      ).data;
-    try {
-      await policy(github, context.repo, current, files);
-      const { data: latest } = await github.rest.pulls.get(params);
-      if (latest.state !== "open" || latest.head.sha !== current.head.sha || latest.base.sha !== current.base.sha) {
-        throw new Error("PR changed during policy validation");
-      }
-      await github.rest.checks.update({
-        ...context.repo,
-        check_run_id: check.id,
-        status: "completed",
-        conclusion: "success",
-        output: {
-          title: "Policy guard passed",
-          summary: "Validated the prepared commit with the trusted main policy.",
-        },
-      });
-    } catch (error) {
-      await github.rest.checks.update({
-        ...context.repo,
-        check_run_id: check.id,
-        status: "completed",
-        conclusion: "failure",
-        output: { title: "Policy guard failed", summary: error.message.slice(0, 6000) },
-      });
-      throw error;
-    }
-  } else if (existing.conclusion !== "success") {
-    throw new Error("Prepared policy validation has not passed");
+  return { current, files };
+}
+
+async function runDispatchedPolicy(github, context, core, trustedMainSha, policy = runPolicy) {
+  const { number, expected_head: expectedHead } = context.payload?.inputs ?? {};
+  if (context.eventName !== "workflow_dispatch" || !/^[1-9][0-9]*$/.test(number) || context.sha !== expectedHead) {
+    throw new Error("Policy job requires the dispatched Dependabot commit");
   }
+  const params = { ...context.repo, pull_number: Number(number) };
+  const { data: pull } = await github.rest.pulls.get(params);
+  if (pull.head.sha !== expectedHead || context.ref !== `refs/heads/${pull.head.ref}`) {
+    throw new Error("Dispatched PR head or branch changed");
+  }
+  const { current, files } = await preparedValidation(
+    github,
+    {
+      ...context,
+      ref: "refs/heads/main",
+      sha: trustedMainSha,
+    },
+    pull,
+  );
+  await policy(github, context.repo, current, files);
+  const { data: latest } = await github.rest.pulls.get(params);
+  if (latest.state !== "open" || latest.head.sha !== current.head.sha || latest.base.sha !== current.base.sha) {
+    throw new Error("PR changed during policy validation");
+  }
+  core.info(`#${current.number}: trusted policy passed at ${current.head.sha}`);
+}
+
+async function requestValidation(github, context, pull, core) {
+  const { current } = await preparedValidation(github, context, pull);
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
     ...context.repo,
     workflow_id: "pr-validation.yml",
@@ -138,7 +110,7 @@ async function requestValidation(github, context, pull, core, policy = runPolicy
       inputs: { number: String(current.number), expected_head: current.head.sha },
     });
   }
-  core.info(`#${current.number}: policy passed; requested PR validation at ${current.head.sha}`);
+  core.info(`#${current.number}: requested PR validation, including Guard, at ${current.head.sha}`);
 }
 
-module.exports = { requestValidation, runPolicy };
+module.exports = { requestValidation, runPolicy, runDispatchedPolicy };
