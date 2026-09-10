@@ -238,7 +238,7 @@ function setBounded<K, V>(map: Map<K, V>, key: K, value: V): void {
   map.delete(key);
   map.set(key, value);
   while (map.size > MAX_SESSION_STATE_ENTRIES) {
-    const oldest = map.keys().next().value as K | undefined;
+    const oldest = map.keys().next().value;
     if (oldest === undefined) break;
     map.delete(oldest);
   }
