@@ -40,7 +40,7 @@
         "@opencode-ai/plugin": "^1.18.26",
         "@opencode-ai/plugin-v2": "npm:@opencode-ai/plugin@0.0.0-beta-18743",
         "@opencode-ai/sdk": "^1.18.9",
-        "@types/node": "22.20.0",
+        "@types/node": "26.4.1",
         "tsup": "^8.3.0",
         "typescript": "^5.6.0",
         "vitest": "^4.1.11"
@@ -1456,13 +1456,13 @@
       "license": "MIT"
     },
     "node_modules/@types/node": {
-      "version": "22.20.0",
-      "resolved": "https://registry.npmjs.org/@types/node/-/node-22.20.0.tgz",
-      "integrity": "sha512-QWlFW2wf3nTjC13/DqRnBpR4ZO36VJH/JVBkA/vcnmbTBNQIlnObqyqZE1tUR7+Ni23Lda8R1BxMfbXRpCUx5g==",
+      "version": "26.4.1",
+      "resolved": "https://registry.npmjs.org/@types/node/-/node-26.4.1.tgz",
+      "integrity": "sha512-k97ENvZWtvA6yqz5/FS6a7duDgOPEeOQOc2iKS/nY6mX6qJUKtLnWzQS+Xj6tXweyj6ZcTAK2Qecetnvi9nCLA==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
-        "undici-types": "~6.21.0"
+        "undici-types": "~8.3.0"
       }
     },
     "node_modules/@vectorize-io/hindsight-all": {
@@ -4227,9 +4227,9 @@
       "license": "MIT"
     },
     "node_modules/undici-types": {
-      "version": "6.21.0",
-      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz",
-      "integrity": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==",
+      "version": "8.3.0",
+      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz",
+      "integrity": "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==",
       "dev": true,
       "license": "MIT"
     },
