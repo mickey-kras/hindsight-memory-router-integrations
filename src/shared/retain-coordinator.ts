@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
-import { type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
+import { type QueuedRetain, type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
 import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
 import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
@@ -127,39 +127,54 @@ export class RetainCoordinator {
     const delivered: string[] = [];
     for (const item of queue.peek(REPLAY_BATCH_SIZE)) {
       try {
-        if (item.updateMode !== undefined && item.updateMode !== "append" && item.updateMode !== "replace") {
-          throw new TypeError("invalid queued retain update mode");
-        }
-        if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
-          throw new RetainAuthorizationError(item.bankId);
-        }
-        const operationId = queue.ensureOperationId(item.id, item.operationId ?? randomUUID());
-        await client.retain(item.bankId, item.content, {
-          documentId: item.documentId,
-          context: item.context,
-          metadata: toStringMetadata(item.metadata),
-          tags: item.tags,
-          updateMode: item.updateMode,
-          operationId,
-          async: true,
-        });
+        await this.replayItem(principalId, client, queue, item);
         delivered.push(item.id);
       } catch (error) {
-        if (isAuthorizationError(error)) {
-          this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
-        } else if (isTransientRequestError(error)) {
-          const attempts = queue.incrementReplayAttempts(item.id);
-          if (attempts >= MAX_REPLAY_ATTEMPTS) {
-            delivered.push(item.id);
-            this.log.error(`retain replay abandoned after ${attempts} attempts for bank ${item.bankId}`);
-          }
-        } else {
-          this.log.error(`retain replay failed permanently for bank ${item.bankId}; item stays queued for review`);
-        }
+        this.handleReplayError(error, queue, item, delivered);
         break; // preserve FIFO ordering; retry next flush
       }
     }
     queue.removeMany(delivered);
+  }
+
+  private async replayItem(
+    principalId: string,
+    client: ReturnType<AuthenticatedClientFactory["forAgent"]>,
+    queue: RetainQueue,
+    item: QueuedRetain,
+  ): Promise<void> {
+    if (item.updateMode !== undefined && item.updateMode !== "append" && item.updateMode !== "replace") {
+      throw new TypeError("invalid queued retain update mode");
+    }
+    if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
+      throw new RetainAuthorizationError(item.bankId);
+    }
+    const operationId = queue.ensureOperationId(item.id, item.operationId ?? randomUUID());
+    await client.retain(item.bankId, item.content, {
+      documentId: item.documentId,
+      context: item.context,
+      metadata: toStringMetadata(item.metadata),
+      tags: item.tags,
+      updateMode: item.updateMode,
+      operationId,
+      async: true,
+    });
+  }
+
+  private handleReplayError(error: unknown, queue: RetainQueue, item: QueuedRetain, delivered: string[]): void {
+    if (isAuthorizationError(error)) {
+      this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
+      return;
+    }
+    if (!isTransientRequestError(error)) {
+      this.log.error(`retain replay failed permanently for bank ${item.bankId}; item stays queued for review`);
+      return;
+    }
+    const attempts = queue.incrementReplayAttempts(item.id);
+    if (attempts >= MAX_REPLAY_ATTEMPTS) {
+      delivered.push(item.id);
+      this.log.error(`retain replay abandoned after ${attempts} attempts for bank ${item.bankId}`);
+    }
   }
 }
 
