@@ -159,6 +159,8 @@ function harness({
       return [dependency];
     },
     merge: (...args) => commands.push(args),
+    prepare: async () => false,
+    recreate: async () => false,
   };
   return { options, commands, dispatches, warnings, failures };
 }
@@ -173,6 +175,36 @@ test("a changed head cannot be queued", async () => {
   const h = harness({
     afterLookup: { ...pull, head: { ...pull.head, sha: "c".repeat(40) } },
   });
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+test("artifact preparation runs before auto-merge", async () => {
+  const h = harness();
+  h.options.prepare = async () => true;
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+test("an unknown score allows preparation but never queues auto-merge", async () => {
+  const h = harness();
+  h.options.metadata = () => [{ ...dependency, compatScore: 0 }];
+  let prepared = false;
+  h.options.prepare = async () => {
+    prepared = true;
+    return true;
+  };
+  await run(h.options);
+  assert.equal(prepared, true);
+  assert.deepEqual(h.commands, []);
+  h.options.prepare = async () => false;
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+test("a stale branch waits for signed Dependabot recreation", async () => {
+  const h = harness();
+  h.options.recreate = async () => true;
+  h.options.prepare = async () => {
+    throw new Error("must not prepare a stale branch");
+  };
   await run(h.options);
   assert.deepEqual(h.commands, []);
 });

@@ -1063,9 +1063,22 @@ jobs:
               if not lines:
                   fail(f'{path}: checksum file must not be empty')
 
+          DEPENDENCY_PREPARATION_SCRIPTS = {
+              '.github/scripts/dependabot-auto-merge.cjs': '5da076a4e27a1bb7e657d30e0e6f79a19c0bdb0dd11b389c383304bdb483ef32',
+              '.github/scripts/dependency-files.cjs': '401d0945695821073cedde61648e58537f56d05fbe52e5adeb502c397264363d',
+              '.github/scripts/dependabot-preparation.cjs': '62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f',
+              '.github/scripts/refresh-dependency-artifacts.cjs': '951ff6b864c238e2f1b7ce98906f572a6fe02f9680a63b9a425ee46518bd1cfd',
+          }
+
+          def gate_dependency_preparation(path, content):
+              if hashlib.sha256(content.encode()).hexdigest() != DEPENDENCY_PREPARATION_SCRIPTS[path]:
+                  fail(f'{path}: dependency preparation must match the reviewed implementation')
+
           # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
+              '.github/workflows/dependabot-preparation.yml': ('c8d826e549d44cdbb850df7580e681957b76c8755510a9be7517c0978447b171',),
+              '.github/workflows/dependabot-policy-tests.yml': ('157b9cac1669869fdacb9b9780bfaec7ffb5d01a63f803b3f1e09cbc7697b448',),
               '.github/workflows/dependabot-auto-merge.yml': (
                   'fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34',
                   '602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19',
@@ -1112,6 +1125,7 @@ jobs:
           }
 
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
+          GATES.update({path: gate_dependency_preparation for path in DEPENDENCY_PREPARATION_SCRIPTS})
           protected = set(GATES)
 
           def load_files():
