@@ -160,6 +160,7 @@ function harness({
     },
     merge: (...args) => commands.push(args),
     prepare: async () => false,
+    isCurrent: async () => true,
   };
   return { options, commands, dispatches, warnings, failures };
 }
@@ -182,6 +183,14 @@ test("artifact preparation runs before auto-merge", async () => {
   h.options.prepare = async () => true;
   await run(h.options);
   assert.deepEqual(h.commands, []);
+});
+test("stale updates wait for native rebasing before preparation", async () => {
+  const h = harness({ metadataError: true });
+  h.options.isCurrent = async () => false;
+  h.options.prepare = async () => assert.fail("must not prepare a stale branch");
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.failures, []);
 });
 test("prepared updates recover validation before the compatibility-score decision", async () => {
   const h = harness();

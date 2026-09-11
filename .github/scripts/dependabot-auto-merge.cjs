@@ -103,6 +103,16 @@ function mergeCommand(repository, number, options) {
   });
 }
 
+async function currentWithMain(github, repo, pull) {
+  const { data: main } = await github.rest.git.getRef({ ...repo, ref: `heads/${pull.base.ref}` });
+  const { data } = await github.rest.repos.compareCommitsWithBasehead({
+    ...repo,
+    basehead: `${pull.head.sha}...${main.object.sha}`,
+  });
+  if (!Number.isInteger(data.ahead_by) || data.ahead_by < 0) throw new Error("Invalid branch comparison");
+  return data.ahead_by === 0;
+}
+
 async function ensureMainRun({ github, context, core, branch, mainWorkflow }) {
   const repo = context.repo;
   const { data: tip } = await github.rest.repos.getBranch({ ...repo, branch });
@@ -148,6 +158,7 @@ async function run({
   merge = mergeCommand,
   verify = dependencyCommits,
   prepare = requestPreparation,
+  isCurrent = currentWithMain,
   validate = require("./dependabot-validation.cjs").requestValidation,
 }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`;
@@ -180,6 +191,10 @@ async function run({
         per_page: 100,
       });
       const original = await verify(github, context.repo, pull, commits);
+      if (!(await isCurrent(github, context.repo, pull))) {
+        core.info(`#${pull.number}: waiting for scheduled Dependabot rebasing`);
+        continue;
+      }
       if (pull.auto_merge && pull.auto_merge.enabled_by.login !== "github-actions[bot]") {
         if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
         if (original.length !== commits.length) await validate(github, context, pull, core);
