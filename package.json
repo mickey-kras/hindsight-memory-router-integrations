@@ -54,7 +54,7 @@
     "@vitest/coverage-v8": "4.1.11",
     "aislop": "^0.16.1",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.2"
+    "vitest": "^5.0.0"
   },
   "engines": {
     "node": ">=22"
