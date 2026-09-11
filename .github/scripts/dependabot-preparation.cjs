@@ -135,26 +135,6 @@ async function requestPreparation(github, context, pull, core) {
   return true;
 }
 
-async function requestRecreate(github, context, pull, core) {
-  const { data: main } = await github.rest.git.getRef({ ...context.repo, ref: `heads/${pull.base.ref}` });
-  const { data } = await github.rest.repos.compareCommitsWithBasehead({
-    ...context.repo,
-    basehead: `${pull.head.sha}...${main.object.sha}`,
-  });
-  if (data.ahead_by === 0) return false;
-  if (!Number.isInteger(data.ahead_by) || data.ahead_by < 0) throw new Error("Invalid branch comparison");
-  const params = { ...context.repo, issue_number: pull.number };
-  const body = `@dependabot recreate\n\n<!-- dependency-refresh:${pull.head.sha} -->`;
-  const comments = await github.paginate(github.rest.issues.listComments, { ...params, per_page: 100 });
-  if (!comments.some((comment) => comment.body === body && comment.user.id === 41898282)) {
-    const { data: current } = await github.rest.pulls.get({ ...context.repo, pull_number: pull.number });
-    if (current.state !== "open" || current.head.sha !== pull.head.sha) return true;
-    await github.rest.issues.createComment({ ...params, body });
-  }
-  core.info(`#${pull.number}: waiting for Dependabot to recreate on current main`);
-  return true;
-}
-
 async function publish(github, context, payload, metadataPath, metadata) {
   const { pull, paths } = await inspect(github, context, payload.number, payload.head);
   const { fetchMetadata, updateEligibility } = require("./dependabot-auto-merge.cjs");
@@ -239,4 +219,4 @@ async function waitForPublishedHead(github, repo, pull, expectedHead, sleep = pa
   throw new Error("Published commit is not yet visible in PR metadata; validation will retry on refresh");
 }
 
-module.exports = { dependencyCommits, inspect, requestPreparation, requestRecreate, publish, waitForPublishedHead };
+module.exports = { dependencyCommits, inspect, requestPreparation, publish, waitForPublishedHead };

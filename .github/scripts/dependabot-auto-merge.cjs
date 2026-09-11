@@ -2,7 +2,7 @@ const { mkdtempSync, writeFileSync, readFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { dependencyCommits, requestPreparation, requestRecreate } = require("./dependabot-preparation.cjs");
+const { dependencyCommits, requestPreparation } = require("./dependabot-preparation.cjs");
 
 const MINIMUM_SCORE = 75;
 const BOT = { login: "dependabot[bot]", id: 49699333 };
@@ -103,6 +103,16 @@ function mergeCommand(repository, number, options) {
   });
 }
 
+async function currentWithMain(github, repo, pull) {
+  const { data: main } = await github.rest.git.getRef({ ...repo, ref: `heads/${pull.base.ref}` });
+  const { data } = await github.rest.repos.compareCommitsWithBasehead({
+    ...repo,
+    basehead: `${pull.head.sha}...${main.object.sha}`,
+  });
+  if (!Number.isInteger(data.ahead_by) || data.ahead_by < 0) throw new Error("Invalid branch comparison");
+  return data.ahead_by === 0;
+}
+
 async function ensureMainRun({ github, context, core, branch, mainWorkflow }) {
   const repo = context.repo;
   const { data: tip } = await github.rest.repos.getBranch({ ...repo, branch });
@@ -148,7 +158,7 @@ async function run({
   merge = mergeCommand,
   verify = dependencyCommits,
   prepare = requestPreparation,
-  recreate = requestRecreate,
+  isCurrent = currentWithMain,
   validate = require("./dependabot-validation.cjs").requestValidation,
 }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`;
@@ -181,8 +191,11 @@ async function run({
         per_page: 100,
       });
       const original = await verify(github, context.repo, pull, commits);
+      if (!(await isCurrent(github, context.repo, pull))) {
+        core.info(`#${pull.number}: waiting for scheduled Dependabot rebasing`);
+        continue;
+      }
       if (pull.auto_merge && pull.auto_merge.enabled_by.login !== "github-actions[bot]") {
-        if (await recreate(github, context, pull, core)) continue;
         if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
         if (original.length !== commits.length) await validate(github, context, pull, core);
         core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
@@ -194,7 +207,6 @@ async function run({
         core.info(`#${pull.number}: ${updateReason}`);
         continue;
       }
-      if (await recreate(github, context, pull, core)) continue;
       if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
       if (original.length !== commits.length) await validate(github, context, pull, core);
       const reason = eligibility(original, dependencies);
