@@ -2,7 +2,7 @@ const { mkdtempSync, writeFileSync, readFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { dependencyCommits, requestPreparation, requestRecreate } = require("./dependabot-preparation.cjs");
+const { dependencyCommits, requestPreparation } = require("./dependabot-preparation.cjs");
 
 const MINIMUM_SCORE = 75;
 const BOT = { login: "dependabot[bot]", id: 49699333 };
@@ -148,7 +148,6 @@ async function run({
   merge = mergeCommand,
   verify = dependencyCommits,
   prepare = requestPreparation,
-  recreate = requestRecreate,
   validate = require("./dependabot-validation.cjs").requestValidation,
 }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`;
@@ -182,7 +181,6 @@ async function run({
       });
       const original = await verify(github, context.repo, pull, commits);
       if (pull.auto_merge && pull.auto_merge.enabled_by.login !== "github-actions[bot]") {
-        if (await recreate(github, context, pull, core)) continue;
         if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
         if (original.length !== commits.length) await validate(github, context, pull, core);
         core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
@@ -194,7 +192,6 @@ async function run({
         core.info(`#${pull.number}: ${updateReason}`);
         continue;
       }
-      if (await recreate(github, context, pull, core)) continue;
       if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
       if (original.length !== commits.length) await validate(github, context, pull, core);
       const reason = eligibility(original, dependencies);
