@@ -1064,9 +1064,9 @@ jobs:
                   fail(f'{path}: checksum file must not be empty')
 
           DEPENDENCY_PREPARATION_SCRIPTS = {
-              '.github/scripts/dependabot-auto-merge.cjs': ('5da076a4e27a1bb7e657d30e0e6f79a19c0bdb0dd11b389c383304bdb483ef32', 'a3b44baec133791a81e25b8257597f7c92173ea89a0727bd5ed37976a30d3b3c', '9e35e7b47d63714e5b9710f93455eb34180f78ddefaeac0e2a4e8bcf1fd6e14b', '5e7599b6f8ee7c35a696196be54fa6ffee868528c596b4eeb60623a2f38e4e5e'),
+              '.github/scripts/dependabot-auto-merge.cjs': ('5da076a4e27a1bb7e657d30e0e6f79a19c0bdb0dd11b389c383304bdb483ef32', 'a3b44baec133791a81e25b8257597f7c92173ea89a0727bd5ed37976a30d3b3c', '9e35e7b47d63714e5b9710f93455eb34180f78ddefaeac0e2a4e8bcf1fd6e14b', '5e7599b6f8ee7c35a696196be54fa6ffee868528c596b4eeb60623a2f38e4e5e', '7c179097b31faca35820986b2fe12ac39ee165ca9dbe2103ddeead8e87728535'),
               '.github/scripts/dependency-files.cjs': ('401d0945695821073cedde61648e58537f56d05fbe52e5adeb502c397264363d',),
-              '.github/scripts/dependabot-preparation.cjs': ('62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f', 'ab8d460b0ebcd47633cf032c041f50daaf552486c0d960c13e9076e9cf62a528', '2c9f962d15ef043ee72da9a2d55c2157bf425d922c90d9610fd074ef21e7dcb7'),
+              '.github/scripts/dependabot-preparation.cjs': ('62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f', 'ab8d460b0ebcd47633cf032c041f50daaf552486c0d960c13e9076e9cf62a528', '2c9f962d15ef043ee72da9a2d55c2157bf425d922c90d9610fd074ef21e7dcb7', '5d5f01c251e93a846218948b83d5c470cebc7acc6b988c7c7565cb0524ffa463'),
               '.github/scripts/refresh-dependency-artifacts.cjs': ('951ff6b864c238e2f1b7ce98906f572a6fe02f9680a63b9a425ee46518bd1cfd',),
               '.github/scripts/dependabot-validation.cjs': ('a6c1d925ac97e90f79129ad3fffcc2e6f4a9f59eaf74b92ef8f02c17bba58182', '199dbdcfda4e7589cdbcf21f3ec2178342af56ad1e658e01d4ce6924fd480ba5', '484157141f5e864b7cd1eecc6545a7077cf660bd683fabe67a773de5878443ad', 'b0775ac32cee8dca1c842e3c79a71a85c7f818f13806cd34067f3c7c2403bbb1', 'af5f1349fe209d2792c976022df09adb2735c2cc617baa7f2b17cd2bfd3497c0'),
               '.github/scripts/verify-prepared-policy.py': ('ad9395f21d84f47bec414a977fe80375f1ffd26ffdec5b72769d31e7bd99a77c',),
