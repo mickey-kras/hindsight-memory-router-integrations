@@ -20,9 +20,26 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.inputs.number }}
+          EXPECTED_HEAD: ${{ github.event.inputs.expected_head }}
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+            [[ "$EXPECTED_HEAD" == "$GITHUB_SHA" ]]
+            pull="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")"
+            jq -e --arg sha "$GITHUB_SHA" --arg ref "$GITHUB_REF_NAME" --arg repo "$REPOSITORY" '
+              .state == "open" and .draft == false and
+              .head.sha == $sha and .head.ref == $ref and .head.repo.full_name == $repo and
+              .base.ref == "main" and .user.login == "dependabot[bot]" and .user.id == 49699333
+            ' <<< "$pull" > /dev/null
+            HEAD_REPO="$(jq -r '.head.repo.full_name' <<< "$pull")"
+            HEAD_REF="$(jq -r '.head.ref' <<< "$pull")"
+            PR_AUTHOR="$(jq -r '.user.login' <<< "$pull")"
+          fi
 
           if [[ "$HEAD_REPO" != "$REPOSITORY" ]]; then
             exit 0

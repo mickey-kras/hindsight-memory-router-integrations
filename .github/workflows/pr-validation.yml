@@ -3,6 +3,14 @@ name: PR validation
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      number:
+        description: Dependabot PR number
+        required: true
+      expected_head:
+        description: Prepared Dependabot commit
+        required: true
 
 permissions:
   contents: read
@@ -10,10 +18,60 @@ permissions:
   security-events: write
 
 concurrency:
-  group: pr-validation-${{ github.event.pull_request.number }}
+  group: pr-validation-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.number }}
   cancel-in-progress: true
 
 jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Read the trusted main policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+          path: automation
+          sparse-checkout: .github
+
+      - name: Validate PR with the trusted policy
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const { execFileSync } = require('node:child_process');
+            const { runPolicy, runDispatchedPolicy } = require('./automation/.github/scripts/dependabot-validation.cjs');
+            const mainSha = execFileSync('git', ['-C', 'automation', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+            async function runPullRequestPolicy(github, context, core, trustedMainSha, policy = runPolicy) {
+              const expected = context.payload.pull_request;
+              if (context.eventName !== "pull_request" || !Number.isSafeInteger(expected?.number)) {
+                throw new Error("Policy job requires a pull request event");
+              }
+              const params = { ...context.repo, pull_number: expected.number };
+              const { data: current } = await github.rest.pulls.get(params);
+              if (
+                current.state !== "open" || current.base.ref !== "main" ||
+                current.head.sha !== expected.head.sha || current.base.sha !== expected.base.sha ||
+                current.base.sha !== trustedMainSha || context.ref !== `refs/pull/${current.number}/merge`
+              ) throw new Error("PR head or trusted policy revision changed");
+              const files = await github.paginate(github.rest.pulls.listFiles, { ...params, per_page: 100 });
+              await policy(github, context.repo, current, files);
+              const { data: latest } = await github.rest.pulls.get(params);
+              if (latest.state !== "open" || latest.head.sha !== current.head.sha || latest.base.sha !== current.base.sha) {
+                throw new Error("PR changed during policy validation");
+              }
+              core.info(`#${current.number}: trusted policy passed at ${current.head.sha}`);
+            }
+            const run = context.eventName === 'pull_request' ? runPullRequestPolicy : runDispatchedPolicy;
+            await run(github, context, core, mainSha);
+
   quality:
     uses: ./.github/workflows/ci.yml
 

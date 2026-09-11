@@ -9,6 +9,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  checks: write
 
 concurrency:
   group: dependabot-auto-merge-${{ github.repository }}
@@ -32,7 +33,7 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           path: automation
-          sparse-checkout: .github/scripts
+          sparse-checkout: .github
 
       - name: Read pinned Dependabot metadata action
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

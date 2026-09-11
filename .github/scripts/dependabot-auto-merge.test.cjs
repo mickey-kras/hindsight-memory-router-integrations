@@ -159,6 +159,8 @@ function harness({
       return [dependency];
     },
     merge: (...args) => commands.push(args),
+    prepare: async () => false,
+    isCurrent: async () => true,
   };
   return { options, commands, dispatches, warnings, failures };
 }
@@ -176,6 +178,49 @@ test("a changed head cannot be queued", async () => {
   await run(h.options);
   assert.deepEqual(h.commands, []);
 });
+test("artifact preparation runs before auto-merge", async () => {
+  const h = harness();
+  h.options.prepare = async () => true;
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+test("stale updates wait for native rebasing before preparation", async () => {
+  const h = harness({ metadataError: true });
+  h.options.isCurrent = async () => false;
+  h.options.prepare = async () => assert.fail("must not prepare a stale branch");
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.failures, []);
+});
+test("prepared updates recover validation before the compatibility-score decision", async () => {
+  const h = harness();
+  const paginate = h.options.github.paginate;
+  h.options.github.paginate = async (endpoint) => endpoint.name === "listCommits"
+    ? [...commits, { author: { login: "github-actions[bot]" } }]
+    : paginate(endpoint);
+  h.options.verify = async () => commits;
+  h.options.metadata = () => [{ ...dependency, compatScore: 0 }];
+  let validated = false;
+  h.options.validate = async () => { validated = true; };
+  await run(h.options);
+  assert.equal(validated, true);
+  assert.deepEqual(h.commands, []);
+});
+test("an unknown score allows preparation but never queues auto-merge", async () => {
+  const h = harness();
+  h.options.metadata = () => [{ ...dependency, compatScore: 0 }];
+  let prepared = false;
+  h.options.prepare = async () => {
+    prepared = true;
+    return true;
+  };
+  await run(h.options);
+  assert.equal(prepared, true);
+  assert.deepEqual(h.commands, []);
+  h.options.prepare = async () => false;
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
 test("lookup failure revokes an earlier bot queue decision", async () => {
   const h = harness({
     pulls: [{ ...pull, auto_merge: { enabled_by: { login: "github-actions[bot]" } } }],
@@ -185,13 +230,42 @@ test("lookup failure revokes an earlier bot queue decision", async () => {
   assert.deepEqual(h.commands, [["owner/repo", 1, ["--disable-auto"]]]);
   assert.equal(h.failures.length, 1);
 });
-test("manual owner queue decisions are preserved", async () => {
+test("manual owner queue decisions are preserved after preparation", async () => {
   const h = harness({
     pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }],
+    metadataError: true,
   });
+  let prepared = false;
+  h.options.prepare = async () => {
+    prepared = true;
+    return true;
+  };
+  await run(h.options);
+  assert.equal(prepared, true);
+  assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.failures, []);
+});
+
+test("manual auto-merge still recovers prepared validation without a metadata lookup", async () => {
+  const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }], metadataError: true });
+  h.options.verify = async () => commits.slice(0, -1);
+  let validated = false;
+  h.options.validate = async () => { validated = true; };
+  await run(h.options);
+  assert.equal(validated, true);
+  assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.failures, []);
+});
+
+test("manual auto-merge cannot hide a validation recovery failure", async () => {
+  const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }] });
+  h.options.verify = async () => commits.slice(0, -1);
+  h.options.validate = async () => { throw new Error("Validation failed"); };
   await run(h.options);
   assert.deepEqual(h.commands, []);
+  assert.equal(h.failures.length, 1);
 });
+
 test("a failed PR does not prevent evaluation of the next PR", async () => {
   const h = harness({ pulls: [pull, { ...pull, number: 2 }] });
   h.options.metadata = (p) => {

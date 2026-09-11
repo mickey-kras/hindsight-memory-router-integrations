@@ -91,10 +91,18 @@ test("API failure is not reported as success", async () => {
   assert.equal(calls.failures.length, 1);
 });
 
-test("leaves stale Dependabot branches to Dependabot", async () => {
+test("leaves stale Dependabot branches to scheduled native rebasing", async () => {
   const { args, calls } = fixture({ user: { login: "dependabot[bot]", id: 49699333 } });
   await run(args);
   assert.deepEqual(calls.updates, []);
+  assert.deepEqual(calls.failures, []);
+});
+
+test("does not involve Dependabot when its branch is current", async () => {
+  const { args, calls } = fixture({ user: { login: "dependabot[bot]", id: 49699333 }, ahead: 0 });
+  await run(args);
+  assert.deepEqual(calls.updates, []);
+  assert.deepEqual(calls.comparisons, ["head...current-main"]);
   assert.deepEqual(calls.failures, []);
 });
 

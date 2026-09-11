@@ -9,6 +9,7 @@ async function updatePull({ github, owner, repo, number, sleep }) {
     });
     if (pull.state !== "open" || pull.base.ref !== "main" || pull.head.repo?.full_name !== `${owner}/${repo}`)
       return "ineligible";
+    // PR base metadata can lag behind the branch tip after a merge.
     const { data: main } = await github.rest.git.getRef({
       owner,
       repo,
@@ -19,9 +20,11 @@ async function updatePull({ github, owner, repo, number, sleep }) {
       repo,
       basehead: `${pull.head.sha}...${main.object.sha}`,
     });
+    // With the PR head as the comparison base, ahead_by counts missing main commits.
     if (comparison.ahead_by === 0) return "current";
     if (!Number.isInteger(comparison.ahead_by) || comparison.ahead_by < 0) throw new Error("invalid commit comparison");
-    // Dependabot must rebase with its own identity so auto-merge provenance remains valid.
+    // Scheduled Dependabot runs rebase with Dependabot's own identity. Bot-posted
+    // recreate commands are rejected, so stale Dependabot branches are left to them.
     if (pull.user?.login === "dependabot[bot]" && pull.user.id === 49699333)
       return "managed by scheduled Dependabot rebasing";
     if (pull.mergeable === false) return "conflicting";
@@ -55,13 +58,7 @@ async function run({ github, context, core, sleep = pause }) {
     try {
       status =
         pull.head.repo?.full_name === `${owner}/${repo}`
-          ? await updatePull({
-              github,
-              owner,
-              repo,
-              number: pull.number,
-              sleep,
-            })
+          ? await updatePull({ github, owner, repo, number: pull.number, sleep })
           : "ineligible";
     } catch (error) {
       status = `unresolved: ${error.message}`;

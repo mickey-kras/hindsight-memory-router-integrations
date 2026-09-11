@@ -17,10 +17,11 @@ if (process.argv[2] === "prepare") {
   const principals = {};
   const credentials = {};
   for (const id of ["openclaw", "codex"]) {
-    const token = `mr_${id}_${randomBytes(32).toString("hex")}`;
+    const secret = randomBytes(32).toString("hex");
+    const token = `mr_${id}_${secret}`;
     credentials[id] = token;
     principals[id] = {
-      keys: [{ id, sha256: createHash("sha256").update(token).digest("hex"), created_at: new Date().toISOString() }],
+      keys: [{ id, sha256: createHash("sha256").update(secret).digest("hex"), created_at: new Date().toISOString() }],
       grants: [{ bank, scopes: ["bank.list", "memory.retain", "memory.recall", "memory.reflect"] }],
     };
   }

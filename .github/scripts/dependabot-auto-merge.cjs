@@ -2,6 +2,7 @@ const { mkdtempSync, writeFileSync, readFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { dependencyCommits, requestPreparation } = require("./dependabot-preparation.cjs");
 
 const MINIMUM_SCORE = 75;
 const BOT = { login: "dependabot[bot]", id: 49699333 };
@@ -26,14 +27,22 @@ function trustedPull(pull, repository, branch) {
   );
 }
 
-function eligibility(commits, dependencies) {
-  if (!verifiedCommits(commits)) {
-    return "Unsigned or non-Dependabot commits require manual review";
-  }
+function updateEligibility(dependencies) {
   if (!Array.isArray(dependencies) || !dependencies.length) return "No dependency metadata";
   for (const dependency of dependencies) {
     if (!UPDATE_TYPES.has(dependency.updateType)) return "Major or unknown update type requires manual review";
     if (!dependency.prevVersion || !dependency.newVersion) return "Missing version pair";
+  }
+  return null;
+}
+
+function eligibility(commits, dependencies) {
+  if (!verifiedCommits(commits)) {
+    return "Unsigned or non-Dependabot commits require manual review";
+  }
+  const reason = updateEligibility(dependencies);
+  if (reason) return reason;
+  for (const dependency of dependencies) {
     const score = dependency.compatScore;
     if (!Number.isInteger(score) || score < MINIMUM_SCORE || score > 100) {
       return `Every dependency needs a known compatibility score of at least ${MINIMUM_SCORE}%`;
@@ -94,6 +103,16 @@ function mergeCommand(repository, number, options) {
   });
 }
 
+async function currentWithMain(github, repo, pull) {
+  const { data: main } = await github.rest.git.getRef({ ...repo, ref: `heads/${pull.base.ref}` });
+  const { data } = await github.rest.repos.compareCommitsWithBasehead({
+    ...repo,
+    basehead: `${pull.head.sha}...${main.object.sha}`,
+  });
+  if (!Number.isInteger(data.ahead_by) || data.ahead_by < 0) throw new Error("Invalid branch comparison");
+  return data.ahead_by === 0;
+}
+
 async function ensureMainRun({ github, context, core, branch, mainWorkflow }) {
   const repo = context.repo;
   const { data: tip } = await github.rest.repos.getBranch({ ...repo, branch });
@@ -137,6 +156,10 @@ async function run({
   mainWorkflow,
   metadata = fetchMetadata,
   merge = mergeCommand,
+  verify = dependencyCommits,
+  prepare = requestPreparation,
+  isCurrent = currentWithMain,
+  validate = require("./dependabot-validation.cjs").requestValidation,
 }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`;
   const { data: repo } = await github.rest.repos.get(context.repo);
@@ -162,20 +185,31 @@ async function run({
       // A previous bot decision must not survive a failed or lower-score lookup.
       if (pull.auto_merge?.enabled_by.login === "github-actions[bot]") {
         merge(repository, pull.number, ["--disable-auto"]);
-      } else if (pull.auto_merge) {
-        core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
-        continue;
       }
       const commits = await github.paginate(github.rest.pulls.listCommits, {
         ...params,
         per_page: 100,
       });
-      if (!verifiedCommits(commits)) {
-        core.info(`#${pull.number}: unsigned or non-Dependabot commits require manual review`);
+      const original = await verify(github, context.repo, pull, commits);
+      if (!(await isCurrent(github, context.repo, pull))) {
+        core.info(`#${pull.number}: waiting for scheduled Dependabot rebasing`);
+        continue;
+      }
+      if (pull.auto_merge && pull.auto_merge.enabled_by.login !== "github-actions[bot]") {
+        if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
+        if (original.length !== commits.length) await validate(github, context, pull, core);
+        core.info(`#${pull.number}: preserving the owner's manual auto-merge decision`);
         continue;
       }
       const dependencies = metadata(pull, repository, metadataPath);
-      const reason = eligibility(commits, dependencies);
+      const updateReason = updateEligibility(dependencies);
+      if (updateReason) {
+        core.info(`#${pull.number}: ${updateReason}`);
+        continue;
+      }
+      if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
+      if (original.length !== commits.length) await validate(github, context, pull, core);
+      const reason = eligibility(original, dependencies);
       if (reason) {
         core.info(`#${pull.number}: ${reason}`);
         continue;
@@ -189,7 +223,7 @@ async function run({
       core.info(`#${pull.number}: eligible, minimum score ${Math.min(...dependencies.map((d) => d.compatScore))}%`);
     } catch (error) {
       failed = true;
-      core.warning(`#${candidate.number}: auto-merge evaluation failed (${error.name}); left for retry`);
+      core.warning(`#${candidate.number}: auto-merge evaluation failed: ${error.message}; left for retry`);
     }
   }
   await ensureMainRun({ github, context, core, branch, mainWorkflow });
@@ -199,6 +233,7 @@ async function run({
 module.exports = {
   run,
   eligibility,
+  updateEligibility,
   trustedPull,
   readDependencies,
   ensureMainRun,

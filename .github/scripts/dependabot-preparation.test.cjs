@@ -1,0 +1,643 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { join, resolve } = require("node:path");
+const {
+  CODING,
+  PROVENANCE,
+  INPUTS,
+  hash,
+  generatedPaths,
+  validateManifest,
+  updateProvenance,
+} = require("./dependency-files.cjs");
+const {
+  dependencyCommits,
+  inspect,
+  requestPreparation,
+  publish,
+  waitForPublishedHead,
+} = require("./dependabot-preparation.cjs");
+const { requestValidation, runDispatchedPolicy } = require("./dependabot-validation.cjs");
+
+const prGuardScript = execFileSync("python3", ["-c",
+  "import sys,yaml; w=yaml.safe_load(open(sys.argv[1])); print(w['jobs']['guard']['steps'][-1]['with']['script'])",
+  resolve(__dirname, "../workflows/pr-validation.yml"),
+], { encoding: "utf8" });
+const executePrGuard = new (Object.getPrototypeOf(async function () {}).constructor)("github", "context", "core", "require", prGuardScript);
+async function runPullRequestPolicy(github, event, core, trustedMainSha, policy) {
+  await executePrGuard(github, event, core, (module) => {
+    if (module === "node:child_process") return { execFileSync: () => trustedMainSha };
+    if (module === "./automation/.github/scripts/dependabot-validation.cjs") {
+      return { runPolicy: policy, runDispatchedPolicy };
+    }
+    throw new Error(`Unexpected workflow import: ${module}`);
+  });
+}
+
+const bot = { login: "dependabot[bot]", id: 49699333 };
+const owner = { login: "owner", id: 100 };
+const actions = { login: "github-actions[bot]", id: 41898282 };
+const head = "a".repeat(40);
+const base = "b".repeat(40);
+const generated = "c".repeat(40);
+const manifest = {
+  name: "@owner/root",
+  version: "1.0.0",
+  scripts: { build: "tsc" },
+  devDependencies: { example: "1.0.0", "@types/node": "22.20.0" },
+};
+const coding = { ...manifest, name: "@owner/coding" };
+const provenance = { "package.json": "old", "npm-shrinkwrap.json": "old", "src/index.ts": "preserved" };
+const commit = { sha: head, author: bot, commit: { verification: { verified: true } } };
+const context = { repo: { owner: "owner", repo: "repo" }, ref: "refs/heads/main", sha: base };
+const pull = {
+  number: 1,
+  user: bot,
+  state: "open",
+  draft: false,
+  author_association: "NONE",
+  head: { sha: head, ref: "dependabot/npm_and_yarn/example-1.0.1", repo: { full_name: "owner/repo" } },
+  base: { ref: "main", sha: base, repo: { owner } },
+};
+
+function harness() {
+  const state = {
+    pull: structuredClone(pull),
+    commits: [structuredClone(commit)],
+    files: [{ filename: `${CODING}/package.json`, status: "modified" }],
+    runs: [],
+    guardRuns: [],
+    dispatches: [],
+    comments: [],
+    messages: [],
+    published: [],
+    reported: [],
+    ahead: 0,
+    generated: { parents: [{ sha: head }], files: [{ filename: PROVENANCE, status: "modified" }] },
+  };
+  const contents = {
+    "package.json": JSON.stringify(manifest),
+    [`${CODING}/package.json`]: JSON.stringify(coding),
+    [`${CODING}/npm-shrinkwrap.json`]: "{}",
+    [PROVENANCE]: JSON.stringify(provenance),
+  };
+  const github = {
+    graphql: async (query, input) => {
+      if (query.startsWith("mutation")) {
+        state.published.push(input);
+        state.pull = { ...state.pull, head: { ...state.pull.head, sha: generated } };
+        state.commits.push({ sha: generated });
+        return { createCommitOnBranch: { commit: { oid: generated } } };
+      }
+      return { repository: { object: { signature: { isValid: true, wasSignedByGitHub: true } } } };
+    },
+    rest: {
+      git: { getRef: async ({ ref }) => ({ data: { object: { sha: ref === "heads/main" ? base : generated } } }) },
+      repos: {
+        get: async (repo) => {
+          assert.deepEqual(repo, context.repo);
+          return { data: { default_branch: "main", full_name: "owner/repo" } };
+        },
+        getContent: async ({ path }) => ({
+          data: { type: "file", encoding: "base64", content: Buffer.from(contents[path]).toString("base64") },
+        }),
+        getCommit: async () => ({ data: state.generated }),
+        compareCommitsWithBasehead: async () => ({ data: { ahead_by: state.ahead } }),
+      },
+      pulls: { get: async () => ({ data: state.pull }), listCommits: "commits", listFiles: "files" },
+      actions: { listWorkflowRuns: "runs", createWorkflowDispatch: async (input) => state.dispatches.push(input) },
+      checks: {
+        create: async (input) => {
+          state.reported.push(input);
+          return { data: { id: 10 } };
+        },
+        update: async (input) => state.reported.push(input),
+      },
+      issues: { listComments: "comments", createComment: async (input) => state.messages.push(input) },
+    },
+    paginate: async (endpoint, params) => state[endpoint === "runs" && params.workflow_id === "dependabot-guard.yml" ? "guardRuns" : endpoint],
+  };
+  const paths = generatedPaths(manifest, coding);
+  const artifacts = {
+    [PROVENANCE]: JSON.stringify(updateProvenance(provenance, contents[`${CODING}/package.json`], "{}")),
+    [paths[3]]: "root archive",
+    [paths[4]]: "coding archive",
+  };
+  artifacts.PACKAGE_SHA256 = paths
+    .slice(3)
+    .sort()
+    .map((path) => `${hash(artifacts[path])}  ${path}\n`)
+    .join("");
+  artifacts.PACKAGE_NIX_HASHES = `source=sha256-${hash(artifacts[paths[3]], "base64")}\nnpm_deps=sha256-${hash("deps", "base64")}\n`;
+  const payload = {
+    number: 1,
+    head,
+    base,
+    files: paths.map((path) => ({ path, contents: Buffer.from(artifacts[path]).toString("base64") })),
+  };
+  const metadata = () => [
+    { updateType: "version-update:semver-patch", prevVersion: "1.0.0", newVersion: "1.0.1", compatScore: 75 },
+  ];
+  return { state, github, payload, metadata, contents };
+}
+
+test("dependency versions can change without reauthorizing scripts or package identity", () => {
+  const updated = { ...manifest, devDependencies: { ...manifest.devDependencies, example: "1.0.1" } };
+  assert.doesNotThrow(() => validateManifest(manifest, updated));
+  for (const invalid of [
+    { ...updated, scripts: { build: "untrusted" } },
+    { ...updated, version: "2.0.0" },
+    { ...updated, devDependencies: { ...updated.devDependencies, extra: "1.0.0" } },
+    { ...updated, devDependencies: { example: "1.0.1" } },
+    { ...updated, devDependencies: { ...updated.devDependencies, "@types/node": "26.4.1" } },
+  ])
+    assert.throws(() => validateManifest(manifest, invalid));
+});
+
+test("provenance refresh preserves every non-dependency hash", () => {
+  const updated = updateProvenance(provenance, "package", "lock");
+  assert.equal(updated["src/index.ts"], "preserved");
+  assert.equal(updated["package.json"], hash("package"));
+  assert.equal(updated["npm-shrinkwrap.json"], hash("lock"));
+  assert.throws(() => updateProvenance({}, "package", "lock"));
+});
+
+test("preparation inspects only a current signed same-repository npm update", async () => {
+  const h = harness();
+  assert.equal((await inspect(h.github, context, 1, head)).pull.head.sha, head);
+  for (const change of [
+    { user: owner },
+    { draft: true },
+    { state: "closed" },
+    { head: { ...pull.head, sha: base } },
+    { head: { ...pull.head, repo: { full_name: "fork/repo" } } },
+  ]) {
+    h.state.pull = { ...pull, ...change };
+    await assert.rejects(inspect(h.github, context, 1, head));
+  }
+  h.state.pull = pull;
+  await assert.rejects(inspect(h.github, { ...context, ref: "refs/heads/feature" }, 1, head));
+  h.state.files.push({ filename: "src/plugin.ts", status: "modified" });
+  await assert.rejects(inspect(h.github, context, 1, head), /only accepts/);
+  h.state.files = [{ filename: INPUTS[0], status: "renamed" }];
+  await assert.rejects(inspect(h.github, context, 1, head), /only accepts/);
+  h.state.files = [{ filename: INPUTS[0], status: "modified" }];
+  h.state.commits[0].commit.verification.verified = false;
+  await assert.rejects(inspect(h.github, context, 1, head), /signed/);
+});
+
+test("a signed preparation commit may only follow signed Dependabot commits and modify generated files", async () => {
+  const h = harness();
+  const prepared = {
+    sha: generated,
+    author: actions,
+    commit: {
+      verification: { verified: true },
+      message: `Regenerate dependency artifacts\n\nDependabot-Head: ${head}`,
+    },
+  };
+  const updated = { ...pull, head: { ...pull.head, sha: generated } };
+  assert.deepEqual(await dependencyCommits(h.github, context.repo, updated, [commit, prepared]), [commit]);
+  assert.deepEqual(await dependencyCommits(h.github, context.repo, updated, [commit, { ...prepared, author: owner }]), [
+    commit,
+  ]);
+  for (const invalid of [
+    { ...prepared, author: { login: "stranger", id: 200 } },
+    { ...prepared, author: { login: "github-actions[bot]", id: 200 } },
+    { ...prepared, commit: { ...prepared.commit, verification: { verified: false } } },
+    { ...prepared, commit: { ...prepared.commit, message: "unrelated commit" } },
+  ])
+    await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, invalid]));
+  h.state.generated.files = [{ filename: `${CODING}/package.json`, status: "modified" }];
+  await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, prepared]), /outside/);
+  h.state.generated.files = [{ filename: PROVENANCE, status: "removed" }];
+  await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, prepared]), /outside/);
+  h.state.generated.parents = [{ sha: base }];
+  await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, prepared]), /outside/);
+  h.state.generated = { parents: [{ sha: head }], files: [{ filename: PROVENANCE, status: "modified" }] };
+  h.github.graphql = async () => ({
+    repository: { object: { signature: { isValid: true, wasSignedByGitHub: false } } },
+  });
+  await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, prepared]), /signed by GitHub/);
+});
+
+test("preparation dispatches once per head and does not intercept action updates", async () => {
+  const h = harness();
+  const core = { info() {} };
+  assert.equal(await requestPreparation(h.github, context, pull, core), true);
+  assert.equal(h.state.dispatches[0].inputs.expected_head, head);
+  h.state.runs.push({ display_title: `Prepare dependencies #1 at ${head}`, conclusion: "failure" });
+  await requestPreparation(h.github, context, pull, core);
+  assert.equal(h.state.dispatches.length, 1);
+  h.state.files = [{ filename: ".github/workflows/ci.yml" }];
+  assert.equal(await requestPreparation(h.github, context, pull, core), false);
+});
+
+test("publication limits files and uses expectedHeadOid for an atomic update", async () => {
+  const h = harness();
+  assert.equal(await publish(h.github, context, h.payload, "unused", h.metadata), generated);
+  assert.equal(h.state.published[0].input.expectedHeadOid, head);
+  assert.deepEqual(h.state.published[0].input.fileChanges.additions, h.payload.files);
+});
+
+test("publication waits for lagging PR metadata and commit lists", async () => {
+  const h = harness();
+  const pauses = [];
+  h.github.rest.git.getRef = async () => ({ data: { object: { sha: pauses.length ? generated : head } } });
+  await waitForPublishedHead(h.github, context.repo, pull, generated, async (ms) => {
+    pauses.push(ms);
+    h.state.pull = { ...pull, head: { ...pull.head, sha: generated } };
+    if (pauses.length === 2) h.state.commits.push({ sha: generated });
+  });
+  assert.deepEqual(pauses, [2000, 2000]);
+});
+
+test("publication rejects genuine branch changes without retrying", async () => {
+  for (const mutate of [
+    (h) => {
+      h.state.pull.head.sha = base;
+    },
+    (h) => {
+      h.state.pull.state = "closed";
+    },
+    (h) => {
+      h.state.pull.base.sha = head;
+    },
+    (h) => {
+      h.github.rest.git.getRef = async () => ({ data: { object: { sha: base } } });
+    },
+  ]) {
+    const h = harness();
+    mutate(h);
+    let sleeps = 0;
+    await assert.rejects(
+      waitForPublishedHead(h.github, context.repo, pull, generated, async () => {
+        sleeps++;
+      }),
+      /PR changed/,
+    );
+    assert.equal(sleeps, 0);
+  }
+});
+
+test("publication stops waiting after a bounded metadata delay", async () => {
+  const h = harness();
+  let sleeps = 0;
+  await assert.rejects(
+    waitForPublishedHead(h.github, context.repo, pull, generated, async () => {
+      sleeps++;
+    }),
+    /not yet visible/,
+  );
+  assert.equal(sleeps, 9);
+});
+
+test("the PR guard checkout can execute its trusted policy without application code", () => {
+  const root = resolve(__dirname, "../..");
+  const directory = mkdtempSync(join(tmpdir(), "refresh-checkout-"));
+  try {
+    const selection = execFileSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import sys, yaml",
+          "with open(sys.argv[1]) as handle: workflow = yaml.safe_load(handle)",
+          "job = workflow['jobs']['guard']",
+          "assert job['name'] == 'guard' and 'if' not in job",
+          "assert set(workflow.get('on', workflow.get(True))) == {'pull_request', 'workflow_dispatch'}",
+          "assert job['permissions'] == {'contents': 'read', 'pull-requests': 'read'}",
+          "step = next(s for s in job['steps'] if s.get('name') == 'Read the trusted main policy')",
+          "assert step['with']['ref'] == 'main' and step['with']['persist-credentials'] is False",
+          "print(step['with']['sparse-checkout'])",
+        ].join("\n"),
+        join(root, ".github/workflows/pr-validation.yml"),
+      ],
+      { encoding: "utf8" },
+    );
+    const checkout = join(directory, "automation");
+    for (const path of selection.trim().split("\n")) {
+      cpSync(join(root, path), join(checkout, path), { recursive: true });
+    }
+    const fixture = join(directory, "fixture");
+    mkdirSync(fixture);
+    for (const [name, value] of Object.entries({
+      "files.json": "[]",
+      head_sha: generated,
+      author_association: "NONE",
+      author_login: bot.login,
+    }))
+      writeFileSync(join(fixture, name), value);
+    const result = execFileSync("python3", [join(checkout, ".github/scripts/verify-prepared-policy.py"), fixture], {
+      encoding: "utf8",
+    });
+    assert.match(result, /Policy guard passed/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function preparedHarness() {
+  const h = harness();
+  h.state.pull.head.sha = generated;
+  h.state.commits.push({
+    sha: generated,
+    author: actions,
+    commit: {
+      verification: { verified: true },
+      message: `Regenerate dependency artifacts\n\nDependabot-Head: ${head}`,
+    },
+  });
+  return h;
+}
+
+const dispatchedContext = {
+  ...context,
+  eventName: "workflow_dispatch",
+  sha: generated,
+  ref: `refs/heads/${pull.head.ref}`,
+  payload: { inputs: { number: "1", expected_head: generated } },
+};
+
+function pullRequestContext(current) {
+  return { repo: context.repo, eventName: "pull_request", ref: "refs/pull/1/merge",
+    payload: { pull_request: structuredClone(current) } };
+}
+
+test("PR validation evaluates regular and prepared heads with trusted main policy", async () => {
+  for (const create of [harness, preparedHarness]) {
+    const h = create();
+    let evaluated;
+    await runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, base,
+      async (_github, repo, current, files) => {
+        assert.deepEqual(repo, context.repo);
+        assert.equal(files, h.state.files);
+        evaluated = current.head.sha;
+      });
+    assert.equal(evaluated, h.state.pull.head.sha);
+    assert.deepEqual(h.state.reported, []);
+  }
+});
+
+test("PR validation rejects stale events and untrusted policy revisions", async () => {
+  for (const change of [
+    (event) => { event.eventName = "push"; },
+    (event) => { event.ref = "refs/heads/main"; },
+    (event) => { event.payload.pull_request.head.sha = generated; },
+    (event) => { event.payload.pull_request.base.sha = generated; },
+  ]) {
+    const h = harness();
+    const event = pullRequestContext(h.state.pull);
+    change(event);
+    await assert.rejects(runPullRequestPolicy(h.github, event, { info() {} }, base, async () => assert.fail()));
+  }
+  const h = harness();
+  await assert.rejects(runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, head,
+    async () => assert.fail()));
+});
+
+test("PR policy failures and changes during evaluation fail the guard", async () => {
+  for (const evaluate of [
+    async () => { throw new Error("Policy failed"); },
+    async (h) => { h.state.pull = { ...h.state.pull, head: { ...h.state.pull.head, sha: generated } }; },
+    async (h) => { h.state.pull = { ...h.state.pull, base: { ...h.state.pull.base, sha: generated } }; },
+    async (h) => { h.state.pull = { ...h.state.pull, state: "closed" }; },
+  ]) {
+    const h = harness();
+    await assert.rejects(runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, base,
+      async () => evaluate(h)));
+  }
+});
+
+test("prepared updates dispatch validation without posting checks into an approval-pending suite", async () => {
+  const h = preparedHarness();
+  await requestValidation(h.github, context, h.state.pull, { info() {} });
+  assert.deepEqual(h.state.reported, []);
+  assert.deepEqual(h.state.dispatches, [
+    {
+      ...context.repo,
+      workflow_id: "pr-validation.yml",
+      ref: pull.head.ref,
+      inputs: { number: "1", expected_head: generated },
+    },
+  ]);
+});
+
+test("the dispatched job evaluates the prepared SHA with the trusted main policy", async () => {
+  const h = preparedHarness();
+  let evaluated;
+  await runDispatchedPolicy(h.github, dispatchedContext, { info() {} }, base, async (_github, _repo, current) => {
+    evaluated = current.head.sha;
+  });
+  assert.equal(evaluated, generated);
+  assert.deepEqual(h.state.reported, []);
+  assert.deepEqual(h.state.dispatches, []);
+});
+
+test("the dispatched policy preserves the Actions context repository getter", async () => {
+  const h = preparedHarness();
+  class ActionsContext {
+    get repo() {
+      return context.repo;
+    }
+  }
+  const { repo, ...fields } = dispatchedContext;
+  const actual = Object.assign(new ActionsContext(), fields);
+  assert.equal(Object.hasOwn(actual, "repo"), false);
+  let evaluated = false;
+  await runDispatchedPolicy(h.github, actual, { info() {} }, base, async (_github, repository) => {
+    assert.deepEqual(repository, repo);
+    evaluated = true;
+  });
+  assert.equal(evaluated, true);
+});
+
+test("prepared updates reuse PR validation including its guard", async () => {
+  for (const conclusion of [null, "success", "failure"]) {
+    const h = preparedHarness();
+    h.state.runs = [{ head_sha: generated, event: "pull_request", conclusion }];
+    await requestValidation(h.github, context, h.state.pull, { info() {} });
+    assert.deepEqual(h.state.dispatches, []);
+  }
+});
+
+test("cancelled or approval-blocked validation is recovered without replacing failed gates", async () => {
+  for (const conclusion of ["cancelled", "skipped", "action_required", "stale"]) {
+    const h = preparedHarness();
+    h.state.runs = [{ head_sha: generated, event: "pull_request", conclusion }];
+    h.state.guardRuns = [{ head_sha: generated, event: "workflow_dispatch", conclusion: "failure" }];
+    await requestValidation(h.github, context, h.state.pull, { info() {} });
+    assert.deepEqual(h.state.dispatches.map((dispatch) => dispatch.workflow_id), ["pr-validation.yml"]);
+  }
+});
+
+test("a failed policy fails the dispatched job", async () => {
+  const h = preparedHarness();
+  await assert.rejects(
+    runDispatchedPolicy(h.github, dispatchedContext, { info() {} }, base, async () => {
+      throw new Error("Policy guard failed");
+    }),
+    /Policy guard failed/,
+  );
+  assert.deepEqual(h.state.reported, []);
+  assert.deepEqual(h.state.dispatches, []);
+});
+
+test("a head or base change or closed PR during policy evaluation fails the job", async () => {
+  for (const mutate of [
+    (h) => {
+      h.state.pull = { ...h.state.pull, head: { ...h.state.pull.head, sha: head } };
+    },
+    (h) => {
+      h.state.pull = { ...h.state.pull, base: { ...h.state.pull.base, sha: head } };
+    },
+    (h) => {
+      h.state.pull = { ...h.state.pull, state: "closed" };
+    },
+  ]) {
+    const h = preparedHarness();
+    await assert.rejects(
+      runDispatchedPolicy(h.github, dispatchedContext, { info() {} }, base, async () => mutate(h)),
+      /changed during/,
+    );
+  }
+});
+
+test("refresh recovers a missing dispatch and reuses active, successful and failed validation runs", async () => {
+  const h = preparedHarness();
+  await requestValidation(h.github, context, h.state.pull, { info() {} });
+  assert.equal(h.state.dispatches.length, 1);
+  for (const conclusion of [null, "success", "failure"]) {
+    h.state.runs = [{ head_sha: generated, conclusion, event: "workflow_dispatch" }];
+    h.state.guardRuns = h.state.runs;
+    await requestValidation(h.github, context, h.state.pull, { info() {} });
+    assert.equal(h.state.dispatches.length, 1);
+  }
+  assert.deepEqual(h.state.reported, []);
+});
+
+test("the policy job rejects mismatched events, refs, inputs, heads and trusted main revisions", async () => {
+  for (const override of [
+    { eventName: "pull_request" },
+    { ref: "refs/heads/main" },
+    { sha: head },
+    { payload: { inputs: { number: "1; false", expected_head: generated } } },
+    { payload: { inputs: { number: "1", expected_head: head } } },
+    { payload: {} },
+  ]) {
+    const h = preparedHarness();
+    let evaluated = false;
+    await assert.rejects(
+      runDispatchedPolicy(h.github, { ...dispatchedContext, ...override }, { info() {} }, base, async () => {
+        evaluated = true;
+      }),
+    );
+    assert.equal(evaluated, false);
+  }
+  const h = preparedHarness();
+  await assert.rejects(
+    runDispatchedPolicy(h.github, dispatchedContext, { info() {} }, head, async () => {}),
+    /current same-repository/,
+  );
+});
+
+test("dispatch refuses workflow changes, forged artifact commits and stale heads", async () => {
+  for (const mutate of [
+    (h) => h.state.files.push({ filename: ".github/workflows/pr-validation.yml", status: "modified" }),
+    (h) => {
+      h.state.commits[1].author = bot;
+    },
+    (h) => {
+      h.state.pull.head.sha = head;
+    },
+  ]) {
+    const h = preparedHarness();
+    const snapshot = structuredClone(h.state.pull);
+    mutate(h);
+    await assert.rejects(requestValidation(h.github, context, snapshot, { info() {} }, async () => {}));
+    await assert.rejects(runDispatchedPolicy(h.github, dispatchedContext, { info() {} }, base, async () => {}));
+    assert.deepEqual(h.state.reported, []);
+    assert.deepEqual(h.state.dispatches, []);
+  }
+});
+
+test("dispatch outside main is rejected before any check is reported", async () => {
+  const h = preparedHarness();
+  await assert.rejects(
+    requestValidation(h.github, { ...context, ref: "refs/heads/feature" }, h.state.pull, { info() {} }),
+  );
+  assert.deepEqual(h.state.reported, []);
+});
+
+for (const [name, mutate] of [
+  [
+    "head race",
+    (h) => {
+      h.state.pull.head.sha = generated;
+    },
+  ],
+  [
+    "base race",
+    (h) => {
+      h.state.pull.base.sha = generated;
+    },
+  ],
+  [
+    "extra file",
+    (h) => {
+      h.payload.files.push({ path: ".github/workflows/main.yml", contents: "" });
+    },
+  ],
+  [
+    "duplicate file",
+    (h) => {
+      h.payload.files[0] = h.payload.files[1];
+    },
+  ],
+  [
+    "source provenance rewrite",
+    (h) => {
+      h.payload.files[0].contents = Buffer.from(JSON.stringify({ ...provenance, "src/index.ts": "changed" })).toString(
+        "base64",
+      );
+    },
+  ],
+  [
+    "incorrect checksum",
+    (h) => {
+      h.payload.files[1].contents = Buffer.from("wrong").toString("base64");
+    },
+  ],
+  [
+    "incorrect Nix source hash",
+    (h) => {
+      h.payload.files[2].contents = Buffer.from(
+        `source=sha256-${hash("other", "base64")}\nnpm_deps=sha256-${hash("deps", "base64")}\n`,
+      ).toString("base64");
+    },
+  ],
+  [
+    "extra Nix hash field",
+    (h) => {
+      h.payload.files[2].contents = Buffer.from(
+        `${Buffer.from(h.payload.files[2].contents, "base64")}extra=value\n`,
+      ).toString("base64");
+    },
+  ],
+  [
+    "ineligible metadata",
+    (h) => {
+      h.metadata = () => [];
+    },
+  ],
+]) {
+  test(`publication rejects ${name}`, async () => {
+    const h = harness();
+    mutate(h);
+    await assert.rejects(publish(h.github, context, h.payload, "unused", h.metadata));
+    assert.equal(h.state.published.length, 0);
+  });
+}
