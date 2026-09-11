@@ -452,6 +452,8 @@ jobs:
                       return
 
           CI_REQUIRED_STEPS = (
+              'Release automation tests',
+              'Audit release tools', 'Release policy tests',
               'Tests and coverage', 'Verify package', 'Nix dependency hash',
               'Gitleaks', 'Semgrep', 'Trivy dependency gate', 'Setup Trivy',
               'Sonar finding reporter tests',
@@ -459,6 +461,8 @@ jobs:
           # Name-only pins are not enough: each required step must still carry
           # the substance of its gate (checked on the normalized run text).
           CI_RUN_SIGNATURES = {
+              'Release automation tests': ('node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs',),
+              'Release policy tests': ('python3 .github/scripts/release-policy.test.py',),
               'Verify package': (
                   'npm pack', 'sha256sum --check PACKAGE_SHA256',
                   'cmp ', 'grep -Fxq package/npm-shrinkwrap.json',
@@ -494,7 +498,17 @@ jobs:
               if doc.get('name') != 'ci':
                   fail('ci.yml: workflow name must remain ci')
               require_events(path, doc, ('workflow_call',))
-              require_job_set(path, doc, ('checks',))
+              require_job_set(path, doc, ('checks', 'combination'))
+              combination = job_named(doc, 'combination')
+              if combination is None:
+                  fail('ci.yml: release combination gate is missing')
+              else:
+                  for step in iter_steps(combination):
+                      if isinstance(step.get('uses'), str):
+                          step['uses'] = re.sub(r'@[0-9a-f]{40}$', '@PINNED', step['uses'])
+                  digest = hashlib.sha256(json.dumps(combination, sort_keys=True).encode()).hexdigest()
+                  if digest != 'dce6a285344679f7cbbf110c80fdbaa37f84ac05e93846fe8c76a9ae46b58060':
+                      fail('ci.yml: release combination must retain its reviewed checks and pinned inputs')
               checks = job_named(doc, 'checks')
               if checks is None:
                   fail('ci.yml: jobs.checks must exist')
@@ -1079,6 +1093,8 @@ jobs:
           # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
+              '.github/workflows/main.yml': ('d0ea8d6df4e6543b5e64a15d55f96cdf585b9009b24105e81a5d8837362824f3',),
+              '.github/workflows/release.yml': ('b8963c9f6c9c98888c1dc77dd60d7a69e10a27c8bf5c14c296dde272141040bf',),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
               '.github/workflows/dependabot-preparation.yml': ('c8d826e549d44cdbb850df7580e681957b76c8755510a9be7517c0978447b171', '82cb9992e9aec4e8cd43a02d94cf114e95eb9421bc35acef60fd2fdb671f1d09'),
               '.github/workflows/dependabot-policy-tests.yml': ('157b9cac1669869fdacb9b9780bfaec7ffb5d01a63f803b3f1e09cbc7697b448',),
@@ -1104,6 +1120,23 @@ jobs:
               if digest not in AUTOMATION_SHAPES[path]:
                   fail(f'{path}: automation must match its reviewed workflow shape')
 
+          RELEASE_SOURCE_HASHES = {
+              '.github/scripts/package.json': '9c5ae4358d83ef9a326dedb33bec455aed50f32107ba0f72b502059f92a95aa5',
+              '.github/scripts/package-lock.json': 'a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e',
+              '.github/scripts/combination.cjs': 'dad2f629eca60a28c0979d286edc1954ac487911a70355f5d9c83692ed15af0c',
+              '.github/scripts/combination-smoke.sh': '05783e5cf9a90f693a2273c611dd4693c64d23b48034b1f3920aabc2ca479ad3',
+              '.github/scripts/combination-smoke.mjs': '2b1f14178c0e5954b80bfa25e8b833a1f62cad5b6da5c327ce7b92f74f1014e1',
+              '.github/scripts/release.cjs': '3cdf59a0283e8dc84bcb83b1499cd7bece9c63d845b374faa332cbb62372bc8c',
+              '.github/scripts/release-settings.cjs': 'c2502d720dc7c1355b3497a38ac7db825a16307aa0e146cdcf313871445f15ff',
+              '.github/scripts/release.test.cjs': 'fe86bb1766225c20c13084857b7405879ab980791e83c4298d3a09fa796ac12a',
+              '.github/scripts/release-policy.test.py': '0bbbbb3ac61af2f357cc88ba9b99f246c22ec7ded621704c93c8634e113285d8',
+              '.github/rulesets/protect-release-branches.json': '44d18bc698688aef02d6c7fe3c37323ca3c8c771826c874773d47867c0564a85',
+          }
+
+          def gate_release_source(path, content):
+              if hashlib.sha256(content.encode()).hexdigest() != RELEASE_SOURCE_HASHES[path]:
+                  fail(f'{path}: release automation must match its reviewed policy')
+
           GATES = {
               '.github/workflows/ci.yml': gate_ci,
               '.github/workflows/aislop.yml': gate_aislop,
@@ -1125,6 +1158,7 @@ jobs:
           }
 
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
+          GATES.update({path: gate_release_source for path in RELEASE_SOURCE_HASHES})
           GATES.update({path: gate_dependency_preparation for path in DEPENDENCY_PREPARATION_SCRIPTS})
           protected = set(GATES)
 

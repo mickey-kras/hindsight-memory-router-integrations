@@ -1,7 +1,13 @@
 name: main
 
 on:
+  workflow_call:
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: Create a pinned release branch and automatically release after checks
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -23,7 +29,7 @@ jobs:
 
   quality:
     name: quality
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
     permissions:
       contents: read
       security-events: write
@@ -31,7 +37,7 @@ jobs:
 
   aislop:
     name: aislop
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
     permissions:
       contents: read
       security-events: write
@@ -39,7 +45,7 @@ jobs:
 
   codeql:
     name: codeql
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
     permissions:
       contents: read
       security-events: write
@@ -106,3 +112,87 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: python3 .github/scripts/sync-sonar-findings.py .scannerwork/report-task.txt
+
+  prepare-release:
+    name: create release branch
+    needs: [quality, aislop, codeql, sonar]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.create_release
+    runs-on: ubuntu-latest
+    environment: release-automation
+    concurrency:
+      group: release-preparation-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - name: Install release tools
+        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
+      - name: Release App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Freeze inputs and create release branch
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: await require('./.github/scripts/release.cjs').prepare({ github, context, core });
+
+  publish:
+    name: publish packages
+    needs: [quality, aislop, codeql]
+    if: startsWith(github.ref, 'refs/heads/release/')
+    runs-on: ubuntu-latest
+    environment: release-automation
+    concurrency:
+      group: package-release-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Release preflight
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: await require('./.github/scripts/release.cjs').validate({ github, context, core });
+
+      - name: Attest tested packages
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: packages/*.tgz
+          create-storage-record: false
+      - name: Install release tools
+        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
+      - name: Release App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Publish immutable release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: await require('./.github/scripts/release.cjs').finalize({ github, context, core });
