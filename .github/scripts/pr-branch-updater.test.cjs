@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { run } = require("./pr-branch-updater.cjs");
 
 function fixture({ mergeable = true, ahead = 1, fail = false, fork = false, user } = {}) {
-  const calls = { updates: [], sleeps: [], failures: [], comparisons: [], recreates: [] };
+  const calls = { updates: [], sleeps: [], failures: [], comparisons: [] };
   let reads = 0;
   const pull = {
     number: 1,
@@ -47,11 +47,6 @@ function fixture({ mergeable = true, ahead = 1, fail = false, fork = false, user
       context: { repo: { owner: "owner", repo: "repo" } },
       core: { info: () => {}, summary, setFailed: (value) => calls.failures.push(value) },
       sleep: async (ms) => calls.sleeps.push(ms),
-      verify: async () => {},
-      recreate: async (_github, _context, current) => {
-        calls.recreates.push(current.number);
-        return true;
-      },
     },
   };
 }
@@ -96,20 +91,19 @@ test("API failure is not reported as success", async () => {
   assert.equal(calls.failures.length, 1);
 });
 
-test("immediately asks Dependabot to recreate a stale branch", async () => {
+test("leaves stale Dependabot branches to scheduled native rebasing", async () => {
   const { args, calls } = fixture({ user: { login: "dependabot[bot]", id: 49699333 } });
   await run(args);
   assert.deepEqual(calls.updates, []);
-  assert.deepEqual(calls.recreates, [1]);
   assert.deepEqual(calls.failures, []);
 });
 
-test("does not recreate a Dependabot branch with untrusted commits", async () => {
-  const { args, calls } = fixture({ user: { login: "dependabot[bot]", id: 49699333 } });
-  args.verify = async () => { throw new Error("untrusted commits"); };
+test("does not involve Dependabot when its branch is current", async () => {
+  const { args, calls } = fixture({ user: { login: "dependabot[bot]", id: 49699333 }, ahead: 0 });
   await run(args);
-  assert.deepEqual(calls.recreates, []);
-  assert.equal(calls.failures.length, 1);
+  assert.deepEqual(calls.updates, []);
+  assert.deepEqual(calls.comparisons, ["head...current-main"]);
+  assert.deepEqual(calls.failures, []);
 });
 
 test("a bot-like name alone does not bypass updates", async () => {

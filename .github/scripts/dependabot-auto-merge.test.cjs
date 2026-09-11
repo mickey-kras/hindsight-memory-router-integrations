@@ -160,7 +160,6 @@ function harness({
     },
     merge: (...args) => commands.push(args),
     prepare: async () => false,
-    recreate: async () => false,
   };
   return { options, commands, dispatches, warnings, failures };
 }
@@ -213,15 +212,6 @@ test("an unknown score allows preparation but never queues auto-merge", async ()
   await run(h.options);
   assert.deepEqual(h.commands, []);
 });
-test("a stale branch waits for signed Dependabot recreation", async () => {
-  const h = harness();
-  h.options.recreate = async () => true;
-  h.options.prepare = async () => {
-    throw new Error("must not prepare a stale branch");
-  };
-  await run(h.options);
-  assert.deepEqual(h.commands, []);
-});
 test("lookup failure revokes an earlier bot queue decision", async () => {
   const h = harness({
     pulls: [{ ...pull, auto_merge: { enabled_by: { login: "github-actions[bot]" } } }],
@@ -267,17 +257,6 @@ test("manual auto-merge cannot hide a validation recovery failure", async () => 
   assert.equal(h.failures.length, 1);
 });
 
-test("manual auto-merge still refreshes stale prepared branches before validation", async () => {
-  const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }] });
-  h.options.verify = async () => commits.slice(0, -1);
-  let recreated = false;
-  h.options.recreate = async () => { recreated = true; return true; };
-  h.options.validate = async () => assert.fail("Must wait for the refreshed head");
-  await run(h.options);
-  assert.equal(recreated, true);
-  assert.deepEqual(h.commands, []);
-  assert.deepEqual(h.failures, []);
-});
 test("a failed PR does not prevent evaluation of the next PR", async () => {
   const h = harness({ pulls: [pull, { ...pull, number: 2 }] });
   h.options.metadata = (p) => {
