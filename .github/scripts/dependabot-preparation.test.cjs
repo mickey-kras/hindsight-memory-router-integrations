@@ -17,7 +17,6 @@ const {
   dependencyCommits,
   inspect,
   requestPreparation,
-  requestRecreate,
   publish,
   waitForPublishedHead,
 } = require("./dependabot-preparation.cjs");
@@ -235,25 +234,6 @@ test("preparation dispatches once per head and does not intercept action updates
   assert.equal(h.state.dispatches.length, 1);
   h.state.files = [{ filename: ".github/workflows/ci.yml" }];
   assert.equal(await requestPreparation(h.github, context, pull, core), false);
-});
-
-test("stale updates request one Dependabot recreation per head", async () => {
-  const h = harness();
-  const core = { info() {} };
-  assert.equal(await requestRecreate(h.github, context, pull, core), false);
-  h.state.ahead = 1;
-  assert.equal(await requestRecreate(h.github, context, pull, core), true);
-  h.state.comments.push({ body: h.state.messages[0].body, user: { id: 41898282 } });
-  await requestRecreate(h.github, context, pull, core);
-  assert.equal(h.state.messages.length, 1);
-});
-
-test("a changed head is not recreated", async () => {
-  const h = harness();
-  h.state.ahead = 1;
-  h.state.pull.head.sha = generated;
-  await requestRecreate(h.github, context, pull, { info() {} });
-  assert.deepEqual(h.state.messages, []);
 });
 
 test("publication limits files and uses expectedHeadOid for an atomic update", async () => {
