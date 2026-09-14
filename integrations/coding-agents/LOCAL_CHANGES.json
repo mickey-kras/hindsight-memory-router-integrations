@@ -1,5 +1,5 @@
 {
-  "DEVIATIONS.md": "7696fb7184177f0521cc7f212cb37ec7f135cfd6f489067d53cffb39629bed33",
+  "DEVIATIONS.md": "aee6c711e314113dd6754ee2ce1e43c1d495ace6e34488d26b9857b22ce6985f",
   "LICENSE": "77cf0484000e1ba583f081f38c1fe0fe88e304565a2cab8464df9f0c2ebb10c0",
   "README.md": "dffd3456f1c510bc7da15e47b38971b3fbc2fac8a05885bfa1296a4b9a6445c4",
   "UPSTREAM.json": "e618297c0a571a6892406f2601c2429f345aef8f74a1e42b78707c1a1a7a46df",
@@ -17,6 +17,7 @@
   "src/core/history.ts": "44895af5b3d1459cb5f0eb7d80db5c9184b15f09ce4f653d69897082d76a5e38",
   "src/core/hook.ts": "cadb2af55761aafe8f8d64f849395e11e456ff444a22a6b1ac99c42bbc553674",
   "src/core/host-client.ts": "3de6c25a7c28ebdbcfef8c8482cadd604d1518074d58abe42442ad3fb449616e",
+  "src/core/inject.ts": "19d2453bf6c0ee5a99e80d16e93c532f0e2c0ffcc959864ac8d1a64044e40098",
   "src/core/jsonl.test.ts": "3ab02ce9cf34534dbbb03c4fb02d0d0a9206770f57f7671b46ce7859e1417135",
   "src/core/knowledge-tools.test.ts": "a7e40e48ce421805390a8e76be86f3a652cd01dac75f41d96e07d48ec6368c75",
   "src/core/knowledge-tools.ts": "a72cf796a5f51ee5690f046ee4edfeaccd25f64eaf5458af63e3018760c74d5c",
