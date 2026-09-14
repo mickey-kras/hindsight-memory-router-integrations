@@ -3,8 +3,9 @@ const { spawnSync } = require("node:child_process");
 const SEVERITY = { low: 1, moderate: 2, high: 3, critical: 4 };
 
 function findings(report) {
-  return Object.entries(report.vulnerabilities || {}).filter(([, vulnerability]) =>
-    SEVERITY[vulnerability.severity] >= SEVERITY.moderate);
+  return Object.entries(report.vulnerabilities || {}).filter(
+    ([, vulnerability]) => SEVERITY[vulnerability.severity] >= SEVERITY.moderate,
+  );
 }
 
 function audit(directory = ".") {
@@ -17,7 +18,11 @@ function audit(directory = ".") {
       env: { ...process.env, npm_config_fetch_timeout: "60000", npm_config_fetch_retries: "1" },
     });
     let report;
-    try { report = JSON.parse(result.stdout); } catch { /* Retry registry or npm failures. */ }
+    try {
+      report = JSON.parse(result.stdout);
+    } catch {
+      /* Retry registry or npm failures. */
+    }
     if (report && !report.error) {
       const failures = findings(report);
       if (!failures.length) return;
