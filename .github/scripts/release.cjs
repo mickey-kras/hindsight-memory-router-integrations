@@ -97,11 +97,16 @@ function checkRule(rule, target, include, types, appId) {
     requireValue(isDeepStrictEqual(rule.bypass_actors, bypass), `${rule.name}: unexpected bypass actors`);
   } else {
     let review;
-    try { review = JSON.parse(process.env.RELEASE_SETTINGS_REVIEW || "null"); }
-    catch { throw new ReleaseError("Invalid RELEASE_SETTINGS_REVIEW"); }
+    try {
+      review = JSON.parse(process.env.RELEASE_SETTINGS_REVIEW || "null");
+    } catch {
+      throw new ReleaseError("Invalid RELEASE_SETTINGS_REVIEW");
+    }
     requireValue(
-      review?.app_id === Number(process.env.RELEASE_APP_ID) && review.immutable_releases === true &&
-        typeof rule.updated_at === "string" && review.rulesets?.[rule.id] === rule.updated_at,
+      review?.app_id === Number(process.env.RELEASE_APP_ID) &&
+        review.immutable_releases === true &&
+        typeof rule.updated_at === "string" &&
+        review.rulesets?.[rule.id] === rule.updated_at,
       `${rule.name}: bypass actors are redacted; record the current owner-reviewed settings in RELEASE_SETTINGS_REVIEW`,
     );
   }
@@ -362,7 +367,9 @@ async function prepare({ github, context, core, inspect }) {
   requireValue(currentMain.object.sha === context.sha, "Main advanced while freezing inputs; run preparation again");
   await github.rest.git.createRef({ ...repository, ref: `refs/heads/release/${version}`, sha: commit.sha });
   await core.summary
-    .addRaw(`Release branch: release/${version}\nMain snapshot: ${context.sha}\nHindsight: ${pin.version}\nCommit: ${commit.sha}\n`)
+    .addRaw(
+      `Release branch: release/${version}\nMain snapshot: ${context.sha}\nHindsight: ${pin.version}\nCommit: ${commit.sha}\n`,
+    )
     .write();
 }
 

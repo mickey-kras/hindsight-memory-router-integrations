@@ -128,11 +128,17 @@ if (process.argv[2] === "prepare") {
       child.once("close", resolve);
     });
     assert.equal(status, 0, stderr);
+    let diagTail = "";
+    try {
+      diagTail = readFileSync(join(state, "diag.jsonl"), "utf8").slice(-2000);
+    } catch {
+      // Diagnostics are best-effort; the assertions below carry the gate.
+    }
     assert.ok(
       traces.some(
         (item) => item.method === "POST" && item.path === `/v1/default/banks/${bank}/reflect` && item.status === 200,
       ),
-      "Packaged Codex hook must reflect through the real router",
+      `Packaged Codex hook must reflect through the real router; traces=${JSON.stringify(traces)} stderr=${stderr.slice(-2000)} diag=${diagTail}`,
     );
     assert.ok(
       !traces.some((item) => item.path.includes("unassigned")),
