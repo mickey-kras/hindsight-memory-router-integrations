@@ -45,6 +45,8 @@ jobs:
       - run: node scripts/verify-coding-upstream.mjs
       - run: node scripts/verify-openclaw-overlay.mjs
       - run: node --test scripts/verify-vendored-files.test.mjs
+      - name: Install release tools
+        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Audit release tools
         run: npm audit --prefix .github/scripts --audit-level=moderate
       - name: Release automation tests

@@ -985,7 +985,7 @@ jobs:
                   fail('.aislop/config.yml: dependency findings must remain owned by the checked npm audit')
 
           def gate_npm_audit_script(path, content):
-              expected = '25a7a36335677189c94cb3a08f19586718bca1ceb27e13b65304cee0af31853f'
+              expected = 'f28a085b4a5b4b391dcc1e0e266cb756e107cf2e40f7f8af33c66ab22f6b6d4c'
               actual = hashlib.sha256(content.encode()).hexdigest()
               if actual != expected:
                   fail(f'{path}: checked audit policy must match the reviewed implementation')
