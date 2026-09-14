@@ -93,13 +93,17 @@ function checkRule(rule, target, include, types, appId) {
     `${rule.name}: unexpected ref targets`,
   );
   const bypass = appId ? [{ actor_id: appId, actor_type: "Integration", bypass_mode: "always" }] : [];
-  // GitHub may redact bypass actors unless the caller can administer the ruleset.
-  // Never interpret an omitted list as proof that no bypass exists. Native rules
-  // enforce creation; the administrator must review actors during setup.
   if (Object.hasOwn(rule, "bypass_actors")) {
     requireValue(isDeepStrictEqual(rule.bypass_actors, bypass), `${rule.name}: unexpected bypass actors`);
   } else {
-    console.info(`${rule.name}: GitHub redacted bypass actors; verify them in repository settings as documented.`);
+    let review;
+    try { review = JSON.parse(process.env.RELEASE_SETTINGS_REVIEW || "null"); }
+    catch { throw new ReleaseError("Invalid RELEASE_SETTINGS_REVIEW"); }
+    requireValue(
+      review?.app_id === Number(process.env.RELEASE_APP_ID) && review.immutable_releases === true &&
+        typeof rule.updated_at === "string" && review.rulesets?.[rule.id] === rule.updated_at,
+      `${rule.name}: bypass actors are redacted; record the current owner-reviewed settings in RELEASE_SETTINGS_REVIEW`,
+    );
   }
   const actual = new Set(rule.rules.map((item) => item.type));
   requireValue(
@@ -354,9 +358,11 @@ async function prepare({ github, context, core, inspect }) {
     tree: createdTree.sha,
     parents: [context.sha],
   });
+  const { data: currentMain } = await github.rest.git.getRef({ ...repository, ref: "heads/main" });
+  requireValue(currentMain.object.sha === context.sha, "Main advanced while freezing inputs; run preparation again");
   await github.rest.git.createRef({ ...repository, ref: `refs/heads/release/${version}`, sha: commit.sha });
   await core.summary
-    .addRaw(`Release branch: release/${version}\nHindsight: ${pin.version}\nCommit: ${commit.sha}\n`)
+    .addRaw(`Release branch: release/${version}\nMain snapshot: ${context.sha}\nHindsight: ${pin.version}\nCommit: ${commit.sha}\n`)
     .write();
 }
 

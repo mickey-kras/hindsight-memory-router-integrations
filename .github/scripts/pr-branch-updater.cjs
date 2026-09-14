@@ -1,19 +1,19 @@
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function updatePull({ github, owner, repo, number, sleep }) {
+async function updatePull({ github, owner, repo, number, sleep, baseBranch }) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const { data: pull } = await github.rest.pulls.get({
       owner,
       repo,
       pull_number: number,
     });
-    if (pull.state !== "open" || pull.base.ref !== "main" || pull.head.repo?.full_name !== `${owner}/${repo}`)
+    if (pull.state !== "open" || pull.base.ref !== baseBranch || pull.head.repo?.full_name !== `${owner}/${repo}`)
       return "ineligible";
     // PR base metadata can lag behind the branch tip after a merge.
     const { data: main } = await github.rest.git.getRef({
       owner,
       repo,
-      ref: "heads/main",
+      ref: `heads/${baseBranch}`,
     });
     const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
       owner,
@@ -44,11 +44,15 @@ async function updatePull({ github, owner, repo, number, sleep }) {
 
 async function run({ github, context, core, sleep = pause }) {
   const { owner, repo } = context.repo;
+  const baseBranch = context.ref?.replace(/^refs\/heads\//, "") || "main";
+  if (baseBranch !== "main" && !/^release\/(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(baseBranch)) {
+    throw new Error("PR updates require main or a release branch");
+  }
   const pulls = await github.paginate(github.rest.pulls.list, {
     owner,
     repo,
     state: "open",
-    base: "main",
+    base: baseBranch,
     per_page: 100,
   });
   const results = [];
@@ -58,7 +62,7 @@ async function run({ github, context, core, sleep = pause }) {
     try {
       status =
         pull.head.repo?.full_name === `${owner}/${repo}`
-          ? await updatePull({ github, owner, repo, number: pull.number, sleep })
+          ? await updatePull({ github, owner, repo, number: pull.number, sleep, baseBranch })
           : "ineligible";
     } catch (error) {
       status = `unresolved: ${error.message}`;

@@ -20,4 +20,5 @@ jobs:
       attestations: write
       pull-requests: write
     uses: ./.github/workflows/main.yml
-    secrets: inherit
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}

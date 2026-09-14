@@ -12,7 +12,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: main-${{ github.ref }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.create_release && format('dependabot-auto-merge-{0}', github.repository) || format('main-{0}', github.ref) }}
   cancel-in-progress: false
 
 permissions:
@@ -21,7 +21,7 @@ permissions:
 jobs:
   update-pr-branches:
     name: update PR branches
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
     permissions:
       contents: write
       pull-requests: write
@@ -126,6 +126,7 @@ jobs:
       contents: read
     env:
       RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+      RELEASE_SETTINGS_REVIEW: ${{ vars.RELEASE_SETTINGS_REVIEW }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
@@ -164,6 +165,7 @@ jobs:
       attestations: write
     env:
       RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+      RELEASE_SETTINGS_REVIEW: ${{ vars.RELEASE_SETTINGS_REVIEW }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
@@ -181,7 +183,7 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-path: packages/*.tgz
-          create-storage-record: false
+          create-storage-record: true
       - name: Install release tools
         run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Release App token

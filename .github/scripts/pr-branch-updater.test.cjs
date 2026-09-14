@@ -111,3 +111,26 @@ test("a bot-like name alone does not bypass updates", async () => {
   await run(args);
   assert.equal(calls.updates.length, 1);
 });
+
+test("updates PRs against the release branch that triggered validation", async () => {
+  const { args, calls } = fixture();
+  args.context.ref = "refs/heads/release/0.1.0";
+  const get = args.github.rest.pulls.get;
+  args.github.rest.pulls.get = async (options) => {
+    const result = await get(options);
+    result.data.base.ref = "release/0.1.0";
+    return result;
+  };
+  args.github.rest.git.getRef = async ({ ref }) => {
+    assert.equal(ref, "heads/release/0.1.0");
+    return { data: { object: { sha: "release-head" } } };
+  };
+  const paginate = args.github.paginate;
+  args.github.paginate = async (method, options) => {
+    assert.equal(options.base, "release/0.1.0");
+    return paginate(method, options);
+  };
+  await run(args);
+  assert.equal(calls.updates.length, 1);
+  assert.deepEqual(calls.comparisons, ["head...release-head"]);
+});

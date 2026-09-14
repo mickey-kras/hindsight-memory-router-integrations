@@ -8,6 +8,8 @@
 
 Checking the box authorizes publication after green gates. There is no second button.
 Normal main runs never publish. Create release branches and tags only through this workflow.
+Release preparation pauses Dependabot auto-merge while it runs. If main advanced
+during preparation, the run fails closed; rerun the workflow from current main.
 
 ## Versions
 
@@ -81,6 +83,7 @@ integrations manifest, even when a newer router is available separately.
    bypass. Branch protections have no bypass and require PRs, squash merges, resolved
    threads, existing scans/checks, and no force pushes/deletion. Allow initial creation
    before checks exist. Integrations also requires `quality / release combination`.
+   Confirm every rule in the templates actually imported in Settings before relying on this runbook.
 6. Keep **Protect release tags** active: block updates, deletion and force pushes,
    with **no bypass**, including the App. Compare it with the generated template.
    Keep **Enforce release tag names**; ensure it accepts plain `vX.Y.Z`.

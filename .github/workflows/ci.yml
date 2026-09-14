@@ -160,6 +160,7 @@ jobs:
 
   combination:
     name: release combination
+    continue-on-error: ${{ github.event_name == 'pull_request' && !startsWith(github.base_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

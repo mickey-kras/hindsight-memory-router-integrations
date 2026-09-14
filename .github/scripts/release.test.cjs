@@ -433,3 +433,38 @@ test("unchanged integration artifacts can be reused but changed bytes need a new
   );
   await release.checkPackageReuse(m.github, m.context.repo, [{ ...pkg, path: "packages/example-0.12.1.tgz" }]);
 });
+
+ test("preparation refuses a main update during upstream resolution before creating the branch", () =>
+  fixture(async () => {
+    const m = mock();
+    m.context.eventName = "workflow_dispatch";
+    m.context.ref = "refs/heads/main";
+    m.context.sha = base;
+    m.inspect = () => {
+      m.state.refs["heads/main"].object.sha = sha;
+      return digest;
+    };
+    await assert.rejects(release.prepare(m), /Main advanced while freezing/);
+    assert.ok(!m.state.calls.some((call) => call.startsWith("refs/heads/release/")));
+  }));
+
+ test("redacted bypass actors require an owner review of the current ruleset revision", () =>
+  fixture(async () => {
+    const rule = { ...rulesets(123)[0], id: 41, updated_at: "2026-09-11T00:00:00Z" };
+    delete rule.bypass_actors;
+    const previous = process.env.RELEASE_SETTINGS_REVIEW;
+    delete process.env.RELEASE_SETTINGS_REVIEW;
+    const check = () => release.checkRule(rule, "branch", "refs/heads/release/*", ["creation"], 123);
+    try {
+      assert.throws(check, /owner-reviewed/);
+      process.env.RELEASE_SETTINGS_REVIEW = JSON.stringify({ app_id: 123, immutable_releases: true, rulesets: { 41: rule.updated_at } });
+      check();
+      rule.updated_at = "2026-09-11T00:01:00Z";
+      assert.throws(check, /owner-reviewed/);
+      process.env.RELEASE_SETTINGS_REVIEW = "invalid";
+      assert.throws(check, /Invalid RELEASE_SETTINGS_REVIEW/);
+    } finally {
+      if (previous === undefined) delete process.env.RELEASE_SETTINGS_REVIEW;
+      else process.env.RELEASE_SETTINGS_REVIEW = previous;
+    }
+  }));
