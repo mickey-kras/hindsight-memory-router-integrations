@@ -104,10 +104,9 @@ if (process.argv[2] === "prepare") {
     const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(enc.iv_b64, "base64"));
     decipher.setAAD(Buffer.from(jcs(aad), "utf8"));
     decipher.setAuthTag(Buffer.from(enc.tag_b64, "base64"));
-    return Buffer.concat([
-      decipher.update(Buffer.from(envelope.ciphertext_b64, "base64")),
-      decipher.final(),
-    ]).toString("utf8");
+    return Buffer.concat([decipher.update(Buffer.from(envelope.ciphertext_b64, "base64")), decipher.final()]).toString(
+      "utf8",
+    );
   };
   const securityEventDump = async () => {
     try {
