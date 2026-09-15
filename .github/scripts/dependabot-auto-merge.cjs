@@ -28,11 +28,17 @@ function trustedPull(pull, repository, branch) {
 }
 
 function updateEligibility(dependencies) {
-  if (!Array.isArray(dependencies) || !dependencies.length) return "No dependency metadata";
+  const metadataReason = metadataEligibility(dependencies);
+  if (metadataReason) return metadataReason;
   for (const dependency of dependencies) {
     if (!UPDATE_TYPES.has(dependency.updateType)) return "Major or unknown update type requires manual review";
-    if (!dependency.prevVersion || !dependency.newVersion) return "Missing version pair";
   }
+  return null;
+}
+
+function metadataEligibility(dependencies) {
+  if (!Array.isArray(dependencies) || !dependencies.length) return "No dependency metadata";
+  if (dependencies.some((dependency) => !dependency.prevVersion || !dependency.newVersion)) return "Missing version pair";
   return null;
 }
 
@@ -203,12 +209,12 @@ async function run({
       }
       const dependencies = metadata(pull, repository, metadataPath);
       const updateReason = updateEligibility(dependencies);
+      if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
+      if (original.length !== commits.length) await validate(github, context, pull, core);
       if (updateReason) {
         core.info(`#${pull.number}: ${updateReason}`);
         continue;
       }
-      if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
-      if (original.length !== commits.length) await validate(github, context, pull, core);
       const reason = eligibility(original, dependencies);
       if (reason) {
         core.info(`#${pull.number}: ${reason}`);
@@ -234,6 +240,7 @@ module.exports = {
   run,
   eligibility,
   updateEligibility,
+  metadataEligibility,
   trustedPull,
   readDependencies,
   ensureMainRun,
