@@ -22,11 +22,22 @@ const {
 } = require("./dependabot-preparation.cjs");
 const { requestValidation, runDispatchedPolicy } = require("./dependabot-validation.cjs");
 
-const prGuardScript = execFileSync("python3", ["-c",
-  "import sys,yaml; w=yaml.safe_load(open(sys.argv[1])); print(w['jobs']['guard']['steps'][-1]['with']['script'])",
-  resolve(__dirname, "../workflows/pr-validation.yml"),
-], { encoding: "utf8" });
-const executePrGuard = new (Object.getPrototypeOf(async function () {}).constructor)("github", "context", "core", "require", prGuardScript);
+const prGuardScript = execFileSync(
+  "python3",
+  [
+    "-c",
+    "import sys,yaml; w=yaml.safe_load(open(sys.argv[1])); print(w['jobs']['guard']['steps'][-1]['with']['script'])",
+    resolve(__dirname, "../workflows/pr-validation.yml"),
+  ],
+  { encoding: "utf8" },
+);
+const executePrGuard = new (Object.getPrototypeOf(async function () {}).constructor)(
+  "github",
+  "context",
+  "core",
+  "require",
+  prGuardScript,
+);
 async function runPullRequestPolicy(github, event, core, trustedMainSha, policy) {
   await executePrGuard(github, event, core, (module) => {
     if (module === "node:child_process") return { execFileSync: () => trustedMainSha };
@@ -118,7 +129,8 @@ function harness() {
       },
       issues: { listComments: "comments", createComment: async (input) => state.messages.push(input) },
     },
-    paginate: async (endpoint, params) => state[endpoint === "runs" && params.workflow_id === "dependabot-guard.yml" ? "guardRuns" : endpoint],
+    paginate: async (endpoint, params) =>
+      state[endpoint === "runs" && params.workflow_id === "dependabot-guard.yml" ? "guardRuns" : endpoint],
   };
   const paths = generatedPaths(manifest, coding);
   const artifacts = {
@@ -371,20 +383,29 @@ const dispatchedContext = {
 };
 
 function pullRequestContext(current) {
-  return { repo: context.repo, eventName: "pull_request", ref: "refs/pull/1/merge",
-    payload: { pull_request: structuredClone(current) } };
+  return {
+    repo: context.repo,
+    eventName: "pull_request",
+    ref: "refs/pull/1/merge",
+    payload: { pull_request: structuredClone(current) },
+  };
 }
 
 test("PR validation evaluates regular and prepared heads with trusted main policy", async () => {
   for (const create of [harness, preparedHarness]) {
     const h = create();
     let evaluated;
-    await runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, base,
+    await runPullRequestPolicy(
+      h.github,
+      pullRequestContext(h.state.pull),
+      { info() {} },
+      base,
       async (_github, repo, current, files) => {
         assert.deepEqual(repo, context.repo);
         assert.equal(files, h.state.files);
         evaluated = current.head.sha;
-      });
+      },
+    );
     assert.equal(evaluated, h.state.pull.head.sha);
     assert.deepEqual(h.state.reported, []);
   }
@@ -392,10 +413,18 @@ test("PR validation evaluates regular and prepared heads with trusted main polic
 
 test("PR validation rejects stale events and untrusted policy revisions", async () => {
   for (const change of [
-    (event) => { event.eventName = "push"; },
-    (event) => { event.ref = "refs/heads/main"; },
-    (event) => { event.payload.pull_request.head.sha = generated; },
-    (event) => { event.payload.pull_request.base.sha = generated; },
+    (event) => {
+      event.eventName = "push";
+    },
+    (event) => {
+      event.ref = "refs/heads/main";
+    },
+    (event) => {
+      event.payload.pull_request.head.sha = generated;
+    },
+    (event) => {
+      event.payload.pull_request.base.sha = generated;
+    },
   ]) {
     const h = harness();
     const event = pullRequestContext(h.state.pull);
@@ -403,20 +432,30 @@ test("PR validation rejects stale events and untrusted policy revisions", async 
     await assert.rejects(runPullRequestPolicy(h.github, event, { info() {} }, base, async () => assert.fail()));
   }
   const h = harness();
-  await assert.rejects(runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, head,
-    async () => assert.fail()));
+  await assert.rejects(
+    runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, head, async () => assert.fail()),
+  );
 });
 
 test("PR policy failures and changes during evaluation fail the guard", async () => {
   for (const evaluate of [
-    async () => { throw new Error("Policy failed"); },
-    async (h) => { h.state.pull = { ...h.state.pull, head: { ...h.state.pull.head, sha: generated } }; },
-    async (h) => { h.state.pull = { ...h.state.pull, base: { ...h.state.pull.base, sha: generated } }; },
-    async (h) => { h.state.pull = { ...h.state.pull, state: "closed" }; },
+    async () => {
+      throw new Error("Policy failed");
+    },
+    async (h) => {
+      h.state.pull = { ...h.state.pull, head: { ...h.state.pull.head, sha: generated } };
+    },
+    async (h) => {
+      h.state.pull = { ...h.state.pull, base: { ...h.state.pull.base, sha: generated } };
+    },
+    async (h) => {
+      h.state.pull = { ...h.state.pull, state: "closed" };
+    },
   ]) {
     const h = harness();
-    await assert.rejects(runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, base,
-      async () => evaluate(h)));
+    await assert.rejects(
+      runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, base, async () => evaluate(h)),
+    );
   }
 });
 
@@ -478,7 +517,10 @@ test("cancelled or approval-blocked validation is recovered without replacing fa
     h.state.runs = [{ head_sha: generated, event: "pull_request", conclusion }];
     h.state.guardRuns = [{ head_sha: generated, event: "workflow_dispatch", conclusion: "failure" }];
     await requestValidation(h.github, context, h.state.pull, { info() {} });
-    assert.deepEqual(h.state.dispatches.map((dispatch) => dispatch.workflow_id), ["pr-validation.yml"]);
+    assert.deepEqual(
+      h.state.dispatches.map((dispatch) => dispatch.workflow_id),
+      ["pr-validation.yml"],
+    );
   }
 });
 
