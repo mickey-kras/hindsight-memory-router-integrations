@@ -38,7 +38,8 @@ function updateEligibility(dependencies) {
 
 function metadataEligibility(dependencies) {
   if (!Array.isArray(dependencies) || !dependencies.length) return "No dependency metadata";
-  if (dependencies.some((dependency) => !dependency.prevVersion || !dependency.newVersion)) return "Missing version pair";
+  if (dependencies.some((dependency) => !dependency.prevVersion || !dependency.newVersion))
+    return "Missing version pair";
   return null;
 }
 
