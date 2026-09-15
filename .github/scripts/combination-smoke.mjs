@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, randomBytes } from "node:crypto";
+import { constants, createDecipheriv, createHash, privateDecrypt, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:https";
 import { request } from "node:http";
@@ -43,6 +43,94 @@ if (process.argv[2] === "prepare") {
 } else {
   const credentials = JSON.parse(readFileSync(join(state, "credentials.json"), "utf8"));
   const traces = [];
+  const ADMIN_READ_TOKEN = "test-admin-read-token-012345678901";
+  const adminGet = (path) =>
+    new Promise((resolve, reject) => {
+      const req = request(
+        {
+          hostname: "127.0.0.1",
+          port: 8890,
+          path,
+          method: "GET",
+          headers: { authorization: `Bearer ${ADMIN_READ_TOKEN}` },
+        },
+        (res) => {
+          const chunks = [];
+          res.on("data", (chunk) => chunks.push(chunk));
+          res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  // RFC 8785 canonicalization for the flat string objects used as envelope AAD.
+  const jcs = (value) => {
+    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(jcs).join(",")}]`;
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${jcs(value[k])}`)
+      .join(",")}}`;
+  };
+  // Quarantine envelopes are AES-256-GCM with an RSA-OAEP-SHA256 wrapped key;
+  // CI generates the keypair per run, so the smoke can read back what the
+  // router's response scanner convicted instead of guessing.
+  const decryptEnvelope = (envelope) => {
+    const enc = envelope.encryption;
+    const key = privateDecrypt(
+      {
+        key: readFileSync(join(state, "key.pem")),
+        padding: constants.RSA_PKCS1_OAEP_PADDING,
+        oaepHash: "sha256",
+      },
+      Buffer.from(enc.wrapped_key_b64, "base64"),
+    );
+    const aad = {
+      version: envelope.version,
+      quarantine_id: envelope.quarantine_id,
+      created_at: envelope.created_at,
+      reason: envelope.reason,
+      ...(envelope.writer_id !== undefined ? { writer_id: envelope.writer_id } : {}),
+      ...(envelope.source !== undefined ? { source: envelope.source } : {}),
+      sha256: envelope.sha256,
+      encryption: {
+        algorithm: enc.algorithm,
+        key_wrap: enc.key_wrap,
+        aad: enc.aad,
+        wrapped_key_b64: enc.wrapped_key_b64,
+        iv_b64: enc.iv_b64,
+      },
+    };
+    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(enc.iv_b64, "base64"));
+    decipher.setAAD(Buffer.from(jcs(aad), "utf8"));
+    decipher.setAuthTag(Buffer.from(enc.tag_b64, "base64"));
+    return Buffer.concat([
+      decipher.update(Buffer.from(envelope.ciphertext_b64, "base64")),
+      decipher.final(),
+    ]).toString("utf8");
+  };
+  const securityEventDump = async () => {
+    try {
+      const queue = await adminGet("/admin/quarantine/queue?limit=500");
+      if (queue.status !== 200) return `queue=${queue.status}:${queue.body.slice(0, 300)}`;
+      const parsed = JSON.parse(queue.body);
+      const items = Array.isArray(parsed) ? parsed : (parsed.items ?? []);
+      const events = items.filter((item) => item.kind === "security_event");
+      if (events.length === 0) return "no security events";
+      const dumps = [];
+      for (const event of events.slice(-3)) {
+        const detail = await adminGet(`/admin/quarantine/items/${encodeURIComponent(event.quarantine_id)}`);
+        if (detail.status !== 200) {
+          dumps.push(`item=${event.quarantine_id} status=${detail.status}`);
+          continue;
+        }
+        dumps.push(decryptEnvelope(JSON.parse(detail.body).encrypted).slice(0, 4096));
+      }
+      return dumps.join("\n---\n");
+    } catch (error) {
+      return `security dump failed: ${error.message}`;
+    }
+  };
   const server = createServer(
     { key: readFileSync(join(state, "key.pem")), cert: readFileSync(join(state, "cert.pem")) },
     (incoming, outgoing) => {
@@ -152,11 +240,13 @@ if (process.argv[2] === "prepare") {
     } catch {
       // Diagnostics are best-effort; the assertions below carry the gate.
     }
+    const reflectOk = traces.some(
+      (item) => item.method === "POST" && item.path === `/v1/default/banks/${bank}/reflect` && item.status === 200,
+    );
+    const securityDump = reflectOk ? "" : await securityEventDump();
     assert.ok(
-      traces.some(
-        (item) => item.method === "POST" && item.path === `/v1/default/banks/${bank}/reflect` && item.status === 200,
-      ),
-      `Packaged Codex hook must reflect through the real router; traces=${JSON.stringify(traces)} stderr=${stderr.slice(-2000)} diag=${diagTail}`,
+      reflectOk,
+      `Packaged Codex hook must reflect through the real router; traces=${JSON.stringify(traces)} stderr=${stderr.slice(-2000)} diag=${diagTail} security=${securityDump}`,
     );
     assert.ok(
       !traces.some((item) => item.path.includes("unassigned")),
