@@ -50,10 +50,10 @@ jobs:
         with:
           script: |
             const { inspect } = require('./.github/scripts/dependabot-preparation.cjs');
-            const { fetchMetadata, updateEligibility } = require('./.github/scripts/dependabot-auto-merge.cjs');
+            const { fetchMetadata, preparationEligibility } = require('./.github/scripts/dependabot-auto-merge.cjs');
             const { pull } = await inspect(github, context, Number(process.env.PR_NUMBER), process.env.EXPECTED_HEAD);
             const deps = fetchMetadata(pull, `${context.repo.owner}/${context.repo.repo}`, require('node:path').resolve('metadata-action'));
-            const reason = updateEligibility(deps);
+            const reason = preparationEligibility(deps);
             if (reason) throw new Error(reason);
             core.setOutput('base', pull.base.sha);
             core.setOutput('head', pull.head.sha);

@@ -1,6 +1,8 @@
 # Coding-agent deployment
 
 Canonical source provenance and deviations live in `UPSTREAM.json`, `LOCAL_CHANGES.json`, `router.patch`, and `src/upstream/coding-agents/DEVIATIONS.md`.
+After intentionally editing vendored files, run `npm run upstream:accept` to record the new hashes; CI rejects unrecorded drift.
+Vendored dependencies track upstream's tested lockfile and move only when re-vendoring; Dependabot does not watch the vendored tree.
 
 Set `HINDSIGHT_ROUTER_CONFIG` to an absolute, operator-managed JSON file:
 

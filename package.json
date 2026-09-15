@@ -42,7 +42,8 @@
     "prepublishOnly": "npm run clean && npm run build && npm test",
     "build:coding-agents": "npm run build --prefix src/upstream/coding-agents",
     "test:coding-agents": "vitest run tests/coding-agents-upstream.test.ts",
-    "audit:coding-agents": "npm audit --prefix src/upstream/coding-agents --audit-level=moderate"
+    "audit:coding-agents": "npm audit --prefix src/upstream/coding-agents --audit-level=moderate",
+    "upstream:accept": "node scripts/regen-coding-local-changes.mjs && node scripts/regen-openclaw-overlay.mjs && node scripts/verify-coding-upstream.mjs && node scripts/verify-openclaw-overlay.mjs"
   },
   "dependencies": {
     "@vectorize-io/hindsight-agent-sdk": "0.1.1",
