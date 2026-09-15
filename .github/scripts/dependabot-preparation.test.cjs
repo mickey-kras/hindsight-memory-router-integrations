@@ -243,6 +243,14 @@ test("publication limits files and uses expectedHeadOid for an atomic update", a
   assert.deepEqual(h.state.published[0].input.fileChanges.additions, h.payload.files);
 });
 
+test("publication permits a major update after metadata verification", async () => {
+  const h = harness();
+  const major = () => [
+    { updateType: "version-update:semver-major", prevVersion: "1.0.0", newVersion: "2.0.0", compatScore: 100 },
+  ];
+  assert.equal(await publish(h.github, context, h.payload, "unused", major), generated);
+});
+
 test("publication waits for lagging PR metadata and commit lists", async () => {
   const h = harness();
   const pauses = [];
