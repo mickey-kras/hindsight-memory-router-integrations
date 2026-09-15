@@ -1125,7 +1125,7 @@ jobs:
               '.github/scripts/package-lock.json': 'a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e',
               '.github/scripts/combination.cjs': 'dad2f629eca60a28c0979d286edc1954ac487911a70355f5d9c83692ed15af0c',
               '.github/scripts/combination-smoke.sh': '05783e5cf9a90f693a2273c611dd4693c64d23b48034b1f3920aabc2ca479ad3',
-              '.github/scripts/combination-smoke.mjs': '880956f9703a651bf43747c46f20784c1f3de0930c205930f84677027e76ff80',
+              '.github/scripts/combination-smoke.mjs': '06f9472811bcefd4db7b37459c58572f7a14e977962c4213ac30333309077c9f',
               '.github/scripts/combination.test.cjs': '0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2',
               '.github/scripts/release.cjs': '2538d5db588e4b8933074773beeda8fddcc86ac9f55f692962cb2ca9ab1e35b4',
               '.github/scripts/release-settings.cjs': '97960e25978ef7aae554b01cdc7497620be006d71f6fcf29322cba1687711d8b',

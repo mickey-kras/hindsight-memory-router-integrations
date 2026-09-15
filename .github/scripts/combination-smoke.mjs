@@ -49,8 +49,26 @@ if (process.argv[2] === "prepare") {
       const upstream = request(
         { hostname: "127.0.0.1", port: 8890, path: incoming.url, method: incoming.method, headers: incoming.headers },
         (response) => {
-          traces.push({ method: incoming.method, path: incoming.url, status: response.statusCode });
+          const trace = { method: incoming.method, path: incoming.url, status: response.statusCode };
+          traces.push(trace);
           outgoing.writeHead(response.statusCode, response.headers);
+          if (response.statusCode >= 400) {
+            const chunks = [];
+            let size = 0;
+            response.on("data", (chunk) => {
+              if (size < 4096) {
+                chunks.push(chunk);
+                size += chunk.length;
+              }
+              outgoing.write(chunk);
+            });
+            response.on("end", () => {
+              trace.body = Buffer.concat(chunks).toString("utf8").slice(0, 4096);
+              outgoing.end();
+            });
+            response.on("error", () => outgoing.end());
+            return;
+          }
           response.pipe(outgoing);
         },
       );
