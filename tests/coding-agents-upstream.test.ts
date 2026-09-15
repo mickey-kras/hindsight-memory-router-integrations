@@ -169,7 +169,7 @@ it("installs harness-specific MCP identities without migrating or storing tokens
   const dir = setup();
   execFileSync("tar", [
     "-xzf",
-    new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.5.1-router.3.tgz", import.meta.url)
+    new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.6.0.tgz", import.meta.url)
       .pathname,
     "-C",
     dir,
@@ -198,7 +198,7 @@ it("runs the packaged Codex hook with harness-bound credentials and fails closed
   const dir = setup();
   execFileSync("tar", [
     "-xzf",
-    new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.5.1-router.3.tgz", import.meta.url)
+    new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.6.0.tgz", import.meta.url)
       .pathname,
     "-C",
     dir,

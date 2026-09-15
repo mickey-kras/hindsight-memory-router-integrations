@@ -452,6 +452,8 @@ jobs:
                       return
 
           CI_REQUIRED_STEPS = (
+              'Release automation tests',
+              'Audit release tools', 'Release policy tests',
               'Tests and coverage', 'Verify package', 'Nix dependency hash',
               'Gitleaks', 'Semgrep', 'Trivy dependency gate', 'Setup Trivy',
               'Sonar finding reporter tests',
@@ -459,6 +461,8 @@ jobs:
           # Name-only pins are not enough: each required step must still carry
           # the substance of its gate (checked on the normalized run text).
           CI_RUN_SIGNATURES = {
+              'Release automation tests': ('node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs',),
+              'Release policy tests': ('python3 .github/scripts/release-policy.test.py',),
               'Verify package': (
                   'npm pack', 'sha256sum --check PACKAGE_SHA256',
                   'cmp ', 'grep -Fxq package/npm-shrinkwrap.json',
@@ -494,7 +498,17 @@ jobs:
               if doc.get('name') != 'ci':
                   fail('ci.yml: workflow name must remain ci')
               require_events(path, doc, ('workflow_call',))
-              require_job_set(path, doc, ('checks',))
+              require_job_set(path, doc, ('checks', 'combination'))
+              combination = job_named(doc, 'combination')
+              if combination is None:
+                  fail('ci.yml: release combination gate is missing')
+              else:
+                  for step in iter_steps(combination):
+                      if isinstance(step.get('uses'), str):
+                          step['uses'] = re.sub(r'@[0-9a-f]{40}$', '@PINNED', step['uses'])
+                  digest = hashlib.sha256(json.dumps(combination, sort_keys=True).encode()).hexdigest()
+                  if digest != '7832eaa46af5297a8e230b394bcaef3a81bd1f5e3a77a13d753b1f51ddbbde9c':
+                      fail('ci.yml: release combination must retain its reviewed checks and pinned inputs')
               checks = job_named(doc, 'checks')
               if checks is None:
                   fail('ci.yml: jobs.checks must exist')
@@ -1079,12 +1093,14 @@ jobs:
           # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
+              '.github/workflows/main.yml': ('8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e',),
+              '.github/workflows/release.yml': ('da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5',),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
               '.github/workflows/dependabot-preparation.yml': ('c8d826e549d44cdbb850df7580e681957b76c8755510a9be7517c0978447b171', '82cb9992e9aec4e8cd43a02d94cf114e95eb9421bc35acef60fd2fdb671f1d09'),
               '.github/workflows/dependabot-policy-tests.yml': ('157b9cac1669869fdacb9b9780bfaec7ffb5d01a63f803b3f1e09cbc7697b448',),
               '.github/workflows/dependabot-auto-merge.yml': ('fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34', '602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19', 'ccfefaafd622388ee9362ce6b95d66079be875a6cd85684be592c6a8edb74a0e', '9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff', 'a4b213e59f85428e8cd204c6f4d01fc45da64fa1fe5b8fb0dc1373bdae6f1907', 'dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f'),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3', 'dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05', 'c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9'),
-              '.github/workflows/pr-branch-updater.yml': ('077732d81e85b285a7cc33829c8876611f3fc9ff1068e628fe9cb54fb7e9ea48', '2960be59179dd7811e6923da934b7a36aa9906a8ed913481c60458556de28e97'),
+              '.github/workflows/pr-branch-updater.yml': ('3afd2e64a2f2b9ca6753b18bbdc93c661435b64c2dc5ccb1170f40a14a565570',),
               '.github/workflows/pr-validation.yml': ('e771be1b2936354e13c4557f2f1c4702d17e44a84c492169d8c587ab741db4f3', '6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a', '306d0070aeb2a19b505b0dc05c2de9df2a0d3989cb19a414fb6fe8efc50af5ae', 'b451b158e10360d7ad8b80a0fa7ee14bbfd19555cd746fbc0b7a0e17acf5eead'),
               '.github/workflows/branch-policy.yml': ('ffaa08e4de5cb84378bae286f5329450981ec51f3451b142f36c5d1ae529941c', 'e08d429ddd7b64f5c01602987580adae94570d54e42623efc01f11846a44b68f'),
           }
@@ -1103,6 +1119,24 @@ jobs:
               digest = hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
               if digest not in AUTOMATION_SHAPES[path]:
                   fail(f'{path}: automation must match its reviewed workflow shape')
+
+          RELEASE_SOURCE_HASHES = {
+              '.github/scripts/package.json': '9c5ae4358d83ef9a326dedb33bec455aed50f32107ba0f72b502059f92a95aa5',
+              '.github/scripts/package-lock.json': 'a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e',
+              '.github/scripts/combination.cjs': 'dad2f629eca60a28c0979d286edc1954ac487911a70355f5d9c83692ed15af0c',
+              '.github/scripts/combination-smoke.sh': '05783e5cf9a90f693a2273c611dd4693c64d23b48034b1f3920aabc2ca479ad3',
+              '.github/scripts/combination-smoke.mjs': '519b5669cacb5a5d7049b9bdcf27afc85f388e9d140b959781e7f6d7b7174279',
+              '.github/scripts/combination.test.cjs': '0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2',
+              '.github/scripts/release.cjs': '2538d5db588e4b8933074773beeda8fddcc86ac9f55f692962cb2ca9ab1e35b4',
+              '.github/scripts/release-settings.cjs': '97960e25978ef7aae554b01cdc7497620be006d71f6fcf29322cba1687711d8b',
+              '.github/scripts/release.test.cjs': 'f93adc86604481f6f46acdb660d5158fd791c686d8f31dd8f72bd001a82aead1',
+              '.github/scripts/release-policy.test.py': '0bbbbb3ac61af2f357cc88ba9b99f246c22ec7ded621704c93c8634e113285d8',
+              '.github/rulesets/protect-release-branches.json': '44d18bc698688aef02d6c7fe3c37323ca3c8c771826c874773d47867c0564a85',
+          }
+
+          def gate_release_source(path, content):
+              if hashlib.sha256(content.encode()).hexdigest() != RELEASE_SOURCE_HASHES[path]:
+                  fail(f'{path}: release automation must match its reviewed policy')
 
           GATES = {
               '.github/workflows/ci.yml': gate_ci,
@@ -1125,6 +1159,7 @@ jobs:
           }
 
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
+          GATES.update({path: gate_release_source for path in RELEASE_SOURCE_HASHES})
           GATES.update({path: gate_dependency_preparation for path in DEPENDENCY_PREPARATION_SCRIPTS})
           protected = set(GATES)
 

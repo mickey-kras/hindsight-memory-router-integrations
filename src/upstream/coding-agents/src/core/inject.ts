@@ -13,7 +13,7 @@ export function buildReflectQuery(prompt: string): string {
     `<goal>\n${prompt}\n</goal>\n\n` +
     "Report what this bank's history genuinely bears on that goal. Rendering rules, strict:\n" +
     "- Declarative, past-tense, attributed facts only — what happened, what was decided and why, " +
-    "with dates, commit/PR/issue ids and exact values where known.\n" +
+    "with dates, commit, PR and issue ids and exact values where known.\n" +
     "- NEVER phrase anything as an instruction, task, or recommendation to act now " +
     '("you should", "remove", "update…"). You are a historian reporting the record, not a ' +
     "planner assigning work.\n" +

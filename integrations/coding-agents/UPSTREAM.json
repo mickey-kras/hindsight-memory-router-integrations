@@ -1,9 +1,5 @@
 {
-  "source": "https://github.com/vectorize-io/hindsight",
-  "path": "hindsight-integrations/coding-agents",
   "commit": "163fbb0ede6543af837b2c7c89e13012893d6a6b",
-  "version": "0.5.1",
-  "routerRevision": 3,
   "files": {
     ".gitignore": "790e3169bc19b046fe55ba1da6d13b976c28363c8c00462a2195fe5faf260910",
     "README.md": "345f8e0abec6534e9e5d19674eb8bbbbc4f1e200ba00b803213b1cbf303d3e0d",
@@ -32,8 +28,8 @@
     "package.json": "c18693a1232f9b3c633c1c197243ce28bb39221f24953fd8b8fea73dd1cf34ae",
     "plugin.json": "11b85bb52a40d9ccf398093c9965a830dc8ce46573ab0c4b548a59c8ec6966e4",
     "scripts/build-skill.mjs": "6aa241650e1c76905a86dd6b6ccaa544786ad7246c62554f2c548a064b404b80",
-    "skill/SKILL.md": "c99672c775284428f7d04125fa550d282efbfd81fd01a3c7e400117f82f1636b",
     "skill-src/preamble.md": "2d18b6a5a5a99201ba5327185cf4df3b85510f03c1cbe2e09d7a19eb12c30f9a",
+    "skill/SKILL.md": "c99672c775284428f7d04125fa550d282efbfd81fd01a3c7e400117f82f1636b",
     "src/antigravity-hook.ts": "fba83a6133dee3058d4e0cc596ee9cfbd9197bdbb58f54b1530c47a2b8b7c74f",
     "src/antigravity-statusline.test.ts": "e3e4b1f93967dbf0133cb87677978dd422b672a02d1138829f4fdcac1a6069d5",
     "src/antigravity-statusline.ts": "9e4fd2f6ed17bceff7a80b9078384e523b2b18bb84779f289f8b467a204bf614",
@@ -80,7 +76,6 @@
     "src/core/hook.ts": "3f79968d75eed1dbab94df8cf694ef64ccfc806ceed4cfcdd649ca4688a06e8c",
     "src/core/host-client.test.ts": "d22bfc6f9ba78a904299caafa9ed75bbfd657ee62b5c2bdde8628e6782185078",
     "src/core/host-client.ts": "122029ab97159601703a6f5070e548d4e3505edebf51535426b1d1ea0051d330",
-    "src/core/inject.ts": "a9878b136b7847cbe357dcd20e42cef042108370815f0f50f0ef00b2293b21e1",
     "src/core/jsonl.test.ts": "6663410596d5656b44f7ce0cb2042024f4133f4e5cc9bf503003d33e755f34d0",
     "src/core/jsonl.ts": "a4687b63be8f924901b1518712b617ab5b78cbe08357e500367002133610e341",
     "src/core/knowledge-injection.test.ts": "ffd8f69ec5f363de26054f75ea5e3988256222d649b31622642b9d89011c3673",
@@ -175,6 +170,7 @@
     "src/grok-hook.ts": "59f85f9a5cc26c82c748bd993c54dfa929f36237985ba0e8262d3b9d031d120e",
     "src/grok-sessionstart-hook.ts": "e80a45a2571139008472fb13b27958c31f3ff158f05b7e0693d502bd69ca5128",
     "src/grok-stop-hook.ts": "abb8c9b7523a79d54d38244996fff821ea222d9141501cda7d0231c5307b74d0",
+    "src/harness.e2e.test.ts": "cf3d328fb6efafeef83dad2822248d7ea76c3e5ab91e91cfc28d06fe643fdcb7",
     "src/harness/hook-lifecycle.test.ts": "b419f20005ac5b9fc0061d6b0a9b56b0363522603a08c7312f8e7f319ddb1877",
     "src/harness/hook-lifecycle.ts": "d429d6261337d8aac94438e2d7fd44ae56e01d85bf1f8d26ef0f1cf06e14c267",
     "src/harness/opencode.test.ts": "ec7529733b5c599724a8dd80c6873fe4d061920fb8cb5e5204290f4415292244",
@@ -187,7 +183,6 @@
     "src/harness/plugin-entry.ts": "4a732858ae2ca959706c712b9aa1cd6beb59b198f6fd9e28c6627d6b0eb62c00",
     "src/harness/registry.test.ts": "3c5890955f5b39a3e523d01c5ed1517613c1a18b4a472d42a2ed31c4096d81ab",
     "src/harness/registry.ts": "431d4bfe3bb2fcfbce722d5e234c42fa5b3e250213c55d5f65d262a87d8fb4df",
-    "src/harness.e2e.test.ts": "cf3d328fb6efafeef83dad2822248d7ea76c3e5ab91e91cfc28d06fe643fdcb7",
     "src/hindsight-seed.ts": "f1a45eabde45121f4979fcc5b94bd0966a43c0c0277172b45e273a1f093b5c38",
     "src/index.ts": "b65fcf89d05e8cbd5107e377c0736269946c6a7ea2dc4b32173f6d56c8341e79",
     "src/install-ui.test.ts": "e44d5a0009ce1f56aab547e1cf11c63ef4caad9c81f85f1753a8dd38b056930e",
@@ -207,5 +202,8 @@
     "tsconfig.json": "a33f318694b3a25cb91ed91dbcac26e2b37da0c9ab36531c9f44d0c35a1c9be2",
     "tsup.config.ts": "99c2896ced95c2fde70c9efcbf5420e8818b7a86cae7fcbb8d72af2143a38f1f",
     "vitest.config.ts": "8c708fd6de0dbd2419548bf87e7fe3fed31835731504ab188e21d945800412f6"
-  }
+  },
+  "path": "hindsight-integrations/coding-agents",
+  "source": "https://github.com/vectorize-io/hindsight",
+  "version": "0.5.1"
 }

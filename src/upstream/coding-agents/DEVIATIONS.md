@@ -7,6 +7,7 @@
 - 401/403 are terminal; upstream credential retry is replaced by runtime environment resolution on each request.
 - Redirects and raw server error bodies are blocked. Automatic upstream replacement and installer token migration are disabled.
 - Transcript parsing, provenance tags, retain payloads, hooks, and harness adapters retain upstream behavior.
+- `src/core/inject.ts` rewords the reflect rendering rules to "commit, PR and issue ids": the upstream "commit/PR/issue" slash token trips the Memory Router encoded-payload request scan, which rejects the reflect query with 422 suspicious_content.
 
 The source hashes in `UPSTREAM.json` describe the pristine snapshot. `LOCAL_CHANGES.json` pins adapted files.
 The regression suite covers unchanged transcript/provenance code; root tests cover the changed security contracts.

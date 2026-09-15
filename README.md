@@ -11,10 +11,10 @@ OpenClaw and the current upstream `coding-agents` package share `src/shared/`.
 
 **client routing != authorization; Memory Router grants are authoritative**
 
-| Integration | Identity | Package version |
+| Integration | Identity | Version source |
 | --- | --- | --- |
-| OpenClaw | trusted `ctx.agentId` | `0.11.1-router.4` |
-| Coding agents | harness entrypoint (`codex`, `claude-code`, `opencode`, etc.) | `0.5.1-router.3` |
+| OpenClaw | trusted `ctx.agentId` | `package.json` |
+| Coding agents | harness entrypoint (`codex`, `claude-code`, `opencode`, etc.) | `src/upstream/coding-agents/package.json` |
 
 Each principal has one optional `writeBank` and `additionalReadBanks`.
 Readable banks are their deduplicated union. Mutations target only `writeBank`.
