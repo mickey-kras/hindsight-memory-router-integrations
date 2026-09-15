@@ -89,7 +89,7 @@
     "@types/node": "22.20.1",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "overrides": {
     "esbuild": ">=0.25.0 <1.0.0",
