@@ -184,6 +184,21 @@ test("artifact preparation runs before auto-merge", async () => {
   await run(h.options);
   assert.deepEqual(h.commands, []);
 });
+test("major updates prepare artifacts but remain manual", async () => {
+  const h = harness();
+  h.options.metadata = () => [{ ...dependency, updateType: "version-update:semver-major", compatScore: 100 }];
+  let prepared = false;
+  h.options.prepare = async () => {
+    prepared = true;
+    return true;
+  };
+  await run(h.options);
+  assert.equal(prepared, true);
+  assert.deepEqual(h.commands, []);
+  h.options.prepare = async () => false;
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
 test("stale updates wait for native rebasing before preparation", async () => {
   const h = harness({ metadataError: true });
   h.options.isCurrent = async () => false;
