@@ -7,6 +7,7 @@ const { dependencyCommits, requestPreparation } = require("./dependabot-preparat
 const MINIMUM_SCORE = 75;
 const BOT = { login: "dependabot[bot]", id: 49699333 };
 const UPDATE_TYPES = new Set(["version-update:semver-patch", "version-update:semver-minor"]);
+const PREPARATION_TYPES = new Set([...UPDATE_TYPES, "version-update:semver-major"]);
 
 function isDependabot(user) {
   return user?.login === BOT.login && user?.id === BOT.id;
@@ -31,6 +32,15 @@ function updateEligibility(dependencies) {
   if (!Array.isArray(dependencies) || !dependencies.length) return "No dependency metadata";
   for (const dependency of dependencies) {
     if (!UPDATE_TYPES.has(dependency.updateType)) return "Major or unknown update type requires manual review";
+    if (!dependency.prevVersion || !dependency.newVersion) return "Missing version pair";
+  }
+  return null;
+}
+
+function preparationEligibility(dependencies) {
+  if (!Array.isArray(dependencies) || !dependencies.length) return "No dependency metadata";
+  for (const dependency of dependencies) {
+    if (!PREPARATION_TYPES.has(dependency.updateType)) return "Unknown update type requires manual review";
     if (!dependency.prevVersion || !dependency.newVersion) return "Missing version pair";
   }
   return null;
@@ -202,13 +212,18 @@ async function run({
         continue;
       }
       const dependencies = metadata(pull, repository, metadataPath);
+      const preparationReason = preparationEligibility(dependencies);
+      if (preparationReason) {
+        core.info(`#${pull.number}: ${preparationReason}`);
+        continue;
+      }
+      if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
+      if (original.length !== commits.length) await validate(github, context, pull, core);
       const updateReason = updateEligibility(dependencies);
       if (updateReason) {
         core.info(`#${pull.number}: ${updateReason}`);
         continue;
       }
-      if (original.length === commits.length && (await prepare(github, context, pull, core))) continue;
-      if (original.length !== commits.length) await validate(github, context, pull, core);
       const reason = eligibility(original, dependencies);
       if (reason) {
         core.info(`#${pull.number}: ${reason}`);
@@ -234,6 +249,7 @@ module.exports = {
   run,
   eligibility,
   updateEligibility,
+  preparationEligibility,
   trustedPull,
   readDependencies,
   ensureMainRun,

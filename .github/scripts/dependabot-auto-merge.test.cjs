@@ -221,6 +221,29 @@ test("an unknown score allows preparation but never queues auto-merge", async ()
   await run(h.options);
   assert.deepEqual(h.commands, []);
 });
+test("a major update prepares artifacts but never queues auto-merge", async () => {
+  const h = harness();
+  h.options.metadata = () => [{ ...dependency, updateType: "version-update:semver-major", compatScore: 100 }];
+  let prepared = false;
+  h.options.prepare = async () => {
+    prepared = true;
+    return true;
+  };
+  await run(h.options);
+  assert.equal(prepared, true);
+  assert.deepEqual(h.commands, []);
+  h.options.prepare = async () => false;
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+test("an unknown update type skips preparation entirely", async () => {
+  const h = harness();
+  h.options.metadata = () => [{ ...dependency, updateType: "version-update:semver-prerelease" }];
+  h.options.prepare = async () => assert.fail("must not prepare an unknown update type");
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+  assert.deepEqual(h.failures, []);
+});
 test("lookup failure revokes an earlier bot queue decision", async () => {
   const h = harness({
     pulls: [{ ...pull, auto_merge: { enabled_by: { login: "github-actions[bot]" } } }],

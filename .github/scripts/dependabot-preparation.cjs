@@ -137,8 +137,8 @@ async function requestPreparation(github, context, pull, core) {
 
 async function publish(github, context, payload, metadataPath, metadata) {
   const { pull, paths } = await inspect(github, context, payload.number, payload.head);
-  const { fetchMetadata, updateEligibility } = require("./dependabot-auto-merge.cjs");
-  const reason = updateEligibility(
+  const { fetchMetadata, preparationEligibility } = require("./dependabot-auto-merge.cjs");
+  const reason = preparationEligibility(
     (metadata ?? fetchMetadata)(pull, `${context.repo.owner}/${context.repo.repo}`, metadataPath),
   );
   if (reason) throw new Error(reason);
