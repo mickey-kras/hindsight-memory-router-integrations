@@ -79,9 +79,10 @@ integrations manifest, even when a newer router is available separately.
    ```
 
 5. In **Settings → Rules → Rulesets**, import **Release branch creation**, **Release tag
-   creation**, and **Protect release branches**. Only the creation rules allow an App
-   bypass. Branch protections have no bypass and require PRs, squash merges, resolved
-   threads, existing scans/checks, and no force pushes/deletion. Allow initial creation
+   creation**, the deletion-only **Release branch deletion**, and **Protect release
+   branches**. Only the creation rules and the deletion rule allow an App bypass.
+   Branch protections have no bypass and require PRs, squash merges, resolved
+   threads, existing scans/checks, and no force pushes. Allow initial creation
    before checks exist. Integrations also requires `quality / release combination`.
    Confirm every rule in the templates actually imported in Settings before relying on this runbook.
 6. Keep **Protect release tags** active: block updates, deletion and force pushes,

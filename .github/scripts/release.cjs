@@ -134,9 +134,10 @@ async function checkRules(github, repository, appId) {
       "Protect release branches",
       "branch",
       "refs/heads/release/*",
-      ["deletion", "non_fast_forward", "pull_request", "required_status_checks"],
+      ["non_fast_forward", "pull_request", "required_status_checks"],
       null,
     ],
+    ["Release branch deletion", "branch", "refs/heads/release/*", ["deletion"], appId],
     ["Release tag creation", "tag", "refs/tags/v*", ["creation"], appId],
     ["Protect release tags", "tag", "refs/tags/v*", ["update", "deletion", "non_fast_forward"], null],
   ];

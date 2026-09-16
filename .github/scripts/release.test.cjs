@@ -235,7 +235,7 @@ test("rules require creation-only App bypass and retain branch/tag protection", 
     m.state.rules[1].bypass_actors = [{ actor_id: 123, actor_type: "Integration", bypass_mode: "always" }];
     await assert.rejects(release.checkRules(m.github, m.context.repo, 123), /bypass/);
     m.state.rules[1].bypass_actors = [];
-    m.state.rules[3].rules = [{ type: "deletion" }];
+    m.state.rules.find((rule) => rule.name === "Protect release tags").rules = [{ type: "deletion" }];
     await assert.rejects(release.checkRules(m.github, m.context.repo, 123), /protection/);
   }));
 

@@ -15,6 +15,7 @@ function rulesets(appId) {
   return [
     make("Release branch creation", "branch", "refs/heads/release/*", ["creation"], true),
     JSON.parse(readFileSync(".github/rulesets/protect-release-branches.json", "utf8")),
+    make("Release branch deletion", "branch", "refs/heads/release/*", ["deletion"], true),
     make("Release tag creation", "tag", "refs/tags/v*", ["creation"], true),
     make("Protect release tags", "tag", "refs/tags/v*", ["update", "deletion", "non_fast_forward"]),
   ];
@@ -43,9 +44,13 @@ async function reviewSettings(appId, repository) {
   const [owner, repo] = repository.split("/");
   await checkRules(github, { owner, repo }, appId);
   const reviewed = rules.filter((rule) =>
-    ["Release branch creation", "Protect release branches", "Release tag creation", "Protect release tags"].includes(
-      rule.name,
-    ),
+    [
+      "Release branch creation",
+      "Protect release branches",
+      "Release branch deletion",
+      "Release tag creation",
+      "Protect release tags",
+    ].includes(rule.name),
   );
   for (const rule of reviewed) {
     if (!Object.hasOwn(rule, "bypass_actors") || typeof rule.updated_at !== "string") {
