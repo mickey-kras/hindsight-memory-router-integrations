@@ -102,11 +102,13 @@ function checkRule(rule, target, include, types, appId) {
     } catch {
       throw new ReleaseError("Invalid RELEASE_SETTINGS_REVIEW");
     }
+    const reviewedAt = review?.rulesets?.[rule.id];
     requireValue(
       review?.app_id === Number(process.env.RELEASE_APP_ID) &&
         review.immutable_releases === true &&
         typeof rule.updated_at === "string" &&
-        review.rulesets?.[rule.id] === rule.updated_at,
+        typeof reviewedAt === "string" &&
+        Date.parse(reviewedAt) === Date.parse(rule.updated_at),
       `${rule.name}: bypass actors are redacted; record the current owner-reviewed settings in RELEASE_SETTINGS_REVIEW`,
     );
   }
