@@ -1127,9 +1127,9 @@ jobs:
               '.github/scripts/combination-smoke.sh': '05783e5cf9a90f693a2273c611dd4693c64d23b48034b1f3920aabc2ca479ad3',
               '.github/scripts/combination-smoke.mjs': '519b5669cacb5a5d7049b9bdcf27afc85f388e9d140b959781e7f6d7b7174279',
               '.github/scripts/combination.test.cjs': '0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2',
-              '.github/scripts/release.cjs': 'f6e170ad42be66638febbc9ce81cbfe3c972e2f75b0a0a7625bbcd4ee6934259',
+              '.github/scripts/release.cjs': 'fcb75f3ec7331f2053320cfa727c1d4052eba1237767aed5a83f5e97a2c34749',
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
-              '.github/scripts/release.test.cjs': '108ca16a764666821d21d90f1d315f6e66241134e3b5909072ce321eaf83dffb',
+              '.github/scripts/release.test.cjs': '06c95e79e995e9cc27f0e2f203f2ec450a395d67dc4a944dfe36846a4ee38c4b',
               '.github/scripts/release-policy.test.py': '0bbbbb3ac61af2f357cc88ba9b99f246c22ec7ded621704c93c8634e113285d8',
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
           }

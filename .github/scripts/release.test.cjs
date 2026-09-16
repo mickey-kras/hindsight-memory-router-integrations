@@ -459,6 +459,10 @@ test("unchanged integration artifacts can be reused but changed bytes need a new
       assert.throws(check, /owner-reviewed/);
       process.env.RELEASE_SETTINGS_REVIEW = JSON.stringify({ app_id: 123, immutable_releases: true, rulesets: { 41: rule.updated_at } });
       check();
+      process.env.RELEASE_SETTINGS_REVIEW = JSON.stringify({ app_id: 123, immutable_releases: true, rulesets: { 41: "2026-09-10T17:00:00.000-07:00" } });
+      check();
+      rule.updated_at = "2026-09-11T00:00:00.001Z";
+      assert.throws(check, /owner-reviewed/);
       rule.updated_at = "2026-09-11T00:01:00Z";
       assert.throws(check, /owner-reviewed/);
       process.env.RELEASE_SETTINGS_REVIEW = "invalid";
