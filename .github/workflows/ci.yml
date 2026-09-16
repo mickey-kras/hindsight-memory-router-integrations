@@ -34,12 +34,14 @@ jobs:
 
       - run: npm ci
       - run: npm ci --prefix src/upstream/coding-agents
+      - run: npm ci --prefix src/mcp
       - run: npm run lint
       - run: npm run typecheck
       - name: Tests and coverage
         run: npm run test:coverage
       - run: npm run build
       - run: npm run build:coding-agents
+      - run: npm run build --prefix src/mcp
       - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
       - run: npm test --prefix src/upstream/coding-agents
       - run: node scripts/verify-coding-upstream.mjs
@@ -86,6 +88,8 @@ jobs:
           tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
             -cf "$RUNNER_TEMP/committed-coding.tar" -C "$RUNNER_TEMP/committed-coding" .
           cmp "$RUNNER_TEMP/generated-coding.tar" "$RUNNER_TEMP/committed-coding.tar"
+          mcp_artifact="$(npm pack ./src/mcp --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
+          tar -tzf "$RUNNER_TEMP/$mcp_artifact" | grep -Fxq package/npm-shrinkwrap.json
           sha256sum --check PACKAGE_SHA256
 
       - name: Install Nix
