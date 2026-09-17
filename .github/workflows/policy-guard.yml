@@ -1093,8 +1093,8 @@ jobs:
           # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
-              '.github/workflows/main.yml': ('4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd',),
-              '.github/workflows/release.yml': ('2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3',),
+              '.github/workflows/main.yml': ('8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e', '4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd', '75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746'),
+              '.github/workflows/release.yml': ('da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5', '2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3'),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
               '.github/workflows/dependabot-preparation.yml': ('c8d826e549d44cdbb850df7580e681957b76c8755510a9be7517c0978447b171', '82cb9992e9aec4e8cd43a02d94cf114e95eb9421bc35acef60fd2fdb671f1d09', 'c5dc2fec63ea7d7f310b2c1076b21214ba6c864969d03657a83de899b030c96a'),
               '.github/workflows/dependabot-policy-tests.yml': ('157b9cac1669869fdacb9b9780bfaec7ffb5d01a63f803b3f1e09cbc7697b448',),
