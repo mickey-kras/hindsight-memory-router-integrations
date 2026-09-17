@@ -182,7 +182,8 @@ function recallTool(stack: McpStack): McpTool {
         if (args.timeoutMs !== undefined && positiveIntArg(args, "timeoutMs") === undefined) {
           return rejected("timeoutMs must be a positive integer");
         }
-        if (args.preferObservations !== undefined && typeof args.preferObservations !== "boolean") {
+        const preferObservations = args.preferObservations;
+        if (preferObservations !== undefined && typeof preferObservations !== "boolean") {
           return rejected("preferObservations must be a boolean");
         }
         let types: string[] | undefined;
@@ -200,7 +201,7 @@ function recallTool(stack: McpStack): McpTool {
           maxTokens: positiveIntArg(args, "maxTokens") ?? stack.recallMaxTokens,
           budget,
           types,
-          preferObservations: args.preferObservations as boolean | undefined,
+          preferObservations,
         });
         return ok({ results: recalled.results, partial: recalled.partial });
       } catch (error) {
