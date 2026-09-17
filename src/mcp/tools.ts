@@ -173,12 +173,7 @@ function recallTool(stack: McpStack): McpTool {
         const query = stringArg(args, "query");
         if (!query) return rejected("query is required");
         const budget = args.budget;
-        if (
-          budget !== undefined &&
-          budget !== "low" &&
-          budget !== "mid" &&
-          budget !== "high"
-        ) {
+        if (budget !== undefined && budget !== "low" && budget !== "mid" && budget !== "high") {
           return rejected("budget must be low, mid or high");
         }
         if (args.maxTokens !== undefined && positiveIntArg(args, "maxTokens") === undefined) {
