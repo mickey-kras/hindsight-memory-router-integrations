@@ -172,7 +172,8 @@ function recallTool(stack: McpStack): McpTool {
       try {
         const query = stringArg(args, "query");
         if (!query) return rejected("query is required");
-        if (args.budget !== undefined && !["low", "mid", "high"].includes(String(args.budget))) {
+        const budget = args.budget;
+        if (budget !== undefined && budget !== "low" && budget !== "mid" && budget !== "high") {
           return rejected("budget must be low, mid or high");
         }
         if (args.maxTokens !== undefined && positiveIntArg(args, "maxTokens") === undefined) {
@@ -197,7 +198,7 @@ function recallTool(stack: McpStack): McpTool {
           banks,
           timeoutMs: positiveIntArg(args, "timeoutMs") ?? stack.recallTimeoutMs,
           maxTokens: positiveIntArg(args, "maxTokens") ?? stack.recallMaxTokens,
-          budget: args.budget as "low" | "mid" | "high" | undefined,
+          budget,
           types,
           preferObservations: args.preferObservations as boolean | undefined,
         });
