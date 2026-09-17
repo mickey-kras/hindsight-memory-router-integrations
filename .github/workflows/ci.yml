@@ -52,7 +52,7 @@ jobs:
       - name: Audit release tools
         run: npm audit --prefix .github/scripts --audit-level=moderate
       - name: Release automation tests
-        run: node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs
+        run: node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs
       - name: Release policy tests
         run: python3 .github/scripts/release-policy.test.py
 
