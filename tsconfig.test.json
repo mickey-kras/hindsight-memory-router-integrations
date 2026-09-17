@@ -2,12 +2,21 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "paths": {
+      "@modelcontextprotocol/sdk/client/index.js": [
+        "./src/mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.d.ts"
+      ],
+      "@modelcontextprotocol/sdk/inMemory.js": [
+        "./src/mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.d.ts"
+      ]
+    }
   },
   "include": [
     "src/plugin.ts",
     "src/shared/**/*.ts",
     "src/coding-agents/**/*.ts",
+    "src/mcp/**/*.ts",
     "src/upstream/src/**/*.ts",
     "tests/**/*.ts",
     "vitest.config.ts"
