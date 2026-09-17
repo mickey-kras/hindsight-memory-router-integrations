@@ -50,8 +50,10 @@ function isDirectInvocation(): boolean {
 }
 
 if (isDirectInvocation()) {
-  main().catch((error: unknown) => {
+  try {
+    await main();
+  } catch (error: unknown) {
     console.error(`${SERVER_NAME} failed to start: ${startupErrorMessage(error)}`);
     process.exit(1);
-  });
+  }
 }
