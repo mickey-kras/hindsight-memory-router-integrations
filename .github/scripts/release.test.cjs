@@ -354,12 +354,20 @@ test("integration package fixes can update tested assets while upstream pins rem
       path: "hindsight-integrations/coding-agents",
     });
     mkdirSync("src/upstream/coding-agents", { recursive: true });
+    mkdirSync("src/mcp", { recursive: true });
     mkdirSync("packages");
     put("package.json", { name: "@example/openclaw", version: "0.12.0" });
     put("src/upstream/coding-agents/package.json", { name: "@example/coding-agents", version: "0.6.0" });
+    put("src/mcp/package.json", { name: "@example/mcp", version: "0.1.0" });
     writeFileSync("packages/example-openclaw-0.12.0.tgz", "original test fixture");
     writeFileSync("packages/example-coding-agents-0.6.0.tgz", "coding test fixture");
+    writeFileSync("packages/example-mcp-0.1.0.tgz", "mcp test fixture");
     manifest.packages = release.packageAssets();
+    assert.deepEqual(
+      manifest.packages.map((pkg) => pkg.name),
+      ["@example/openclaw", "@example/coding-agents", "@example/mcp"],
+      "the bundle must carry all three packages as separate entries",
+    );
     manifest.nix_openclaw = base;
     manifest.router = {
       version: "0.1.0",
@@ -371,6 +379,9 @@ test("integration package fixes can update tested assets while upstream pins rem
     m.state.prepared = structuredClone(manifest);
     put("release.json", manifest);
     await release.validate(m);
+    put("release.json", { ...manifest, packages: manifest.packages.slice(0, 2) });
+    await assert.rejects(release.validate(m), /Invalid release package inventory/);
+    put("release.json", manifest);
     put("package.json", { name: "@example/openclaw", version: "0.12.1" });
     writeFileSync("packages/example-openclaw-0.12.1.tgz", "fixed test fixture");
     await assert.rejects(release.validate(m), /Refresh release.json/);
