@@ -19,6 +19,7 @@ jobs:
       id-token: write
       attestations: write
       pull-requests: write
+      issues: write
     uses: ./.github/workflows/main.yml
     secrets:
       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
