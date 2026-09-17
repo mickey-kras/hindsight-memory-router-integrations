@@ -41,7 +41,15 @@ async function main() {
 }
 
 // The bin is usually invoked through an npm .bin symlink; resolve it before comparing.
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isDirectInvocation(): boolean {
+  try {
+    return process.argv[1] !== undefined && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectInvocation()) {
   main().catch((error: unknown) => {
     console.error(`${SERVER_NAME} failed to start: ${startupErrorMessage(error)}`);
     process.exit(1);

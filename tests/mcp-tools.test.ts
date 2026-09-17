@@ -183,6 +183,34 @@ describe("memory_router_retain", () => {
     expect(result.content[0].text).not.toContain("agent-bank");
   });
 
+  it.each([
+    ["non-array", { content: "x", tags: "ops" }],
+    ["empty array", { content: "x", tags: [] }],
+    ["non-string member", { content: "x", tags: ["ops", 7] }],
+    ["blank member", { content: "x", tags: ["ops", " "] }],
+  ])("rejects malformed tags (%s) without touching the router", async (_label, args) => {
+    const send = stubFetch(() => Response.json({}));
+    const stack = makeStack({});
+    const result = await tool(buildTools(stack), "memory_router_retain").handler(args);
+    expect(result).toMatchObject({ isError: true });
+    expect(result.content[0].text).toBe("tags must be a non-empty string array");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["non-array", { content: "x", tags: "ops" }],
+    ["empty array", { content: "x", tags: [] }],
+    ["mixed entries", { content: "x", tags: ["ops", 7] }],
+    ["blank entry", { content: "x", tags: ["ops", "  "] }],
+  ])("rejects malformed tags (%s) without retaining", async (_label, args) => {
+    const send = stubFetch(() => Response.json({}));
+    const stack = makeStack({});
+    const result = await tool(buildTools(stack), "memory_router_retain").handler(args);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("tags must be a non-empty string array");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("rejects an empty content without touching the router", async () => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
@@ -269,6 +297,11 @@ describe("memory_router_recall", () => {
     ["bad maxTokens", { query: "q", maxTokens: 0 }, "maxTokens must be a positive integer"],
     ["bad timeoutMs", { query: "q", timeoutMs: -5 }, "timeoutMs must be a positive integer"],
     ["bad preferObservations", { query: "q", preferObservations: "yes" }, "preferObservations must be a boolean"],
+    ["non-array types", { query: "q", types: "world" }, "types must be a non-empty string array"],
+    ["empty types", { query: "q", types: [] }, "types must be a non-empty string array"],
+    ["mixed types", { query: "q", types: ["world", 3] }, "types must be a non-empty string array"],
+    ["bad types", { query: "q", types: ["world", 0] }, "types must be a non-empty string array"],
+    ["empty types", { query: "q", types: [] }, "types must be a non-empty string array"],
   ])("rejects %s with a bounded message", async (_label, args, message) => {
     const send = stubFetch(() => Response.json({ results: [] }));
     const stack = makeStack({});

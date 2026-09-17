@@ -66,6 +66,9 @@ jobs:
           node .github/scripts/npm-audit.cjs
           node .github/scripts/npm-audit.cjs src/upstream/coding-agents
 
+      - name: MCP tooling audit
+        run: node .github/scripts/npm-audit.cjs src/mcp
+
       - name: Verify package
         run: |
           artifact="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"

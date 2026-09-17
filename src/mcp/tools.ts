@@ -92,9 +92,12 @@ function stringArg(args: Record<string, unknown>, name: string): string | undefi
 
 function stringListArg(args: Record<string, unknown>, name: string): string[] | undefined {
   const value = args[name];
-  if (!Array.isArray(value)) return undefined;
-  const items = value.filter((item): item is string => typeof item === "string" && item.trim() !== "");
-  return items.length === value.length && items.length > 0 ? items : undefined;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0) throw new TypeError(`${name} must be a non-empty string array`);
+  if (value.some((item) => typeof item !== "string" || item.trim() === "")) {
+    throw new TypeError(`${name} must be a non-empty string array`);
+  }
+  return value as string[];
 }
 
 function positiveIntArg(args: Record<string, unknown>, name: string): number | undefined {
@@ -124,11 +127,17 @@ function retainTool(stack: McpStack): McpTool {
       try {
         const content = stringArg(args, "content");
         if (!content) return rejected("content is required");
+        let tags: string[] | undefined;
+        try {
+          tags = stringListArg(args, "tags");
+        } catch {
+          return rejected("tags must be a non-empty string array");
+        }
         const outcome = await stack.retain.retain(stack.principalId, {
           content,
           documentId: stringArg(args, "documentId"),
           context: stringArg(args, "context"),
-          tags: stringListArg(args, "tags"),
+          tags,
           metadata: { agent: stack.principalId, ...(stack.source ? { source: stack.source } : {}) },
         });
         return ok({ retained: true, queued: outcome.queued });
@@ -175,6 +184,12 @@ function recallTool(stack: McpStack): McpTool {
         if (args.preferObservations !== undefined && typeof args.preferObservations !== "boolean") {
           return rejected("preferObservations must be a boolean");
         }
+        let types: string[] | undefined;
+        try {
+          types = stringListArg(args, "types");
+        } catch {
+          return rejected("types must be a non-empty string array");
+        }
         const credentials = stack.credentials.resolve(stack.principalId);
         const banks = stack.credentials.resolveReadBanks(stack.principalId);
         const recalled = await stack.recall.recall(stack.clients.forAgent(credentials), {
@@ -183,7 +198,7 @@ function recallTool(stack: McpStack): McpTool {
           timeoutMs: positiveIntArg(args, "timeoutMs") ?? stack.recallTimeoutMs,
           maxTokens: positiveIntArg(args, "maxTokens") ?? stack.recallMaxTokens,
           budget: args.budget as "low" | "mid" | "high" | undefined,
-          types: stringListArg(args, "types"),
+          types,
           preferObservations: args.preferObservations as boolean | undefined,
         });
         return ok({ results: recalled.results, partial: recalled.partial });
