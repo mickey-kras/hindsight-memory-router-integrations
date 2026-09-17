@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$PWD"
 state="$RUNNER_TEMP/release-combination"
-mkdir -p "$state/openclaw" "$state/coding" "$state/quarantine"
+mkdir -p "$state/openclaw" "$state/coding" "$state/mcp" "$state/quarantine"
 chmod 777 "$state/quarantine"
 export COMBINATION_STATE="$state"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
@@ -18,9 +18,12 @@ export MEMORY_ROUTER_TEST_QUARANTINE_DATABASE_URL=sqlite:/state/quarantine.db
 node .github/scripts/combination-smoke.mjs prepare
 openclaw="$(node -p 'const p=require("./package.json"); `packages/${p.name.slice(1).replace("/", "-")}-${p.version}.tgz`')"
 coding="$(node -p 'const p=require("./src/upstream/coding-agents/package.json"); `packages/${p.name.slice(1).replace("/", "-")}-${p.version}.tgz`')"
+mcp="$(node -p 'const p=require("./src/mcp/package.json"); `packages/${p.name.slice(1).replace("/", "-")}-${p.version}.tgz`')"
 tar -xzf "$openclaw" -C "$state/openclaw"
 tar -xzf "$coding" -C "$state/coding"
+tar -xzf "$mcp" -C "$state/mcp"
 npm ci --prefix "$state/openclaw/package" --omit=dev --ignore-scripts --no-audit --no-fund
+npm ci --prefix "$state/mcp/package" --omit=dev --ignore-scripts --no-audit --no-fund
 
 if [[ -n "$ROUTER_TEST_IMAGE" ]]; then
   docker pull "$ROUTER_TEST_IMAGE"

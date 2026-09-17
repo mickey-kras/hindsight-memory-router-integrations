@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { constants, createDecipheriv, createHash, privateDecrypt, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:https";
+import { createRequire } from "node:module";
 import { request } from "node:http";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ const routerUrl = "https://localhost:9443";
 if (process.argv[2] === "prepare") {
   const principals = {};
   const credentials = {};
-  for (const id of ["openclaw", "codex"]) {
+  for (const id of ["openclaw", "codex", "mcp"]) {
     const secret = randomBytes(32).toString("hex");
     const token = `mr_${id}_${secret}`;
     credentials[id] = token;
@@ -253,7 +254,63 @@ if (process.argv[2] === "prepare") {
     );
     assert.ok(!traces.some((item) => item.status >= 400 && item.status !== 404), JSON.stringify(traces));
     assert.equal(typeof JSON.parse(stdout).hookSpecificOutput.additionalContext, "string");
-    console.log("Packaged OpenClaw retain/recall and Codex reflect passed against the pinned router and Hindsight.");
+
+    put("mcp-managed.json", {
+      routerUrl,
+      queueDir: join(state, "mcp-queue"),
+      principals: {
+        mcp: {
+          writeBank: bank,
+          additionalReadBanks: [],
+          tokenEnv: "COMBINATION_MCP_TOKEN",
+        },
+      },
+    });
+    const mcpPackage = join(state, "mcp/package");
+    const requireMcp = createRequire(join(mcpPackage, "package.json"));
+    const { Client } = await import(pathToFileURL(requireMcp.resolve("@modelcontextprotocol/sdk/client/index.js")));
+    const { StdioClientTransport } = await import(
+      pathToFileURL(requireMcp.resolve("@modelcontextprotocol/sdk/client/stdio.js"))
+    );
+    const mcpTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [join(mcpPackage, "dist/mcp/server.js")],
+      env: {
+        ...process.env,
+        HINDSIGHT_ROUTER_CONFIG: join(state, "mcp-managed.json"),
+        HINDSIGHT_ROUTER_PRINCIPAL: "mcp",
+        COMBINATION_MCP_TOKEN: credentials.mcp,
+      },
+      stderr: "pipe",
+    });
+    const mcpClient = new Client({ name: "release-smoke", version: "0.0.0" });
+    try {
+      await mcpClient.connect(mcpTransport);
+      const { tools } = await mcpClient.listTools();
+      for (const name of ["memory_router_retain", "memory_router_recall"]) {
+        assert.ok(
+          tools.some((tool) => tool.name === name),
+          `Packaged MCP server must expose ${name}`,
+        );
+      }
+      const mcpRetained = await mcpClient.callTool({
+        name: "memory_router_retain",
+        arguments: { content: "The release smoke project deploys with Docker Compose." },
+      });
+      assert.equal(mcpRetained.isError, undefined, JSON.stringify(mcpRetained.content));
+      const mcpRecalled = await mcpClient.callTool({
+        name: "memory_router_recall",
+        arguments: { query: "How is the project deployed?" },
+      });
+      assert.equal(mcpRecalled.isError, undefined, JSON.stringify(mcpRecalled.content));
+      assert.ok(Array.isArray(mcpRecalled.content) && mcpRecalled.content.length > 0);
+    } finally {
+      await mcpClient.close();
+    }
+    assert.ok(!traces.some((item) => item.status >= 400 && item.status !== 404), JSON.stringify(traces));
+    console.log(
+      "Packaged OpenClaw retain/recall, Codex reflect and MCP retain/recall passed against the pinned router and Hindsight.",
+    );
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
