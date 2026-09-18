@@ -50,7 +50,7 @@
     "@vectorize-io/hindsight-client": "0.9.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
+    "@biomejs/biome": "2.5.13",
     "@types/node": "22.20.2",
     "@vitest/coverage-v8": "5.0.0",
     "aislop": "^0.16.1",
