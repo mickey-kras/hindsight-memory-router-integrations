@@ -31,8 +31,10 @@ compatible fixes; after 1.0, use normal SemVer major/minor/patch rules.
 Update package locks, rebuild changed packages, and refresh checksums/Nix hashes.
 Already-published package versions can be reused only with identical bytes.
 
-Every preparation reserves its version, including failed attempts. Rerunning the same
-preparation finds its branch. For a new attempt, bump the repository release version.
+Every preparation reserves its version while its branch or tag exists. A failed
+release run deletes its branch automatically (see Recovery), which frees the version;
+while a failed attempt's tag or branch remains, resume that release or bump the
+repository release version through a main PR.
 An upstream Hindsight upgrade does not dictate any component's version number.
 
 ## Tested inputs
@@ -119,3 +121,26 @@ integrations manifest, even when a newer router is available separately.
 
 Publication across GitHub and two registries is not atomic; exact digest references
 remain usable if a partial failure temporarily leaves aliases different.
+
+### Failed release cleanup
+
+When a release run fails before the immutable release is finalized, the **clean up
+failed release** job removes the run's leftover automatically and posts a summary of
+what it did: the `release/X.Y.Z` branch, deleted with the release App token (the App
+is the only bypass actor on the deletion ruleset). The branch is kept when it advanced
+past the failed run — its newest attempt owns it — or when `vX.Y.Z` already has a git
+tag or release; that state is resumable, so re-run the failed jobs to finish the
+release instead. Cleanup never runs on success, on cancellation, or on main runs, and
+it never touches tags, releases, assets, attestations, or any other branch.
+
+Manual cleanup remains needed only when:
+
+- the run fails before any job executes (caller startup failure) or is cancelled —
+  no cleanup job runs, so delete the orphaned branch manually;
+- the cleanup job itself fails — its summary names the leftover to remove;
+- a half-finished finalize left the `vX.Y.Z` tag or a draft release — resume with
+  **Re-run failed jobs**; only when abandoning the version, delete the draft release
+  manually (the protected tag stays and keeps the version reserved);
+- tarball attestations from a failed attempt — they are content-addressed, stay valid
+  if identical bytes are released later, and cannot be deleted with the automation's
+  credentials; they are accepted residue, not release state.

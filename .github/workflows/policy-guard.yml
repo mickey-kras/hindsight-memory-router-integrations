@@ -461,7 +461,7 @@ jobs:
           # Name-only pins are not enough: each required step must still carry
           # the substance of its gate (checked on the normalized run text).
           CI_RUN_SIGNATURES = {
-              'Release automation tests': ('node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs',),
+              'Release automation tests': ('node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs',),
               'Release policy tests': ('python3 .github/scripts/release-policy.test.py',),
               'Verify package': (
                   'npm pack', 'sha256sum --check PACKAGE_SHA256',
@@ -1130,7 +1130,9 @@ jobs:
               '.github/scripts/release.cjs': '736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77',
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': '8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5',
-              '.github/scripts/release-policy.test.py': '0bbbbb3ac61af2f357cc88ba9b99f246c22ec7ded621704c93c8634e113285d8',
+              '.github/scripts/release-policy.test.py': '55f3adf7fac689176e8d7c57a7a36297d5774302960a0d56a4e99653f020831c',
+              '.github/scripts/release-cleanup.cjs': 'f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533',
+              '.github/scripts/release-cleanup.test.cjs': '99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd',
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
           }
 

@@ -25,6 +25,9 @@ PATHS = [
 ]
 if ROUTER:
     PATHS.append(".github/scripts/publish-image.sh")
+else:
+    PATHS.append(".github/scripts/release-cleanup.cjs")
+    PATHS.append(".github/scripts/release-cleanup.test.cjs")
 
 
 def policy(overrides=None):
@@ -146,6 +149,40 @@ class ReleasePolicyTests(unittest.TestCase):
             self.assertIn("sonar", prepare["needs"])
             self.assertEqual(publish["if"], "startsWith(github.ref, 'refs/heads/release/')")
             self.assertEqual(main["jobs"]["sonar"]["if"], "github.ref == 'refs/heads/main'")
+
+    def test_release_cleanup_contract(self):
+        if ROUTER:
+            self.skipTest("integrations main workflow required")
+        main = yaml.safe_load((ROOT / MAIN).read_text())
+        publish = main["jobs"]["publish"]
+        self.assertEqual(publish["outputs"]["released"], "${{ steps.finalized.outputs.latest }}")
+        publish_steps = {step.get("name"): step for step in publish["steps"]}
+        self.assertEqual(publish_steps["Publish immutable release"].get("id"), "finalized")
+        cleanup = main["jobs"]["cleanup"]
+        self.assertTrue({"quality", "aislop", "codeql", "publish"} <= set(cleanup["needs"]))
+        self.assertIs(cleanup["continue-on-error"], True)
+        condition = cleanup["if"]
+        for guard in [
+            "always()",
+            "startsWith(github.ref, 'refs/heads/release/')",
+            "needs.publish.outputs.released == ''",
+            "needs.quality.result == 'failure'",
+            "needs.aislop.result == 'failure'",
+            "needs.codeql.result == 'failure'",
+            "needs.publish.result == 'failure'",
+        ]:
+            self.assertIn(guard, condition)
+        self.assertEqual(cleanup["environment"], "release-automation")
+        self.assertEqual(cleanup["permissions"], {"contents": "read"})
+        self.assertEqual(cleanup["concurrency"]["group"], publish["concurrency"]["group"])
+        self.assertIs(cleanup["concurrency"]["cancel-in-progress"], False)
+        steps = {step.get("name"): step for step in cleanup["steps"]}
+        self.assertEqual(
+            steps["Release App token"]["with"]["private-key"], "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"
+        )
+        branch = steps["Delete the failed release branch"]
+        self.assertEqual(branch["with"]["github-token"], "${{ steps.app.outputs.token }}")
+        self.assertIn("release-cleanup.cjs').branch(", branch["with"]["script"])
 
     def test_reviewed_release_workflows_pass(self):
         self.assertEqual(policy(), [])
