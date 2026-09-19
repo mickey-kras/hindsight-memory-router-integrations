@@ -153,7 +153,7 @@ function optionalPositiveInt(message: string) {
 }
 
 function absentWhenBlank(value: string | undefined): string | undefined {
-  return value !== undefined && value.trim() === "" ? undefined : value;
+  return value?.trim() === "" ? undefined : value;
 }
 
 function retainTool(stack: McpStack): McpTool {
