@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { formatMemoryOperationAudit, type MemoryAuditLogger, safeAuditLogger } from "../shared/audit.js";
 import { AuthenticatedClientFactory } from "../shared/authenticated-client-factory.js";
 import { AccessDeniedError } from "../shared/bank-access.js";
 import { loadManagedConfig } from "../shared/managed-config.js";
@@ -23,6 +24,7 @@ export interface McpStack {
   clients: AuthenticatedClientFactory;
   recall: RecallCoordinator;
   retain: RetainCoordinator;
+  audit: MemoryAuditLogger;
 }
 
 export const MCP_DEFAULTS = Object.freeze({
@@ -31,7 +33,11 @@ export const MCP_DEFAULTS = Object.freeze({
   retainQueueFlushIntervalMs: 30000,
 });
 
-export function loadMcpStack(env: NodeJS.ProcessEnv, logger: CoordinatorLogger): McpStack {
+export interface McpLogger extends CoordinatorLogger {
+  info?(msg: string): void;
+}
+
+export function loadMcpStack(env: NodeJS.ProcessEnv, logger: McpLogger): McpStack {
   const { config, principalId, principal } = loadManagedConfig(env, env.HINDSIGHT_ROUTER_PRINCIPAL);
   const credentials = new PrincipalCredentialResolver({
     routerUrl: config.routerUrl,
@@ -67,6 +73,7 @@ export function loadMcpStack(env: NodeJS.ProcessEnv, logger: CoordinatorLogger):
       logger,
       onAbandon: (item, attempts) => logger.error(retainAbandonNotice(item, attempts)),
     }),
+    audit: safeAuditLogger((event) => (logger.info ?? logger.warn)(formatMemoryOperationAudit(event))),
   };
 }
 

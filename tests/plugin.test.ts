@@ -81,6 +81,18 @@ function makeApi(queueDir: string): FakeApi {
   return api;
 }
 
+function auditRecords(api: FakeApi): Array<Record<string, unknown>> {
+  return api.logger.info.mock.calls
+    .map(([line]) => {
+      try {
+        return JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((record): record is Record<string, unknown> => typeof record?.op === "string");
+}
+
 /** Stack whose clients record their credentials and serve canned responses. */
 function instrumentedStack(
   queueDir: string,
@@ -187,6 +199,40 @@ describe("plugin wiring", () => {
     expect(result.prependContext).toContain("<hindsight_memories>");
     expect(result.prependContext).toContain("main memory");
     expect(result.prependContext).toContain("dev memory");
+    expect(auditRecords(api)).toEqual([
+      expect.objectContaining({ principal: "main", op: "recall", outcome: "success", bankId: "main,dev" }),
+    ]);
+    expect(JSON.stringify(auditRecords(api))).not.toContain("what do you remember?");
+  });
+
+  it("a throwing audit sink never breaks recall or retain hooks", async () => {
+    const api = makeApi(queueDir);
+    api.logger.info.mockImplementation((msg: string) => {
+      if (msg.includes('"op"')) {
+        throw new Error("sink down");
+      }
+    });
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+      recallResults: {
+        main: [{ text: "main memory", score: 0.9 }],
+      },
+    };
+    registerWithStack(api, instrumentedStack(queueDir, sink));
+
+    const result = (await api.handlers.get("before_prompt_build")!(
+      { prompt: "what do you remember?" },
+      { agentId: "main" },
+    )) as { prependContext?: string };
+    expect(result.prependContext).toContain("main memory");
+
+    await api.handlers.get("agent_end")!(
+      { messages: [{ role: "user", content: "remember this" }] },
+      { agentId: "main", sessionKey: "agent:main:main" },
+    );
+    expect(sink.retains).toHaveLength(1);
   });
 
   it("auto-retain routes to the agent's default write bank", async () => {
@@ -257,6 +303,14 @@ describe("plugin wiring", () => {
     expect(result).toBeUndefined();
     expect(sink.constructed).toHaveLength(0);
     expect(sink.recalls).toHaveLength(0);
+    expect(auditRecords(api)).toEqual([
+      expect.objectContaining({
+        principal: "unknown-agent",
+        op: "recall",
+        outcome: "failure",
+        errorClass: "identity_resolution_failed",
+      }),
+    ]);
   });
 
   it("auto-recall fails closed when ctx.agentId is missing", async () => {
@@ -338,6 +392,14 @@ describe("plugin wiring", () => {
     expect(sink.recalls.map((r) => r.bank)).toEqual(["dev", "dev-best-practices"]);
     expect(response.content[0].text).toContain("dev note");
     expect(response.content[0].text).toContain("bp note");
+    expect(auditRecords(api)).toEqual([
+      expect.objectContaining({
+        principal: "backend",
+        op: "agent_knowledge_recall",
+        outcome: "success",
+        bankId: "dev,dev-best-practices",
+      }),
+    ]);
   });
 
   it("exposes recall only for a read-only agent", () => {
@@ -492,6 +554,11 @@ describe("plugin wiring", () => {
     expect(api.logger.error).toHaveBeenCalledWith("auto-recall denied: recall authorization denied for bank main");
     expect(await handler({ prompt: "third query" }, { agentId: "main" })).toBeUndefined();
     expect(api.logger.warn).toHaveBeenCalledWith("auto-recall failed: memory operation failed");
+    expect(auditRecords(api)).toEqual([
+      expect.objectContaining({ principal: "main", op: "recall", outcome: "success", bankId: "main,dev" }),
+      expect.objectContaining({ principal: "main", op: "recall", outcome: "failure", errorClass: "access_denied" }),
+      expect.objectContaining({ principal: "main", op: "recall", outcome: "failure", errorClass: "operation_failed" }),
+    ]);
   });
 
   it("enforces retain filters, reports failures, and manages the flush service", async () => {
@@ -537,6 +604,12 @@ describe("plugin wiring", () => {
       expect.stringContaining("openclaw:normal:denied:"),
       expect.stringContaining("openclaw:normal:failed:"),
     ]);
+    expect(auditRecords(api)).toEqual([
+      expect.objectContaining({ principal: "main", op: "retain", outcome: "success", bankId: "main" }),
+      expect.objectContaining({ principal: "main", op: "retain", outcome: "failure", errorClass: "access_denied" }),
+      expect.objectContaining({ principal: "main", op: "retain", outcome: "failure", errorClass: "operation_failed" }),
+    ]);
+    expect(JSON.stringify(auditRecords(api))).not.toContain("remember this");
 
     await api.services[0].start();
     expect(flush).toHaveBeenCalledOnce();
@@ -632,8 +705,49 @@ describe("plugin wiring", () => {
       const [url, init] = fetchMock.mock.calls[0];
       expect(url).toContain("/v1/default/banks/main/mental-models");
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${TOKEN_MAIN}`);
+      expect(auditRecords(api)).toEqual([
+        expect.objectContaining({
+          principal: "main",
+          op: "agent_knowledge_create_page",
+          outcome: "success",
+          bankId: "main",
+        }),
+      ]);
     } finally {
       fetchMock.mockRestore();
     }
+  });
+
+  it("records a bounded audit class when a knowledge tool call fails", async () => {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    registerWithStack(api, instrumentedStack(queueDir, sink));
+    const tools = api.toolFactories[0].factory({ agentId: "main" }) as Array<{
+      name: string;
+      execute(
+        id: string,
+        params: Record<string, unknown>,
+      ): Promise<{ content: Array<{ text: string }>; details: object }>;
+    }>;
+    const listPages = tools.find((t) => t.name === "agent_knowledge_list_pages")!;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
+    try {
+      await expect(listPages.execute("call-1", {})).rejects.toThrow("memory request failed (500)");
+    } finally {
+      fetchMock.mockRestore();
+    }
+    expect(auditRecords(api)).toEqual([
+      expect.objectContaining({
+        principal: "main",
+        op: "agent_knowledge_list_pages",
+        outcome: "failure",
+        bankId: "main",
+        errorClass: "router_request_failed",
+      }),
+    ]);
   });
 });

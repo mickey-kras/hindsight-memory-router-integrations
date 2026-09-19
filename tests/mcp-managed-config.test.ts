@@ -59,6 +59,51 @@ describe("loadMcpStack", () => {
     expect(JSON.stringify(Object.keys(stack))).not.toContain("token");
   });
 
+  it("forwards structured audit records to the host logger as single-line JSON", () => {
+    configure(validPrincipal);
+    const stack = loadMcpStack(process.env, logger);
+    stack.audit({ principal: "agent", op: "memory_router_recall", outcome: "success", bankId: "agent-bank" });
+    const line = logger.warn.mock.calls.map(([message]) => message as string).find((m) => m.includes('"op"'));
+    expect(line).toBeDefined();
+    expect(line).not.toContain("\n");
+    expect(JSON.parse(line as string)).toMatchObject({
+      principal: "agent",
+      op: "memory_router_recall",
+      outcome: "success",
+      bankId: "agent-bank",
+    });
+  });
+
+  it("prefers the info channel for audit records when the host logger provides one", () => {
+    configure(validPrincipal);
+    const infoLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const stack = loadMcpStack(process.env, infoLogger);
+    infoLogger.warn.mockClear();
+    stack.audit({ principal: "agent", op: "memory_router_retain", outcome: "success", bankId: "agent-bank" });
+    expect(infoLogger.info).toHaveBeenCalledOnce();
+    expect(infoLogger.warn).not.toHaveBeenCalled();
+    expect(JSON.parse(infoLogger.info.mock.calls[0][0] as string)).toMatchObject({
+      principal: "agent",
+      op: "memory_router_retain",
+      outcome: "success",
+    });
+  });
+
+  it("never propagates a throwing audit sink", () => {
+    configure(validPrincipal);
+    const infoLogger = {
+      info: vi.fn(() => {
+        throw new Error("sink down");
+      }),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const stack = loadMcpStack(process.env, infoLogger);
+    expect(() =>
+      stack.audit({ principal: "agent", op: "memory_router_retain", outcome: "success" }),
+    ).not.toThrow();
+  });
+
   it.each([
     ["missing principal id", undefined],
     ["empty principal id", ""],

@@ -6,6 +6,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
+import {
+  formatMemoryOperationAudit,
+  type MemoryAuditLogger,
+  memoryOperationErrorClass,
+  safeAuditLogger,
+} from "./shared/audit.js";
 import { AuthenticatedClientFactory } from "./shared/authenticated-client-factory.js";
 import { PACKAGE_VERSION } from "./shared/package-version.js";
 import {
@@ -208,6 +214,10 @@ function memoryErrorMessage(error: unknown): string {
   return isIdentityError(error) ? (error as Error).message : "memory operation failed";
 }
 
+function auditLogger(log: { info(msg: string): void }): MemoryAuditLogger {
+  return safeAuditLogger((event) => log.info(formatMemoryOperationAudit(event)));
+}
+
 function sessionKeyFor(event: PluginHookEvent, ctx: PluginHookAgentContext | undefined): string | undefined {
   if (typeof ctx?.sessionKey === "string") {
     return ctx.sessionKey;
@@ -318,6 +328,7 @@ export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): v
 
 function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const log = api.logger;
+  const audit = auditLogger(log);
   const config = stack.config;
   api.on(
     "before_prompt_build",
@@ -326,8 +337,10 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
         return;
       }
       const agentId = ctx?.agentId;
+      let principal = agentId ?? "unknown";
       try {
         const credentials = stack.credentials.resolve(agentId);
+        principal = credentials.principalId;
         const banks = stack.credentials.resolveReadBanks(credentials.principalId);
         if (banks.length === 0) {
           return;
@@ -346,6 +359,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
           types: config.recallTypes,
           preferObservations: config.preferObservations,
         });
+        audit({ principal, op: "recall", outcome: "success", bankId: banks.join(",") });
         if (recalled.partial) {
           log.warn(`partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`);
         }
@@ -365,6 +379,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
             return { prependContext: contextMessage };
         }
       } catch (error) {
+        audit({ principal, op: "recall", outcome: "failure", errorClass: memoryOperationErrorClass(error) });
         if (isIdentityError(error)) {
           log.warn(`auto-recall skipped: ${(error as Error).message}`);
           return;
@@ -381,6 +396,7 @@ function registerRecallHook(api: MoltbotPluginAPI, stack: RoutingStack): void {
 
 function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const log = api.logger;
+  const audit = auditLogger(log);
   const config = stack.config;
   const ignorePatterns = compileSessionPatterns(config.ignoreSessionPatterns ?? []);
   const statelessPatterns = compileSessionPatterns(config.statelessSessionPatterns ?? []);
@@ -398,8 +414,10 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
       return;
     }
     let sequenceKey: string | undefined;
+    let principal = agentId ?? "unknown";
     try {
       const credentials = stack.credentials.resolve(agentId);
+      principal = credentials.principalId;
       if (stack.credentials.resolveOptionalWriteBank(credentials.principalId) === null) {
         return;
       }
@@ -426,10 +444,12 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
         tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.principalId}`],
       });
       setBounded(retainedDigests, sequenceKey, digest);
+      audit({ principal, op: "retain", outcome: "success", bankId: outcome.bank });
       if (outcome.queued) {
         log.warn(`retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`);
       }
     } catch (error) {
+      audit({ principal, op: "retain", outcome: "failure", errorClass: memoryOperationErrorClass(error) });
       if (isIdentityError(error)) {
         log.warn(`retain skipped: ${(error as Error).message}`);
         return;
@@ -471,90 +491,162 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   });
 }
 
+type RoutedKnowledgeTool = ReturnType<typeof routedKnowledgeTools>[number];
+
+interface KnowledgeRoute {
+  credentials: ReturnType<PrincipalCredentialResolver["resolve"]>;
+  writeBank: string | null;
+  recallBanks: string[];
+}
+
+const READ_KNOWLEDGE_TOOLS = ["agent_knowledge_recall", "agent_knowledge_list_pages", "agent_knowledge_get_page"];
+
+function resolveKnowledgeRoute(
+  stack: RoutingStack,
+  log: { warn(msg: string): void },
+  ctx: PluginToolContext,
+): KnowledgeRoute | null {
+  try {
+    const credentials = stack.credentials.resolve(ctx.agentId);
+    const writeBank = stack.credentials.resolveOptionalWriteBank(credentials.principalId);
+    const recallBanks = stack.credentials.resolveReadBanks(credentials.principalId);
+    if (writeBank === null && recallBanks.length === 0) {
+      return null;
+    }
+    return { credentials, writeBank, recallBanks };
+  } catch (error) {
+    if (isIdentityError(error)) {
+      log.warn(`knowledge tools disabled: ${(error as Error).message}`);
+      return null; // fail closed: no tools for unknown agents
+    }
+    throw error;
+  }
+}
+
+function knowledgeBankTool(tool: RoutedKnowledgeTool, route: KnowledgeRoute, audit: MemoryAuditLogger) {
+  const bankIdFor = (params: Record<string, unknown>) =>
+    typeof params.bankId === "string" ? params.bankId : (route.writeBank ?? undefined);
+  return {
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    parameters: tool.parameters,
+    async execute(_id: string, params: Record<string, unknown>) {
+      try {
+        const result = { ...(await tool.execute(params)), details: {} };
+        audit({
+          principal: route.credentials.principalId,
+          op: tool.name,
+          outcome: "success",
+          bankId: bankIdFor(params),
+        });
+        return result;
+      } catch (error) {
+        audit({
+          principal: route.credentials.principalId,
+          op: tool.name,
+          outcome: "failure",
+          bankId: bankIdFor(params),
+          errorClass: memoryOperationErrorClass(error),
+        });
+        throw error;
+      }
+    },
+  };
+}
+
+// The recall tool routes through the multi-bank coordinator: same
+// identity, same recall banks, same shared budget and timeout.
+function knowledgeRecallTool(
+  tool: RoutedKnowledgeTool,
+  stack: RoutingStack,
+  route: KnowledgeRoute,
+  log: { warn(msg: string): void },
+  audit: MemoryAuditLogger,
+) {
+  const config = stack.config;
+  return {
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    parameters: tool.parameters,
+    async execute(_id: string, params: Record<string, unknown>) {
+      const query = typeof params.query === "string" ? params.query : "";
+      const client = stack.clients.forAgent(route.credentials);
+      try {
+        const recalled = await stack.recall.recall(client, {
+          query,
+          banks: route.recallBanks,
+          timeoutMs: config.recallTimeoutMs ?? RUNTIME_DEFAULTS.recallTimeoutMs,
+          maxTokens: config.recallMaxTokens ?? RUNTIME_DEFAULTS.recallMaxTokens,
+          budget: config.recallBudget,
+          types: config.recallTypes,
+          preferObservations: config.preferObservations,
+        });
+        audit({
+          principal: route.credentials.principalId,
+          op: tool.name,
+          outcome: "success",
+          bankId: route.recallBanks.join(","),
+        });
+        if (recalled.partial) {
+          log.warn(`partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`);
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: formatMemories(recalled.results) || "No memories found.",
+            },
+          ],
+          details: {},
+        };
+      } catch (error) {
+        audit({
+          principal: route.credentials.principalId,
+          op: tool.name,
+          outcome: "failure",
+          bankId: route.recallBanks.join(","),
+          errorClass: memoryOperationErrorClass(error),
+        });
+        throw error;
+      }
+    },
+  };
+}
+
+function knowledgeToolsForContext(
+  stack: RoutingStack,
+  log: { warn(msg: string): void },
+  audit: MemoryAuditLogger,
+  ctx: PluginToolContext,
+) {
+  const route = resolveKnowledgeRoute(stack, log, ctx);
+  if (route === null) {
+    return null;
+  }
+  return routedKnowledgeTools(stack.clients.transportFor(route.credentials))
+    .filter((tool) =>
+      READ_KNOWLEDGE_TOOLS.includes(tool.name) ? route.recallBanks.length > 0 : route.writeBank !== null,
+    )
+    .map((tool) =>
+      tool.name === "agent_knowledge_recall"
+        ? knowledgeRecallTool(tool, stack, route, log, audit)
+        : knowledgeBankTool(tool, route, audit),
+    );
+}
+
 function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const log = api.logger;
   const config = stack.config;
-  if (
-    (config.enableKnowledgeTools ?? RUNTIME_DEFAULTS.enableKnowledgeTools) === true &&
-    typeof api.registerTool === "function"
-  ) {
-    api.registerTool(
-      (ctx: PluginToolContext) => {
-        let credentials: ReturnType<PrincipalCredentialResolver["resolve"]>;
-        let writeBank: string | null;
-        let recallBanks: string[];
-        try {
-          credentials = stack.credentials.resolve(ctx.agentId);
-          writeBank = stack.credentials.resolveOptionalWriteBank(credentials.principalId);
-          recallBanks = stack.credentials.resolveReadBanks(credentials.principalId);
-          if (writeBank === null && recallBanks.length === 0) {
-            return null;
-          }
-        } catch (error) {
-          if (isIdentityError(error)) {
-            log.warn(`knowledge tools disabled: ${(error as Error).message}`);
-            return null; // fail closed: no tools for unknown agents
-          }
-          throw error;
-        }
-        const tools = routedKnowledgeTools(stack.clients.transportFor(credentials));
-        return tools
-          .filter((tool) => {
-            if (
-              ["agent_knowledge_recall", "agent_knowledge_list_pages", "agent_knowledge_get_page"].includes(tool.name)
-            )
-              return recallBanks.length > 0;
-            return writeBank !== null;
-          })
-          .map((tool) => {
-            if (tool.name !== "agent_knowledge_recall") {
-              return {
-                name: tool.name,
-                label: tool.label,
-                description: tool.description,
-                parameters: tool.parameters,
-                async execute(_id: string, params: Record<string, unknown>) {
-                  return { ...(await tool.execute(params)), details: {} };
-                },
-              };
-            }
-            // Recall tool routes through the multi-bank coordinator: same
-            // identity, same recall banks, same shared budget and timeout.
-            return {
-              name: tool.name,
-              label: tool.label,
-              description: tool.description,
-              parameters: tool.parameters,
-              async execute(_id: string, params: Record<string, unknown>) {
-                const query = typeof params.query === "string" ? params.query : "";
-                const client = stack.clients.forAgent(credentials);
-                const recalled = await stack.recall.recall(client, {
-                  query,
-                  banks: recallBanks,
-                  timeoutMs: config.recallTimeoutMs ?? RUNTIME_DEFAULTS.recallTimeoutMs,
-                  maxTokens: config.recallMaxTokens ?? RUNTIME_DEFAULTS.recallMaxTokens,
-                  budget: config.recallBudget,
-                  types: config.recallTypes,
-                  preferObservations: config.preferObservations,
-                });
-                if (recalled.partial) {
-                  log.warn(`partial recall: banks unavailable: ${recalled.failedBanks.join(", ")}`);
-                }
-                return {
-                  content: [
-                    {
-                      type: "text",
-                      text: formatMemories(recalled.results) || "No memories found.",
-                    },
-                  ],
-                  details: {},
-                };
-              },
-            };
-          });
-      },
-      { names: [...TOOL_NAMES], optional: false },
-    );
-    log.info("knowledge tools registered");
+  const enabled = (config.enableKnowledgeTools ?? RUNTIME_DEFAULTS.enableKnowledgeTools) === true;
+  if (!enabled || typeof api.registerTool !== "function") {
+    return;
   }
+  const audit = auditLogger(log);
+  api.registerTool((ctx: PluginToolContext) => knowledgeToolsForContext(stack, log, audit, ctx), {
+    names: [...TOOL_NAMES],
+    optional: false,
+  });
+  log.info("knowledge tools registered");
 }

@@ -26,6 +26,8 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 - Any 401/403 discards the entire read result. Network/408/429/5xx failures permit partial reads.
 - Bank/config/page reads are read operations. Scope checks still belong to Memory Router.
 - OpenClaw retain queues recheck the current write bank before replay.
+- Every memory op emits a single-line JSON audit record (principal, op, bank, outcome, bounded error
+  class) to the host log; memory content is never logged.
 
 [OpenClaw configuration](docs/OPENCLAW.md) · [Coding agents](integrations/coding-agents/README.md)
 
