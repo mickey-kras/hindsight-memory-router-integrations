@@ -407,6 +407,36 @@ describe("RetainCoordinator", () => {
     expect(() => readFileSync(queueFile, "utf8")).toThrow();
   });
 
+  it("drops the item and logs when a host onAbandon handler throws", async () => {
+    const first = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(500);
+      },
+    });
+    await first.retain.retain("main", { content: "poison" });
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const log = { warn: () => {}, error: vi.fn() };
+    const replay = makeStack({
+      queueDir,
+      logger: log,
+      onAbandon: () => {
+        throw new Error("webhook unreachable");
+      },
+      behavior: () => {
+        throw httpError(503);
+      },
+    });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await replay.retain.flushQueues();
+    }
+    expect(log.error).toHaveBeenCalledWith("retain abandonment handler failed for bank main: Error");
+    expect(() => readFileSync(queueFile, "utf8")).toThrow();
+    log.error.mockClear();
+    await replay.retain.flushQueues();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
   it("warns at startup while queue retention is unbounded, and stays quiet when bounded", () => {
     const unbounded = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: unbounded });

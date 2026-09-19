@@ -187,7 +187,13 @@ export class RetainCoordinator {
     const attempts = queue.incrementReplayAttempts(item.id);
     if (attempts >= MAX_REPLAY_ATTEMPTS) {
       delivered.push(item.id);
-      this.onAbandon(item, attempts);
+      try {
+        this.onAbandon(item, attempts);
+      } catch (error) {
+        this.log.error(
+          `retain abandonment handler failed for bank ${item.bankId}: ${error instanceof Error ? error.name : typeof error}`,
+        );
+      }
     }
   }
 }

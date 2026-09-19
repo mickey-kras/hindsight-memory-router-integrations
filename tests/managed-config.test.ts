@@ -124,6 +124,10 @@ describe("loadManagedConfig", () => {
     ["recallTimeoutMs", 1.5],
     ["recallMaxTokens", -1],
     ["retainQueueFlushIntervalMs", 0],
+    ["queueMaxAgeMs", 0],
+    ["queueMaxAgeMs", -2],
+    ["queueMaxAgeMs", 1.5],
+    ["queueMaxAgeMs", "604800000"],
   ])("rejects %s=%s", (name, value) => {
     configure(validPrincipal, { [name]: value });
     expect(() => loadManagedConfig(process.env, "agent")).toThrow(AccessDeniedError);
@@ -137,12 +141,24 @@ describe("loadManagedConfig", () => {
   it("accepts valid optional principal and tuning fields", () => {
     configure(
       { ...validPrincipal, source: "my-product", mapPathToBank: { "/srv/app": "agent-bank" } },
-      { recallTimeoutMs: 4000, recallMaxTokens: 256, retainQueueFlushIntervalMs: 1000, queueDir: "/tmp/queue" },
+      {
+        recallTimeoutMs: 4000,
+        recallMaxTokens: 256,
+        retainQueueFlushIntervalMs: 1000,
+        queueMaxAgeMs: 604800000,
+        queueDir: "/tmp/queue",
+      },
     );
     const { config, principal } = loadManagedConfig(process.env, "agent");
     expect(principal.source).toBe("my-product");
     expect(principal.mapPathToBank).toEqual({ "/srv/app": "agent-bank" });
     expect(config.recallTimeoutMs).toBe(4000);
     expect(config.recallMaxTokens).toBe(256);
+    expect(config.queueMaxAgeMs).toBe(604800000);
+  });
+
+  it("accepts queueMaxAgeMs -1 to keep queued retains without expiration", () => {
+    configure(validPrincipal, { queueMaxAgeMs: -1 });
+    expect(loadManagedConfig(process.env, "agent").config.queueMaxAgeMs).toBe(-1);
   });
 });

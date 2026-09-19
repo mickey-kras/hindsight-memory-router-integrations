@@ -12,6 +12,7 @@ const logger = { warn: vi.fn(), error: vi.fn() };
 const dirs: string[] = [];
 
 afterEach(() => {
+  vi.clearAllMocks();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -133,6 +134,17 @@ describe("loadMcpStack", () => {
     vi.stubEnv("HOME", dir);
     loadMcpStack(process.env, logger);
     expect(existsSync(join(dir, ".hindsight-memory-router", "retain-queue"))).toBe(true);
+  });
+
+  it("warns about plaintext retention by default and stays quiet with a bounded queueMaxAgeMs", () => {
+    const { dir } = configure(validPrincipal);
+    vi.stubEnv("HOME", dir);
+    loadMcpStack(process.env, logger);
+    expect(logger.warn.mock.calls.flat().join("\n")).toContain("plaintext transcripts with no expiration");
+    vi.clearAllMocks();
+    configure(validPrincipal, { queueMaxAgeMs: 604800000 });
+    loadMcpStack(process.env, logger);
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it("surfaces queue abandonment as a stderr notice through the wired logger", async () => {
