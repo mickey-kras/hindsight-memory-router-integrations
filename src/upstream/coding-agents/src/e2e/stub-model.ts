@@ -11,7 +11,8 @@
  * What this does NOT prove is that a model reasons over the memory; the real-subscription runs
  * (codex, opencode, cline) still cover that. Use this to test OUR wiring, not model behaviour.
  */
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { networkInterfaces } from "node:os";
 
 export interface StubModel {
   /** Base URL reachable FROM THE CONTAINER (host.docker.internal), without a trailing slash. */
@@ -77,14 +78,31 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * Start the stub on an ephemeral port, bound to loopback only: the echo server has no client that
- * must cross a network boundary, and a wildcard bind would expose it on every host interface.
- * Speaks the two request shapes these CLIs use: OpenAI chat-completions and Anthropic messages,
- * plus the model-list endpoints they probe at startup.
+ * Host-side IPv4 addresses of the Docker bridges (docker0, compose's br-*). On native Linux,
+ * `host.docker.internal:host-gateway` resolves to one of these, NOT to loopback, so a stub bound
+ * to 127.0.0.1 alone is unreachable from containers. Binding exactly these addresses keeps the
+ * stub off every LAN interface while staying reachable from bridge networks.
+ */
+function dockerBridgeHosts(): string[] {
+  const hosts: string[] = [];
+  for (const [name, addresses] of Object.entries(networkInterfaces())) {
+    if (!/^(?:docker\d*|br-)/.test(name)) continue;
+    for (const address of addresses ?? []) {
+      if (address.family === "IPv4" && !address.internal) hosts.push(address.address);
+    }
+  }
+  return hosts;
+}
+
+/**
+ * Start the stub on an ephemeral port, bound to loopback plus the Docker bridge gateways (see
+ * dockerBridgeHosts) — never to 0.0.0.0, which would expose the echo server on every host
+ * interface. Speaks the two request shapes these CLIs use: OpenAI chat-completions and Anthropic
+ * messages, plus the model-list endpoints they probe at startup.
  */
 export async function startStubModel(): Promise<StubModel> {
   let served = 0;
-  const server: Server = createServer((req, res) => {
+  const handle = (req: IncomingMessage, res: ServerResponse): void => {
     void (async () => {
       const url = req.url || "";
       const json = (status: number, payload: unknown): void => {
@@ -214,19 +232,34 @@ export async function startStubModel(): Promise<StubModel> {
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       });
     })();
-  });
+  };
 
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
+  const hosts = ["127.0.0.1", ...dockerBridgeHosts()];
+  const servers = hosts.map(() => createServer(handle));
+  const listen = (server: Server, host: string, port: number): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, host, () => resolve());
+    });
+  await listen(servers[0], hosts[0], 0);
+  const address = servers[0].address();
   const port = typeof address === "object" && address ? address.port : 0;
+  for (let i = 1; i < servers.length; i++) {
+    await listen(servers[i], hosts[i], port);
+  }
 
   return {
     // The container reaches the host through this alias, already added to every docker run.
     containerUrl: `http://host.docker.internal:${port}`,
     requests: () => served,
     close: () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      }),
+      Promise.all(
+        servers.map(
+          (server) =>
+            new Promise<void>((resolve) => {
+              server.close(() => resolve());
+            }),
+        ),
+      ).then(() => undefined),
   };
 }
