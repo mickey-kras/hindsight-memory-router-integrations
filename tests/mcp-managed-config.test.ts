@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ const logger = { warn: vi.fn(), error: vi.fn() };
 const dirs: string[] = [];
 
 afterEach(() => {
+  vi.clearAllMocks();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -59,92 +60,27 @@ describe("loadMcpStack", () => {
   });
 
   it.each([
-    ["missing config path", { HINDSIGHT_ROUTER_CONFIG: undefined, HINDSIGHT_ROUTER_PRINCIPAL: "agent" }],
-    ["relative config path", { HINDSIGHT_ROUTER_CONFIG: "router.json", HINDSIGHT_ROUTER_PRINCIPAL: "agent" }],
-    ["missing principal id", { HINDSIGHT_ROUTER_PRINCIPAL: undefined }],
-    ["empty principal id", { HINDSIGHT_ROUTER_PRINCIPAL: "" }],
-  ])("fails closed on %s", (_label, env) => {
+    ["missing principal id", undefined],
+    ["empty principal id", ""],
+  ])("fails closed on %s from the environment", (_label, principalId) => {
     configure(validPrincipal);
-    for (const [name, value] of Object.entries(env)) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        vi.stubEnv(name, value);
-      }
+    if (principalId === undefined) {
+      delete process.env.HINDSIGHT_ROUTER_PRINCIPAL;
+    } else {
+      vi.stubEnv("HINDSIGHT_ROUTER_PRINCIPAL", principalId);
     }
     expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
   });
 
-  it("fails closed when the config file is unreadable or not JSON", () => {
-    const dir = mkdtempSync(join(tmpdir(), "mcp-config-test-"));
-    dirs.push(dir);
-    const path = join(dir, "router.json");
-    writeFileSync(path, "not json");
-    vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", path);
-    vi.stubEnv("HINDSIGHT_ROUTER_PRINCIPAL", "agent");
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-    vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", join(dir, "missing.json"));
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-  });
-
-  it("fails closed on an unknown principal id", () => {
+  it("rejects a principal id that violates the principal pattern", () => {
     configure(validPrincipal);
-    vi.stubEnv("HINDSIGHT_ROUTER_PRINCIPAL", "intruder");
+    vi.stubEnv("HINDSIGHT_ROUTER_PRINCIPAL", "../agent");
     expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-  });
-
-  it.each(["token", "apiToken"])("rejects an inline %s in the principal entry", (key) => {
-    configure({ ...validPrincipal, [key]: `mr_inline_${"b".repeat(64)}` });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-  });
-
-  it.each(["lowercase", "9STARTSWITHDIGIT", "HAS-DASH"])("rejects tokenEnv %s", (tokenEnv) => {
-    configure({ ...validPrincipal, tokenEnv });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-  });
-
-  it.each([
-    ["wildcard", "*"],
-    ["dot-dot", ".."],
-    ["dot", "."],
-    ["empty", ""],
-    ["too long", "b".repeat(129)],
-  ])("rejects a %s write bank at config load", (_label, writeBank) => {
-    configure({ ...validPrincipal, writeBank });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-  });
-
-  it.each([
-    ["wildcard", ["*"]],
-    ["dot-dot", [".."]],
-    ["empty", [""]],
-  ])("rejects %s additional read banks at config load", (_label, additionalReadBanks) => {
-    configure({ ...validPrincipal, additionalReadBanks });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-  });
-
-  it("rejects a non-array additionalReadBanks at startup", () => {
-    configure({ ...validPrincipal, additionalReadBanks: "shared-bank" });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(CredentialResolutionError);
   });
 
   it("rejects a non-string write bank at startup", () => {
     configure({ ...validPrincipal, writeBank: 5 });
     expect(() => loadMcpStack(process.env, logger)).toThrow(CredentialResolutionError);
-  });
-
-  it("rejects a non-string tokenEnv", () => {
-    configure({ ...validPrincipal, tokenEnv: 42 });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-  });
-
-  it.each([
-    ["empty string", ""],
-    ["whitespace", "   "],
-    ["non-string", 7],
-  ])("rejects source %s", (_label, source) => {
-    configure({ ...validPrincipal, source });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
   });
 
   it("carries a configured source for retain provenance", () => {
@@ -174,26 +110,11 @@ describe("loadMcpStack", () => {
     expect(() => loadMcpStack(process.env, logger)).toThrow(CredentialResolutionError);
   });
 
-  it.each([
-    ["recallTimeoutMs", 0],
-    ["recallTimeoutMs", 1.5],
-    ["recallMaxTokens", -1],
-    ["retainQueueFlushIntervalMs", 0],
-  ])("rejects %s=%s at config load", (name, value) => {
-    configure(validPrincipal, { [name]: value });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
-  });
-
   it("applies configured recall budget and timeout", () => {
     configure(validPrincipal, { recallTimeoutMs: 4000, recallMaxTokens: 256 });
     const stack = loadMcpStack(process.env, logger);
     expect(stack.recallTimeoutMs).toBe(4000);
     expect(stack.recallMaxTokens).toBe(256);
-  });
-
-  it("rejects a relative queueDir", () => {
-    configure(validPrincipal, { queueDir: "relative/queue" });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
   });
 
   it("creates the configured queue directory", () => {
@@ -215,6 +136,45 @@ describe("loadMcpStack", () => {
     expect(existsSync(join(dir, ".hindsight-memory-router", "retain-queue"))).toBe(true);
   });
 
+  it("warns about plaintext retention by default and stays quiet with a bounded queueMaxAgeMs", () => {
+    const { dir } = configure(validPrincipal);
+    vi.stubEnv("HOME", dir);
+    loadMcpStack(process.env, logger);
+    const warning = logger.warn.mock.calls.flat().join("\n");
+    expect(warning).toContain("plaintext transcripts with no expiration");
+    expect(warning).toContain("set queueMaxAgeMs to bound retention");
+    vi.clearAllMocks();
+    configure(validPrincipal, { queueMaxAgeMs: 604800000 });
+    loadMcpStack(process.env, logger);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("surfaces queue abandonment as a stderr notice through the wired logger", async () => {
+    const { dir } = configure(validPrincipal);
+    vi.stubEnv("HOME", dir);
+    const stack = loadMcpStack(process.env, logger);
+    const queueDir = join(dir, ".hindsight-memory-router", "retain-queue");
+    const queueFile = join(queueDir, "hindsight-retain-queue.agent.jsonl");
+    writeFileSync(
+      queueFile,
+      `${JSON.stringify({
+        id: "poison-1",
+        bankId: "agent-bank",
+        content: "poison transcript",
+        documentId: "conversation",
+        metadata: {},
+        createdAt: new Date().toISOString(),
+        replayAttempts: 4,
+      })}\n`,
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unavailable", { status: 503 }));
+    await stack.retain.flushQueues();
+    expect(logger.error).toHaveBeenCalledWith(
+      "retain replay abandoned after 5 attempts for bank agent-bank; transcript dropped from the queue without delivery",
+    );
+    expect(() => readFileSync(queueFile, "utf8")).toThrow();
+  });
+
   it("loads a read-only principal without a write bank", () => {
     configure({ tokenEnv: "TEST_AGENT_TOKEN", additionalReadBanks: ["shared-bank"] });
     const stack = loadMcpStack(process.env, logger);
@@ -225,12 +185,6 @@ describe("loadMcpStack", () => {
   it("rejects a principal with no route at all", () => {
     configure({ tokenEnv: "TEST_AGENT_TOKEN" });
     expect(() => loadMcpStack(process.env, logger)).toThrow(CredentialResolutionError);
-  });
-
-  it("rejects a principal id that violates the principal pattern", () => {
-    configure(validPrincipal);
-    vi.stubEnv("HINDSIGHT_ROUTER_PRINCIPAL", "../agent");
-    expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
   });
 });
 

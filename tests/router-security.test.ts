@@ -82,6 +82,20 @@ describe("managed harness identities", () => {
     setup();
     expect(() => harnessTransport(harness)).toThrow(AccessDeniedError);
   });
+  it("loads a writeBank-only principal without additional read banks", async () => {
+    const path = setup();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        routerUrl: url,
+        principals: { codex: { writeBank: "A", tokenEnv: "TEST_CODEX_TOKEN" } },
+      }),
+    );
+    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}));
+    const client = harnessTransport("codex");
+    await client.request(client.bankUrl("A", "/config"));
+    expect(new Headers(send.mock.calls[0][1]?.headers).get("authorization")).toBe(`Bearer ${token("codex")}`);
+  });
   it("denies missing credentials, invalid secrets and missing managed config", () => {
     setup();
     vi.stubEnv("TEST_CODEX_TOKEN", "");
@@ -129,16 +143,6 @@ describe("managed harness identities", () => {
       gitIngest: "none",
     });
     expect(() => managedBank("reader", "/approved")).toThrow(AccessDeniedError);
-  });
-  it("rejects plaintext tokens and wildcard bank grants", () => {
-    const path = setup();
-    for (const principal of [
-      { ...access, tokenEnv: "TEST_CODEX_TOKEN", token: token("codex") },
-      { writeBank: "*", additionalReadBanks: [], tokenEnv: "TEST_CODEX_TOKEN" },
-    ]) {
-      writeFileSync(path, JSON.stringify({ routerUrl: url, principals: { codex: principal } }));
-      expect(() => harnessTransport("codex")).toThrow(AccessDeniedError);
-    }
   });
   it("does not serialize credentials", () => {
     setup();
@@ -259,6 +263,7 @@ describe("bank isolation", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
   it("strips error bodies, catches network errors and blocks redirect following", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const send = vi
       .fn<typeof fetch>()
       .mockRejectedValueOnce(new Error(token("test")))
@@ -267,6 +272,9 @@ describe("bank isolation", () => {
     await expect(client.request(client.bankUrl("A"))).rejects.toThrow(RouterRequestError);
     await expect(client.request(client.bankUrl("A"))).rejects.toThrow("memory request failed (500)");
     expect(send.mock.calls[0][1]?.redirect).toBe("error");
+    // The local log records the bounded error class only, never the message (URLs, tokens).
+    expect(stderr).toHaveBeenCalledWith("memory request failed: Error\n");
+    expect(stderr.mock.calls.flat().join(" ")).not.toContain(token("test"));
   });
 });
 

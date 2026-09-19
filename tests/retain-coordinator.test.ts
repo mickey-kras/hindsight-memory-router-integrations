@@ -25,6 +25,9 @@ function makeStack(options: {
   behavior?: (bank: string) => void;
   apiKeys?: string[];
   logger?: { warn(msg: string): void; error(msg: string): void };
+  queueMaxAgeMs?: number;
+  onAbandon?: (item: { bankId: string }, attempts: number) => void;
+  maxAgeConfigKey?: string;
 }) {
   const credentials = new PrincipalCredentialResolver({
     routerUrl: "https://router.example.test",
@@ -65,7 +68,10 @@ function makeStack(options: {
     credentials,
     clients,
     queueDir: options.queueDir,
+    queueMaxAgeMs: options.queueMaxAgeMs,
     logger: options.logger ?? silentLog,
+    onAbandon: options.onAbandon,
+    maxAgeConfigKey: options.maxAgeConfigKey,
   });
   return { retain, fakeClients };
 }
@@ -354,8 +360,10 @@ describe("RetainCoordinator", () => {
     });
     await first.retain.retain("main", { content: "poison" });
     const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const log = { warn: () => {}, error: vi.fn() };
     const replay = makeStack({
       queueDir,
+      logger: log,
       behavior: () => {
         throw httpError(503);
       },
@@ -367,5 +375,81 @@ describe("RetainCoordinator", () => {
     }
     await replay.retain.flushQueues();
     expect(() => readFileSync(queueFile, "utf8")).toThrow();
+    expect(log.error).toHaveBeenCalledWith(
+      "retain replay abandoned after 5 attempts for bank main; transcript dropped from the queue without delivery",
+    );
+  });
+
+  it("routes abandonment to a host onAbandon handler instead of the log", async () => {
+    const first = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(500);
+      },
+    });
+    await first.retain.retain("main", { content: "poison" });
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const onAbandon = vi.fn();
+    const log = { warn: () => {}, error: vi.fn() };
+    const replay = makeStack({
+      queueDir,
+      logger: log,
+      onAbandon,
+      behavior: () => {
+        throw httpError(503);
+      },
+    });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await replay.retain.flushQueues();
+    }
+    expect(onAbandon).toHaveBeenCalledOnce();
+    expect(onAbandon.mock.calls[0][0]).toMatchObject({ bankId: "main", content: "poison" });
+    expect(onAbandon.mock.calls[0][1]).toBe(5);
+    expect(log.error).not.toHaveBeenCalled();
+    expect(() => readFileSync(queueFile, "utf8")).toThrow();
+  });
+
+  it("drops the item and logs when a host onAbandon handler throws", async () => {
+    const first = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(500);
+      },
+    });
+    await first.retain.retain("main", { content: "poison" });
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const log = { warn: () => {}, error: vi.fn() };
+    const replay = makeStack({
+      queueDir,
+      logger: log,
+      onAbandon: () => {
+        throw new Error("webhook unreachable");
+      },
+      behavior: () => {
+        throw httpError(503);
+      },
+    });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await replay.retain.flushQueues();
+    }
+    expect(log.error).toHaveBeenCalledWith("retain abandonment handler failed for bank main: Error");
+    expect(() => readFileSync(queueFile, "utf8")).toThrow();
+    log.error.mockClear();
+    await replay.retain.flushQueues();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it("warns at startup while queue retention is unbounded, and stays quiet when bounded", () => {
+    const unbounded = { warn: vi.fn(), error: () => {} };
+    makeStack({ queueDir, logger: unbounded });
+    expect(unbounded.warn).toHaveBeenCalledWith(
+      `retain queue at ${queueDir} holds plaintext transcripts with no expiration; set retainQueueMaxAgeMs to bound retention and protect the directory with disk encryption`,
+    );
+    const bounded = { warn: vi.fn(), error: () => {} };
+    makeStack({ queueDir, logger: bounded, queueMaxAgeMs: 604800000 });
+    expect(bounded.warn).not.toHaveBeenCalled();
+    const renamed = { warn: vi.fn(), error: () => {} };
+    makeStack({ queueDir, logger: renamed, maxAgeConfigKey: "queueMaxAgeMs" });
+    expect(renamed.warn.mock.calls.flat().join("\n")).toContain("set queueMaxAgeMs to bound retention");
   });
 });
