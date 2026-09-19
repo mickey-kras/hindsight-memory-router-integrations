@@ -146,3 +146,13 @@ jobs:
             if (pull.head.sha !== sha) throw new Error('PR changed after publication');
             const { requestValidation } = require('./.github/scripts/dependabot-validation.cjs');
             await requestValidation(github, context, pull, core);
+            // The published commit is created through the API as github-actions[bot] and does
+            // not trigger pull_request_target, and the scheduled refresh may be delayed for
+            // hours; re-run the auto-merge evaluation now so prepared PRs do not stall.
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'dependabot-auto-merge-refresh.yml',
+              ref: pull.base.ref,
+            });
+            core.info(`#${pull.number}: requested auto-merge refresh after preparation`);
