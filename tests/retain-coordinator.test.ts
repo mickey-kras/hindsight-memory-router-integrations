@@ -27,6 +27,7 @@ function makeStack(options: {
   logger?: { warn(msg: string): void; error(msg: string): void };
   queueMaxAgeMs?: number;
   onAbandon?: (item: { bankId: string }, attempts: number) => void;
+  maxAgeConfigKey?: string;
 }) {
   const credentials = new PrincipalCredentialResolver({
     routerUrl: "https://router.example.test",
@@ -70,6 +71,7 @@ function makeStack(options: {
     queueMaxAgeMs: options.queueMaxAgeMs,
     logger: options.logger ?? silentLog,
     onAbandon: options.onAbandon,
+    maxAgeConfigKey: options.maxAgeConfigKey,
   });
   return { retain, fakeClients };
 }
@@ -446,5 +448,8 @@ describe("RetainCoordinator", () => {
     const bounded = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: bounded, queueMaxAgeMs: 604800000 });
     expect(bounded.warn).not.toHaveBeenCalled();
+    const renamed = { warn: vi.fn(), error: () => {} };
+    makeStack({ queueDir, logger: renamed, maxAgeConfigKey: "queueMaxAgeMs" });
+    expect(renamed.warn.mock.calls.flat().join("\n")).toContain("set queueMaxAgeMs to bound retention");
   });
 });

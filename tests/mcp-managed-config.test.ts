@@ -140,7 +140,9 @@ describe("loadMcpStack", () => {
     const { dir } = configure(validPrincipal);
     vi.stubEnv("HOME", dir);
     loadMcpStack(process.env, logger);
-    expect(logger.warn.mock.calls.flat().join("\n")).toContain("plaintext transcripts with no expiration");
+    const warning = logger.warn.mock.calls.flat().join("\n");
+    expect(warning).toContain("plaintext transcripts with no expiration");
+    expect(warning).toContain("set queueMaxAgeMs to bound retention");
     vi.clearAllMocks();
     configure(validPrincipal, { queueMaxAgeMs: 604800000 });
     loadMcpStack(process.env, logger);

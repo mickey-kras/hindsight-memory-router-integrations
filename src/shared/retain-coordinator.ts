@@ -48,6 +48,7 @@ export class RetainCoordinator {
   private readonly queueMaxAgeMs: number;
   private readonly log: CoordinatorLogger;
   private readonly onAbandon: RetainAbandonHandler;
+  private readonly maxAgeConfigKey: string;
 
   constructor(options: {
     credentials: PrincipalCredentialResolver;
@@ -56,6 +57,7 @@ export class RetainCoordinator {
     queueMaxAgeMs?: number;
     logger: CoordinatorLogger;
     onAbandon?: RetainAbandonHandler;
+    maxAgeConfigKey?: string;
   }) {
     this.credentials = options.credentials;
     this.clients = options.clients;
@@ -64,9 +66,10 @@ export class RetainCoordinator {
     this.queueMaxAgeMs = options.queueMaxAgeMs ?? -1;
     this.log = options.logger;
     this.onAbandon = options.onAbandon ?? ((item, attempts) => this.log.error(retainAbandonNotice(item, attempts)));
+    this.maxAgeConfigKey = options.maxAgeConfigKey ?? "retainQueueMaxAgeMs";
     if (this.queueMaxAgeMs < 0) {
       this.log.warn(
-        `retain queue at ${this.queueDir} holds plaintext transcripts with no expiration; set retainQueueMaxAgeMs to bound retention and protect the directory with disk encryption`,
+        `retain queue at ${this.queueDir} holds plaintext transcripts with no expiration; set ${this.maxAgeConfigKey} to bound retention and protect the directory with disk encryption`,
       );
     }
   }
