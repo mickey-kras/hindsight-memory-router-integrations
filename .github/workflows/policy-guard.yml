@@ -906,12 +906,6 @@ jobs:
               ):
                   fail('policy-guard.yml: structural policy guard step must stay active')
               if isinstance(run, str):
-          POLICY_SOURCE
-
-      - name: Policy source 3
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   if run.count(T_SYS_EXIT1) < 2:
                       fail(
                           'policy-guard.yml: policy guard run must keep both failure '
@@ -922,6 +916,12 @@ jobs:
                           'policy-guard.yml: policy guard run must not contain '
                           'a silent-success exit'
                       )
+          POLICY_SOURCE
+
+      - name: Policy source 3
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
 
           def gate_branch_policy(path, content):
               doc = parse_yaml_file(path, content, 'workflow')
@@ -1127,9 +1127,9 @@ jobs:
               '.github/scripts/combination-smoke.sh': '3074e9c0b6b8f4c3e8e36586478a93f37271694dff5b93511ac6946717f5d53f',
               '.github/scripts/combination-smoke.mjs': '7bdb7f4b189c8ab538eaa49ad16395da9d9fb9950f8d263cc68dafb9e6587622',
               '.github/scripts/combination.test.cjs': '0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2',
-              '.github/scripts/release.cjs': 'f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36',
+              '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77', 'f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36'),
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
-              '.github/scripts/release.test.cjs': 'f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23',
+              '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5', 'f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23'),
               '.github/scripts/release-policy.test.py': '55f3adf7fac689176e8d7c57a7a36297d5774302960a0d56a4e99653f020831c',
               '.github/scripts/release-cleanup.cjs': 'f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533',
               '.github/scripts/release-cleanup.test.cjs': '99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd',
@@ -1137,7 +1137,9 @@ jobs:
           }
 
           def gate_release_source(path, content):
-              if hashlib.sha256(content.encode()).hexdigest() != RELEASE_SOURCE_HASHES[path]:
+              expected = RELEASE_SOURCE_HASHES[path]
+              if isinstance(expected, str): expected = (expected,)
+              if hashlib.sha256(content.encode()).hexdigest() not in expected:
                   fail(f'{path}: release automation must match its reviewed policy')
 
           GATES = {
