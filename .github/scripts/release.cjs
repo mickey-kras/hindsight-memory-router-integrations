@@ -458,7 +458,9 @@ async function validate({ github, context, core }) {
   if (tag) {
     let target = tag.object;
     if (target.type === "tag") {
-      ({ data: { object: target } } = await github.rest.git.getTag({ ...context.repo, tag_sha: target.sha }));
+      ({
+        data: { object: target },
+      } = await github.rest.git.getTag({ ...context.repo, tag_sha: target.sha }));
     }
     requireValue(
       target.type === "commit" && commitSha.test(target.sha) && target.sha === context.sha,

@@ -1079,8 +1079,8 @@ jobs:
 
           DEPENDENCY_PREPARATION_SCRIPTS = {
               '.github/scripts/dependabot-auto-merge.cjs': ('5da076a4e27a1bb7e657d30e0e6f79a19c0bdb0dd11b389c383304bdb483ef32', 'a3b44baec133791a81e25b8257597f7c92173ea89a0727bd5ed37976a30d3b3c', '9e35e7b47d63714e5b9710f93455eb34180f78ddefaeac0e2a4e8bcf1fd6e14b', '5e7599b6f8ee7c35a696196be54fa6ffee868528c596b4eeb60623a2f38e4e5e', '7c179097b31faca35820986b2fe12ac39ee165ca9dbe2103ddeead8e87728535', '546fe0c758c17b5336c7767e3a8305dd3280c1c297e7246b3aa460c1e1ac1e85'),
-              '.github/scripts/dependency-files.cjs': ('401d0945695821073cedde61648e58537f56d05fbe52e5adeb502c397264363d', '707d733c2f3cf33ccf54dcc6ef9e68516e09fbb5e5a567b76769d1b2c7c99105'),
-              '.github/scripts/dependabot-preparation.cjs': ('62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f', 'ab8d460b0ebcd47633cf032c041f50daaf552486c0d960c13e9076e9cf62a528', '2c9f962d15ef043ee72da9a2d55c2157bf425d922c90d9610fd074ef21e7dcb7', '5d5f01c251e93a846218948b83d5c470cebc7acc6b988c7c7565cb0524ffa463', '06c1b2dafec663eef59630a772324b8521ad9463ffff2fbcee9c6928ef64d924', 'ede8c7961d0d9d54141781a00d1146e025f2e528b157a55f34d2385e325e45c6'),
+              '.github/scripts/dependency-files.cjs': ('401d0945695821073cedde61648e58537f56d05fbe52e5adeb502c397264363d', '3c2f255c274ffde722a31531da541baaa109c00a6e314a1e336c4d60c974bc54'),
+              '.github/scripts/dependabot-preparation.cjs': ('62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f', 'ab8d460b0ebcd47633cf032c041f50daaf552486c0d960c13e9076e9cf62a528', '2c9f962d15ef043ee72da9a2d55c2157bf425d922c90d9610fd074ef21e7dcb7', '5d5f01c251e93a846218948b83d5c470cebc7acc6b988c7c7565cb0524ffa463', '06c1b2dafec663eef59630a772324b8521ad9463ffff2fbcee9c6928ef64d924', '9cf269d531db85b590e02777108af43e51ca3d2e911f4b9789f664896b2090af'),
               '.github/scripts/refresh-dependency-artifacts.cjs': ('951ff6b864c238e2f1b7ce98906f572a6fe02f9680a63b9a425ee46518bd1cfd', '1b66ade5cb2c13770556c9aa266e56afda612bb28df6be30a42229b9a19a5250'),
               '.github/scripts/dependabot-validation.cjs': ('a6c1d925ac97e90f79129ad3fffcc2e6f4a9f59eaf74b92ef8f02c17bba58182', '199dbdcfda4e7589cdbcf21f3ec2178342af56ad1e658e01d4ce6924fd480ba5', '484157141f5e864b7cd1eecc6545a7077cf660bd683fabe67a773de5878443ad', 'b0775ac32cee8dca1c842e3c79a71a85c7f818f13806cd34067f3c7c2403bbb1', 'af5f1349fe209d2792c976022df09adb2735c2cc617baa7f2b17cd2bfd3497c0'),
               '.github/scripts/verify-prepared-policy.py': ('ad9395f21d84f47bec414a977fe80375f1ffd26ffdec5b72769d31e7bd99a77c',),
@@ -1127,7 +1127,7 @@ jobs:
               '.github/scripts/combination-smoke.sh': '3074e9c0b6b8f4c3e8e36586478a93f37271694dff5b93511ac6946717f5d53f',
               '.github/scripts/combination-smoke.mjs': '7bdb7f4b189c8ab538eaa49ad16395da9d9fb9950f8d263cc68dafb9e6587622',
               '.github/scripts/combination.test.cjs': '0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2',
-              '.github/scripts/release.cjs': '9b5c1e62fb2ccffecf0d1670b949059756207c84f1686046608ee72a90021997',
+              '.github/scripts/release.cjs': 'f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36',
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': 'f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23',
               '.github/scripts/release-policy.test.py': '55f3adf7fac689176e8d7c57a7a36297d5774302960a0d56a4e99653f020831c',

@@ -56,4 +56,14 @@ function updateProvenance(before, packageJson, shrinkwrap) {
   };
 }
 
-module.exports = { CODING, PROVENANCE, INPUTS, hash, packagePath, packagePaths, generatedPaths, validateManifest, updateProvenance };
+module.exports = {
+  CODING,
+  PROVENANCE,
+  INPUTS,
+  hash,
+  packagePath,
+  packagePaths,
+  generatedPaths,
+  validateManifest,
+  updateProvenance,
+};
