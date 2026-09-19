@@ -30,6 +30,12 @@ export interface CoordinatorLogger {
   error(msg: string): void;
 }
 
+export type RetainAbandonHandler = (item: QueuedRetain, attempts: number) => void;
+
+export function retainAbandonNotice(item: QueuedRetain, attempts: number): string {
+  return `retain replay abandoned after ${attempts} attempts for bank ${item.bankId}; transcript dropped from the queue without delivery`;
+}
+
 const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
 const QUEUE_FILE_SUFFIX = ".jsonl";
 const MAX_REPLAY_ATTEMPTS = 5;
@@ -41,6 +47,7 @@ export class RetainCoordinator {
   private readonly queueDir: string;
   private readonly queueMaxAgeMs: number;
   private readonly log: CoordinatorLogger;
+  private readonly onAbandon: RetainAbandonHandler;
 
   constructor(options: {
     credentials: PrincipalCredentialResolver;
@@ -48,6 +55,7 @@ export class RetainCoordinator {
     queueDir: string;
     queueMaxAgeMs?: number;
     logger: CoordinatorLogger;
+    onAbandon?: RetainAbandonHandler;
   }) {
     this.credentials = options.credentials;
     this.clients = options.clients;
@@ -55,6 +63,12 @@ export class RetainCoordinator {
     this.queueDir = options.queueDir;
     this.queueMaxAgeMs = options.queueMaxAgeMs ?? -1;
     this.log = options.logger;
+    this.onAbandon = options.onAbandon ?? ((item, attempts) => this.log.error(retainAbandonNotice(item, attempts)));
+    if (this.queueMaxAgeMs < 0) {
+      this.log.warn(
+        `retain queue at ${this.queueDir} holds plaintext transcripts with no expiration; set retainQueueMaxAgeMs to bound retention and protect the directory with disk encryption`,
+      );
+    }
   }
 
   private queueFor(principalId: string): RetainQueue {
@@ -173,7 +187,7 @@ export class RetainCoordinator {
     const attempts = queue.incrementReplayAttempts(item.id);
     if (attempts >= MAX_REPLAY_ATTEMPTS) {
       delivered.push(item.id);
-      this.log.error(`retain replay abandoned after ${attempts} attempts for bank ${item.bankId}`);
+      this.onAbandon(item, attempts);
     }
   }
 }

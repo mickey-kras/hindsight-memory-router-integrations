@@ -20,6 +20,9 @@ Omit `writeBank` for read-only principals. Knowledge tools require `enableKnowle
 Read-only page tools require an explicit assigned `bankId`.
 
 Retain queues: `~/.openclaw/data/hindsight-retain-queue/`. Revoked/moved bank entries remain queued for operator review.
+Queued transcripts are plaintext JSONL (mode 0600) and never expire by default (`retainQueueMaxAgeMs: -1`); the plugin warns loudly at startup while retention is unbounded.
+Set `retainQueueMaxAgeMs` to bound retention, and use full-disk encryption for at-rest confidentiality - the plugin does not encrypt queue contents.
+An item whose replay fails 5 times is abandoned: dropped from the queue and reported as a loud error log via the coordinator's `onAbandon` handler.
 
 Artifact: `packages/mickey-kras-hindsight-memory-router-openclaw-0.12.0.tgz`.
 Nix hashes: `PACKAGE_NIX_HASHES`.
