@@ -15,6 +15,9 @@ the router only — never to Hindsight directly — so the router's principal gr
 - Retain/recall provenance (`source`) is stamped by the router from its principal registry
   (hindsight-memory-router #279). Set `source` per principal only to record an explicit client-side
   marker in retain metadata.
+- Every tool invocation writes one single-line JSON audit record to stderr (`at`, `principal`, `op`,
+  `bankId`, `outcome`, bounded `errorClass` on failure, including invalid arguments). Memory content
+  and query text are never logged.
 
 ## Configuration
 

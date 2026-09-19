@@ -59,6 +59,21 @@ describe("loadMcpStack", () => {
     expect(JSON.stringify(Object.keys(stack))).not.toContain("token");
   });
 
+  it("forwards structured audit records to the host logger as single-line JSON", () => {
+    configure(validPrincipal);
+    const stack = loadMcpStack(process.env, logger);
+    stack.audit({ principal: "agent", op: "memory_router_recall", outcome: "success", bankId: "agent-bank" });
+    const line = logger.warn.mock.calls.map(([message]) => message as string).find((m) => m.includes('"op"'));
+    expect(line).toBeDefined();
+    expect(line).not.toContain("\n");
+    expect(JSON.parse(line as string)).toMatchObject({
+      principal: "agent",
+      op: "memory_router_recall",
+      outcome: "success",
+      bankId: "agent-bank",
+    });
+  });
+
   it.each([
     ["missing principal id", undefined],
     ["empty principal id", ""],

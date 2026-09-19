@@ -52,6 +52,7 @@ function makeStack(options: {
     clients,
     recall: new RecallCoordinator(),
     retain: new RetainCoordinator({ credentials, clients, queueDir, logger }),
+    audit: vi.fn(),
   };
 }
 
@@ -395,5 +396,101 @@ describe("agent_knowledge tools", () => {
     const result = await tool(buildTools(stack), "agent_knowledge_list_pages").handler({});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe("memory request failed (500)");
+  });
+});
+
+describe("tool audit logging", () => {
+  function auditEvents(stack: McpStack): Array<Record<string, unknown>> {
+    return (stack.audit as ReturnType<typeof vi.fn>).mock.calls.map(([event]) => event);
+  }
+
+  it("records a successful retain with principal, op, and bank, never the content", async () => {
+    const stack = makeStack({
+      construct: () => ({
+        retain: async () => ({}),
+        recall: async () => ({ results: [] }),
+      }),
+    });
+    await tool(buildTools(stack), "memory_router_retain").handler({ content: "remember this" });
+    expect(stack.audit).toHaveBeenCalledWith({
+      principal: "agent",
+      op: "memory_router_retain",
+      outcome: "success",
+      bankId: "agent-bank",
+    });
+    expect(JSON.stringify(auditEvents(stack))).not.toContain("remember this");
+  });
+
+  it("records a bounded error class for a denied retain", async () => {
+    stubFetch(() => Response.json({}, { status: 401 }));
+    const stack = makeStack({});
+    await tool(buildTools(stack), "memory_router_retain").handler({ content: "x" });
+    expect(stack.audit).toHaveBeenCalledWith({
+      principal: "agent",
+      op: "memory_router_retain",
+      outcome: "failure",
+      bankId: "agent-bank",
+      errorClass: "access_denied",
+    });
+  });
+
+  it("records malformed arguments as a failure before any router call", async () => {
+    const send = stubFetch(() => Response.json({}));
+    const stack = makeStack({});
+    await tool(buildTools(stack), "memory_router_retain").handler({ content: "   " });
+    expect(stack.audit).toHaveBeenCalledWith({
+      principal: "agent",
+      op: "memory_router_retain",
+      outcome: "failure",
+      errorClass: "invalid_arguments",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("records a successful recall with the full read set as bankId", async () => {
+    const stack = makeStack({
+      construct: () => ({
+        retain: async () => {
+          throw new Error("read-only test");
+        },
+        recall: async () => ({ results: [] }),
+      }),
+    });
+    await tool(buildTools(stack), "memory_router_recall").handler({ query: "deploy" });
+    expect(stack.audit).toHaveBeenCalledWith({
+      principal: "agent",
+      op: "memory_router_recall",
+      outcome: "success",
+      bankId: "agent-bank,shared-bank",
+    });
+  });
+
+  it("records a router failure class for a failed knowledge read", async () => {
+    stubFetch(() => Response.json({}, { status: 500 }));
+    const stack = makeStack({});
+    await tool(buildTools(stack), "agent_knowledge_list_pages").handler({});
+    expect(stack.audit).toHaveBeenCalledWith({
+      principal: "agent",
+      op: "agent_knowledge_list_pages",
+      outcome: "failure",
+      bankId: "agent-bank",
+      errorClass: "router_request_failed",
+    });
+  });
+
+  it("records a successful knowledge write with the explicit bankId", async () => {
+    stubFetch(() => Response.json({}));
+    const stack = makeStack({});
+    await tool(buildTools(stack), "agent_knowledge_ingest").handler({
+      bankId: "agent-bank",
+      title: "Runbook",
+      content: "steps",
+    });
+    expect(stack.audit).toHaveBeenCalledWith({
+      principal: "agent",
+      op: "agent_knowledge_ingest",
+      outcome: "success",
+      bankId: "agent-bank",
+    });
   });
 });

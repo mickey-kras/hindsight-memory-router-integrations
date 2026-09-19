@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type MemoryAuditLogger, memoryOperationErrorClass } from "../shared/audit.js";
 import { AccessDeniedError } from "../shared/bank-access.js";
 import { routedKnowledgeTools } from "../shared/knowledge-tools.js";
 import { RecallAuthorizationError } from "../shared/recall-coordinator.js";
@@ -95,16 +96,40 @@ function invalidArguments(name: string, error: z.ZodError): ToolResult {
   return rejected(`invalid arguments for ${name}: ${detail}`);
 }
 
+interface ToolAudit {
+  logger: MemoryAuditLogger;
+  principal: string;
+  bankId?: (args: Record<string, unknown>) => string | undefined;
+}
+
 function validated<Schema extends ToolInputShape>(
   name: string,
   inputSchema: Schema,
+  audit: ToolAudit,
   run: (args: z.output<z.ZodObject<Schema>>) => Promise<ToolResult>,
 ): (args: Record<string, unknown>) => Promise<ToolResult> {
   const schema = z.object(inputSchema);
   return async (args) => {
     const parsed = schema.safeParse(args);
-    if (!parsed.success) return invalidArguments(name, parsed.error);
-    return run(parsed.data as z.output<z.ZodObject<Schema>>);
+    if (!parsed.success) {
+      audit.logger({ principal: audit.principal, op: name, outcome: "failure", errorClass: "invalid_arguments" });
+      return invalidArguments(name, parsed.error);
+    }
+    const bankId = audit.bankId?.(parsed.data);
+    try {
+      const result = await run(parsed.data as z.output<z.ZodObject<Schema>>);
+      audit.logger({ principal: audit.principal, op: name, outcome: "success", bankId });
+      return result;
+    } catch (error) {
+      audit.logger({
+        principal: audit.principal,
+        op: name,
+        outcome: "failure",
+        bankId,
+        errorClass: memoryOperationErrorClass(error),
+      });
+      return boundedError(error);
+    }
   };
 }
 
@@ -136,6 +161,8 @@ function retainTool(stack: McpStack): McpTool {
     context: z.string().optional().describe("Provenance context stored alongside the memory."),
     tags: optionalStringList("tags must be a non-empty string array").describe("Optional tags."),
   };
+  const writeBank = stack.credentials.resolveOptionalWriteBank(stack.principalId) ?? undefined;
+  const audit: ToolAudit = { logger: stack.audit, principal: stack.principalId, bankId: () => writeBank };
   return {
     name: "memory_router_retain",
     description:
@@ -143,19 +170,15 @@ function retainTool(stack: McpStack): McpTool {
       "Mutations are restricted to that bank; transient router failures are queued for later delivery.",
     inputSchema,
     annotations: NON_DESTRUCTIVE_WRITE,
-    handler: validated("memory_router_retain", inputSchema, async (args) => {
-      try {
-        const outcome = await stack.retain.retain(stack.principalId, {
-          content: args.content,
-          documentId: absentWhenBlank(args.documentId),
-          context: absentWhenBlank(args.context),
-          tags: args.tags,
-          metadata: { agent: stack.principalId, ...(stack.source ? { source: stack.source } : {}) },
-        });
-        return ok({ retained: true, queued: outcome.queued });
-      } catch (error) {
-        return boundedError(error);
-      }
+    handler: validated("memory_router_retain", inputSchema, audit, async (args) => {
+      const outcome = await stack.retain.retain(stack.principalId, {
+        content: args.content,
+        documentId: absentWhenBlank(args.documentId),
+        context: absentWhenBlank(args.context),
+        tags: args.tags,
+        metadata: { agent: stack.principalId, ...(stack.source ? { source: stack.source } : {}) },
+      });
+      return ok({ retained: true, queued: outcome.queued });
     }),
   };
 }
@@ -186,8 +209,15 @@ function recallTool(stack: McpStack): McpTool {
       "merged under one shared deadline and token budget.",
     inputSchema,
     annotations: READ_ONLY,
-    handler: validated("memory_router_recall", inputSchema, async (args) => {
-      try {
+    handler: validated(
+      "memory_router_recall",
+      inputSchema,
+      {
+        logger: stack.audit,
+        principal: stack.principalId,
+        bankId: () => stack.credentials.resolveReadBanks(stack.principalId).join(","),
+      },
+      async (args) => {
         const credentials = stack.credentials.resolve(stack.principalId);
         const banks = stack.credentials.resolveReadBanks(stack.principalId);
         const recalled = await stack.recall.recall(stack.clients.forAgent(credentials), {
@@ -200,10 +230,8 @@ function recallTool(stack: McpStack): McpTool {
           preferObservations: args.preferObservations,
         });
         return ok({ results: recalled.results, partial: recalled.partial });
-      } catch (error) {
-        return boundedError(error);
-      }
-    }),
+      },
+    ),
   };
 }
 
@@ -235,18 +263,17 @@ function knowledgeTools(stack: McpStack): McpTool[] {
     .filter((tool) => !(WRITE_KNOWLEDGE_TOOLS.has(tool.name) && writeBank === null))
     .map((tool) => {
       const inputSchema = knowledgeInputSchema(tool.parameters, banks);
+      const audit: ToolAudit = {
+        logger: stack.audit,
+        principal: stack.principalId,
+        bankId: (args) => (typeof args.bankId === "string" ? args.bankId : (writeBank ?? undefined)),
+      };
       return {
         name: tool.name,
         description: tool.description,
         inputSchema,
         annotations: KNOWLEDGE_TOOL_ANNOTATIONS[tool.name],
-        handler: validated(tool.name, inputSchema, async (args) => {
-          try {
-            return await tool.execute(args);
-          } catch (error) {
-            return boundedError(error);
-          }
-        }),
+        handler: validated(tool.name, inputSchema, audit, (args) => tool.execute(args)),
       };
     });
 }
