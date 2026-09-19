@@ -145,7 +145,11 @@ export class RouterTransport {
         },
         signal: init.signal ?? AbortSignal.timeout(15_000),
       });
-    } catch {
+    } catch (error) {
+      // Log only the error class (TypeError/TimeoutError/AbortError/...), never the message:
+      // fetch messages can embed the URL or token. Undifferentiated 503s otherwise hide
+      // DNS/TLS/timeout anomalies from local logs.
+      console.warn(`memory request failed: ${error instanceof Error ? error.name : typeof error}`);
       throw new RouterRequestError(503);
     }
   }
