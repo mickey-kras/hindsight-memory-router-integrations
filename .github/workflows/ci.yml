@@ -47,12 +47,17 @@ jobs:
       - run: node scripts/verify-coding-upstream.mjs
       - run: node scripts/verify-openclaw-overlay.mjs
       - run: node --test scripts/verify-vendored-files.test.mjs
+      - name: Install supported audit client
+        # npm < 11 audits through the retired /audits/quick endpoint (HTTP 400
+        # "endpoint is being retired"); npm 11 queries the supported bulk
+        # advisory endpoint. Upgrade once so every later audit step benefits.
+        run: npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
       - name: Install release tools
         run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Audit release tools
         run: |
-          # The npm quick-audit endpoint is being retired and intermittently returns
-          # HTTP 400 "Invalid package tree"; retry before failing the gate.
+          # Retry only shields transient registry errors; the endpoint
+          # retirement itself is handled by the npm 11 upgrade above.
           for attempt in 1 2 3; do
             if npm audit --prefix .github/scripts --audit-level=moderate; then exit 0; fi
             echo "npm audit attempt $attempt failed; retrying"
