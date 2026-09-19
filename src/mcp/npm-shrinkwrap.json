@@ -10,7 +10,8 @@
       "license": "MIT",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.30.0",
-        "@vectorize-io/hindsight-agent-sdk": "0.1.1"
+        "@vectorize-io/hindsight-agent-sdk": "0.1.1",
+        "zod": "^4.6.5"
       },
       "bin": {
         "hindsight-memory-router-mcp": "dist/mcp/server.js"

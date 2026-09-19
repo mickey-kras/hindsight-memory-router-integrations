@@ -184,30 +184,18 @@ describe("memory_router_retain", () => {
   });
 
   it.each([
-    ["non-array", { content: "x", tags: "ops" }],
-    ["empty array", { content: "x", tags: [] }],
-    ["non-string member", { content: "x", tags: ["ops", 7] }],
-    ["blank member", { content: "x", tags: ["ops", " "] }],
-  ])("rejects malformed tags (%s) without touching the router", async (_label, args) => {
+    ["non-array", { content: "x", tags: "ops" }, "tags"],
+    ["empty array", { content: "x", tags: [] }, "tags"],
+    ["non-string member", { content: "x", tags: ["ops", 7] }, "tags.1"],
+    ["blank member", { content: "x", tags: ["ops", " "] }, "tags.1"],
+  ])("rejects malformed tags (%s) without touching the router", async (_label, args, path) => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
     const result = await tool(buildTools(stack), "memory_router_retain").handler(args);
     expect(result).toMatchObject({ isError: true });
-    expect(result.content[0].text).toBe("tags must be a non-empty string array");
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["non-array", { content: "x", tags: "ops" }],
-    ["empty array", { content: "x", tags: [] }],
-    ["mixed entries", { content: "x", tags: ["ops", 7] }],
-    ["blank entry", { content: "x", tags: ["ops", "  "] }],
-  ])("rejects malformed tags (%s) without retaining", async (_label, args) => {
-    const send = stubFetch(() => Response.json({}));
-    const stack = makeStack({});
-    const result = await tool(buildTools(stack), "memory_router_retain").handler(args);
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toBe("tags must be a non-empty string array");
+    expect(result.content[0].text).toBe(
+      `invalid arguments for memory_router_retain: ${path}: tags must be a non-empty string array`,
+    );
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -216,7 +204,7 @@ describe("memory_router_retain", () => {
     const stack = makeStack({});
     const result = await tool(buildTools(stack), "memory_router_retain").handler({ content: "   " });
     expect(result).toMatchObject({ isError: true });
-    expect(result.content[0].text).toBe("content is required");
+    expect(result.content[0].text).toBe("invalid arguments for memory_router_retain: content: content is required");
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -292,22 +280,24 @@ describe("memory_router_recall", () => {
   });
 
   it.each([
-    ["empty query", { query: " " }, "query is required"],
-    ["bad budget", { query: "q", budget: "max" }, "budget must be low, mid or high"],
-    ["bad maxTokens", { query: "q", maxTokens: 0 }, "maxTokens must be a positive integer"],
-    ["bad timeoutMs", { query: "q", timeoutMs: -5 }, "timeoutMs must be a positive integer"],
-    ["bad preferObservations", { query: "q", preferObservations: "yes" }, "preferObservations must be a boolean"],
-    ["non-array types", { query: "q", types: "world" }, "types must be a non-empty string array"],
-    ["empty types", { query: "q", types: [] }, "types must be a non-empty string array"],
-    ["mixed types", { query: "q", types: ["world", 3] }, "types must be a non-empty string array"],
-    ["bad types", { query: "q", types: ["world", 0] }, "types must be a non-empty string array"],
-    ["empty types", { query: "q", types: [] }, "types must be a non-empty string array"],
-  ])("rejects %s with a bounded message", async (_label, args, message) => {
+    ["empty query", { query: " " }, "query: query is required"],
+    ["bad budget", { query: "q", budget: "max" }, "budget: budget must be low, mid or high"],
+    ["bad maxTokens", { query: "q", maxTokens: 0 }, "maxTokens: maxTokens must be a positive integer"],
+    ["bad timeoutMs", { query: "q", timeoutMs: -5 }, "timeoutMs: timeoutMs must be a positive integer"],
+    [
+      "bad preferObservations",
+      { query: "q", preferObservations: "yes" },
+      "preferObservations: preferObservations must be a boolean",
+    ],
+    ["non-array types", { query: "q", types: "world" }, "types: types must be a non-empty string array"],
+    ["empty types", { query: "q", types: [] }, "types: types must be a non-empty string array"],
+    ["mixed types", { query: "q", types: ["world", 3] }, "types.1: types must be a non-empty string array"],
+  ])("rejects %s with a bounded message", async (_label, args, detail) => {
     const send = stubFetch(() => Response.json({ results: [] }));
     const stack = makeStack({});
     const result = await tool(buildTools(stack), "memory_router_recall").handler(args);
     expect(result).toMatchObject({ isError: true });
-    expect(result.content[0].text).toBe(message);
+    expect(result.content[0].text).toBe(`invalid arguments for memory_router_recall: ${detail}`);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -326,8 +316,11 @@ describe("agent_knowledge tools", () => {
   it("constrains bankId to the principal's visible banks in the advertised schema", () => {
     const stack = makeStack({});
     const createPage = tool(buildTools(stack), "agent_knowledge_create_page");
-    const properties = createPage.inputSchema.properties as Record<string, { enum?: string[] }>;
-    expect(properties.bankId.enum?.sort()).toEqual(["agent-bank", "shared-bank"]);
+    const bankId = createPage.inputSchema.bankId;
+    expect(bankId.safeParse("agent-bank").success).toBe(true);
+    expect(bankId.safeParse("shared-bank").success).toBe(true);
+    expect(bankId.safeParse("other-bank").success).toBe(false);
+    expect(bankId.safeParse(undefined).success).toBe(true);
   });
 
   it("denies knowledge operations against banks outside the visible set", async () => {
@@ -335,7 +328,7 @@ describe("agent_knowledge tools", () => {
     const stack = makeStack({});
     const result = await tool(buildTools(stack), "agent_knowledge_list_pages").handler({ bankId: "other-bank" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toBe("memory access denied");
+    expect(result.content[0].text).toContain("invalid arguments for agent_knowledge_list_pages: bankId:");
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -403,5 +396,4 @@ describe("agent_knowledge tools", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe("memory request failed (500)");
   });
-
 });
