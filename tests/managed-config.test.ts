@@ -69,6 +69,15 @@ describe("loadManagedConfig", () => {
     expect(() => loadManagedConfig(process.env, "agent")).toThrow(AccessDeniedError);
   });
 
+  it("fails closed when the config file has no principals map", () => {
+    const dir = mkdtempSync(join(tmpdir(), "managed-config-test-"));
+    dirs.push(dir);
+    const path = join(dir, "router.json");
+    writeFileSync(path, JSON.stringify({ routerUrl: "https://router.example.test" }));
+    vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", path);
+    expect(() => loadManagedConfig(process.env, "agent")).toThrow(AccessDeniedError);
+  });
+
   it.each(["token", "apiToken"])("rejects an inline %s in the principal entry", (key) => {
     configure({ ...validPrincipal, [key]: `mr_inline_${"b".repeat(64)}` });
     expect(() => loadManagedConfig(process.env, "agent")).toThrow(AccessDeniedError);
