@@ -34,6 +34,7 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 ```sh
 npm ci
 npm ci --prefix src/upstream/coding-agents
+npm ci --prefix src/mcp
 npm run test:coverage
 npm run build
 npm run build:coding-agents
