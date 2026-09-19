@@ -4,7 +4,7 @@
 
 1. Merge the intended version changes into `main`.
 2. Open **Actions → main → Run workflow**, select **main**, check **Create a pinned release branch and automatically release after checks**, and run.
-3. Main checks, including Sonar, pass → automation creates `release/X.Y.Z` with frozen upstream inputs → release checks run without Sonar → artifacts publish → protected `vX.Y.Z` tag and immutable GitHub release → `latest` advances.
+3. Main checks, including Sonar, pass → automation creates `release/X.Y.Z` with frozen upstream inputs → release checks run without Sonar → artifacts publish → protected annotated `vX.Y.Z` tag and immutable GitHub release → `latest` advances.
 
 Checking the box authorizes publication after green gates. There is no second button.
 Normal main runs never publish. Create release branches and tags only through this workflow.
@@ -60,12 +60,28 @@ or claim coverage of every coding harness. Use the manifest's exact versions/dig
 for installation. Upstream bases remain in `UPSTREAM_VERSION` and the coding provenance files.
 
 Router publishes the scanned image to Docker Hub and GHCR with version and commit tags,
-signs/attests the digests, and attaches `image-digests.txt`. Integrations attaches its
-committed tarballs, `PACKAGE_SHA256`, `PACKAGE_NIX_HASHES`, and provenance to GitHub.
+signs/attests the digests, and attaches `image-digests.txt`. Integrations builds its
+tarballs from the release commit, verifies them against `PACKAGE_SHA256`, and
+attaches the tarballs, `PACKAGE_SHA256`, `PACKAGE_NIX_HASHES`, and provenance to GitHub.
 There is no integrations Docker image or npm publication.
 `latest` means the highest successfully released repository version; an older-line fix
 cannot move it backwards. The compatibility combination is authoritative in the
 integrations manifest, even when a newer router is available separately.
+
+## Tag trust basis
+
+Release tags `vX.Y.Z` are annotated tag objects created by the Release App through
+the GitHub API only after every gate passes. They are not GPG-signed: no signing
+key is provisioned for this repository, and the automation adds none. The trust
+basis instead:
+
+- tag rulesets restrict `v*` creation to the Release App and block updates,
+  deletion and force pushes, so a tag always names the commit the gates ran on;
+- the GitHub release is immutable and records exact package checksums in
+  `release.json`;
+- the attached tarballs are CI-built from the tagged commit, byte-pinned by
+  `PACKAGE_SHA256`, and carry Sigstore build-provenance attestations verifiable
+  through the public Rekor log.
 
 ## One-time GitHub setup
 

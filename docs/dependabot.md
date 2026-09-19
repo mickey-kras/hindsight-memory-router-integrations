@@ -10,7 +10,9 @@
   lookup clears an earlier bot auto-merge decision. Manually enabled
   auto-merge still gets branch refresh and validation recovery.
 - `GITHUB_TOKEN` handles merging and main-workflow dispatch. No App or PAT.
-- npm updates regenerate provenance, packages and hashes in a read-only build.
+- npm updates regenerate provenance and package hash pins in a read-only build;
+  tarballs are rebuilt from source by CI and byte-compared against the pins,
+  never committed.
   A separate job commits only generated files with `GITHUB_TOKEN` and
   dispatches any missing PR validation, including guard.
 - Only signed Dependabot commits plus a GitHub-signed artifact commit from

@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { deriveBankId } from "../src/upstream/coding-agents/src/core/bank";
 import { applyBankConfig, loadConfig, resolveConfig } from "../src/upstream/coding-agents/src/core/config";
 import { HindsightClient } from "../src/upstream/coding-agents/src/core/hindsight";
@@ -20,6 +20,26 @@ afterEach(() => {
     rmSync(p, { recursive: true, force: true });
   });
 });
+let cachedPackage: string | undefined;
+function codingAgentsPackage() {
+  // packages/ is gitignored; pack the tarball from source on demand.
+  if (!cachedPackage) {
+    const source = new URL("../src/upstream/coding-agents", import.meta.url).pathname;
+    execFileSync("npm", ["run", "build", "--silent"], { cwd: source });
+    // Not tracked in `dirs`: the cache must survive afterEach cleanup.
+    const dir = mkdtempSync(join(tmpdir(), "coding-agents-pack-"));
+    process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
+    const [{ filename }] = JSON.parse(
+      execFileSync("npm", ["pack", "--pack-destination", dir, "--json"], { cwd: source, encoding: "utf8" }),
+    );
+    cachedPackage = join(dir, filename);
+  }
+  return cachedPackage;
+}
+beforeAll(() => {
+  // Build and pack once; npm pack exceeds the default per-test timeout.
+  codingAgentsPackage();
+}, 120000);
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "upstream-router-"));
   dirs.push(dir);
@@ -169,8 +189,7 @@ it("installs harness-specific MCP identities without migrating or storing tokens
   const dir = setup();
   execFileSync("tar", [
     "-xzf",
-    new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.6.0.tgz", import.meta.url)
-      .pathname,
+    codingAgentsPackage(),
     "-C",
     dir,
   ]);
@@ -198,8 +217,7 @@ it("runs the packaged Codex hook with harness-bound credentials and fails closed
   const dir = setup();
   execFileSync("tar", [
     "-xzf",
-    new URL("../packages/mickey-kras-hindsight-memory-router-coding-agents-0.6.0.tgz", import.meta.url)
-      .pathname,
+    codingAgentsPackage(),
     "-C",
     dir,
   ]);

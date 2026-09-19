@@ -1,5 +1,5 @@
 const { execFileSync } = require("node:child_process");
-const { readFileSync, writeFileSync, lstatSync } = require("node:fs");
+const { readFileSync, writeFileSync, lstatSync, mkdirSync } = require("node:fs");
 const { join, resolve } = require("node:path");
 const {
   CODING,
@@ -7,6 +7,7 @@ const {
   INPUTS,
   hash,
   generatedPaths,
+  packagePaths,
   validateManifest,
   updateProvenance,
 } = require("./dependency-files.cjs");
@@ -34,7 +35,8 @@ function refresh(directory, number, head, base, output) {
   for (const path of ["package.json", `${CODING}/package.json`]) {
     validateManifest(JSON.parse(run("git", ["show", `${base}:${path}`])), JSON.parse(read(path)));
   }
-  const paths = generatedPaths(JSON.parse(read("package.json")), JSON.parse(read(`${CODING}/package.json`)));
+  const paths = generatedPaths();
+  const tarballs = packagePaths(JSON.parse(read("package.json")), JSON.parse(read(`${CODING}/package.json`)));
   const provenance = updateProvenance(
     JSON.parse(read(PROVENANCE)),
     read(`${CODING}/package.json`),
@@ -47,12 +49,15 @@ function refresh(directory, number, head, base, output) {
   run("npm", ["ci"], join(root, CODING));
   run("npm", ["run", "build"]);
   run("npm", ["run", "build:coding-agents"]);
+  mkdirSync(join(root, "packages"), { recursive: true });
   run("npm", ["pack", "--pack-destination", join(root, "packages"), "--silent"]);
   run("npm", ["pack", "--pack-destination", join(root, "packages"), "--silent"], join(root, CODING));
+  // packages/*.tgz stay gitignored local build outputs; only their hashes are
+  // committed, and CI rebuilds and byte-compares the tarballs from source.
   writeFileSync(
     join(root, "PACKAGE_SHA256"),
-    paths
-      .filter((path) => path.endsWith(".tgz"))
+    tarballs
+      .slice()
       .sort()
       .map((path) => `${hash(read(path))}  ${path}\n`)
       .join(""),
@@ -72,7 +77,7 @@ function refresh(directory, number, head, base, output) {
   if (!/^sha256-[A-Za-z0-9+/]{43}=$/.test(deps)) throw new Error("Invalid regenerated Nix dependency hash");
   writeFileSync(
     join(root, "PACKAGE_NIX_HASHES"),
-    `source=sha256-${hash(read(paths[3]), "base64")}\nnpm_deps=${deps}\n`,
+    `source=sha256-${hash(read(tarballs[0]), "base64")}\nnpm_deps=${deps}\n`,
   );
   const modified = run("git", ["diff", "--name-only", "HEAD"]).trim().split("\n");
   if (modified.some((path) => !paths.includes(path))) throw new Error("Build modified non-generated files");

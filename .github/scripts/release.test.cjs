@@ -53,6 +53,7 @@ async function fixture(fn) {
 function mock() {
   const state = {
     refs: { "heads/main": { object: { type: "commit", sha: base } } },
+    tagObjects: {},
     rules: rulesets(123),
     tags: [],
     branches: [],
@@ -113,6 +114,15 @@ function mock() {
               ? data(state.refs[ref])
               : notFound(),
         getCommit: () => data({ tree: { sha: base } }),
+        createTag: (args) => {
+          state.calls.push(`tag:${args.tag}`);
+          assert.equal(args.type, "commit");
+          assert.equal(typeof args.message, "string" );
+          const tagSha = `f${state.calls.length}`.padEnd(40, "0");
+          state.tagObjects[tagSha] = { sha: tagSha, tag: args.tag, object: { type: "commit", sha: args.object } };
+          return data(state.tagObjects[tagSha]);
+        },
+        getTag: ({ tag_sha }) => data(state.tagObjects[tag_sha]),
         createTree: (args) => {
           state.calls.push("tree");
           state.tree = args.tree;
@@ -125,7 +135,8 @@ function mock() {
         createRef: ({ ref, sha: commit }) => {
           state.calls.push(ref);
           assert.equal(state.refs[ref.replace(/^refs\//, "")], undefined);
-          state.refs[ref.replace(/^refs\//, "")] = { object: { type: "commit", sha: commit } };
+          const type = state.tagObjects[commit] ? "tag" : "commit";
+          state.refs[ref.replace(/^refs\//, "")] = { object: { type, sha: commit } };
           return data({});
         },
       },
@@ -293,6 +304,9 @@ test("release validation rejects changed pins, workflow changes, stale heads and
     prepared(m);
     m.state.refs["tags/v0.1.0"] = { object: { type: "commit", sha: base } };
     await assert.rejects(release.validate(m), /another commit/);
+    m.state.refs["tags/v0.1.0"] = { object: { type: "tag", sha: "e".repeat(40) } };
+    m.state.tagObjects["e".repeat(40)] = { object: { type: "commit", sha: base } };
+    await assert.rejects(release.validate(m), /another commit/);
   }));
 
 test("finalization publishes only after uploading assets and never moves or recreates its tag", () =>
@@ -301,6 +315,7 @@ test("finalization publishes only after uploading assets and never moves or recr
     prepared(m);
     await release.finalize(m);
     assert.deepEqual(m.state.calls, [
+      "tag:v0.1.0",
       "refs/tags/v0.1.0",
       "draft",
       "asset:release.json",
@@ -308,8 +323,12 @@ test("finalization publishes only after uploading assets and never moves or recr
       "publish",
     ]);
     assert.equal(m.outputs.latest, "true");
+    const ref = m.state.refs["tags/v0.1.0"];
+    assert.equal(ref.object.type, "tag");
+    assert.equal(m.state.tagObjects[ref.object.sha].object.sha, m.context.sha);
     await release.finalize(m);
     assert.equal(m.state.calls.filter((call) => call.startsWith("refs/tags/")).length, 1);
+    assert.equal(m.state.calls.filter((call) => call.startsWith("tag:")).length, 1);
     m.state.assets[0].digest = `sha256:${"f".repeat(64)}`;
     await assert.rejects(release.finalize(m), /Existing release asset differs/);
   }));

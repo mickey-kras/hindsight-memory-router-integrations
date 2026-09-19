@@ -4,8 +4,8 @@ const {
   CODING,
   PROVENANCE,
   INPUTS,
-  hash,
   generatedPaths,
+  packagePaths,
   validateManifest,
   updateProvenance,
 } = require("./dependency-files.cjs");
@@ -26,10 +26,14 @@ async function content(github, repo, path, ref) {
 }
 
 async function pathsFor(github, repo, ref) {
+  return generatedPaths();
+}
+
+async function tarballsFor(github, repo, ref) {
   const [root, coding] = await Promise.all(
     ["package.json", `${CODING}/package.json`].map(async (path) => JSON.parse(await content(github, repo, path, ref))),
   );
-  return generatedPaths(root, coding);
+  return packagePaths(root, coding);
 }
 
 async function dependencyCommits(github, repo, pull, commits) {
@@ -165,18 +169,26 @@ async function publish(github, context, payload, metadataPath, metadata) {
   if (!isDeepStrictEqual(JSON.parse(files.get(PROVENANCE).toString()), expectedProvenance)) {
     throw new Error("Generated provenance changes non-dependency entries");
   }
-  const checksums = paths
-    .filter((path) => path.endsWith(".tgz"))
-    .sort()
-    .map((path) => `${hash(files.get(path))}  ${path}\n`)
-    .join("");
-  if (files.get("PACKAGE_SHA256").toString() !== checksums) throw new Error("Package checksum mismatch");
-  const nixHashes = files.get("PACKAGE_NIX_HASHES").toString();
-  const sourceHash = `source=sha256-${hash(files.get(paths[3]), "base64")}\n`;
+  // Hash pins arrive without their tarballs (packages/*.tgz are gitignored
+  // CI-built outputs), so publication validates their shape and inventory;
+  // the PR's own ci.yml run rebuilds every package and byte-compares it
+  // against these pins before auto-merge can proceed.
+  const checksums = files.get("PACKAGE_SHA256").toString();
+  const lines = checksums.split("\n");
   if (
-    !nixHashes.startsWith(sourceHash) ||
-    !/^npm_deps=sha256-[A-Za-z0-9+/]{43}=\n$/.test(nixHashes.slice(sourceHash.length))
+    lines.length !== 3 ||
+    lines[2] !== "" ||
+    !lines.slice(0, 2).every((line) => /^[0-9a-f]{64} {2}packages\/[a-z0-9.-]+\.tgz$/.test(line))
   ) {
+    throw new Error("Invalid package checksums");
+  }
+  const listed = lines.slice(0, 2).map((line) => line.slice(66));
+  const tarballs = await tarballsFor(github, context.repo, payload.head);
+  if (!isDeepStrictEqual(listed.slice().sort(), tarballs.slice().sort())) {
+    throw new Error("Package checksum mismatch");
+  }
+  const nixHashes = files.get("PACKAGE_NIX_HASHES").toString();
+  if (!/^source=sha256-[A-Za-z0-9+/]{43}=\nnpm_deps=sha256-[A-Za-z0-9+/]{43}=\n$/.test(nixHashes)) {
     throw new Error("Invalid package Nix hashes");
   }
   const result = await github.graphql(
