@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type MemoryAuditLogger, memoryOperationErrorClass } from "../shared/audit.js";
+import { type MemoryAuditLogger, memoryOperationErrorClass, safeAuditLogger } from "../shared/audit.js";
 import { AccessDeniedError } from "../shared/bank-access.js";
 import { routedKnowledgeTools } from "../shared/knowledge-tools.js";
 import { RecallAuthorizationError } from "../shared/recall-coordinator.js";
@@ -109,19 +109,21 @@ function validated<Schema extends ToolInputShape>(
   run: (args: z.output<z.ZodObject<Schema>>) => Promise<ToolResult>,
 ): (args: Record<string, unknown>) => Promise<ToolResult> {
   const schema = z.object(inputSchema);
+  const logger = safeAuditLogger(audit.logger);
   return async (args) => {
     const parsed = schema.safeParse(args);
     if (!parsed.success) {
-      audit.logger({ principal: audit.principal, op: name, outcome: "failure", errorClass: "invalid_arguments" });
+      logger({ principal: audit.principal, op: name, outcome: "failure", errorClass: "invalid_arguments" });
       return invalidArguments(name, parsed.error);
     }
-    const bankId = audit.bankId?.(parsed.data);
+    let bankId: string | undefined;
     try {
+      bankId = audit.bankId?.(parsed.data);
       const result = await run(parsed.data as z.output<z.ZodObject<Schema>>);
-      audit.logger({ principal: audit.principal, op: name, outcome: "success", bankId });
+      logger({ principal: audit.principal, op: name, outcome: "success", bankId });
       return result;
     } catch (error) {
-      audit.logger({
+      logger({
         principal: audit.principal,
         op: name,
         outcome: "failure",
@@ -161,8 +163,11 @@ function retainTool(stack: McpStack): McpTool {
     context: z.string().optional().describe("Provenance context stored alongside the memory."),
     tags: optionalStringList("tags must be a non-empty string array").describe("Optional tags."),
   };
-  const writeBank = stack.credentials.resolveOptionalWriteBank(stack.principalId) ?? undefined;
-  const audit: ToolAudit = { logger: stack.audit, principal: stack.principalId, bankId: () => writeBank };
+  const audit: ToolAudit = {
+    logger: stack.audit,
+    principal: stack.principalId,
+    bankId: () => stack.credentials.resolveOptionalWriteBank(stack.principalId) ?? undefined,
+  };
   return {
     name: "memory_router_retain",
     description:

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
-import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
+import { PrincipalCredentialResolver, UnknownPrincipalError } from "../src/shared/principal-credential-resolver.js";
 import { RecallCoordinator } from "../src/shared/recall-coordinator.js";
 import { RetainCoordinator } from "../src/shared/retain-coordinator.js";
 import type { McpStack } from "../src/mcp/managed-config.js";
@@ -491,6 +491,57 @@ describe("tool audit logging", () => {
       op: "agent_knowledge_ingest",
       outcome: "success",
       bankId: "agent-bank",
+    });
+  });
+
+  it("a throwing audit sink on the success path never breaks the op or reclassifies it", async () => {
+    const retained: string[] = [];
+    const stack = makeStack({
+      construct: () => ({
+        retain: async () => {
+          retained.push("x");
+        },
+        recall: async () => ({ results: [] }),
+      }),
+    });
+    (stack.audit as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("sink down");
+    });
+    const result = await tool(buildTools(stack), "memory_router_retain").handler({ content: "x" });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text)).toEqual({ retained: true, queued: false });
+    expect(retained).toHaveLength(1);
+    expect(stack.audit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a throwing audit sink on the invalid-arguments and failure paths still returns bounded errors", async () => {
+    stubFetch(() => Response.json({}, { status: 401 }));
+    const stack = makeStack({});
+    (stack.audit as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("sink down");
+    });
+    const retain = tool(buildTools(stack), "memory_router_retain");
+    const invalid = await retain.handler({ content: "   " });
+    expect(invalid.content[0].text).toContain("invalid arguments for memory_router_retain");
+    const denied = await retain.handler({ content: "x" });
+    expect(denied.isError).toBe(true);
+    expect(denied.content[0].text).toBe("memory access denied");
+  });
+
+  it("a credential-resolution throw while deriving bankId stays inside the guarded path", async () => {
+    const stack = makeStack({});
+    const tools = buildTools(stack);
+    vi.spyOn(stack.credentials, "resolveReadBanks").mockImplementation(() => {
+      throw new UnknownPrincipalError("agent");
+    });
+    const result = await tool(tools, "memory_router_recall").handler({ query: "deploy" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("memory operation failed");
+    expect(stack.audit).toHaveBeenCalledWith({
+      principal: "agent",
+      op: "memory_router_recall",
+      outcome: "failure",
+      errorClass: "identity_resolution_failed",
     });
   });
 });

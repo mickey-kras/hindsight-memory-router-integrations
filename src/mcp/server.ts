@@ -27,9 +27,16 @@ export function buildMcpServer(tools: McpTool[]): McpServer {
   return server;
 }
 
+// console.info writes to stdout and would corrupt the stdio JSON-RPC stream; all logs stay on stderr.
+const STDERR_LOGGER = {
+  info: (msg: string) => process.stderr.write(`${msg}\n`),
+  warn: (msg: string) => console.warn(msg),
+  error: (msg: string) => console.error(msg),
+};
+
 async function main() {
-  const stack = loadMcpStack(process.env, console);
-  scheduleQueueFlush(stack, process.env, console);
+  const stack = loadMcpStack(process.env, STDERR_LOGGER);
+  scheduleQueueFlush(stack, process.env, STDERR_LOGGER);
   await buildMcpServer(buildTools(stack)).connect(new StdioServerTransport());
 }
 

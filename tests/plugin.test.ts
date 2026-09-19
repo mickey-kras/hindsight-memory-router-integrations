@@ -205,6 +205,36 @@ describe("plugin wiring", () => {
     expect(JSON.stringify(auditRecords(api))).not.toContain("what do you remember?");
   });
 
+  it("a throwing audit sink never breaks recall or retain hooks", async () => {
+    const api = makeApi(queueDir);
+    api.logger.info.mockImplementation((msg: string) => {
+      if (msg.includes('"op"')) {
+        throw new Error("sink down");
+      }
+    });
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+      recallResults: {
+        main: [{ text: "main memory", score: 0.9 }],
+      },
+    };
+    registerWithStack(api, instrumentedStack(queueDir, sink));
+
+    const result = (await api.handlers.get("before_prompt_build")!(
+      { prompt: "what do you remember?" },
+      { agentId: "main" },
+    )) as { prependContext?: string };
+    expect(result.prependContext).toContain("main memory");
+
+    await api.handlers.get("agent_end")!(
+      { messages: [{ role: "user", content: "remember this" }] },
+      { agentId: "main", sessionKey: "agent:main:main" },
+    );
+    expect(sink.retains).toHaveLength(1);
+  });
+
   it("auto-retain routes to the agent's default write bank", async () => {
     const api = makeApi(queueDir);
     const sink = {

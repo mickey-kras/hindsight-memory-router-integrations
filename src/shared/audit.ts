@@ -14,6 +14,17 @@ export interface MemoryOperationAudit {
 
 export type MemoryAuditLogger = (event: MemoryOperationAudit) => void;
 
+// A throwing audit sink must never break or alter the outcome of a memory operation.
+export function safeAuditLogger(sink: MemoryAuditLogger): MemoryAuditLogger {
+  return (event) => {
+    try {
+      sink(event);
+    } catch {
+      // Intentionally swallowed.
+    }
+  };
+}
+
 export function memoryOperationErrorClass(error: unknown): string {
   if (
     error instanceof AccessDeniedError ||

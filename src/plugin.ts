@@ -6,7 +6,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
-import { formatMemoryOperationAudit, type MemoryAuditLogger, memoryOperationErrorClass } from "./shared/audit.js";
+import {
+  formatMemoryOperationAudit,
+  type MemoryAuditLogger,
+  memoryOperationErrorClass,
+  safeAuditLogger,
+} from "./shared/audit.js";
 import { AuthenticatedClientFactory } from "./shared/authenticated-client-factory.js";
 import { PACKAGE_VERSION } from "./shared/package-version.js";
 import {
@@ -210,7 +215,7 @@ function memoryErrorMessage(error: unknown): string {
 }
 
 function auditLogger(log: { info(msg: string): void }): MemoryAuditLogger {
-  return (event) => log.info(formatMemoryOperationAudit(event));
+  return safeAuditLogger((event) => log.info(formatMemoryOperationAudit(event)));
 }
 
 function sessionKeyFor(event: PluginHookEvent, ctx: PluginHookAgentContext | undefined): string | undefined {
