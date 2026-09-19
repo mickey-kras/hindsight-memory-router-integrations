@@ -56,7 +56,7 @@ export class AuthenticatedClientFactory {
   constructor(options: {
     routerUrl: unknown;
     userAgent: string;
-    /** Injection point for tests; production uses HindsightClient. */
+    /** Injection point for tests; production builds a raw-fetch client over RouterTransport. */
     construct?: ClientConstructor;
   }) {
     this.baseUrl = validateRouterUrl(options.routerUrl);
