@@ -499,7 +499,11 @@ interface KnowledgeRoute {
   recallBanks: string[];
 }
 
-const READ_KNOWLEDGE_TOOLS = new Set(["agent_knowledge_recall", "agent_knowledge_list_pages", "agent_knowledge_get_page"]);
+const READ_KNOWLEDGE_TOOLS = new Set([
+  "agent_knowledge_recall",
+  "agent_knowledge_list_pages",
+  "agent_knowledge_get_page",
+]);
 
 function resolveKnowledgeRoute(
   stack: RoutingStack,
@@ -626,9 +630,7 @@ function knowledgeToolsForContext(
     return null;
   }
   return routedKnowledgeTools(stack.clients.transportFor(route.credentials))
-    .filter((tool) =>
-      READ_KNOWLEDGE_TOOLS.has(tool.name) ? route.recallBanks.length > 0 : route.writeBank !== null,
-    )
+    .filter((tool) => (READ_KNOWLEDGE_TOOLS.has(tool.name) ? route.recallBanks.length > 0 : route.writeBank !== null))
     .map((tool) =>
       tool.name === "agent_knowledge_recall"
         ? knowledgeRecallTool(tool, stack, route, log, audit)
