@@ -37,6 +37,9 @@ updates:
       default-days: 7
     rebase-strategy: auto
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-coding-agents-minor-patch:
         patterns: ["*"]
@@ -63,6 +66,9 @@ updates:
       default-days: 7
     rebase-strategy: auto
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     groups:
       docker-e2e-minor-patch:
         patterns: ["*"]
