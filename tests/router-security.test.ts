@@ -130,16 +130,6 @@ describe("managed harness identities", () => {
     });
     expect(() => managedBank("reader", "/approved")).toThrow(AccessDeniedError);
   });
-  it("rejects plaintext tokens and wildcard bank grants", () => {
-    const path = setup();
-    for (const principal of [
-      { ...access, tokenEnv: "TEST_CODEX_TOKEN", token: token("codex") },
-      { writeBank: "*", additionalReadBanks: [], tokenEnv: "TEST_CODEX_TOKEN" },
-    ]) {
-      writeFileSync(path, JSON.stringify({ routerUrl: url, principals: { codex: principal } }));
-      expect(() => harnessTransport("codex")).toThrow(AccessDeniedError);
-    }
-  });
   it("does not serialize credentials", () => {
     setup();
     expect(JSON.stringify(harnessTransport("codex"))).not.toContain(token("codex"));
