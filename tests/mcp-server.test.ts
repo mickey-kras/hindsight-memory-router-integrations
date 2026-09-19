@@ -82,7 +82,7 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
     configure({ tokenEnv: "TEST_AGENT_TOKEN", writeBank: "agent-bank", additionalReadBanks: ["shared-bank"] });
     const { client, close } = await wiredClient(loaded);
     try {
-      expect(client.getServerCapabilities()).toMatchObject({ tools: { listChanged: false } });
+      expect(client.getServerCapabilities()).toMatchObject({ tools: { listChanged: true } });
       expect(client.getServerVersion()).toMatchObject({ name: loaded.serverName });
       const listed = await client.listTools();
       const annotations = Object.fromEntries(listed.tools.map((entry) => [entry.name, entry.annotations]));
@@ -101,6 +101,9 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
       expect(annotations.memory_router_recall).toMatchObject({ readOnlyHint: true });
       expect(annotations.memory_router_retain).toMatchObject({ readOnlyHint: false, destructiveHint: false });
       expect(annotations.agent_knowledge_delete_page).toMatchObject({ destructiveHint: true });
+      const createPage = listed.tools.find((entry) => entry.name === "agent_knowledge_create_page");
+      const properties = createPage?.inputSchema.properties as Record<string, { enum?: string[] }> | undefined;
+      expect(properties?.bankId.enum?.slice().sort()).toEqual(["agent-bank", "shared-bank"]);
     } finally {
       await close();
     }
@@ -170,7 +173,9 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
     try {
       const result = await client.callTool({ name: "memory_router_admin", arguments: {} });
       expect(result.isError).toBe(true);
-      expect((result.content as Array<{ text: string }>)[0].text).toBe("unknown tool");
+      expect((result.content as Array<{ text: string }>)[0].text).toBe(
+        "MCP error -32602: Tool memory_router_admin not found",
+      );
     } finally {
       await close();
     }
