@@ -1,7 +1,5 @@
 node_modules/
 dist/
 *.tgz
-!packages/
-!packages/*.tgz
 
 coverage/

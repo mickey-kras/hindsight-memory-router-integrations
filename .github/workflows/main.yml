@@ -138,6 +138,25 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.20.0
+      - name: Build and verify packages
+        # packages/ is gitignored; release inputs freeze the CI-reproducible
+        # package bytes pinned by PACKAGE_SHA256, not committed binaries.
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/mcp --ignore-scripts --no-audit --no-fund
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm run build:coding-agents
+          npm run build --prefix src/mcp
+          mkdir -p packages
+          npm pack --pack-destination packages --silent
+          (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
+          npm pack ./src/mcp --pack-destination packages --silent
+          sha256sum --check PACKAGE_SHA256
       - name: Install release tools
         run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Release App token
@@ -179,6 +198,25 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.20.0
+      - name: Build and verify packages
+        # packages/ is gitignored; the release publishes and attests the
+        # CI-reproducible package bytes pinned by PACKAGE_SHA256.
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/mcp --ignore-scripts --no-audit --no-fund
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm run build:coding-agents
+          npm run build --prefix src/mcp
+          mkdir -p packages
+          npm pack --pack-destination packages --silent
+          (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
+          npm pack ./src/mcp --pack-destination packages --silent
+          sha256sum --check PACKAGE_SHA256
       - name: Release preflight
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:

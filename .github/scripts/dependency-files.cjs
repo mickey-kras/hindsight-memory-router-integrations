@@ -16,8 +16,14 @@ function packagePath(manifest) {
   return `packages/${manifest.name.slice(1).replace("/", "-")}-${manifest.version}.tgz`;
 }
 
-function generatedPaths(root, coding) {
-  return [PROVENANCE, "PACKAGE_SHA256", "PACKAGE_NIX_HASHES", packagePath(root), packagePath(coding)];
+// Generated artifacts committed to Dependabot branches are text-only: package
+// tarballs are CI-built from source and pinned by their hashes, never committed.
+function generatedPaths() {
+  return [PROVENANCE, "PACKAGE_SHA256", "PACKAGE_NIX_HASHES"];
+}
+
+function packagePaths(root, coding) {
+  return [packagePath(root), packagePath(coding)];
 }
 
 function validateManifest(before, after) {
@@ -50,4 +56,14 @@ function updateProvenance(before, packageJson, shrinkwrap) {
   };
 }
 
-module.exports = { CODING, PROVENANCE, INPUTS, hash, packagePath, generatedPaths, validateManifest, updateProvenance };
+module.exports = {
+  CODING,
+  PROVENANCE,
+  INPUTS,
+  hash,
+  packagePath,
+  packagePaths,
+  generatedPaths,
+  validateManifest,
+  updateProvenance,
+};

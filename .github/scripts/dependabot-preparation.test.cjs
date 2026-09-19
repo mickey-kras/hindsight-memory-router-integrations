@@ -10,6 +10,7 @@ const {
   INPUTS,
   hash,
   generatedPaths,
+  packagePaths,
   validateManifest,
   updateProvenance,
 } = require("./dependency-files.cjs");
@@ -120,18 +121,17 @@ function harness() {
     },
     paginate: async (endpoint, params) => state[endpoint === "runs" && params.workflow_id === "dependabot-guard.yml" ? "guardRuns" : endpoint],
   };
-  const paths = generatedPaths(manifest, coding);
+  const paths = generatedPaths();
+  // Tarballs are CI-built and gitignored; prepared commits carry text-only
+  // artifacts whose hash pins the PR's own CI run byte-verifies.
   const artifacts = {
     [PROVENANCE]: JSON.stringify(updateProvenance(provenance, contents[`${CODING}/package.json`], "{}")),
-    [paths[3]]: "root archive",
-    [paths[4]]: "coding archive",
   };
-  artifacts.PACKAGE_SHA256 = paths
-    .slice(3)
+  artifacts.PACKAGE_SHA256 = packagePaths(manifest, coding)
     .sort()
-    .map((path) => `${hash(artifacts[path])}  ${path}\n`)
+    .map((path, index) => `${String(index + 1).repeat(64)}  ${path}\n`)
     .join("");
-  artifacts.PACKAGE_NIX_HASHES = `source=sha256-${hash(artifacts[paths[3]], "base64")}\nnpm_deps=sha256-${hash("deps", "base64")}\n`;
+  artifacts.PACKAGE_NIX_HASHES = `source=sha256-${hash("root archive", "base64")}\nnpm_deps=sha256-${hash("deps", "base64")}\n`;
   const payload = {
     number: 1,
     head,
@@ -612,10 +612,18 @@ for (const [name, mutate] of [
     },
   ],
   [
-    "incorrect Nix source hash",
+    "checksum entries for unknown packages",
+    (h) => {
+      h.payload.files[1].contents = Buffer.from(
+        `${"9".repeat(64)}  packages/owner-unknown-9.9.9.tgz\n${"8".repeat(64)}  packages/owner-coding-1.0.0.tgz\n`,
+      ).toString("base64");
+    },
+  ],
+  [
+    "malformed Nix source hash",
     (h) => {
       h.payload.files[2].contents = Buffer.from(
-        `source=sha256-${hash("other", "base64")}\nnpm_deps=sha256-${hash("deps", "base64")}\n`,
+        `source=sha256-untrusted\nnpm_deps=sha256-${hash("deps", "base64")}\n`,
       ).toString("base64");
     },
   ],

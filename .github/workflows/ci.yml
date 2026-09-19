@@ -83,37 +83,27 @@ jobs:
         run: node .github/scripts/npm-audit.cjs src/mcp
 
       - name: Verify package
+        # packages/ is gitignored: tarballs are CI-built, never committed.
+        # Reproducibility is enforced twice: each package is packed twice and
+        # byte-compared, and the pinned hashes in PACKAGE_SHA256 must match the
+        # freshly packed bytes.
         run: |
-          artifact="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
-          tar -tzf "$RUNNER_TEMP/$artifact" > "$RUNNER_TEMP/package-files"
+          mkdir -p packages "$RUNNER_TEMP/repack"
+          artifact="$(npm pack --pack-destination packages --json | jq -r '.[0].filename')"
+          tar -tzf "packages/$artifact" > "$RUNNER_TEMP/package-files"
           grep -Fxq package/npm-shrinkwrap.json "$RUNNER_TEMP/package-files"
-          mkdir "$RUNNER_TEMP/generated-root" "$RUNNER_TEMP/committed-root"
-          tar -xzf "$RUNNER_TEMP/$artifact" -C "$RUNNER_TEMP/generated-root"
-          tar -xzf "packages/$artifact" -C "$RUNNER_TEMP/committed-root"
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -cf "$RUNNER_TEMP/generated-root.tar" -C "$RUNNER_TEMP/generated-root" .
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -cf "$RUNNER_TEMP/committed-root.tar" -C "$RUNNER_TEMP/committed-root" .
-          cmp "$RUNNER_TEMP/generated-root.tar" "$RUNNER_TEMP/committed-root.tar"
-          coding_artifact="$(cd src/upstream/coding-agents && npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
-          mkdir "$RUNNER_TEMP/generated-coding" "$RUNNER_TEMP/committed-coding"
-          tar -xzf "$RUNNER_TEMP/$coding_artifact" -C "$RUNNER_TEMP/generated-coding"
-          tar -xzf "packages/$coding_artifact" -C "$RUNNER_TEMP/committed-coding"
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -cf "$RUNNER_TEMP/generated-coding.tar" -C "$RUNNER_TEMP/generated-coding" .
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -cf "$RUNNER_TEMP/committed-coding.tar" -C "$RUNNER_TEMP/committed-coding" .
-          cmp "$RUNNER_TEMP/generated-coding.tar" "$RUNNER_TEMP/committed-coding.tar"
-          mcp_artifact="$(npm pack ./src/mcp --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
-          tar -tzf "$RUNNER_TEMP/$mcp_artifact" | grep -Fxq package/npm-shrinkwrap.json
-          mkdir "$RUNNER_TEMP/generated-mcp" "$RUNNER_TEMP/committed-mcp"
-          tar -xzf "$RUNNER_TEMP/$mcp_artifact" -C "$RUNNER_TEMP/generated-mcp"
-          tar -xzf "packages/$mcp_artifact" -C "$RUNNER_TEMP/committed-mcp"
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -cf "$RUNNER_TEMP/generated-mcp.tar" -C "$RUNNER_TEMP/generated-mcp" .
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -cf "$RUNNER_TEMP/committed-mcp.tar" -C "$RUNNER_TEMP/committed-mcp" .
-          cmp "$RUNNER_TEMP/generated-mcp.tar" "$RUNNER_TEMP/committed-mcp.tar"
+          repeat="$(npm pack --pack-destination "$RUNNER_TEMP/repack" --json | jq -r '.[0].filename')"
+          test "$artifact" = "$repeat"
+          cmp "packages/$artifact" "$RUNNER_TEMP/repack/$repeat"
+          coding_artifact="$(cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --json | jq -r '.[0].filename')"
+          coding_repeat="$(cd src/upstream/coding-agents && npm pack --pack-destination "$RUNNER_TEMP/repack" --json | jq -r '.[0].filename')"
+          test "$coding_artifact" = "$coding_repeat"
+          cmp "packages/$coding_artifact" "$RUNNER_TEMP/repack/$coding_repeat"
+          mcp_artifact="$(npm pack ./src/mcp --pack-destination packages --json | jq -r '.[0].filename')"
+          tar -tzf "packages/$mcp_artifact" | grep -Fxq package/npm-shrinkwrap.json
+          mcp_repeat="$(npm pack ./src/mcp --pack-destination "$RUNNER_TEMP/repack" --json | jq -r '.[0].filename')"
+          test "$mcp_artifact" = "$mcp_repeat"
+          cmp "packages/$mcp_artifact" "$RUNNER_TEMP/repack/$mcp_repeat"
           sha256sum --check PACKAGE_SHA256
 
       - name: Install Nix
@@ -121,10 +111,10 @@ jobs:
 
       - name: Nix dependency hash
         run: |
-          artifact="packages/$(npm pack --dry-run --json | jq -r '.[0].filename')"
+          artifact="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
           expected_source="$(sed -n 's/^source=//p' PACKAGE_NIX_HASHES)"
           expected_deps="$(sed -n 's/^npm_deps=//p' PACKAGE_NIX_HASHES)"
-          test "$(nix hash file "$artifact")" = "$expected_source"
+          test "$(nix hash file "$RUNNER_TEMP/$artifact")" = "$expected_source"
           actual_deps="$(
             nix run github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3#prefetch-npm-deps \
               -- npm-shrinkwrap.json
@@ -204,6 +194,22 @@ jobs:
         with:
           node-version: 22.20.0
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - name: Pack tested packages
+        # packages/ is gitignored; the smoke gate packs from source and pins
+        # the bytes against PACKAGE_SHA256 before testing them.
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/mcp --ignore-scripts --no-audit --no-fund
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm run build:coding-agents
+          npm run build --prefix src/mcp
+          mkdir -p packages
+          npm pack --pack-destination packages --silent
+          (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
+          npm pack ./src/mcp --pack-destination packages --silent
+          sha256sum --check PACKAGE_SHA256
       - name: Resolve tested combination
         id: pins
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3

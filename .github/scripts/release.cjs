@@ -455,10 +455,18 @@ async function validate({ github, context, core }) {
     );
   }
   const tag = await optional(() => github.rest.git.getRef({ ...context.repo, ref: `tags/v${manifest.version}` }));
-  requireValue(
-    !tag || (tag.object.type === "commit" && tag.object.sha === context.sha),
-    "Release tag already belongs to another commit",
-  );
+  if (tag) {
+    let target = tag.object;
+    if (target.type === "tag") {
+      ({
+        data: { object: target },
+      } = await github.rest.git.getTag({ ...context.repo, tag_sha: target.sha }));
+    }
+    requireValue(
+      target.type === "commit" && commitSha.test(target.sha) && target.sha === context.sha,
+      "Release tag already belongs to another commit",
+    );
+  }
   core.setOutput("version", manifest.version);
   return manifest;
 }
@@ -486,7 +494,20 @@ async function finalize({ github, context, core }) {
   const manifest = await validate({ github, context, core });
   const tag = `v${manifest.version}`;
   const existing = await optional(() => github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` }));
-  if (!existing) await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${tag}`, sha: context.sha });
+  if (!existing) {
+    // Annotated tag object (no signing key is provisioned for this repository;
+    // see docs/RELEASING.md for the tag trust basis). The tag rulesets restrict
+    // creation to the Release App and block updates, deletion and force pushes.
+    const { data: annotated } = await github.rest.git.createTag({
+      ...context.repo,
+      tag,
+      message: `Release ${tag}\n\nSee release.json for frozen inputs and package checksums.`,
+      object: context.sha,
+      type: "commit",
+    });
+    requireValue(annotated.object?.sha === context.sha, "Annotated tag does not point at the release commit");
+    await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${tag}`, sha: annotated.sha });
+  }
   let release = await optional(() => github.rest.repos.getReleaseByTag({ ...context.repo, tag }));
   if (!release) {
     ({ data: release } = await github.rest.repos.createRelease({
