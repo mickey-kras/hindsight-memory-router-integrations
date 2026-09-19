@@ -3,10 +3,9 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { PACKAGE_VERSION } from "../shared/package-version.js";
 import { loadMcpStack, scheduleQueueFlush, startupErrorMessage } from "./managed-config.js";
-import { buildTools, type McpTool, type ToolResult } from "./tools.js";
+import { buildTools, type McpTool } from "./tools.js";
 
 export { startupErrorMessage } from "./managed-config.js";
 
@@ -14,23 +13,17 @@ export const SERVER_NAME = "hindsight-memory-router-mcp";
 
 export function buildMcpServer(tools: McpTool[]): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: PACKAGE_VERSION });
-  server.server.registerCapabilities({ tools: { listChanged: false } });
-  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      annotations: tool.annotations,
-    })),
-  }));
-  server.server.setRequestHandler(CallToolRequestSchema, async (request): Promise<ToolResult> => {
-    const tool = tools.find((candidate) => candidate.name === request.params.name);
-    if (!tool) {
-      return { content: [{ type: "text", text: "unknown tool" }], isError: true };
-    }
-    const args = request.params.arguments;
-    return tool.handler(args !== null && typeof args === "object" ? args : {});
-  });
+  for (const tool of tools) {
+    server.registerTool(
+      tool.name,
+      {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
+      },
+      async (args) => tool.handler(args),
+    );
+  }
   return server;
 }
 
