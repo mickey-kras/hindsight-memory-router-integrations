@@ -259,7 +259,7 @@ describe("bank isolation", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
   it("strips error bodies, catches network errors and blocks redirect following", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const send = vi
       .fn<typeof fetch>()
       .mockRejectedValueOnce(new Error(token("test")))
@@ -269,8 +269,8 @@ describe("bank isolation", () => {
     await expect(client.request(client.bankUrl("A"))).rejects.toThrow("memory request failed (500)");
     expect(send.mock.calls[0][1]?.redirect).toBe("error");
     // The local log records the bounded error class only, never the message (URLs, tokens).
-    expect(warn).toHaveBeenCalledWith("memory request failed: Error");
-    expect(warn.mock.calls.flat().join(" ")).not.toContain(token("test"));
+    expect(stderr).toHaveBeenCalledWith("memory request failed: Error\n");
+    expect(stderr.mock.calls.flat().join(" ")).not.toContain(token("test"));
   });
 });
 

@@ -149,7 +149,7 @@ export class RouterTransport {
       // Log only the error class (TypeError/TimeoutError/AbortError/...), never the message:
       // fetch messages can embed the URL or token. Undifferentiated 503s otherwise hide
       // DNS/TLS/timeout anomalies from local logs.
-      console.warn(`memory request failed: ${error instanceof Error ? error.name : typeof error}`);
+      process.stderr.write(`memory request failed: ${error instanceof Error ? error.name : typeof error}\n`);
       throw new RouterRequestError(503);
     }
   }
