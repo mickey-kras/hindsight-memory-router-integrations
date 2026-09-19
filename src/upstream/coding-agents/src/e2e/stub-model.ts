@@ -77,8 +77,10 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * Start the stub on an ephemeral port. Speaks the two request shapes these CLIs use: OpenAI
- * chat-completions and Anthropic messages, plus the model-list endpoints they probe at startup.
+ * Start the stub on an ephemeral port, bound to loopback only: the echo server has no client that
+ * must cross a network boundary, and a wildcard bind would expose it on every host interface.
+ * Speaks the two request shapes these CLIs use: OpenAI chat-completions and Anthropic messages,
+ * plus the model-list endpoints they probe at startup.
  */
 export async function startStubModel(): Promise<StubModel> {
   let served = 0;
@@ -214,7 +216,7 @@ export async function startStubModel(): Promise<StubModel> {
     })();
   });
 
-  await new Promise<void>((resolve) => server.listen(0, "0.0.0.0", resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
 
