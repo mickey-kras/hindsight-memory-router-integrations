@@ -34,6 +34,7 @@ Config file:
   "recallTimeoutMs": 15000,
   "recallMaxTokens": 4096,
   "retainQueueFlushIntervalMs": 30000,
+  "queueMaxAgeMs": -1,
   "queueDir": "/absolute/path/for/retain-queue",
   "principals": {
     "my-agent": {
@@ -53,7 +54,11 @@ Rules (all fail closed at startup):
 - Bank ids must be concrete names: wildcards, `.`/`..`, empty or oversized ids are rejected.
 - `writeBank` may be omitted for a read-only principal (retain/write tools are then not exposed).
 - `recallTimeoutMs`, `recallMaxTokens`, `retainQueueFlushIntervalMs` must be positive integers.
-- `queueDir` must be absolute; defaults to `~/.hindsight-memory-router/retain-queue`.
+- `queueMaxAgeMs` must be -1 (default, keep queued retains forever) or a positive integer.
+- `queueDir` must be absolute; defaults to `~/.hindsight-memory-router/retain-queue`. Queued retains are
+  plaintext JSONL (mode 0600) and expire only when `queueMaxAgeMs` is set; use full-disk encryption for
+  at-rest confidentiality.
+  An item whose replay fails 5 times is abandoned: dropped from the queue and logged loudly to stderr.
 
 ## Run
 

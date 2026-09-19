@@ -13,6 +13,7 @@ export interface ManagedRouterConfig {
   recallTimeoutMs?: number;
   recallMaxTokens?: number;
   retainQueueFlushIntervalMs?: number;
+  queueMaxAgeMs?: number;
   queueDir?: string;
   principals: Record<string, ManagedPrincipal>;
 }
@@ -49,6 +50,12 @@ export function loadManagedConfig(
     visibleBanks(principal);
     for (const value of [config.recallTimeoutMs, config.recallMaxTokens, config.retainQueueFlushIntervalMs]) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) throw new AccessDeniedError();
+    }
+    if (
+      config.queueMaxAgeMs !== undefined &&
+      (!Number.isSafeInteger(config.queueMaxAgeMs) || (config.queueMaxAgeMs !== -1 && config.queueMaxAgeMs <= 0))
+    ) {
+      throw new AccessDeniedError();
     }
     if (config.queueDir !== undefined && (typeof config.queueDir !== "string" || !isAbsolute(config.queueDir))) {
       throw new AccessDeniedError();

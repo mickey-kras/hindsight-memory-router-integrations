@@ -11,7 +11,7 @@ import {
   UnknownPrincipalError,
 } from "../shared/principal-credential-resolver.js";
 import { RecallCoordinator } from "../shared/recall-coordinator.js";
-import { type CoordinatorLogger, RetainCoordinator } from "../shared/retain-coordinator.js";
+import { type CoordinatorLogger, RetainCoordinator, retainAbandonNotice } from "../shared/retain-coordinator.js";
 import { RouterUrlError } from "../shared/router-url.js";
 
 export interface McpStack {
@@ -58,7 +58,15 @@ export function loadMcpStack(env: NodeJS.ProcessEnv, logger: CoordinatorLogger):
     credentials,
     clients,
     recall: new RecallCoordinator(),
-    retain: new RetainCoordinator({ credentials, clients, queueDir, logger }),
+    retain: new RetainCoordinator({
+      credentials,
+      clients,
+      queueDir,
+      queueMaxAgeMs: config.queueMaxAgeMs,
+      maxAgeConfigKey: "queueMaxAgeMs",
+      logger,
+      onAbandon: (item, attempts) => logger.error(retainAbandonNotice(item, attempts)),
+    }),
   };
 }
 

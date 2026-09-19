@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ const logger = { warn: vi.fn(), error: vi.fn() };
 const dirs: string[] = [];
 
 afterEach(() => {
+  vi.clearAllMocks();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -133,6 +134,45 @@ describe("loadMcpStack", () => {
     vi.stubEnv("HOME", dir);
     loadMcpStack(process.env, logger);
     expect(existsSync(join(dir, ".hindsight-memory-router", "retain-queue"))).toBe(true);
+  });
+
+  it("warns about plaintext retention by default and stays quiet with a bounded queueMaxAgeMs", () => {
+    const { dir } = configure(validPrincipal);
+    vi.stubEnv("HOME", dir);
+    loadMcpStack(process.env, logger);
+    const warning = logger.warn.mock.calls.flat().join("\n");
+    expect(warning).toContain("plaintext transcripts with no expiration");
+    expect(warning).toContain("set queueMaxAgeMs to bound retention");
+    vi.clearAllMocks();
+    configure(validPrincipal, { queueMaxAgeMs: 604800000 });
+    loadMcpStack(process.env, logger);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("surfaces queue abandonment as a stderr notice through the wired logger", async () => {
+    const { dir } = configure(validPrincipal);
+    vi.stubEnv("HOME", dir);
+    const stack = loadMcpStack(process.env, logger);
+    const queueDir = join(dir, ".hindsight-memory-router", "retain-queue");
+    const queueFile = join(queueDir, "hindsight-retain-queue.agent.jsonl");
+    writeFileSync(
+      queueFile,
+      `${JSON.stringify({
+        id: "poison-1",
+        bankId: "agent-bank",
+        content: "poison transcript",
+        documentId: "conversation",
+        metadata: {},
+        createdAt: new Date().toISOString(),
+        replayAttempts: 4,
+      })}\n`,
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unavailable", { status: 503 }));
+    await stack.retain.flushQueues();
+    expect(logger.error).toHaveBeenCalledWith(
+      "retain replay abandoned after 5 attempts for bank agent-bank; transcript dropped from the queue without delivery",
+    );
+    expect(() => readFileSync(queueFile, "utf8")).toThrow();
   });
 
   it("loads a read-only principal without a write bank", () => {
