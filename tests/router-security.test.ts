@@ -82,6 +82,20 @@ describe("managed harness identities", () => {
     setup();
     expect(() => harnessTransport(harness)).toThrow(AccessDeniedError);
   });
+  it("loads a writeBank-only principal without additional read banks", async () => {
+    const path = setup();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        routerUrl: url,
+        principals: { codex: { writeBank: "A", tokenEnv: "TEST_CODEX_TOKEN" } },
+      }),
+    );
+    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}));
+    const client = harnessTransport("codex");
+    await client.request(client.bankUrl("A", "/config"));
+    expect(new Headers(send.mock.calls[0][1]?.headers).get("authorization")).toBe(`Bearer ${token("codex")}`);
+  });
   it("denies missing credentials, invalid secrets and missing managed config", () => {
     setup();
     vi.stubEnv("TEST_CODEX_TOKEN", "");

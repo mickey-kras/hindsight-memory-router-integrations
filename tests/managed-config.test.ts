@@ -109,6 +109,16 @@ describe("loadManagedConfig", () => {
     expect(() => loadManagedConfig(process.env, "agent")).toThrow(AccessDeniedError);
   });
 
+  it("rejects a non-array additionalReadBanks", () => {
+    configure({ ...validPrincipal, additionalReadBanks: "shared-bank" });
+    expect(() => loadManagedConfig(process.env, "agent")).toThrow(AccessDeniedError);
+  });
+
+  it("defaults a missing additionalReadBanks to an empty list", () => {
+    configure({ tokenEnv: "TEST_AGENT_TOKEN", writeBank: "agent-bank" });
+    expect(loadManagedConfig(process.env, "agent").principal.additionalReadBanks).toEqual([]);
+  });
+
   it.each([
     ["recallTimeoutMs", 0],
     ["recallTimeoutMs", 1.5],

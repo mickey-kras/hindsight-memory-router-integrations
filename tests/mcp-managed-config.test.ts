@@ -77,11 +77,6 @@ describe("loadMcpStack", () => {
     expect(() => loadMcpStack(process.env, logger)).toThrow(AccessDeniedError);
   });
 
-  it("rejects a non-array additionalReadBanks at startup", () => {
-    configure({ ...validPrincipal, additionalReadBanks: "shared-bank" });
-    expect(() => loadMcpStack(process.env, logger)).toThrow(CredentialResolutionError);
-  });
-
   it("rejects a non-string write bank at startup", () => {
     configure({ ...validPrincipal, writeBank: 5 });
     expect(() => loadMcpStack(process.env, logger)).toThrow(CredentialResolutionError);

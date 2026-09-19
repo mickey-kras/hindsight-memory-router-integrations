@@ -32,17 +32,21 @@ export function loadManagedConfig(
     if (!path || !isAbsolute(path) || !principalId) throw new AccessDeniedError();
     const config = JSON.parse(readFileSync(path, "utf8")) as ManagedRouterConfig;
     if (!Object.hasOwn(config.principals ?? {}, principalId)) throw new AccessDeniedError();
-    const principal = config.principals[principalId];
-    if (!TOKEN_ENV_PATTERN.test(principal.tokenEnv) || "token" in principal || "apiToken" in principal) {
+    const configured = config.principals[principalId];
+    if (!TOKEN_ENV_PATTERN.test(configured.tokenEnv) || "token" in configured || "apiToken" in configured) {
       throw new AccessDeniedError();
     }
-    if (principal.source !== undefined && (typeof principal.source !== "string" || principal.source.trim() === "")) {
+    if (configured.source !== undefined && (typeof configured.source !== "string" || configured.source.trim() === "")) {
       throw new AccessDeniedError();
     }
-    if (typeof principal.writeBank === "string" && principal.writeBank.trim() === "") {
+    if (typeof configured.writeBank === "string" && configured.writeBank.trim() === "") {
       throw new AccessDeniedError();
     }
-    visibleBanks({ writeBank: principal.writeBank, additionalReadBanks: principal.additionalReadBanks ?? [] });
+    if (configured.additionalReadBanks !== undefined && !Array.isArray(configured.additionalReadBanks)) {
+      throw new AccessDeniedError();
+    }
+    const principal: ManagedPrincipal = { ...configured, additionalReadBanks: configured.additionalReadBanks ?? [] };
+    visibleBanks(principal);
     for (const value of [config.recallTimeoutMs, config.recallMaxTokens, config.retainQueueFlushIntervalMs]) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) throw new AccessDeniedError();
     }
