@@ -2,7 +2,8 @@
 // branch. Integrations releases publish tarballs as immutable-release assets,
 // so there are no registry tags to remove; the tag/draft-release state a
 // half-finished finalize leaves behind is resumable and must be kept. Strictly
-// scoped to the release branch of the failed run's version. Never touches tags,
+// scoped to the release branch of the failed run's version, or to release
+// branches frozen by the failed preparation run. Never touches tags,
 // releases, assets, attestations, or any other branch. Every target is
 // best-effort: failures are logged, never thrown, so cleanup can never mask the
 // original release failure.
@@ -88,9 +89,58 @@ async function branch({ github, context, core }) {
   await summary.write();
 }
 
+function preparationTargets(context) {
+  requireValue(
+    context.eventName === "workflow_dispatch" && context.ref === "refs/heads/main",
+    "Preparation cleanup is allowed only from the main workflow button",
+  );
+  requireValue(Number.isSafeInteger(context.runId) && context.runId > 0, "Invalid preparation run");
+  return context.runId;
+}
+
+async function preparation({ github, context, core }) {
+  const runId = preparationTargets(context);
+  const summary = core.summary.addHeading("Failed release cleanup: preparation", 3);
+  const branches = await github.paginate(github.rest.repos.listBranches, { ...context.repo, per_page: 100 });
+  const orphans = [];
+  for (const branch of branches.filter((item) => item.name.startsWith("release/"))) {
+    const version = branch.name.slice("release/".length);
+    if (!releaseTag.test(`v${version}`)) continue;
+    const manifest = await github.rest.repos
+      .getContent({ ...context.repo, path: "release.json", ref: branch.name })
+      .then(
+        ({ data }) => data,
+        (error) => {
+          if (error.status === 404) return null;
+          throw error;
+        },
+      );
+    if (manifest?.encoding !== "base64") continue;
+    const prepared = JSON.parse(Buffer.from(manifest.content, "base64").toString("utf8"));
+    if (prepared.preparation_run === runId) orphans.push(version);
+  }
+  if (!orphans.length) {
+    await summary.addRaw(`No release branch from preparation run ${runId}; nothing to delete.\n`).write();
+    return;
+  }
+  for (const version of orphans) {
+    if (await published(github, context.repo, version)) {
+      await summary.addRaw(`Kept \`release/${version}\`: \`v${version}\` already exists.\n`);
+      continue;
+    }
+    await attempt(core, summary, `Branch \`release/${version}\``, async () => {
+      await github.rest.git.deleteRef({ ...context.repo, ref: `heads/release/${version}` });
+      return [`heads/release/${version}`];
+    });
+  }
+  await summary.write();
+}
+
 module.exports = {
   CleanupError,
   targets,
+  preparationTargets,
   published,
   branch,
+  preparation,
 };
