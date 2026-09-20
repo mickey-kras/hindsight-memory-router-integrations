@@ -618,3 +618,54 @@ test("follow-up opens the next-version PR and deletes the published branch, loud
     assert.match(m.state.errors[0], /Next version PR failed: forbidden/);
     assert.match(m.state.errors[1], /release\/0\.1\.0.*failed: forbidden/);
   }));
+
+test("follow-up prunes stale published branches and keeps advanced or unpublished ones", () =>
+  fixture(async () => {
+    const m = mock();
+    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
+    m.state.refs["heads/release/0.0.9"] = { object: { type: "commit", sha: base } };
+    m.state.refs["tags/v0.0.9"] = { object: { type: "commit", sha: base } };
+    m.state.refs["heads/release/0.2.0"] = { object: { type: "commit", sha: "d".repeat(40) } };
+    m.state.refs["tags/v0.2.0"] = { object: { type: "commit", sha: "e".repeat(40) } };
+    m.state.refs["heads/release/0.3.0"] = { object: { type: "commit", sha: base } };
+    m.state.refs["heads/release/0.4.0"] = { object: { type: "commit", sha: base } };
+    m.state.tagObjects["f".repeat(40)] = { object: { type: "commit", sha: base } };
+    m.state.refs["tags/v0.4.0"] = { object: { type: "tag", sha: "f".repeat(40) } };
+    m.state.branches = [
+      { name: "main", commit: { sha: base } },
+      { name: "release/0.1.0", commit: { sha } },
+      { name: "release/0.0.9", commit: { sha: base } },
+      { name: "release/0.2.0", commit: { sha: "d".repeat(40) } },
+      { name: "release/0.3.0", commit: { sha: base } },
+      { name: "release/0.4.0", commit: { sha: base } },
+      { name: "release/candidate", commit: { sha: base } },
+    ];
+    const lines = [];
+    m.core.summary = {
+      addHeading: () => m.core.summary,
+      addRaw: (text) => {
+        lines.push(text);
+        return m.core.summary;
+      },
+      write: async () => {},
+    };
+    await release.followUp(m, "0.1.0");
+    assert.deepEqual(m.state.errors, []);
+    assert.deepEqual(
+      m.state.calls.filter((call) => call.startsWith("delete:")),
+      ["delete:heads/release/0.1.0", "delete:heads/release/0.0.9", "delete:heads/release/0.4.0"],
+    );
+    assert.equal(m.state.refs["heads/release/0.0.9"], undefined);
+    assert.equal(m.state.refs["heads/release/0.4.0"], undefined);
+    assert.ok(m.state.refs["heads/release/0.2.0"], "advanced branch must be kept");
+    assert.ok(m.state.refs["heads/release/0.3.0"], "unpublished branch must be kept");
+    const stale = lines.find((line) => line.includes("Stale published branches"));
+    assert.match(stale, /deleted `release\/0\.0\.9`, deleted `release\/0\.4\.0`/);
+    assert.match(stale, /kept `release\/0\.2\.0` \(advanced past its tag\)/);
+    assert.ok(!stale.includes("0.3.0") && !stale.includes("candidate"));
+    m.state.failDelete = true;
+    m.state.branches = [{ name: "release/0.0.9", commit: { sha: base } }];
+    m.state.refs["heads/release/0.0.9"] = { object: { type: "commit", sha: base } };
+    await release.followUp(m, "0.1.0");
+    assert.ok(m.state.errors.some((error) => /Stale published branches failed: forbidden/.test(error)));
+  }));
