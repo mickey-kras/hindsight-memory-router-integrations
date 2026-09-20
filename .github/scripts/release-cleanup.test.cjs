@@ -123,3 +123,90 @@ test("branch deletion failures are logged, never thrown", async () => {
   assert.equal(state.errors.length, 1);
   assert.match(state.summary, /\*\*failed\*\* \(forbidden\)/);
 });
+
+function fakeDispatchContext(overrides = {}) {
+  return fakeContext({
+    eventName: "workflow_dispatch",
+    workflow: "main",
+    ref: "refs/heads/main",
+    runId: 42,
+    ...overrides,
+  });
+}
+
+function fakePreparationGithub({ manifests = {}, deleteFails = false } = {}) {
+  const api = {
+    deleted: [],
+    paginate: async (method, args) => (await method(args)).data,
+    rest: {
+      repos: {
+        listBranches: async () => ({ data: Object.keys(manifests).map((name) => ({ name })) }),
+        getContent: async ({ path, ref }) => {
+          const manifest = manifests[ref];
+          if (path !== "release.json" || !manifest) return notFound();
+          return {
+            data: {
+              type: "file",
+              encoding: "base64",
+              content: Buffer.from(JSON.stringify(manifest)).toString("base64"),
+            },
+          };
+        },
+        getReleaseByTag: async () => notFound(),
+      },
+      git: {
+        getRef: async () => notFound(),
+        deleteRef: async ({ ref }) => {
+          if (deleteFails) throw new Error("forbidden");
+          api.deleted.push(ref);
+        },
+      },
+    },
+  };
+  return api;
+}
+
+test("preparationTargets accepts only main workflow dispatches with a run id", () => {
+  assert.equal(cleanup.preparationTargets(fakeDispatchContext()), 42);
+  assert.throws(() => cleanup.preparationTargets(fakeContext()), cleanup.CleanupError);
+  assert.throws(
+    () => cleanup.preparationTargets(fakeDispatchContext({ ref: "refs/heads/release/0.2.0" })),
+    cleanup.CleanupError,
+  );
+  assert.throws(() => cleanup.preparationTargets(fakeDispatchContext({ runId: 0 })), cleanup.CleanupError);
+  assert.throws(() => cleanup.preparationTargets(fakeDispatchContext({ runId: "42" })), cleanup.CleanupError);
+});
+
+test("preparation deletes only branches frozen by the failed run", async () => {
+  const { core, state } = fakeCore();
+  const github = fakePreparationGithub({
+    manifests: {
+      "release/0.2.0": { preparation_run: 42 },
+      "release/0.3.0": { preparation_run: 41 },
+      "release/0.4.0": null,
+      "release/0.1": { preparation_run: 42 },
+    },
+  });
+  await cleanup.preparation({ github, context: fakeDispatchContext(), core });
+  assert.deepEqual(github.deleted, ["heads/release/0.2.0"]);
+  assert.match(state.summary, /deleted `heads\/release\/0\.2\.0`/);
+  assert.equal(state.errors.length, 0);
+});
+
+test("preparation cleanup without a matching branch is a quiet no-op", async () => {
+  const { core, state } = fakeCore();
+  const github = fakePreparationGithub({ manifests: { "release/0.2.0": { preparation_run: 41 } } });
+  await cleanup.preparation({ github, context: fakeDispatchContext(), core });
+  assert.deepEqual(github.deleted, []);
+  assert.match(state.summary, /nothing to delete/);
+  assert.equal(state.errors.length, 0);
+});
+
+test("preparation deletion failures are logged, never thrown", async () => {
+  const { core, state } = fakeCore();
+  const github = fakePreparationGithub({ manifests: { "release/0.2.0": { preparation_run: 42 } }, deleteFails: true });
+  await cleanup.preparation({ github, context: fakeDispatchContext(), core });
+  assert.deepEqual(github.deleted, []);
+  assert.equal(state.errors.length, 1);
+  assert.match(state.summary, /\*\*failed\*\* \(forbidden\)/);
+});
