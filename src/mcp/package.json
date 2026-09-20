@@ -1,6 +1,6 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Optional MCP (stdio) server that exposes Memory Router retain and multi-bank recall with per-principal authorization",
   "license": "MIT",
   "type": "module",
