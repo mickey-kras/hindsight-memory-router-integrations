@@ -37,7 +37,7 @@
   "src/core/transcript-util.ts": "c50f2bc97fb7c425fdb95243456277e955fdc55b66378d6d27e2d92d0419f3e8",
   "src/core/uuid.ts": "4289ae1c6d45166d925c18b03a87e5cbb616755e5ee9e6122a1d7b46b5584093",
   "src/dcode-plugin.test.ts": "1e668bbfe5bcf2b1034115d722b2f6ca5d144fb078de66f994fe84549659bdc2",
-  "src/deepen.ts": "4e162032dadf3c098f5cf02e5ad42ac278b5c0cbf6c357301ecec4c10e5f8d99",
+  "src/deepen.ts": "4e162032dadf3c098f5cf02e5ad42ac278b5c0cbf6b357301ecec4c10e5f8d99",
   "src/docs-freshness.test.ts": "85615d2e6497304ace32e2f0d507a50cbec9bf013265ed122fa21456be0144ac",
   "src/e2e/harness.ts": "a0b8068c7eb926291331c93340aaadb8b423a6713fb539825f7efab726bbffca",
   "src/e2e/stub-model.ts": "7fe7a80777eb2645755fb933b2484cfaf0a84928969ffb7956925f74aa86c5dc",
