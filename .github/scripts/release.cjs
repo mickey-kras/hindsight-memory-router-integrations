@@ -538,6 +538,34 @@ async function bumpVersionPr(github, repository, version) {
   return `opened #${pr.number}`;
 }
 
+async function prunePublishedBranches(github, repository, keep) {
+  const branches = await github.paginate(github.rest.repos.listBranches, { ...repository, per_page: 100 });
+  const pruned = [];
+  const advanced = [];
+  for (const branch of branches) {
+    const match = /^release\/(.+)$/.exec(branch.name);
+    if (!match || branch.name === keep || !releaseTag.test(`v${match[1]}`)) continue;
+    const tag = await optional(() => github.rest.git.getRef({ ...repository, ref: `tags/v${match[1]}` }));
+    if (!tag) continue;
+    let target = tag.object;
+    if (target.type === "tag") {
+      ({
+        data: { object: target },
+      } = await github.rest.git.getTag({ ...repository, tag_sha: target.sha }));
+    }
+    if (target.type !== "commit") continue;
+    if (target.sha === branch.commit.sha) {
+      await github.rest.git.deleteRef({ ...repository, ref: `heads/${branch.name}` }).catch((error) => {
+        if (error.status !== 404) throw error;
+      });
+      pruned.push(branch.name);
+    } else {
+      advanced.push(branch.name);
+    }
+  }
+  return { pruned, advanced };
+}
+
 async function followUp({ github, context, core }, version) {
   const summary = core.summary.addHeading(`Release v${version} follow-up`, 3);
   const attempt = async (name, action) => {
@@ -554,6 +582,14 @@ async function followUp({ github, context, core }, version) {
       if (error.status !== 404) throw error;
     });
     return "deleted";
+  });
+  await attempt("Stale published branches", async () => {
+    const { pruned, advanced } = await prunePublishedBranches(github, context.repo, `release/${version}`);
+    const actions = [
+      ...pruned.map((name) => `deleted \`${name}\``),
+      ...advanced.map((name) => `kept \`${name}\` (advanced past its tag)`),
+    ];
+    return actions.length ? actions.join(", ") : "none found";
   });
   await summary.write();
 }
@@ -643,6 +679,7 @@ module.exports = {
   checkPackageReuse,
   shouldPromote,
   bumpVersionPr,
+  prunePublishedBranches,
   followUp,
   prepare,
   validate,
