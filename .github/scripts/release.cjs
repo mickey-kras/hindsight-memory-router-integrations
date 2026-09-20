@@ -47,6 +47,17 @@ function validatePin(pin) {
   return pin;
 }
 
+async function retry(request, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await request();
+    } catch (error) {
+      if (attempt === 2 || (error.status && error.status < 500 && error.status !== 429)) throw error;
+      await sleep(1000 * 2 ** attempt);
+    }
+  }
+}
+
 async function latestHindsight(
   github,
   inspect = (image) =>
@@ -56,7 +67,7 @@ async function latestHindsight(
       }),
     ),
 ) {
-  const { data: release } = await github.rest.repos.getLatestRelease(upstream);
+  const { data: release } = await retry(() => github.rest.repos.getLatestRelease(upstream));
   requireValue(
     !release.draft && !release.prerelease && coreTag.test(release.tag_name),
     "Latest upstream release is not a stable Hindsight server release",
@@ -68,7 +79,7 @@ async function latestHindsight(
   requireValue(ref.object.type === "commit", "Hindsight tag does not resolve to a commit");
   const version = release.tag_name.slice(1);
   const image = `ghcr.io/vectorize-io/hindsight:${version}`;
-  return validatePin({ version, sha: ref.object.sha, image: `${image}@${inspect(image)}` });
+  return validatePin({ version, sha: ref.object.sha, image: `${image}@${await retry(() => inspect(image))}` });
 }
 
 async function resolve({ github, context, core, inspect }) {
@@ -490,6 +501,63 @@ function releaseNotes(manifest, sha) {
   return `| Component | Version |\n| --- | --- |\n${rows.join("\n")}\n\nHindsight: ${manifest.hindsight.version}.\nCommit: ${sha}.\n\nSee release.json for exact upstream commits, package checksums and${manifest.packages.length ? " the tested router image digest" : " image-digests.txt for published images"}.`;
 }
 
+async function bumpVersionPr(github, repository, version) {
+  const [major, minor, patch] = version.split(".").map(Number);
+  const next = `${major}.${minor}.${patch + 1}`;
+  const branch = `ci/release-version-${next.replaceAll(".", "-")}`;
+  const pulls = await github.paginate(github.rest.pulls.list, {
+    ...repository,
+    state: "open",
+    head: `${repository.owner}:${branch}`,
+  });
+  if (pulls.length) return `already open: #${pulls[0].number}`;
+  const { data: main } = await github.rest.git.getRef({ ...repository, ref: "heads/main" });
+  const existing = await optional(() => github.rest.git.getRef({ ...repository, ref: `heads/${branch}` }));
+  if (!existing) await github.rest.git.createRef({ ...repository, ref: `refs/heads/${branch}`, sha: main.object.sha });
+  const { data: file } = await github.rest.repos.getContent({
+    ...repository,
+    path: "release-version.json",
+    ref: "main",
+  });
+  requireValue(file.type === "file" && file.encoding === "base64", "release-version.json is missing on main");
+  await github.rest.repos.createOrUpdateFileContents({
+    ...repository,
+    path: "release-version.json",
+    message: `chore: bump release-version.json to ${next}`,
+    content: Buffer.from(json({ version: next })).toString("base64"),
+    sha: file.sha,
+    branch,
+  });
+  const { data: pr } = await github.rest.pulls.create({
+    ...repository,
+    title: `chore: bump release-version.json to ${next}`,
+    head: branch,
+    base: "main",
+    body: `v${version} is published; reserve the next patch version so preparation does not reject ${version} as reserved.`,
+  });
+  return `opened #${pr.number}`;
+}
+
+async function followUp({ github, context, core }, version) {
+  const summary = core.summary.addHeading(`Release v${version} follow-up`, 3);
+  const attempt = async (name, action) => {
+    try {
+      await summary.addRaw(`- ${name}: ${await action()}\n`);
+    } catch (error) {
+      core.error(`${name} failed: ${error.message}`);
+      await summary.addRaw(`- ${name}: **failed** (${error.message}); finish it manually\n`);
+    }
+  };
+  await attempt("Next version PR", () => bumpVersionPr(github, context.repo, version));
+  await attempt(`Branch \`release/${version}\``, async () => {
+    await github.rest.git.deleteRef({ ...context.repo, ref: `heads/release/${version}` }).catch((error) => {
+      if (error.status !== 404) throw error;
+    });
+    return "deleted";
+  });
+  await summary.write();
+}
+
 async function finalize({ github, context, core }) {
   const manifest = await validate({ github, context, core });
   const tag = `v${manifest.version}`;
@@ -558,10 +626,12 @@ async function finalize({ github, context, core }) {
     });
   }
   core.setOutput("latest", String(latest));
+  await followUp({ github, context, core }, manifest.version);
 }
 
 module.exports = {
   ReleaseError,
+  retry,
   validatePin,
   latestHindsight,
   resolve,
@@ -572,6 +642,8 @@ module.exports = {
   validateRouter,
   checkPackageReuse,
   shouldPromote,
+  bumpVersionPr,
+  followUp,
   prepare,
   validate,
   finalize,
