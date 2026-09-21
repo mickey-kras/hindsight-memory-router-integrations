@@ -89,7 +89,8 @@ basis instead:
    guard may require an owner-reviewed bootstrap before it accepts the new workflow.
    Keep that guard enabled; do not fabricate statuses or bypass it with the release App.
 2. Create a dedicated GitHub App, installed only on these repositories, with
-   **Contents: read and write** and implicit Metadata read. No Administration permission.
+   **Contents: read and write**, **Pull requests: read and write**, and implicit Metadata read.
+   No Administration permission. Approve changed installation permissions before releasing.
 3. In each repository, create environment **release-automation**, allowing branches
    `main` and `release/*`. Add environment secret `RELEASE_APP_PRIVATE_KEY` and repository
    variable `RELEASE_APP_ID`. Leave environment reviewers unset for automatic publication.

@@ -338,18 +338,17 @@ export async function startCodebaseSurvey(
         budgetUsd: opts.budgetUsd,
         mcpServerPath,
       });
-      // Use the SAME resolver as the selected agent's MCP/plugin, including fallback harnesses
-      // and bank overrides. Hash credentials too: equal bank ids on one API can belong to
-      // different tenants, but neither tokens nor bank names should appear in scratch paths.
+      // Resolve the actual managed destination, including fallback harnesses and bank overrides.
+      // Router identity is the principal, not cfg.apiToken (cleared by managedSettings).
+      // Credential rotation must not start a second survey for the same destination.
       const { cfg, bankId } = resolveHostConfig(harness, repoDir);
       if (cfg.disabled) return false;
-      const leaseKeyInput = JSON.stringify([
+      const leaseIdentity = JSON.stringify([
         cfg.apiUrl.replace(/\/+$/, ""),
-        cfg.apiToken ?? "",
+        cfg.routerHarness ?? harness,
         bankId,
       ]);
-      // codeql[js/insufficient-password-hash] -- not a password hash: deterministic lease key keeping credentials out of scratch paths; no verification oracle exists.
-      const key = createHash("sha256").update(leaseKeyInput).digest("hex");
+      const key = createHash("sha256").update(leaseIdentity).digest("hex");
       const lease = acquireLease(
         opts.lease?.dir ?? join(tmpdir(), "hindsight-coding-agent", "surveys"),
         key,

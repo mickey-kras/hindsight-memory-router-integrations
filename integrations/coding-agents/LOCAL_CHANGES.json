@@ -1,8 +1,8 @@
 {
-  "DEVIATIONS.md": "876406f1053206a81c7d9148d80f355a878d3420e7c3d04aa201d347803c782c",
+  "DEVIATIONS.md": "9843440298eb40b3e5f8f6c9933e74fc6418a9e08f5e322ad6ec9e646ae33346",
   "LICENSE": "55dd88319dfa99291d635e32df6e70ca55ee1952b323b2d4433def3940ef1594",
   "README.md": "a349d259278235bcda25c249d704405fec9a3ac663d62ef3797996385915eafe",
-  "UPSTREAM.json": "cf9921a5e3720c200920c9010e58255aab62fd6ce0513ca4c0221f82a1bc4341",
+  "UPSTREAM.json": "270b5748104433a94b6fbe31ef1e2ece92b53b2e029074a50b279a7b30f9aa12",
   "cordis.patch.yml": "9a32a0a6819c281fcb0f17c9c2e77ba6be8f78f7f369882edbe9170afd48cd25",
   "e2e/Dockerfile.base": "4cac50b9dd6c503856247ce7e57d5d61c1d1b12621c1a2b8c54306767082160c",
   "npm-shrinkwrap.json": "3b7c9f7b14826a3fe046f403396aadd1d4ae0d33b4c1fddf70d4fd18d95a4bbf",
@@ -24,12 +24,13 @@
   "src/core/legacy.test.ts": "abd72ae1bcae22fa16d81ee614bd27bba183b55e6a6bfb11e74b8f109cff51b2",
   "src/core/missions.test.ts": "fd58c07c1231a927d30c70832328bc2562341a30da2ab7831337fa53be084522",
   "src/core/retain-hook.ts": "ad2f00bf3f0185d588b0aa1db62a678590d97fba77435bc38a62ddcf2df18a4a",
+  "src/core/router-survey.test.ts": "8b1519c9f6fc489566633e88d45f7d803d5826c2bad5d806c00277f24834f4c0",
   "src/core/runtime.ts": "ba62e689c51b929ec1ef1ba52b320d4b98757acb897bad332ed160e5367365b5",
   "src/core/seed.ts": "4ca77f4f6edf091e46058fda0a4b3769265558e49a3892950fab96cbcb679f68",
   "src/core/session-cache.ts": "292c8074d6b9e87a5cacd9bf5b6dab3f4bc77401df5d9215a1046e1228a9db1d",
   "src/core/session-start.ts": "3b4c69930915ef8ca1fa4fe5ffa56f32097864c44d3e5428c48e7ced93d0e40a",
   "src/core/survey.test.ts": "71f998965baa840b2e1cdab1fa350349a7127c01ad11c6198fc7b4ae58c84d37",
-  "src/core/survey.ts": "13b53f1c4af21a150777069843bfc02de18581eb4e566b1e2329a2e557e25214",
+  "src/core/survey.ts": "b042c0140deb1733752a916ac0d95e81ff93d6465afce8d68e12685a420618b1",
   "src/core/template.ts": "b5b0553c91f562365ab917b993e3b1e58b099425c726867058cf565926498d26",
   "src/core/transcript-dcode.test.ts": "f00f455ef823cd1a6623002ce12ae5d680415a8f1222e7b30c7188f642ff7786",
   "src/core/transcript-dcode.ts": "9f63d0ea54940443809bfe33af35872d5a0834b893d6d80481872d0edebcd3f4",
@@ -52,5 +53,5 @@
   "src/mcp-server.ts": "4cd0d83135702420a6c9e37df0553131bb67cfdeb7f861bee02bdb87881ca046",
   "src/status.ts": "3a9fbc0d4421d067dc03e94ef777c21a9d3766a8ef2da85fa1081114e950e4e6",
   "tsconfig.json": "259ae1a998965db4a5dc00bc729d6c0713885df01e223d14fc783fa04f7b447f",
-  "vitest.config.ts": "fb1a69195247e1e976cc17577c241d6220558c73c3d09eb2d953c755e1cb2c43"
+  "vitest.config.ts": "aef4737eca3085361feb9e471627aec069e536690a739ee05226ef70ccdbb2a2"
 }

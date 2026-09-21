@@ -1,5 +1,5 @@
 upstream_repo=vectorize-io/hindsight
-upstream_ref=integrations/openclaw/v0.13.0
-upstream_commit=87be3538bf93d3377abdd0569407348da2f10f58
+upstream_ref=680406b3dd9cca2108c7f0e204820a09b4e30906
+upstream_commit=680406b3dd9cca2108c7f0e204820a09b4e30906
 upstream_path=hindsight-integrations/openclaw
 upstream_version=0.13.0

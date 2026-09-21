@@ -14,7 +14,7 @@ e1032b92500f6d36d496e7378c9fbf85bafffdcc3517956d6c837563016ec0c3  ./src/backfill
 63d55c9f18ce6f987eb9d1b56dd5a78fc3bc87f0f277a094ebd7d3fbe7c717d9  ./src/bank-defaults.ts
 10f2d7424eb55c0c3105fa6847648ffae494c9da1d42727c78d0958d33548c1f  ./src/derive-bank-id.test.ts
 6e4070d3f8d0123c75bcf68554bc724f1ea1d751123bce8c4eada2d46624cabf  ./src/index.test.ts
-b511d02b4bc1cd9ca4192f759df6b0cf062800ba0a3e4b06ba67d7a91a523948  ./src/index.ts
+3d300ca85189d28e7652e8f604b559fa28d8bb3d3d0e3c0db0ba9f4a4e68ab28  ./src/index.ts
 1c8a77d03ed17dcc65511f13201fe0cd3c12e5aca98ba22dc3982b8a844434c6  ./src/local-daemon-parity.test.ts
 404f31640fa13726507f798cde96abdf9cfa04b606e2fabafe1e48995ddc3e51  ./src/logger.ts
 10aeea2ad9b0696f0d44d1c591a7054ab4120dc986ab099b959ca29c4cc3affd  ./src/manifest.test.ts
@@ -32,12 +32,12 @@ df2c90e6ff881de1761d9c01d0b7ead92d8716e4e05bac0b939dae7d700e3a0d  ./src/session-
 5570bdb956bfea23fd09a5ed88de9961b011b9702019d3ce1d33b2d7674c38ae  ./src/session-patterns.test.ts
 897d35905e640e8baf07cdba8704da6aa54db078d3d0bef10a464b5100ec6524  ./src/session-patterns.ts
 786581ed1c5e7184808071d5a2dfff82712f265305cc111b9e0645012c5742bd  ./src/setup-lib.test.ts
-f39e5411d2ae3955dd408f9dee77a14583a7d5a6f2a2764b0986c5a013438990  ./src/setup-lib.ts
+899e19d76543a07703e96bfcd096bf18f55a101553ff1282a9537070535dd11c  ./src/setup-lib.ts
 5a4cc345878d18e88036d025fa6655b1e9900f90760a50763433621a633d5fc2  ./src/setup.test.ts
 a8c4d9fe239b0cd246deecfefb5fe61c794c7af1faaa08f50c34ba0e9fe23898  ./src/setup.ts
 f887cb1728d49b9dd5957adbb8afbdf271da6bc2428f66a0b0ed31f871f22229  ./src/types.ts
 e630fb03a6491ff0a509900921b911549fc7bc9733a64a38a5cefcde1fea79c0  ./tests/hooks.integration.test.ts
-a899a5b430b0d762900c3409bac0baf147bd3b2ce1d4d9bd898bb6f45e2a2809  ./tests/integration.test.ts
+0385de8c81c11bdeef08ec276fcd98935668d835ca1d4b5952affbe341ea4f31  ./tests/integration.test.ts
 78e02bec22c4757534422453d6b4059f84420bb73b514dc7f1d6b7f39f2f7ef2  ./tsconfig.json
 c309635d69ba764feb81fa4cc8a6eb7e52a3f370b181519045ee42cd2323b286  ./vitest.config.ts
 b4a9f62b8a7194942edba85f9a4b7e11a0be4cd3f6ddce3e770c087ab65a6a77  ./vitest.integration.config.ts
