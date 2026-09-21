@@ -1,6 +1,6 @@
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/DEVIATIONS.md b/DEVIATIONS.md
 --- a/DEVIATIONS.md	1970-01-01 08:00:00.000000000 +0800
-+++ b/DEVIATIONS.md	2026-09-22 04:47:09.994809841 +0800
++++ b/DEVIATIONS.md	2026-09-22 05:13:54.000000000 +0800
 @@ -0,0 +1,25 @@
 +# Router deviations
 +
@@ -26,7 +26,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/DEVIATIONS.md b/DEVIATIONS
 +- `@opentelemetry/core` is forced to `>=2.8.0 <3.0.0`, scoped under `@opencode/plugin`, fixing GHSA-8988-4f7v-96qf (unbounded memory allocation in W3C Baggage propagation, moderate, `<=2.7.x` affected). `@opencode/plugin`/`@opencode/util` pin the vulnerable 2.6.1 line (`fixAvailable: false` even at the latest release), so an npm override is the only remediation. The remaining flagged packages (`exporter-trace-otlp-http`, `otlp-exporter-base`, `otlp-transformer`, `resources`, `sdk-logs`, `sdk-metrics`, `sdk-trace-base`, `sdk-trace-node`) are vulnerable only transitively through `core` and are cleared by this single override; the override is nested under `@opencode/plugin` because that subtree is the sole OpenTelemetry consumer.
 +
 +Code scanning suppressions (comment-only, zero logic change):
-+- `src/core/survey.ts` carries a single-line `codeql[js/insufficient-password-hash]` suppression directly above the `.update(...)` sink line of the survey lease-key derivation (CodeQL only honors the line immediately below the comment). CodeQL flags the fast SHA-256 over `apiUrl + apiToken + bankId` as a weak password hash, but this digest is a deterministic lease lookup key that keeps credentials out of scratch paths — it is neither password storage nor verification, and no verification oracle exists for it, so a fast hash is correct and the alert is a false positive.
++- `src/core/survey.ts` restructures the survey lease-key derivation so a standalone single-line `codeql[js/insufficient-password-hash]` suppression sits directly above the single-statement `createHash("sha256").update(leaseKeyInput)` sink (CodeQL only honors a standalone comment on the line immediately above the alert line; a comment inside the method chain is not honored). CodeQL flags the fast SHA-256 over `apiUrl + apiToken + bankId` as a weak password hash, but this digest is a deterministic lease lookup key that keeps credentials out of scratch paths — it is neither password storage nor verification, and no verification oracle exists for it, so a fast hash is correct and the alert is a false positive.
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/LICENSE b/LICENSE
 --- a/LICENSE	1970-01-01 08:00:00.000000000 +0800
 +++ b/LICENSE	2026-09-21 16:48:10.000000000 +0800
@@ -17337,15 +17337,24 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/survey.test.ts b/
      for (const escape of ["write", "edit", "bash", "task", "patch"])
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/survey.ts b/src/core/survey.ts
 --- a/src/core/survey.ts	2026-09-20 22:04:33.000000000 +0800
-+++ b/src/core/survey.ts	2026-09-22 04:38:54.000000000 +0800
-@@ -344,6 +344,7 @@
++++ b/src/core/survey.ts	2026-09-22 05:13:36.000000000 +0800
+@@ -343,9 +343,13 @@
+       // different tenants, but neither tokens nor bank names should appear in scratch paths.
        const { cfg, bankId } = resolveHostConfig(harness, repoDir);
        if (cfg.disabled) return false;
-       const key = createHash("sha256")
-+        // codeql[js/insufficient-password-hash] -- not a password hash: deterministic lease key keeping credentials out of scratch paths; no verification oracle exists.
-         .update(JSON.stringify([cfg.apiUrl.replace(/\/+$/, ""), cfg.apiToken ?? "", bankId]))
-         .digest("hex");
+-      const key = createHash("sha256")
+-        .update(JSON.stringify([cfg.apiUrl.replace(/\/+$/, ""), cfg.apiToken ?? "", bankId]))
+-        .digest("hex");
++      const leaseKeyInput = JSON.stringify([
++        cfg.apiUrl.replace(/\/+$/, ""),
++        cfg.apiToken ?? "",
++        bankId,
++      ]);
++      // codeql[js/insufficient-password-hash] -- not a password hash: deterministic lease key keeping credentials out of scratch paths; no verification oracle exists.
++      const key = createHash("sha256").update(leaseKeyInput).digest("hex");
        const lease = acquireLease(
+         opts.lease?.dir ?? join(tmpdir(), "hindsight-coding-agent", "surveys"),
+         key,
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/template.ts b/src/core/template.ts
 --- a/src/core/template.ts	2026-09-20 22:04:33.000000000 +0800
 +++ b/src/core/template.ts	2026-09-21 16:48:18.000000000 +0800
