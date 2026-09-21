@@ -1,7 +1,7 @@
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/DEVIATIONS.md b/DEVIATIONS.md
 --- a/DEVIATIONS.md	1970-01-01 08:00:00.000000000 +0800
-+++ b/DEVIATIONS.md	2026-09-22 03:19:54.278934511 +0800
-@@ -0,0 +1,22 @@
++++ b/DEVIATIONS.md	2026-09-22 04:08:12.265516399 +0800
+@@ -0,0 +1,25 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -24,6 +24,9 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/DEVIATIONS.md b/DEVIATIONS
 +
 +Dependency security overrides (`package.json` `overrides`, applied to `npm-shrinkwrap.json`):
 +- `@opentelemetry/core` is forced to `>=2.8.0 <3.0.0`, scoped under `@opencode/plugin`, fixing GHSA-8988-4f7v-96qf (unbounded memory allocation in W3C Baggage propagation, moderate, `<=2.7.x` affected). `@opencode/plugin`/`@opencode/util` pin the vulnerable 2.6.1 line (`fixAvailable: false` even at the latest release), so an npm override is the only remediation. The remaining flagged packages (`exporter-trace-otlp-http`, `otlp-exporter-base`, `otlp-transformer`, `resources`, `sdk-logs`, `sdk-metrics`, `sdk-trace-base`, `sdk-trace-node`) are vulnerable only transitively through `core` and are cleared by this single override; the override is nested under `@opencode/plugin` because that subtree is the sole OpenTelemetry consumer.
++
++Code scanning suppressions (comment-only, zero logic change):
++- `src/core/survey.ts` carries an inline `codeql[js/insufficient-password-hash]` suppression above the survey lease-key derivation. CodeQL flags the fast SHA-256 over `apiUrl + apiToken + bankId` as a weak password hash, but this digest is a deterministic lease lookup key that keeps credentials out of scratch paths — it is neither password storage nor verification, and no verification oracle exists for it, so a fast hash is correct and the alert is a false positive.
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/LICENSE b/LICENSE
 --- a/LICENSE	1970-01-01 08:00:00.000000000 +0800
 +++ b/LICENSE	2026-09-21 16:48:10.000000000 +0800
@@ -1400,7 +1403,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/e2e/Dockerfile.base b/e2e/
      && apt-get install -y --no-install-recommends ca-certificates curl git unzip \
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/npm-shrinkwrap.json b/npm-shrinkwrap.json
 --- a/npm-shrinkwrap.json	1970-01-01 08:00:00.000000000 +0800
-+++ b/npm-shrinkwrap.json	2026-09-22 03:19:54.267934203 +0800
++++ b/npm-shrinkwrap.json	2026-09-22 01:40:28.000000000 +0800
 @@ -0,0 +1,7487 @@
 +{
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
@@ -16454,7 +16457,7 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/package-lock.json b/packag
 -}
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/package.json b/package.json
 --- a/package.json	2026-09-20 22:04:33.000000000 +0800
-+++ b/package.json	2026-09-22 03:19:54.257933924 +0800
++++ b/package.json	2026-09-22 01:39:32.000000000 +0800
 @@ -1,12 +1,12 @@
  {
 -  "name": "@vectorize-io/hindsight-coding-agents",
@@ -17332,6 +17335,18 @@ diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/survey.test.ts b/
      expect(allowed).toEqual(["glob", "grep", "hindsight_ingest_document", "read"]);
      // No write, no bash, and no `task` — which would reach a subagent that CAN write.
      for (const escape of ["write", "edit", "bash", "task", "patch"])
+diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/survey.ts b/src/core/survey.ts
+--- a/src/core/survey.ts	2026-09-20 22:04:33.000000000 +0800
++++ b/src/core/survey.ts	2026-09-22 03:46:34.000000000 +0800
+@@ -343,6 +343,8 @@
+       // different tenants, but neither tokens nor bank names should appear in scratch paths.
+       const { cfg, bankId } = resolveHostConfig(harness, repoDir);
+       if (cfg.disabled) return false;
++      // codeql[js/insufficient-password-hash] -- not a password hash: deterministic lease key keeping
++      // credentials out of scratch paths; no verification oracle exists for this digest.
+       const key = createHash("sha256")
+         .update(JSON.stringify([cfg.apiUrl.replace(/\/+$/, ""), cfg.apiToken ?? "", bankId]))
+         .digest("hex");
 diff -ruN '--exclude=node_modules' '--exclude=dist' a/src/core/template.ts b/src/core/template.ts
 --- a/src/core/template.ts	2026-09-20 22:04:33.000000000 +0800
 +++ b/src/core/template.ts	2026-09-21 16:48:18.000000000 +0800

@@ -343,6 +343,8 @@ export async function startCodebaseSurvey(
       // different tenants, but neither tokens nor bank names should appear in scratch paths.
       const { cfg, bankId } = resolveHostConfig(harness, repoDir);
       if (cfg.disabled) return false;
+      // codeql[js/insufficient-password-hash] -- not a password hash: deterministic lease key keeping
+      // credentials out of scratch paths; no verification oracle exists for this digest.
       const key = createHash("sha256")
         .update(JSON.stringify([cfg.apiUrl.replace(/\/+$/, ""), cfg.apiToken ?? "", bankId]))
         .digest("hex");
