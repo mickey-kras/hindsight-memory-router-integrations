@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -76,6 +76,43 @@ function run(command: string, args: string[], options: { cwd?: string } = {}): s
   return result.stdout;
 }
 
+/**
+ * Run the harness container WITHOUT blocking this process's event loop.
+ *
+ * The stub model (./stub-model) is an HTTP server living in this very process, so a synchronous
+ * child process here is fatal to it: the OS still completes the TCP handshake from the container,
+ * but no JavaScript can run to answer the request, and the CLI inside hangs on a model call that is
+ * never served until the whole docker run hits its timeout. That silently broke EVERY stub-model
+ * harness — dcode, qwen-code, dsh — which is why this one call cannot be `spawnSync` like the rest.
+ * The credential-mounted harnesses talk to their vendor's backend and never noticed.
+ */
+function runDocker(
+  args: string[],
+  timeoutMs: number
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolveRun) => {
+    const child = spawn("docker", args);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    const timer = setTimeout(() => {
+      stderr += `\ndocker run exceeded ${timeoutMs}ms and was killed`;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolveRun({ status: null, stdout, stderr: `${stderr}\n${String(error)}` });
+    });
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      resolveRun({ status, stdout, stderr });
+    });
+  });
+}
+
 function loadHindsightConfig(): RawConfig {
   const path =
     process.env.HINDSIGHT_E2E_CONFIG || join(homedir(), ".hindsight", "coding-agent.json");
@@ -104,7 +141,7 @@ function makeTestConfig(bankId: string): {
   apiToken?: string;
   containerConfig: RawConfig & {
     bankId: string;
-    autoReflect: boolean;
+    autoInject: "reflect";
     autoSeed: boolean;
     codebaseSurvey: boolean;
     gitIngest: "none";
@@ -124,7 +161,7 @@ function makeTestConfig(bankId: string): {
       apiToken,
       bankId,
       // The Docker run must exercise semantic injection, not merely record an empty session.
-      autoReflect: true,
+      autoInject: "reflect",
       autoSeed: false,
       codebaseSurvey: false,
       gitIngest: "none",
@@ -197,12 +234,14 @@ export async function runHarnessE2e(harness: HarnessDockerSetup): Promise<E2eRun
   const packageDir = join(root, "package");
   const workDir = join(root, "workspace");
   const resultDir = join(root, "results");
+  const diagnosticsPath = join(resultDir, "diagnostics.jsonl");
   const configPath = join(root, "hindsight-config.json");
   const bankId = `e2e-${harness.name}-${basename(root)}`.replaceAll(/[^a-zA-Z0-9:_-]/g, "-");
   let stub: StubModel | undefined;
 
   try {
     run("mkdir", ["-p", packageDir, workDir, resultDir]);
+    writeFileSync(diagnosticsPath, "", { mode: 0o600 });
     const tarball = packageTarball(packageDir);
     run("git", ["init", "-q"], { cwd: workDir });
     writeFileSync(join(workDir, "README.md"), "# Hindsight harness E2E fixture\n");
@@ -261,8 +300,7 @@ export async function runHarnessE2e(harness: HarnessDockerSetup): Promise<E2eRun
     stub = harness.stubModelEnv ? await startStubModel() : undefined;
     const stubEnv = stub ? harness.stubModelEnv!(stub.containerUrl) : {};
 
-    const result = spawnSync(
-      "docker",
+    const result = await runDocker(
       [
         "run",
         "--rm",
@@ -302,7 +340,7 @@ export async function runHarnessE2e(harness: HarnessDockerSetup): Promise<E2eRun
         imageFor(harness),
         ...harness.command(prompt, { stubUrl: stub?.containerUrl }),
       ],
-      { encoding: "utf8", timeout: 300_000 }
+      300_000
     );
     if (result.status !== 0) {
       throw new Error(
@@ -312,7 +350,6 @@ export async function runHarnessE2e(harness: HarnessDockerSetup): Promise<E2eRun
       );
     }
     const outputPath = join(resultDir, "last-message.txt");
-    const diagnosticsPath = join(resultDir, "diagnostics.jsonl");
     const output = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : result.stdout;
     const diagnostics = existsSync(diagnosticsPath) ? readFileSync(diagnosticsPath, "utf8") : "";
     return {

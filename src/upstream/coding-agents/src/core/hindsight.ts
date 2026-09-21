@@ -13,9 +13,16 @@ import {
   type BankOverrides,
   buildPageTrigger,
   codingBankManifest,
+  type CustomPagesConfig,
+  type CurrentPageTrigger,
   PAGE_MAX_TOKENS,
   pagesFor,
+  type PagesConfig,
+  pageScopeRule,
   type PageTrigger,
+  pageTriggerDrifted,
+  pageTriggerFor,
+  pageTriggerPatch,
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
@@ -29,7 +36,7 @@ export interface KnowledgeNode {
   description?: string;
   /** The page's EFFECTIVE refresh policy, on servers new enough to report it (#3572). Absent
    *  everywhere else, which `seedPages()` reads as "unknown, leave it alone". */
-  trigger?: { tags_match?: string };
+  trigger?: CurrentPageTrigger;
   children?: KnowledgeNode[];
 }
 
@@ -98,14 +105,22 @@ export interface ClientOpts {
   apiToken?: string;
   bank: string;
   /** Repository this bank is about, named in every seeded page's query (`pageScopeRule`). Only
-   *  `seedPages()` reads it; it falls back to the bank id, which carries the repo name in the
-   *  default `coding-agent::{gitProject}` template. */
+   *  `seedPages()` reads it. Undefined when no single repository is (a shared static bank, a path
+   *  map, a bank several repos are renamed onto) — the query then names the BANK, which is the
+   *  only stable subject such a bank has. Must be a property of the bank and never of the calling
+   *  session's cwd: see `bankProjectName` (#4146). */
   project?: string;
   log?: (msg: string) => void;
   /** Cap on concurrent retain-related requests (drain op polls, deepen pools). Default 10. */
   maxParallelRetains?: number;
   /** Observation scoping for every retain this client sends. Default `DEFAULT_OBSERVATION_SCOPES`. */
   observationScopes?: ObservationScopes;
+  /** Pages one knowledge-page search returns. Default `DEFAULT_PAGE_SEARCH_LIMIT`. Lives on the
+   *  client so every caller — the hook's injection and the MCP tool — shares one value. */
+  pageSearchLimit?: number;
+  /** Recall-body overrides, merged key-by-key over `DEFAULT_RECALL_OPTIONS`. Passed through to
+   *  the API as given (`types`, `max_tokens`, `budget`, …); `query` is never overridable. */
+  recallOptions?: Record<string, unknown>;
   /** Re-read the bearer token from the LIVE config, for hosts that outlive their credential.
    *  `apiToken` alone is a construction-time snapshot: a long-lived host (dsh, Cline, Kilo, the
    *  MCP server, any persistent plugin) kept signing with it forever, so enabling auth or rotating
@@ -167,7 +182,56 @@ export class KnowledgePagesUnavailableError extends Error {
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
 
 /** Default cap on concurrent retain-related requests; configurable via `maxParallelRetains`. */
+/**
+ * A reflect that failed on the SERVER's side of the wire: our deadline expired or the server
+ * answered non-2xx. `status` is undefined for a timeout. Transport errors (connection refused,
+ * DNS) are NOT wrapped — they mean the server is unreachable, so no other endpoint would answer
+ * either.
+ */
+export class ReflectError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | undefined,
+    readonly timedOut: boolean,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = "ReflectError";
+  }
+
+  /** A timeout or a 5xx means reflect's synthesis (the slow LLM path) broke, while the cheap
+   *  retrieval endpoints may still answer — worth falling back. A 4xx will fail the same way on
+   *  every endpoint (auth, missing bank), so it is not. */
+  get fallbackEligible(): boolean {
+    return this.timedOut || (this.status !== undefined && this.status >= 500);
+  }
+}
+
 export const DEFAULT_MAX_PARALLEL_RETAINS = 10;
+/** Knowledge pages returned by one search — the hook's injection and the agent-facing
+ *  `hindsight_search_knowledge_pages` tool both get this, so tuning it moves both.
+ *
+ *  Ten, not three. Three was set when the page roster was injected wholesale and search was a
+ *  rarely-used fallback; search is now the way in, and a repo's pages are narrow by design, so the
+ *  decision one turn needs is routinely split across two of them ("Pricing decisions" AND
+ *  "Conventions") and a three-hit cut drops one. Ten snippets is a few hundred tokens on a call the
+ *  agent made deliberately. */
+export const DEFAULT_PAGE_SEARCH_LIMIT = 10;
+/**
+ * The recall body this client sends when `recallOptions` overrides nothing — one object rather
+ * than a field per parameter, so a new recall parameter needs no plumbing here.
+ *
+ * Observations are the consolidated layer, so they are the best answer per token; a bank whose
+ * consolidation is off never grows any, and recalling only observations there returns nothing.
+ * Such a bank sets `{"types": ["world", "experience"]}`, or `{"types": null}` for every type.
+ * The budget stays low and entities are excluded because this runs inside a hook window.
+ */
+export const DEFAULT_RECALL_OPTIONS: Record<string, unknown> = {
+  types: ["observation"],
+  budget: "low",
+  max_tokens: 2000,
+  include: { entities: null },
+};
 
 /** How long drain() pauses between poll cycles when the API did not rate-limit (429). */
 const POLL_CYCLE_MS = 5000;
@@ -200,6 +264,8 @@ export class HindsightClient {
   private readonly log: (msg: string) => void;
   readonly maxParallelRetains: number;
   readonly observationScopes: ObservationScopes;
+  readonly pageSearchLimit: number;
+  readonly recallOptions: Record<string, unknown>;
 
   constructor(o: ClientOpts) {
     this.routerHarness = o.routerHarness;
@@ -211,6 +277,11 @@ export class HindsightClient {
     this.log = o.log ?? (() => {});
     this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
     this.observationScopes = o.observationScopes ?? DEFAULT_OBSERVATION_SCOPES;
+    this.pageSearchLimit = o.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT;
+    // Merged once here, not per call, and copied rather than aliased: the default is a
+    // module-level object, and handing every client the same reference makes one caller's
+    // mutation everyone's.
+    this.recallOptions = { ...DEFAULT_RECALL_OPTIONS, ...o.recallOptions };
   }
 
   assertAuthorized(): void { this.transport.assertAuthorized(); }
@@ -247,14 +318,15 @@ export class HindsightClient {
     method: string,
     url: string,
     body?: unknown,
-    tolerate: number[] = []
+    tolerate: number[] = [],
+    timeoutMs = 15_000
   ): Promise<Response> {
     // Hard cap on EVERY request: a stalled server (pool deadlock, network) must degrade to a
     // memoryless turn — never hang a host that awaits us (opencode blocks its BOOT on plugin init).
     const r = await this.fetchWithAuth(url, {
       method,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (r.status === 429 && !tolerate.includes(429))
       throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
@@ -364,7 +436,15 @@ export class HindsightClient {
    *  `conversation`, `document`, `survey`): an unknown strategy name is not an error server-side,
    *  it just falls back to the bank's own config, so the miss is silent. */
   async configureBank(
-    opts: { reset?: boolean; pageTrigger?: PageTrigger; manage?: boolean } = {}
+    opts: {
+      reset?: boolean;
+      pageTrigger?: PageTrigger;
+      /** Which pages to seed and with what query — see RawConfig.pages. */
+      pages?: PagesConfig;
+      /** Pages of the user's own to seed alongside them — see RawConfig.customPages. */
+      customPages?: CustomPagesConfig;
+      manage?: boolean;
+    } = {}
   ): Promise<void> {
     if (opts.reset) {
       await this.req("DELETE", this.bankUrl());
@@ -384,7 +464,7 @@ export class HindsightClient {
         this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort((a, b) => a.localeCompare(b)).join(", ")}`);
       }
     }
-    await this.seedPages(opts.pageTrigger);
+    await this.seedPages(opts.pageTrigger, opts.pages, opts.customPages);
   }
 
   /**
@@ -480,7 +560,7 @@ export class HindsightClient {
   /**
    * Reflect: synthesized, root-cause answer over the bank. Bounded so a slow server never hangs a
    * caller — but `timeoutMs` is REQUIRED, deliberately: the right deadline differs by an order of
-   * magnitude between the automatic hook (25s, to fit the host's window) and the agent-invoked
+   * magnitude between the automatic hook (20s, to fit the host's window) and the agent-invoked
    * tool (minutes, on a populated bank). This used to default to 120s, which silently overrode the
    * tool's configured window and aborted every high-budget synthesis mid-flight (#3590).
    */
@@ -488,6 +568,31 @@ export class HindsightClient {
     const result = await readAcrossBanks(this.transport, "reflect", { query, budget: opts.budget ?? "high" }, { timeoutMs: opts.timeoutMs, maxTokens: 4096 });
     if (result.partial) this.log("partial memory read: assigned bank unavailable");
     return result.results.map(item => item.text ?? item.content ?? "").join("\n\n");
+  }
+
+  /**
+   * Raw recall with no LLM in the loop, so it still answers when reflect's synthesis times out or
+   * 5xxs. The body is `recallOptions` (consolidated observations by default) — a bank that grows
+   * no observations widens it rather than getting nothing back. Returns the texts in rank order.
+   *
+   * The name predates `recallOptions` (the observation type used to be hardcoded here) and is
+   * kept deliberately: this is the client's published surface, so renaming it would break
+   * importers for a cosmetic gain. The doc above is the contract, not the name.
+   */
+  async recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]> {
+    const r = await this.req(
+      "POST",
+      this.bankUrl("/memories/recall"),
+      // `query` is applied AFTER the spread: everything else is the caller's to override, but a
+      // config that could replace the goal with a fixed string would silently recall for the
+      // wrong question on every turn.
+      { ...this.recallOptions, query },
+      [],
+      opts.timeoutMs
+    );
+    if (r.status === 404) return [];
+    const j = (await r.json()) as { results?: { text?: string }[] };
+    return (j.results ?? []).map((x) => (x.text ?? "").trim()).filter(Boolean);
   }
 
   /**
@@ -559,11 +664,17 @@ export class HindsightClient {
    *  hindsight_search_knowledge_pages. */
   async searchKnowledgePages(
     query: string,
-    limit = 3
+    opts: { limit?: number; timeoutMs?: number } = {}
   ): Promise<{ id: string; name: string; snippet: string; score: number }[]> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
-    const q = `?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const r = await this.req("GET", this.bankUrl(`/knowledge-base/search${q}`));
+    const q = `?q=${encodeURIComponent(query)}&limit=${opts.limit ?? this.pageSearchLimit}`;
+    const r = await this.req(
+      "GET",
+      this.bankUrl(`/knowledge-base/search${q}`),
+      undefined,
+      [],
+      opts.timeoutMs
+    );
     const j = (await r.json()) as {
       results?: { id: string; name: string; snippet?: string; score?: number }[];
     };
@@ -586,8 +697,15 @@ export class HindsightClient {
    * `source_query` re-syncs onto the live page instead of orphaning its synthesized content —
    * which is how `pageScopeRule`'s repo name reaches banks seeded by an earlier version.
    */
-  async seedPages(pageTrigger: PageTrigger = buildPageTrigger()): Promise<void> {
-    const pages = pagesFor(this.project ?? this.bank);
+  async seedPages(
+    pageTrigger: PageTrigger = buildPageTrigger(),
+    pagesConfig: PagesConfig = {},
+    customPages: CustomPagesConfig = {}
+  ): Promise<void> {
+    // The bank id is the fallback subject, not a degraded one: for a bank no single repository
+    // owns it is the only name that stays put across sessions, and under the default
+    // `coding-agent::{gitProject}` template `project` is always set, so it never applies there.
+    const pages = pagesFor(this.project ?? this.bank, pagesConfig, customPages);
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
     try {
@@ -611,7 +729,9 @@ export class HindsightClient {
         source_query: page.source_query,
         tags: page.tags,
         max_tokens: PAGE_MAX_TOKENS,
-        trigger: pageTrigger,
+        // Resolved HERE, not in `buildPageTrigger`: a hashed cron (`H`) needs the page's identity,
+        // and one trigger is built per session for all of them.
+        trigger: pageTriggerFor(pageTrigger, this.bank, page.name),
       };
       if (!hit) {
         // 409 = another deepen run seeded this name between our tree read and this POST. That is
@@ -629,20 +749,31 @@ export class HindsightClient {
         const sourceDrift = hit.description !== page.source_query;
         // Older servers omit trigger from the tree, so an absent value means unknown rather
         // than drift. Those servers also reject a trigger-only PATCH as an empty update.
-        const triggerDrift =
-          hit.trigger != null && hit.trigger.tags_match !== pageTrigger.tags_match;
+        const triggerDrift = hit.trigger != null && pageTriggerDrifted(hit.trigger, body.trigger);
         if (!sourceDrift && !triggerDrift) continue;
 
         // The name IS the match key, so it can't drift; the source query and the trigger can.
-        // The trigger is re-sent when the server reports it drifting, because it is the only way
-        // a policy change reaches a page that already exists. Servers that do not report a page's
+        // The trigger is re-sent on ANY difference in the policy this plugin states — the refresh
+        // schedule included, not just `tags_match` as before — because that is the only way a
+        // changed default reaches a bank that was seeded under the old one (the hourly staggered
+        // schedule that replaced auto-refresh would otherwise apply to new repos only). The
+        // config is therefore the source of truth for these pages: a trigger edited in the
+        // control plane is re-synced back on the next session, and a repo that wants a different
+        // policy sets `pageTriggerType`/`pageTriggerCron`. Servers that do not report a page's
         // trigger leave its policy unknown; source-query drift can still be reconciled safely.
         const patch: { trigger?: PageTrigger; source_query?: string; tags?: string[] } = {};
         if (sourceDrift) {
           patch.source_query = page.source_query;
           patch.tags = page.tags;
+          // Say so. This replaces a query edited through the API or the control plane, which used
+          // to happen silently and read as the edit never having saved (#4460).
+          this.log(
+            `[bank] re-syncing "${page.name}" to its configured source_query — set ` +
+              `pages[${JSON.stringify(page.name)}].source_query to keep your own wording`
+          );
         }
-        if (triggerDrift) patch.trigger = pageTrigger;
+        // The page's OWN resolved trigger (a hashed cron differs per page), not the shared one.
+        if (triggerDrift) patch.trigger = pageTriggerPatch(body.trigger);
         const r = await this.req(
           "PATCH",
           this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(hit.id)}`),
@@ -658,10 +789,49 @@ export class HindsightClient {
         updated++;
       }
     }
+    const initiatives = await this.resyncInitiativeTriggers(roots, pageTrigger);
     this.log(
-      `[bank] knowledge pages seeded on ${this.bank}: ${created} created, ${updated} re-synced, ` +
-        `${pages.length - created - updated} unchanged`
+      `[bank] knowledge pages seeded on ${this.bank} (scoped to ${this.project ?? this.bank}): ` +
+        `${created} created, ${updated} re-synced, ` +
+        `${pages.length - created - updated} unchanged` +
+        (initiatives ? `, ${initiatives} initiative pages re-synced` : "")
     );
+  }
+
+  /**
+   * Bring the captured initiative pages onto the same refresh policy as the seeded taxonomy.
+   *
+   * `captureInitiative` stamps this very trigger when it creates a page, so on a bank seeded under
+   * an older default they are the same drift as the taxonomy — and on a real repo they are most of
+   * it: five taxonomy pages against one page per initiative, each an LLM synthesis per
+   * consolidation under the auto-refresh that used to be the default (#3506).
+   *
+   * Only the trigger is touched. Their `name` and `source_query` are written once, from the
+   * initiative's own title, and re-stating either would rebuild a page whose question never
+   * changed. The tree read above is reused rather than re-fetched.
+   */
+  private async resyncInitiativeTriggers(
+    roots: KnowledgeNode[],
+    pageTrigger: PageTrigger
+  ): Promise<number> {
+    const folder = roots.find(
+      (n) => n.kind === "folder" && (n.name || "").toLowerCase() === "initiatives"
+    );
+    let updated = 0;
+    for (const page of folder?.children ?? []) {
+      // No trigger reported = policy unknown, not divergent (a server older than #3572).
+      if (page.kind !== "page" || page.trigger == null) continue;
+      const desired = pageTriggerFor(pageTrigger, this.bank, page.name);
+      if (!pageTriggerDrifted(page.trigger, desired)) continue;
+      const r = await this.req(
+        "PATCH",
+        this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(page.id)}`),
+        { trigger: pageTriggerPatch(desired) }
+      );
+      if ([404, 405, 501].includes(r.status)) break;
+      updated++;
+    }
+    return updated;
   }
 
   /** URL/id-safe slug: lowercase, non-alphanumerics → "-", trim dashes, cap length; fallback "initiative". */
@@ -704,12 +874,22 @@ export class HindsightClient {
     let pageId = args.relatesToPageId;
     if (!pageId) {
       const folderId = await this.ensureFolder("Initiatives");
+      // Same subject scoping and budget as the seeded pages: an initiative page synthesizes from
+      // the same bank, which also holds facts about the dependencies this repo merely uses, and
+      // "the project's memory" alone never said WHICH project (#3476). `max_tokens` is stated for
+      // the same reason `seedPages` states it — leaving it implicit pins these pages to whatever
+      // the server's page default happens to be, which is only coincidentally PAGE_MAX_TOKENS.
+      const subject = this.project ?? this.bank;
       const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), {
         name: args.title,
-        source_query: `Summarize the "${args.title}" initiative: what is being built or changed and why, and its current state — drawn from the project's memory.`,
+        source_query:
+          `Summarize the "${args.title}" initiative: what is being built or changed and why, ` +
+          `and its current state — drawn from the project's memory.` +
+          pageScopeRule(subject),
         parent_id: folderId,
         tags: ["knowledge:feature-work"],
-        trigger: args.pageTrigger ?? buildPageTrigger(),
+        max_tokens: PAGE_MAX_TOKENS,
+        trigger: pageTriggerFor(args.pageTrigger ?? buildPageTrigger(), this.bank, args.title),
       });
       try {
         const j = (await r.json()) as { page_id?: string; id?: string };

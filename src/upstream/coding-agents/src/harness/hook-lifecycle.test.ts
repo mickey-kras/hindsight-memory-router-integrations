@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HOOK_HARNESSES, type HookHarnessName } from "./hook-lifecycle";
+import { DEFAULT_REFLECT_TIMEOUT_MS } from "../core/config";
 
 // Derived, not hand-listed: a hand-written roster silently stops covering the newest harness, which
 // is exactly the sibling it most needs to cover. (It had already fallen behind — devin-cli was
@@ -139,16 +140,90 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       cwd: "/repo",
       lastAssistantMessage: "done",
     });
+
+    const droid = HOOK_HARNESSES["factory-droid"];
+    expect(droid.additionalHooks).toEqual([
+      { event: "Notification", entry: "droid-stop-hook.js", timeout: 60 },
+    ]);
+    expect(
+      droid.retain.accept?.({
+        hook_event_name: "Notification",
+        notification_type: "idle_prompt",
+      })
+    ).toBe(true);
+    expect(
+      droid.retain.accept?.({
+        hook_event_name: "Notification",
+        notification_type: "permission_prompt",
+      })
+    ).toBe(false);
+    expect(droid.retain.accept?.({ hook_event_name: "Stop" })).toBe(true);
+
+    const zcode = HOOK_HARNESSES.zcode;
+    expect(zcode.configStyle).toBe("process");
+    expect(zcode.install).toMatchObject({
+      sessionStart: { event: "SessionStart", entry: "zcode-sessionstart-hook.js", timeout: 30_000 },
+      prompt: { event: "UserPromptSubmit", entry: "zcode-hook.js", timeout: 30_000 },
+      stop: { event: "Stop", entry: "zcode-stop-hook.js", timeout: 60_000 },
+    });
+    // ZCode sends `session_id` on UserPromptSubmit and BOTH spellings on Stop.
+    expect(zcode.prompt.parse({ prompt: "hi", cwd: "/repo", session_id: "s1" }).sessionId).toBe(
+      "s1"
+    );
+    expect(zcode.retain.parse({ sessionId: "s1", cwd: "/repo" }).sessionId).toBe("s1");
+    // The reply falls back through the ephemeral transcript to the TRUNCATED preview.
+    expect(zcode.retain.journal?.assistantText({ responseText: " full reply " })).toBe(
+      "full reply"
+    );
+    expect(
+      zcode.retain.journal?.assistantText({ responseText: "", responsePreview: "trunc" })
+    ).toBe("trunc");
+    expect(zcode.retain.journal?.assistantText({})).toBe("");
+  });
+
+  /**
+   * Family guard for the journal harnesses. The two halves live in different processes and
+   * different specs: the prompt hook writes the user turn, the Stop hook writes the reply and
+   * retains the file. Declare only the Stop half and every session is retained assistant-only —
+   * a bank of replies with nothing they were replying to, and no error anywhere to say so.
+   */
+  it("pairs every journal-retaining harness with a prompt hook that fills the journal", () => {
+    for (const harness of HOOK_HARNESS_NAMES) {
+      const spec = HOOK_HARNESSES[harness];
+      expect(
+        Boolean(spec.prompt.journalPrompt),
+        `${harness}: journalPrompt and retain.journal must be declared together`
+      ).toBe(Boolean(spec.retain.journal));
+      if (!spec.retain.journal) continue;
+      // A journal harness must not ALSO claim a host transcript or a Stop-event reply. Both would
+      // be applied ON TOP of the journal it already holds: the path would be ignored (a lie about
+      // where the conversation comes from), and `lastAssistantMessage` would append the reply a
+      // SECOND time, since buildRetain adds it after the reader has run. Not hypothetical — ZCode's
+      // own Stop payload carries `last_assistant_message`, so parsing it is one line away.
+      const probe = {
+        transcript_path: "/tmp/host.jsonl",
+        transcriptPath: "/tmp/host.jsonl",
+        last_assistant_message: "done",
+        lastAssistantMessage: "done",
+      };
+      expect(
+        spec.retain.parse(probe).transcriptPath,
+        `${harness} retains from its journal, so it must not parse a host transcript path`
+      ).toBeUndefined();
+      expect(
+        spec.retain.parse(probe).lastAssistantMessage,
+        `${harness} closes its turn via journal.assistantText, so it must not ALSO parse a reply`
+      ).toBeUndefined();
+    }
   });
 
   // The prompt hook must outlive the once-per-session reflect, or the FIRST prompt of every
   // session is killed mid-flight and recall silently degrades to nothing. Nothing coupled these
   // two numbers before: qwen-code's timeouts are MILLISECONDS while every other harness's are
-  // SECONDS, so a bare `>= 25_000` would pass vacuously for the seven seconds-based harnesses and
-  // a bare `>= 25` would pass vacuously for qwen. Normalising through the declared unit is what
+  // SECONDS, so a bare `>= 20_000` would pass vacuously for the seven seconds-based harnesses and
+  // a bare `>= 20` would pass vacuously for qwen. Normalising through the declared unit is what
   // makes this catch a mutation in EITHER direction.
-  it("gives every prompt hook a budget above the once-per-session reflect cap", () => {
-    const HOOK_REFLECT_CAP_MS = 25_000;
+  it("gives every prompt hook a budget above the default once-per-session reflect", () => {
     for (const harness of HOOK_HARNESS_NAMES) {
       const spec = HOOK_HARNESSES[harness];
       const raw = spec.install.prompt.timeout;
@@ -157,7 +232,7 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       expect(
         ms,
         `${harness} prompt timeout (${raw} ${spec.timeoutUnit ?? "seconds"})`
-      ).toBeGreaterThan(HOOK_REFLECT_CAP_MS);
+      ).toBeGreaterThan(DEFAULT_REFLECT_TIMEOUT_MS);
     }
   });
 

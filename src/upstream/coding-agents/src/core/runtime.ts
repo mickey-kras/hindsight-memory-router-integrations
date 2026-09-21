@@ -9,7 +9,7 @@ import { stripVTControlCharacters } from "node:util";
  *   - onPrompt(sessionId, prompt)   : each user turn -> recall + build this turn's injection
  *   - getInjection(sessionId)       : the system-prompt text to inject this turn (or undefined)
  *   - toolSpecs()                   : the hindsight_* knowledge/recall tools to register natively
- *   - onTranscript(sessionId, turns): full transcript -> write back every N turns (on by default)
+ *   - onTranscript(sessionId, turns, lastTurnComplete): full transcript -> write back (on by default)
  *   - onSessionIdle(sessionId)      : assistant finished -> refetch + write back the completed
  *                                     exchange (the Stop-equivalent these hosts lack)
  * No opencode/claude specifics live here — only the memory logic.
@@ -24,8 +24,10 @@ import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
 import { buildPageTrigger } from "./missions";
 import { retainLiveSession, type TransportTurn } from "./chat";
 import { memoryCursorStore } from "./retain-cursor";
+import { memoryUsageCursorStore, recordUsage } from "./usage";
 import { buildRetainStamp } from "./retain-stamp";
 import { buildSessionStartContext } from "./session-start";
+import { syncCompanionSkill } from "./skill-sync";
 import { buildHookOutput } from "./hook";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
 
@@ -37,6 +39,8 @@ export class RuntimeCore {
   private readonly sessionState = new Map<string, { startTs: string; retainedTurns: number }>();
   /** Live write-back cursors. In memory, unlike the hook harnesses': this host outlives the session. */
   private readonly cursors = memoryCursorStore();
+  /** Turns already written to the usage log (core/usage.ts), per session. */
+  private readonly usageCursors = memoryUsageCursorStore();
   /** Pulls a session's CURRENT transcript from the host (set by the adapter); see onSessionIdle. */
   private fetchTranscript?: (sessionId: string) => Promise<TransportTurn[]>;
   private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
@@ -107,6 +111,12 @@ export class RuntimeCore {
     // HINDSIGHT_DISABLE_HOOKS=1 — the tools stay registered (toolSpecs, so the survey can ingest),
     // but seeding/recall/write-back must no-op or the survey would re-seed itself (see core/survey.ts).
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return;
+    // Companion skill, the same housekeeping `runSessionStartHook` does for hook harnesses — but
+    // with `install`, because a persistent-plugin host can be wired by its OWN plugin manager
+    // (`dsh plugin add …`, `cline plugin install`), a route our installer never sees, leaving the
+    // plugin loaded with its tools registered and no skill on disk at all (#4406). No-op for a host
+    // with no skills directory (opencode; opencode2 registers it in memory instead).
+    syncCompanionSkill(this.harness, { install: true });
     // Daemon mode: this is the SessionStart of a persistent-plugin host, so it owns the same
     // warm-up the hook harnesses do in `runSessionStartHook` — start it before the user has typed
     // anything, wait only briefly, and let a cold one keep coming up in the background. Without it
@@ -213,9 +223,17 @@ export class RuntimeCore {
    * (`engine.retain.fold`), so submitting every turn costs one extraction, not one per turn, and
    * nothing is ever held somewhere it can be lost.
    */
-  async onTranscript(sessionId: string, turns: TransportTurn[]): Promise<void> {
+  async onTranscript(
+    sessionId: string,
+    turns: TransportTurn[],
+    /** Whether the agent has finished answering the last prompt. Required, not defaulted: opencode
+     *  hands this over while BUILDING a request (false), pi and Cline after the run ends (true), and
+     *  a wrong default records every turn one late and never the session's last. */
+    lastTurnComplete: boolean
+  ): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
     if (!this.writeBackEnabled || !sessionId || !turns.length) return;
+    this.recordUsage(sessionId, turns, lastTurnComplete);
     const st = this.stateFor(sessionId);
     this.retain(sessionId, turns, st.startTs);
   }
@@ -246,12 +264,28 @@ export class RuntimeCore {
       return;
     }
     if (!turns.length) return;
+    this.recordUsage(sessionId, turns, true); // idle: the reply is in
     const st = this.stateFor(sessionId);
     // idle can fire more than once for one exchange (and again on a session with no new activity);
     // only retain when this transcript actually grew past what we last wrote.
     if (turns.length <= st.retainedTurns) return;
     st.retainedTurns = turns.length;
     this.retain(sessionId, turns, st.startTs, "idle");
+  }
+
+  private recordUsage(sessionId: string, turns: TransportTurn[], lastTurnComplete: boolean): void {
+    recordUsage({
+      harness: this.harness,
+      sessionId,
+      bankId: this.bankId,
+      turns,
+      cursors: this.usageCursors,
+      lastTurnComplete,
+      // No `reviseLastTurn` here, unlike the hook path: this runtime never records a turn before its
+      // reply exists. `onTranscript` is handed `false` while the host is still building the request,
+      // which holds the turn back, and `onSessionIdle` refetches a transcript that includes the
+      // reply before recording it.
+    });
   }
 
   private stateFor(sessionId: string): {

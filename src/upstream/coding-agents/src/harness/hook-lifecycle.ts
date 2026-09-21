@@ -15,6 +15,8 @@ import { grokTranscriptPath, readGrokTranscript } from "../core/transcript-grok"
 import { readDevinTranscript } from "../core/transcript-devin";
 import { dcodeAssistantText, readDcodeTranscript } from "../core/transcript-dcode";
 import { readQwenTranscript } from "../core/transcript-qwen";
+import { readDroidTranscript } from "../core/transcript-droid";
+import { zcodeAssistantText } from "../core/transcript-zcode";
 
 export type HookHarnessName =
   | "claude-code"
@@ -25,9 +27,20 @@ export type HookHarnessName =
   | "devin-cli"
   | "grok-build"
   | "dcode"
-  | "qwen-code";
+  | "qwen-code"
+  | "factory-droid"
+  | "zcode";
 export type HookLifecycle = "sessionStart" | "prompt" | "stop";
-export type HookConfigStyle = "nested" | "flat";
+/**
+ * How the HOST spells one hook registration.
+ *   nested  — Claude Code's matcher group: `[{hooks:[{type:"command", command, timeout}]}]`.
+ *   flat    — one `{command, timeout}` object per entry (Cursor, Copilot, Antigravity).
+ *   process — ZCode's: a matcher group like `nested`, but the command is SPLIT into an argv
+ *             (`type:"process"`, `command:"node"`, `args:[...]`) and the budget is `timeoutMs`.
+ *             The split matters: ZCode spawns without a shell, so a quoted command string is
+ *             looked up verbatim as an executable name and never runs.
+ */
+export type HookConfigStyle = "nested" | "flat" | "process";
 
 export interface HookInstallSpec {
   event: string;
@@ -50,6 +63,8 @@ export interface HookHarnessSpec {
   /** Defaults to "seconds" when absent — the unit every host but qwen-code uses. */
   timeoutUnit?: HookTimeoutUnit;
   install: Record<HookLifecycle, HookInstallSpec>;
+  /** Native host events beyond the shared three-stage lifecycle. */
+  additionalHooks?: HookInstallSpec[];
   sessionStart: SessionStartHookSpec;
   prompt: HookSpec;
   retain: RetainHookSpec;
@@ -89,6 +104,18 @@ const dcodePrompt: HookSpec = {
 };
 
 /**
+ * Factory Droid speaks Claude Code's hook protocol field for field: `session_id`, `transcript_path`
+ * and `cwd` in, `hookSpecificOutput.additionalContext` + `systemMessage` out. Its user-level hook
+ * config (`~/.factory/hooks.json`) also uses Claude's matcher-group shape, so the only real
+ * difference from `claude-code` is where the installer writes the registration and which transcript
+ * reader parses the file.
+ */
+const droidPrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "factory-droid",
+};
+
+/**
  * Qwen Code speaks Claude Code's hook protocol field for field (session_id / transcript_path / cwd
  * in, hookSpecificOutput.additionalContext + systemMessage out), so only `parse` differs — and it
  * reads `submitted_prompt`, NOT `prompt`.
@@ -114,6 +141,10 @@ const qwenPrompt: HookSpec = {
     sessionId: ev.session_id as string | undefined,
   }),
 };
+
+/** ZCode sends `session_id` on UserPromptSubmit and BOTH spellings on Stop; accept either. */
+const zcodeSessionId = (ev: Record<string, unknown>): string | undefined =>
+  (ev.session_id as string | undefined) ?? (ev.sessionId as string | undefined);
 
 const antigravityCwd = (ev: Record<string, unknown>): string | undefined =>
   Array.isArray(ev.workspacePaths) ? (ev.workspacePaths[0] as string | undefined) : undefined;
@@ -421,7 +452,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     // `detached` and terminates the whole process TREE on timeout, so the retain is genuinely lost
     // rather than merely orphaned. `retain.hostTimeoutSec` below stays SECONDS, as its name says;
     // these two numbers are the same budget in different units for this harness alone.
-    // The prompt timeout must also stay above core/hook.ts's HOOK_REFLECT_CAP_MS (25_000).
+    // The prompt timeout must also stay above core/config.ts's DEFAULT_REFLECT_TIMEOUT_MS.
     install: {
       sessionStart: { event: "SessionStart", entry: "qwen-sessionstart-hook.js", timeout: 30_000 },
       prompt: { event: "UserPromptSubmit", entry: "qwen-hook.js", timeout: 30_000 },
@@ -440,6 +471,89 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         cwd: ev.cwd as string | undefined,
       }),
       readTranscript: readQwenTranscript,
+    },
+  },
+  "factory-droid": {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "droid-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "droid-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "droid-stop-hook.js", timeout: 60 },
+    },
+    // Droid emits Notification(idle_prompt), not Stop, after user cancellation. Reusing the
+    // idempotent retain entry point captures that final partial turn; its event gate ignores every
+    // other notification type before config or daemon work begins.
+    additionalHooks: [{ event: "Notification", entry: "droid-stop-hook.js", timeout: 60 }],
+    sessionStart: standardSessionStart("factory-droid"),
+    prompt: droidPrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "factory-droid",
+      accept: (ev) =>
+        ev.hook_event_name === "Stop" ||
+        (ev.hook_event_name === "Notification" && ev.notification_type === "idle_prompt"),
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readDroidTranscript,
+    },
+  },
+  /**
+   * ZCode (Z.ai's GLM coding agent) embeds the Claude Code agent runtime, so its hook PROTOCOL is
+   * Claude's — `prompt`/`cwd` in, `hookSpecificOutput.additionalContext` + `systemMessage` out —
+   * with `sessionId` accepted alongside `session_id`, which its Stop payload sends instead.
+   *
+   * What is not Claude's is the TRANSCRIPT, and that is the whole of the difference here. ZCode
+   * keeps no durable session file: `Stop` carries the reply in `responseText` plus a temp,
+   * assistant-only transcript it deletes as soon as the hook returns, and no user prompt at all.
+   * So this is the one harness that retains from the plugin's own journal (core/turn-journal.ts) —
+   * the prompt hook appends the user turn, `journal.assistantText` closes it with the reply — and
+   * everything downstream (cursor, append, stamping) sees the same full conversation as any host
+   * transcript.
+   */
+  zcode: {
+    configStyle: "process",
+    // ZCode's `timeoutMs`, so MILLISECONDS — see the qwen-code note above for the same trap. The
+    // prompt budget must stay above core/config.ts's DEFAULT_REFLECT_TIMEOUT_MS.
+    timeoutUnit: "milliseconds",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "zcode-sessionstart-hook.js", timeout: 30_000 },
+      prompt: { event: "UserPromptSubmit", entry: "zcode-hook.js", timeout: 30_000 },
+      stop: { event: "Stop", entry: "zcode-stop-hook.js", timeout: 60_000 },
+    },
+    sessionStart: {
+      ...standardSessionStart("zcode"),
+      parse: (ev) => ({ cwd: ev.cwd as string | undefined, sessionId: zcodeSessionId(ev) }),
+    },
+    prompt: {
+      ...claudePrompt,
+      harness: "zcode",
+      journalPrompt: true,
+      parse: (ev) => ({
+        prompt: (ev.prompt as string | undefined) ?? (ev.user_prompt as string | undefined),
+        cwd: ev.cwd as string | undefined,
+        sessionId: zcodeSessionId(ev),
+      }),
+    },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "zcode",
+      // No transcriptPath: the journal supplies it (see `journal` below).
+      parse: (ev) => ({ sessionId: zcodeSessionId(ev), cwd: ev.cwd as string | undefined }),
+      journal: {
+        // `responseText` is the full reply and is what ZCode sends in practice. The ephemeral
+        // transcript is the fallback when it is absent, and `responsePreview` — which is
+        // TRUNCATED — is the last resort, preferred only over losing the turn entirely.
+        assistantText: (ev) =>
+          (
+            (ev.responseText as string | undefined) ||
+            zcodeAssistantText(ev.transcript_path as string | undefined) ||
+            (ev.responsePreview as string | undefined) ||
+            ""
+          ).trim(),
+      },
     },
   },
 };
