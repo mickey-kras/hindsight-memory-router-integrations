@@ -236,6 +236,7 @@ jobs:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
+          permission-pull-requests: write
       - name: Publish immutable release
         id: finalized
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
@@ -245,17 +246,27 @@ jobs:
 
   cleanup:
     name: clean up failed release
-    needs: [quality, aislop, codeql, publish]
+    needs: [quality, aislop, codeql, publish, prepare-release]
     if: >-
       ${{
         always() &&
-        startsWith(github.ref, 'refs/heads/release/') &&
-        needs.publish.outputs.released == '' &&
         (
-          needs.quality.result == 'failure' ||
-          needs.aislop.result == 'failure' ||
-          needs.codeql.result == 'failure' ||
-          needs.publish.result == 'failure'
+          (
+            startsWith(github.ref, 'refs/heads/release/') &&
+            needs.publish.outputs.released == '' &&
+            (
+              needs.quality.result == 'failure' ||
+              needs.aislop.result == 'failure' ||
+              needs.codeql.result == 'failure' ||
+              needs.publish.result == 'failure'
+            )
+          ) ||
+          (
+            github.event_name == 'workflow_dispatch' &&
+            github.ref == 'refs/heads/main' &&
+            inputs.create_release &&
+            needs.prepare-release.result == 'failure'
+          )
         )
       }}
     runs-on: ubuntu-latest
@@ -282,7 +293,14 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
       - name: Delete the failed release branch
+        if: startsWith(github.ref, 'refs/heads/release/')
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           github-token: ${{ steps.app.outputs.token }}
           script: await require('./.github/scripts/release-cleanup.cjs').branch({ github, context, core });
+      - name: Delete failed preparation branches
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: await require('./.github/scripts/release-cleanup.cjs').preparation({ github, context, core });

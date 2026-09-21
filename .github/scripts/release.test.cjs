@@ -58,8 +58,10 @@ function mock() {
     tags: [],
     branches: [],
     calls: [],
+    errors: [],
     assets: [],
     releases: [],
+    pulls: [],
     comparison: { status: "ahead", total_commits: 1, commits: [{ sha }], files: [{ filename: "release.json" }] },
   };
   state.rules.push({
@@ -105,6 +107,18 @@ function mock() {
           Object.assign(state.release, args);
           return data(state.release);
         },
+        createOrUpdateFileContents: (args) => {
+          state.calls.push(`file:${args.branch}`);
+          return data({});
+        },
+      },
+      pulls: {
+        list: () => data(state.pulls),
+        create: (args) => {
+          state.calls.push(`pr:${args.head}`);
+          state.pulls.push({ number: 7, head: { ref: args.head } });
+          return data(state.pulls[0]);
+        },
       },
       git: {
         getRef: ({ repo, ref }) =>
@@ -117,7 +131,7 @@ function mock() {
         createTag: (args) => {
           state.calls.push(`tag:${args.tag}`);
           assert.equal(args.type, "commit");
-          assert.equal(typeof args.message, "string" );
+          assert.equal(typeof args.message, "string");
           const tagSha = `f${state.calls.length}`.padEnd(40, "0");
           state.tagObjects[tagSha] = { sha: tagSha, tag: args.tag, object: { type: "commit", sha: args.object } };
           return data(state.tagObjects[tagSha]);
@@ -139,16 +153,29 @@ function mock() {
           state.refs[ref.replace(/^refs\//, "")] = { object: { type, sha: commit } };
           return data({});
         },
+        deleteRef: async ({ ref }) => {
+          if (state.failDelete) throw new Error("forbidden");
+          if (!state.refs[ref]) return notFound();
+          state.calls.push(`delete:${ref}`);
+          delete state.refs[ref];
+          return data({});
+        },
       },
     },
     paginate: async (method, args) => (await method(args)).data,
   };
   const outputs = {};
+  const summary = {
+    addHeading: () => summary,
+    addRaw: () => summary,
+    write: async () => {},
+  };
   const core = {
     setOutput: (key, value) => {
       outputs[key] = value;
     },
-    summary: { addRaw: () => ({ write: async () => {} }) },
+    summary,
+    error: (message) => state.errors.push(message),
   };
   const context = {
     repo: { owner: "example", repo: "hindsight-memory-router" },
@@ -321,14 +348,21 @@ test("finalization publishes only after uploading assets and never moves or recr
       "asset:release.json",
       "asset:image-digests.txt",
       "publish",
+      "refs/heads/ci/release-version-0-1-1",
+      "file:ci/release-version-0-1-1",
+      "pr:ci/release-version-0-1-1",
+      "delete:heads/release/0.1.0",
     ]);
     assert.equal(m.outputs.latest, "true");
     const ref = m.state.refs["tags/v0.1.0"];
     assert.equal(ref.object.type, "tag");
     assert.equal(m.state.tagObjects[ref.object.sha].object.sha, m.context.sha);
+    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
     await release.finalize(m);
     assert.equal(m.state.calls.filter((call) => call.startsWith("refs/tags/")).length, 1);
     assert.equal(m.state.calls.filter((call) => call.startsWith("tag:")).length, 1);
+    assert.equal(m.state.calls.filter((call) => call.startsWith("pr:")).length, 1);
+    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
     m.state.assets[0].digest = `sha256:${"f".repeat(64)}`;
     await assert.rejects(release.finalize(m), /Existing release asset differs/);
   }));
@@ -464,7 +498,7 @@ test("unchanged integration artifacts can be reused but changed bytes need a new
   await release.checkPackageReuse(m.github, m.context.repo, [{ ...pkg, path: "packages/example-0.12.1.tgz" }]);
 });
 
- test("preparation refuses a main update during upstream resolution before creating the branch", () =>
+test("preparation refuses a main update during upstream resolution before creating the branch", () =>
   fixture(async () => {
     const m = mock();
     m.context.eventName = "workflow_dispatch";
@@ -478,7 +512,7 @@ test("unchanged integration artifacts can be reused but changed bytes need a new
     assert.ok(!m.state.calls.some((call) => call.startsWith("refs/heads/release/")));
   }));
 
- test("redacted bypass actors require an owner review of the current ruleset revision", () =>
+test("redacted bypass actors require an owner review of the current ruleset revision", () =>
   fixture(async () => {
     const rule = { ...rulesets(123)[0], id: 41, updated_at: "2026-09-11T00:00:00Z" };
     delete rule.bypass_actors;
@@ -487,9 +521,17 @@ test("unchanged integration artifacts can be reused but changed bytes need a new
     const check = () => release.checkRule(rule, "branch", "refs/heads/release/*", ["creation"], 123);
     try {
       assert.throws(check, /owner-reviewed/);
-      process.env.RELEASE_SETTINGS_REVIEW = JSON.stringify({ app_id: 123, immutable_releases: true, rulesets: { 41: rule.updated_at } });
+      process.env.RELEASE_SETTINGS_REVIEW = JSON.stringify({
+        app_id: 123,
+        immutable_releases: true,
+        rulesets: { 41: rule.updated_at },
+      });
       check();
-      process.env.RELEASE_SETTINGS_REVIEW = JSON.stringify({ app_id: 123, immutable_releases: true, rulesets: { 41: "2026-09-10T17:00:00.000-07:00" } });
+      process.env.RELEASE_SETTINGS_REVIEW = JSON.stringify({
+        app_id: 123,
+        immutable_releases: true,
+        rulesets: { 41: "2026-09-10T17:00:00.000-07:00" },
+      });
       check();
       rule.updated_at = "2026-09-11T00:00:00.001Z";
       assert.throws(check, /owner-reviewed/);
@@ -501,4 +543,129 @@ test("unchanged integration artifacts can be reused but changed bytes need a new
       if (previous === undefined) delete process.env.RELEASE_SETTINGS_REVIEW;
       else process.env.RELEASE_SETTINGS_REVIEW = previous;
     }
+  }));
+
+test("retry backs off on transient failures and rethrows permanent ones", async () => {
+  const sleep = async () => {};
+  const fail = (status) => () => Promise.reject(Object.assign(new Error("boom"), { status }));
+  let calls = 0;
+  const flaky = () => (calls++ < 2 ? Promise.reject(Object.assign(new Error("boom"), { status: 502 })) : "ok");
+  assert.equal(await release.retry(flaky, sleep), "ok");
+  assert.equal(calls, 3);
+  await assert.rejects(release.retry(fail(502), sleep), /boom/);
+  for (const status of [400, 403, 404, 422]) {
+    let attempts = 0;
+    await assert.rejects(
+      release.retry(() => {
+        attempts++;
+        return fail(status)();
+      }, sleep),
+      /boom/,
+    );
+    assert.equal(attempts, 1, `status ${status} must not be retried`);
+  }
+  let rateLimited = 0;
+  await assert.rejects(
+    release.retry(() => {
+      rateLimited++;
+      return fail(429)();
+    }, sleep),
+    /boom/,
+  );
+  assert.equal(rateLimited, 3);
+  assert.equal(await release.retry(() => "plain"), "plain");
+});
+
+test("latestHindsight retries transient release lookups and inspect failures", async () => {
+  const m = mock();
+  let lookups = 0;
+  m.github.rest.repos.getLatestRelease = () =>
+    lookups++ === 0
+      ? Promise.reject(Object.assign(new Error("timeout"), { status: 503 }))
+      : { data: { tag_name: "v0.9.2", draft: false, prerelease: false } };
+  let inspects = 0;
+  const pin = await release.latestHindsight(m.github, () => {
+    inspects++;
+    if (inspects === 1) throw Object.assign(new Error("registry timeout"), {});
+    return digest;
+  });
+  assert.equal(pin.version, "0.9.2");
+  assert.equal(lookups, 2);
+  assert.equal(inspects, 2);
+});
+
+test("follow-up opens the next-version PR and deletes the published branch, loudly but non-fatally", () =>
+  fixture(async () => {
+    const m = mock();
+    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
+    await release.followUp(m, "0.1.0");
+    assert.deepEqual(m.state.errors, []);
+    assert.deepEqual(m.state.calls, [
+      "refs/heads/ci/release-version-0-1-1",
+      "file:ci/release-version-0-1-1",
+      "pr:ci/release-version-0-1-1",
+      "delete:heads/release/0.1.0",
+    ]);
+    assert.equal(m.state.errors.length, 0);
+    await release.followUp(m, "0.1.0");
+    assert.equal(m.state.calls.filter((call) => call.startsWith("pr:")).length, 1);
+    m.state.failDelete = true;
+    m.github.rest.pulls.create = () => Promise.reject(new Error("forbidden"));
+    m.state.pulls = [];
+    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
+    await release.followUp(m, "0.1.0");
+    assert.equal(m.state.errors.length, 2);
+    assert.match(m.state.errors[0], /Next version PR failed: forbidden/);
+    assert.match(m.state.errors[1], /release\/0\.1\.0.*failed: forbidden/);
+  }));
+
+test("follow-up prunes stale published branches and keeps advanced or unpublished ones", () =>
+  fixture(async () => {
+    const m = mock();
+    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
+    m.state.refs["heads/release/0.0.9"] = { object: { type: "commit", sha: base } };
+    m.state.refs["tags/v0.0.9"] = { object: { type: "commit", sha: base } };
+    m.state.refs["heads/release/0.2.0"] = { object: { type: "commit", sha: "d".repeat(40) } };
+    m.state.refs["tags/v0.2.0"] = { object: { type: "commit", sha: "e".repeat(40) } };
+    m.state.refs["heads/release/0.3.0"] = { object: { type: "commit", sha: base } };
+    m.state.refs["heads/release/0.4.0"] = { object: { type: "commit", sha: base } };
+    m.state.tagObjects["f".repeat(40)] = { object: { type: "commit", sha: base } };
+    m.state.refs["tags/v0.4.0"] = { object: { type: "tag", sha: "f".repeat(40) } };
+    m.state.branches = [
+      { name: "main", commit: { sha: base } },
+      { name: "release/0.1.0", commit: { sha } },
+      { name: "release/0.0.9", commit: { sha: base } },
+      { name: "release/0.2.0", commit: { sha: "d".repeat(40) } },
+      { name: "release/0.3.0", commit: { sha: base } },
+      { name: "release/0.4.0", commit: { sha: base } },
+      { name: "release/candidate", commit: { sha: base } },
+    ];
+    const lines = [];
+    m.core.summary = {
+      addHeading: () => m.core.summary,
+      addRaw: (text) => {
+        lines.push(text);
+        return m.core.summary;
+      },
+      write: async () => {},
+    };
+    await release.followUp(m, "0.1.0");
+    assert.deepEqual(m.state.errors, []);
+    assert.deepEqual(
+      m.state.calls.filter((call) => call.startsWith("delete:")),
+      ["delete:heads/release/0.1.0", "delete:heads/release/0.0.9", "delete:heads/release/0.4.0"],
+    );
+    assert.equal(m.state.refs["heads/release/0.0.9"], undefined);
+    assert.equal(m.state.refs["heads/release/0.4.0"], undefined);
+    assert.ok(m.state.refs["heads/release/0.2.0"], "advanced branch must be kept");
+    assert.ok(m.state.refs["heads/release/0.3.0"], "unpublished branch must be kept");
+    const stale = lines.find((line) => line.includes("Stale published branches"));
+    assert.match(stale, /deleted `release\/0\.0\.9`, deleted `release\/0\.4\.0`/);
+    assert.match(stale, /kept `release\/0\.2\.0` \(advanced past its tag\)/);
+    assert.ok(!stale.includes("0.3.0") && !stale.includes("candidate"));
+    m.state.failDelete = true;
+    m.state.branches = [{ name: "release/0.0.9", commit: { sha: base } }];
+    m.state.refs["heads/release/0.0.9"] = { object: { type: "commit", sha: base } };
+    await release.followUp(m, "0.1.0");
+    assert.ok(m.state.errors.some((error) => /Stale published branches failed: forbidden/.test(error)));
   }));
