@@ -29,7 +29,7 @@
   "src/core/session-cache.ts": "292c8074d6b9e87a5cacd9bf5b6dab3f4bc77401df5d9215a1046e1228a9db1d",
   "src/core/session-start.ts": "3b4c69930915ef8ca1fa4fe5ffa56f32097864c44d3e5428c48e7ced93d0e40a",
   "src/core/survey.test.ts": "71f998965baa840b2e1cdab1fa350349a7127c01ad11c6198fc7b4ae58c84d37",
-  "src/core/survey.ts": "b36b7cc47450fa1d3c6533c1969c59c2d3a661d0d49e6441b13a11cd5cc52287",
+  "src/core/survey.ts": "8d91048f9e490089b8f34bf54bdf780a67ebb102665ab6416e74470b06d0151c",
   "src/core/template.ts": "b5b0553c91f562365ab917b993e3b1e58b099425c726867058cf565926498d26",
   "src/core/transcript-dcode.test.ts": "f00f455ef823cd1a6623002ce12ae5d680415a8f1222e7b30c7188f642ff7786",
   "src/core/transcript-dcode.ts": "9f63d0ea54940443809bfe33af35872d5a0834b893d6d80481872d0edebcd3f4",
