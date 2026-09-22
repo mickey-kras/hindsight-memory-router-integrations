@@ -160,6 +160,67 @@ describe("RetainCoordinator", () => {
     expect(() => readFileSync(queueFile, "utf8")).toThrow();
   });
 
+  it("keeps document IDs omitted when unrelated retains are queued and replayed after restart", async () => {
+    const first = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(503);
+      },
+    });
+    await first.retain.retain("main", { content: "first memory" });
+    await first.retain.retain("main", { content: "second memory" });
+
+    const raw = readFileSync(join(queueDir, "hindsight-retain-queue.main.jsonl"), "utf8");
+    for (const line of raw.trim().split("\n")) {
+      expect(JSON.parse(line)).not.toHaveProperty("documentId");
+    }
+
+    const replay = makeStack({ queueDir });
+    await replay.retain.flushQueues();
+    expect(replay.fakeClients.get("main")?.retains).toMatchObject([
+      { content: "first memory", options: { documentId: undefined } },
+      { content: "second memory", options: { documentId: undefined } },
+    ]);
+  });
+
+  it.each(["conversation", "", "docs/a", "docs_a"])(
+    "preserves the explicit document ID %j through queueing and replay",
+    async (documentId) => {
+      const first = makeStack({
+        queueDir,
+        behavior: () => {
+          throw httpError(503);
+        },
+      });
+      await first.retain.retain("main", { content: "memory", documentId });
+
+      const replay = makeStack({ queueDir });
+      await replay.retain.flushQueues();
+      expect(replay.fakeClients.get("main")?.retains[0].options?.documentId).toBe(documentId);
+    },
+  );
+
+  it.each([undefined, "conversation", "existing/document"])(
+    "replays legacy document ID %j unchanged",
+    async (documentId) => {
+      writeFileSync(
+        join(queueDir, "hindsight-retain-queue.main.jsonl"),
+        `${JSON.stringify({
+          id: "legacy-queue-item",
+          bankId: "main",
+          content: "older memory",
+          documentId,
+          metadata: {},
+          createdAt: "2026-01-01T00:00:00.000Z",
+        })}\n`,
+      );
+
+      const replay = makeStack({ queueDir });
+      await replay.retain.flushQueues();
+      expect(replay.fakeClients.get("main")?.retains[0].options?.documentId).toBe(documentId);
+    },
+  );
+
   it("replay keeps items queued for unknown agents (fail closed)", async () => {
     const apiKeys: string[] = [];
     const first = makeStack({
