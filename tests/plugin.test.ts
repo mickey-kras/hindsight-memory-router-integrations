@@ -288,6 +288,102 @@ describe("plugin wiring", () => {
     expect(sink.retains).toHaveLength(2);
   });
 
+  function retainIdentityFixture() {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    const stack = instrumentedStack(queueDir, sink);
+    stack.credentials = new PrincipalCredentialResolver({
+      principals: {
+        main: { token: TOKEN_MAIN, writeBank: "main" },
+        backend: { token: TOKEN_BACKEND, writeBank: "main" },
+        a: { token: TOKEN_MAIN, writeBank: "main" },
+        "a:b": { token: TOKEN_BACKEND, writeBank: "main" },
+      },
+    });
+    stack.retain = new RetainCoordinator({
+      credentials: stack.credentials,
+      clients: stack.clients,
+      queueDir,
+      logger: api.logger,
+    });
+    const retain = vi.spyOn(stack.retain, "retain");
+    registerWithStack(api, stack);
+    const handler = api.handlers.get("agent_end");
+    const sessionEnd = api.handlers.get("session_end");
+    if (!handler || !sessionEnd) throw new Error("retain hooks not registered");
+    return {
+      retain,
+      sink,
+      event: { messages: [{ role: "user", content: "remember this exact turn" }] },
+      handler,
+      sessionEnd,
+    };
+  }
+
+  it("retains a revisited session in a new document after digest-state eviction", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    const original = { agentId: "main", sessionKey: "original" };
+    await handler(event, original);
+    for (let index = 0; index < 1000; index++) {
+      await handler(event, { agentId: "main", sessionKey: `other-${index}` });
+    }
+    await handler(event, original);
+
+    const documentIds = retain.mock.calls.map(([, request]) => request.documentId);
+    expect(documentIds).toHaveLength(1002);
+    expect(new Set(documentIds).size).toBe(1002);
+  });
+
+  it.each([
+    ["room/a", "room_a"],
+    ["room__a", "room_a"],
+    [" room ", "room"],
+    ["", "session"],
+    [undefined, "session"],
+    [undefined, ""],
+  ])("keeps exact session identities %j and %j independent", async (firstSession, secondSession) => {
+    const { handler, event, retain } = retainIdentityFixture();
+    await handler(event, { agentId: "main", sessionKey: firstSession });
+    await handler(event, { agentId: "main", sessionKey: secondSession });
+
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
+  });
+
+  it("keeps documents independent for principals writing the same session to a shared bank", async () => {
+    const { handler, event, retain, sink } = retainIdentityFixture();
+    await handler(event, { agentId: "main", sessionKey: "shared" });
+    await handler(event, { agentId: "backend", sessionKey: "shared" });
+
+    expect(sink.retains.map(({ bank }) => bank)).toEqual(["main", "main"]);
+    expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
+  });
+
+  it("does not suppress distinct principal/session tuples containing colons", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    await handler(event, { agentId: "a", sessionKey: "b:c" });
+    await handler(event, { agentId: "a:b", sessionKey: "c" });
+    await handler(event, { agentId: "a", sessionKey: "b:c" });
+    await handler(event, { agentId: "a:b", sessionKey: "c" });
+
+    expect(retain.mock.calls.map(([principal]) => principal)).toEqual(["a", "a:b"]);
+  });
+
+  it("keeps new session documents independent after session_end clears deduplication state", async () => {
+    const { sessionEnd, handler, event, retain } = retainIdentityFixture();
+    const context = { agentId: "main", sessionKey: "reused" };
+    await handler(event, context);
+    await sessionEnd(event, context);
+    await handler(event, context);
+
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
+  });
+
   it("auto-recall fails closed for unknown agents: no client, no injection", async () => {
     const api = makeApi(queueDir);
     const sink = {
@@ -600,9 +696,9 @@ describe("plugin wiring", () => {
 
     expect(retainMock).toHaveBeenCalledTimes(3);
     expect(retainMock.mock.calls.map(([, request]) => request.documentId)).toEqual([
-      expect.stringContaining("openclaw:normal:queued:"),
-      expect.stringContaining("openclaw:normal:denied:"),
-      expect.stringContaining("openclaw:normal:failed:"),
+      expect.stringMatching(/^openclaw:[a-f0-9]{64}:[a-f0-9-]{36}$/),
+      expect.stringMatching(/^openclaw:[a-f0-9]{64}:[a-f0-9-]{36}$/),
+      expect.stringMatching(/^openclaw:[a-f0-9]{64}:[a-f0-9-]{36}$/),
     ]);
     expect(auditRecords(api)).toEqual([
       expect.objectContaining({ principal: "main", op: "retain", outcome: "success", bankId: "main" }),
