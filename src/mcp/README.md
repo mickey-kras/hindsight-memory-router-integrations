@@ -61,7 +61,7 @@ Rules (all fail closed at startup):
 - `recallTimeoutMs`, `recallMaxTokens`, `retainQueueFlushIntervalMs` must be positive integers.
 - `queueMaxAgeMs` must be -1 (default, keep queued retains forever) or a positive integer.
 - `queueMaxItems` (1,000) and `queueMaxBytes` (16 MiB) are positive integer limits shared across every principal in `queueDir`. Each item reserves 128 additional bytes for replay metadata. Full queues reject new retains with `RetainQueueCapacityError`; no success/queued result is returned.
-- Queue writes and replay mutations are locked across processes. All writers sharing `queueDir` must use matching limits and this package version. Increase the byte limit to replay a legacy backlog larger than the configured limit.
+- Queue writes and replay mutations use OS-owned file locks through `fs-native-extensions`; paused writers keep ownership, and process termination releases it automatically. All writers sharing `queueDir` must use matching limits and this package version on a local filesystem with OS file-lock support. Do not remove the two `.retain-*.lock` files while writers are running. Replay is serialized per directory; enqueue uses a separate lock. Increase the byte limit to replay a legacy backlog larger than the configured limit.
 - `queueDir` must be absolute; defaults to `~/.hindsight-memory-router/retain-queue`. Queued retains are
   plaintext JSONL (mode 0600) and expire only when `queueMaxAgeMs` is set; use full-disk encryption for
   at-rest confidentiality.

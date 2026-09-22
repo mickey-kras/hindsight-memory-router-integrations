@@ -1,6 +1,7 @@
-import { closeSync, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { lock } from "proper-lockfile";
+import { setTimeout } from "node:timers/promises";
+import { tryLock } from "fs-native-extensions";
 
 export const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
 export const QUEUE_FILE_SUFFIX = ".jsonl";
@@ -18,7 +19,7 @@ export class RetainQueueCapacityError extends Error {
 
 export class RetainQueueBusyError extends Error {
   readonly code = "RETAIN_QUEUE_BUSY";
-  constructor(options: ErrorOptions) {
+  constructor(options?: ErrorOptions) {
     super("retain queue is busy; retain was not queued", options);
     this.name = "RetainQueueBusyError";
   }
@@ -71,35 +72,30 @@ export class RetainQueueStorage {
   }
 
   async transaction<T>(action: () => T): Promise<T> {
-    let release: () => Promise<void>;
+    const fd = openSync(join(this.directory, ".retain-queue.lock"), "a", 0o600);
     try {
-      release = await lock(this.directory, {
-        lockfilePath: join(this.directory, ".retain-queue.lock"),
-        retries: { retries: 30, minTimeout: 10, maxTimeout: 100, factor: 1.3 },
-      });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ELOCKED") throw new RetainQueueBusyError({ cause: error });
-      throw error;
-    }
-    try {
+      for (let attempt = 0; !tryLock(fd); attempt++) {
+        if (attempt === 30) throw new RetainQueueBusyError();
+        await setTimeout(100);
+      }
+      for (const name of readdirSync(this.directory)) {
+        if (name.startsWith(QUEUE_FILE_PREFIX) && name.endsWith(`${QUEUE_FILE_SUFFIX}.tmp`)) {
+          unlinkSync(join(this.directory, name));
+        }
+      }
       return action();
     } finally {
-      await release();
+      closeSync(fd);
     }
   }
 
-  async replay<T>(principalId: string, action: () => Promise<T>): Promise<T | undefined> {
-    let release: () => Promise<void>;
+  async replay<T>(action: () => Promise<T>): Promise<T | undefined> {
+    const fd = openSync(join(this.directory, ".retain-replay.lock"), "a", 0o600);
     try {
-      release = await lock(join(realpathSync(this.directory), `.retain-replay.${principalId}`), { realpath: false });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ELOCKED") return undefined;
-      throw error;
-    }
-    try {
+      if (!tryLock(fd)) return undefined;
       return await action();
     } finally {
-      await release();
+      closeSync(fd);
     }
   }
 

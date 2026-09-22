@@ -1,9 +1,19 @@
 import { execFile } from "node:child_process";
-import { appendFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  openSync,
+  closeSync,
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { lock } from "proper-lockfile";
+import { tryLock } from "fs-native-extensions";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RetainQueueStorage } from "../src/shared/retain-queue-storage.js";
 
@@ -21,7 +31,7 @@ describe("aggregate queue capacity", () => {
   it("rejects a single oversized record before creating any queue file", async () => {
     const storage = new RetainQueueStorage(directory, 100, 1000);
     await expect(storage.transaction(() => storage.assertAppend(1000))).rejects.toMatchObject({ limit: "bytes" });
-    expect(readdirSync(directory)).toEqual([]);
+    expect(readdirSync(directory).filter((file) => file.endsWith(".jsonl"))).toEqual([]);
   });
   it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])("rejects invalid limits: %s", (value) => {
     expect(() => new RetainQueueStorage(directory, value)).toThrow(RangeError);
@@ -61,27 +71,28 @@ describe("aggregate queue capacity", () => {
 
   it("rejects a contended writer after bounded retries and keeps lock errors typed", async () => {
     const storage = new RetainQueueStorage(directory);
-    const release = await lock(directory, { lockfilePath: join(directory, ".retain-queue.lock") });
+    const fd = openSync(join(directory, ".retain-queue.lock"), "a", 0o600);
+    expect(tryLock(fd)).toBe(true);
     try {
       await expect(storage.transaction(() => undefined)).rejects.toMatchObject({
         name: "RetainQueueBusyError",
         code: "RETAIN_QUEUE_BUSY",
       });
     } finally {
-      await release();
+      closeSync(fd);
     }
     rmSync(directory, { recursive: true });
     await expect(storage.transaction(() => undefined)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(storage.replay("main", async () => undefined)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(storage.replay(async () => undefined)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("excludes a second replayer while allowing capacity transactions", async () => {
     const storage = new RetainQueueStorage(directory);
-    await storage.replay("main", async () => {
-      expect(await storage.replay("main", async () => "duplicate")).toBeUndefined();
+    await storage.replay(async () => {
+      expect(await storage.replay(async () => "duplicate")).toBeUndefined();
       await storage.transaction(() => storage.assertAppend(1));
     });
-    expect(await storage.replay("main", async () => "released")).toBe("released");
+    expect(await storage.replay(async () => "released")).toBe("released");
   });
 
   it("does not oversubscribe aggregate capacity when separate processes enqueue concurrently", async () => {

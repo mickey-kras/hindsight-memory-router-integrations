@@ -144,7 +144,7 @@ export class RetainCoordinator {
       this.log.error(`retain queue replay skipped: no routing entry for agent ${principalId}`);
       return; // fail closed: unknown agent's items stay queued
     }
-    await this.storage.replay(principalId, () => this.replayQueue(principalId, credentials));
+    await this.storage.replay(() => this.replayQueue(principalId, credentials));
   }
 
   private async replayQueue(
