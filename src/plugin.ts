@@ -577,7 +577,7 @@ function requestedRecallOptions(params: Record<string, unknown>, config: Runtime
   return {
     query: params.query,
     maxTokens: Math.min(
-      (params.max_tokens as number | undefined) ?? Number.POSITIVE_INFINITY,
+      params.max_tokens ?? Number.POSITIVE_INFINITY,
       config.recallMaxTokens ?? RUNTIME_DEFAULTS.recallMaxTokens,
     ),
     types,
