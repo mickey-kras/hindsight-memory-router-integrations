@@ -20,7 +20,7 @@ const { parse: parseToml } = createRequire(new URL("../src/upstream/coding-agent
 interface CodexRegistration {
   command: string;
   args: string[];
-  env_vars: string[];
+  env_vars: (string | { name: string; source?: "local" | "remote" })[];
   env: Record<string, string>;
   startup_timeout_sec?: number;
   tool_timeout_sec?: number;
@@ -332,7 +332,9 @@ function initializeCodexMcp(
   cwd = dir,
 ) {
   const env: NodeJS.ProcessEnv = {};
-  for (const name of ["HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "TMPDIR", ...registration.env_vars]) {
+  for (const entry of ["HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "TMPDIR", ...registration.env_vars]) {
+    if (typeof entry !== "string" && entry.source === "remote") throw new Error("remote env requires remote stdio");
+    const name = typeof entry === "string" ? entry : entry.name;
     if (hostEnv[name] !== undefined) env[name] = hostEnv[name];
   }
   return spawnSync(registration.command, registration.args, {
@@ -428,6 +430,82 @@ it("preserves Codex overrides and manual allowlist entries when reinstalling wit
   expect(registration.env_vars).not.toContain("UPSTREAM_TEST_TOKEN");
   expect(installed).toContain('[mcp_servers.other]\ncommand = "untouched"');
   expect(installed).not.toContain(token);
+  const initialized = initializeCodexMcp(dir, registration);
+  expect(initialized.status, initialized.stderr).toBe(0);
+  expect(JSON.parse(initialized.stdout).result.serverInfo.name).toBe("hindsight");
+  expect(installPackagedCodex(dir).status).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(installed);
+});
+
+it.each(["local", "remote", undefined] as const)(
+  "preserves structured Codex allowlist entries with source %s across reinstalls",
+  (source) => {
+    const dir = setup();
+    mkdirSync(join(dir, ".codex"));
+    const path = join(dir, ".codex", "config.toml");
+    const sourceField = source === undefined ? "" : `, source = "${source}"`;
+    const entries = [
+      '"USER_STRING_ENV"',
+      `{ name = "USER_STRUCTURED_ENV"${sourceField} }`,
+      '{ name = "HINDSIGHT_ROUTER_CONFIG" }',
+      '{ name = "UPSTREAM_TEST_TOKEN", source = "local" }',
+    ];
+    writeFileSync(path, `[mcp_servers.hindsight]\ncommand = "node"\nenv_vars = [${entries.join(", ")}]\n`);
+    expect(installPackagedCodex(dir).status).toBe(0);
+    const installed = readFileSync(path, "utf8");
+    const registration = parseToml(installed).mcp_servers.hindsight;
+    expect(registration.env_vars.slice(0, 4)).toEqual([
+      "USER_STRING_ENV",
+      source === undefined ? { name: "USER_STRUCTURED_ENV" } : { name: "USER_STRUCTURED_ENV", source },
+      { name: "HINDSIGHT_ROUTER_CONFIG" },
+      { name: "UPSTREAM_TEST_TOKEN", source: "local" },
+    ]);
+    const names = registration.env_vars.map((entry) => (typeof entry === "string" ? entry : entry.name));
+    expect(names.filter((name) => name === "HINDSIGHT_ROUTER_CONFIG")).toHaveLength(1);
+    expect(names.filter((name) => name === "UPSTREAM_TEST_TOKEN")).toHaveLength(1);
+    expect(installed).not.toContain(token);
+    if (source !== "remote") {
+      const initialized = initializeCodexMcp(dir, registration);
+      expect(initialized.status, initialized.stderr).toBe(0);
+      expect(JSON.parse(initialized.stdout).result.serverInfo.name).toBe("hindsight");
+    }
+    expect(installPackagedCodex(dir).status).toBe(0);
+    expect(readFileSync(path, "utf8")).toBe(installed);
+  },
+);
+
+it.each([
+  "7",
+  '{ source = "local" }',
+  '{ name = "USER_ENV", source = "unknown" }',
+  `{ name = "USER_ENV", value = "${token}" }`,
+])("rejects invalid structured Codex allowlist entry %# without writing host config", (entry) => {
+  const dir = setup();
+  mkdirSync(join(dir, ".codex"));
+  const path = join(dir, ".codex", "config.toml");
+  const existing = `[mcp_servers.hindsight]\ncommand = "node"\nenv_vars = [${entry}]\n`;
+  writeFileSync(path, existing);
+  const installed = installPackagedCodex(dir);
+  expect(installed.status).toBe(1);
+  expect(installed.stderr).toContain("env_vars must contain names or { name, source } entries");
+  expect(installed.stderr).not.toContain(token);
+  expect(readFileSync(path, "utf8")).toBe(existing);
+  expect(existsSync(join(dir, ".codex", "hooks.json"))).toBe(false);
+  expect(existsSync(`${path}.hindsight-backup`)).toBe(false);
+});
+
+it("preserves structured Codex allowlist entries written as array tables", () => {
+  const dir = setup();
+  mkdirSync(join(dir, ".codex"));
+  const path = join(dir, ".codex", "config.toml");
+  writeFileSync(
+    path,
+    '[mcp_servers.hindsight]\ncommand = "node"\n\n[[mcp_servers.hindsight.env_vars]]\nname = "UPSTREAM_TEST_TOKEN"\nsource = "local"\n',
+  );
+  expect(installPackagedCodex(dir).status).toBe(0);
+  const installed = readFileSync(path, "utf8");
+  const registration = parseToml(installed).mcp_servers.hindsight;
+  expect(registration.env_vars[0]).toEqual({ name: "UPSTREAM_TEST_TOKEN", source: "local" });
   const initialized = initializeCodexMcp(dir, registration);
   expect(initialized.status, initialized.stderr).toBe(0);
   expect(JSON.parse(initialized.stdout).result.serverInfo.name).toBe("hindsight");

@@ -48,7 +48,7 @@
   "src/hindsight-seed.ts": "4048b770baf3140ea972a60750a77c829b76de76b2ef8600a023fb651f285524",
   "src/install-ui.ts": "9e31a8047a6b5b000b3fe2ed8a3ca4aca29b061cc15955910310c72830442674",
   "src/installer.test.ts": "c83d6e21c7eebe98ef9289cc892279556996ee8de32fbe2236ae4d5825ac09fc",
-  "src/installer.ts": "640112cf5effc64fe30a3f22fd091a38d9a6a9e91eea86463906bef1d297df27",
+  "src/installer.ts": "6bded7fa46e61f9dd589008d7d4277ff29cf0c5d600b0cb6d1ca9d075bff5179",
   "src/mcp-server.test.ts": "e576f47d577a89954aabf9f7b68e7b4419c77b6ec91e9b1ef295867b4482cf9f",
   "src/mcp-server.ts": "4cd0d83135702420a6c9e37df0553131bb67cfdeb7f861bee02bdb87881ca046",
   "src/status.ts": "3a9fbc0d4421d067dc03e94ef777c21a9d3766a8ef2da85fa1081114e950e4e6",

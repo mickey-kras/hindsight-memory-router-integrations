@@ -616,7 +616,7 @@ function defaultClaudeMcp(args: string[]): boolean {
  * Our `[mcp_servers.hindsight]` table (plus any sub-table of it): the header line through to the
  * next table header or EOF. Shared by install — which REPLACES the block — and uninstall.
  */
-const CODEX_MCP_BLOCK_RE = /^\[mcp_servers\.hindsight(?:\.[^\]]+)?\][^\n]*\n(?:(?!\[)(?:[^\n]+\n?|\n))*/gm;
+const CODEX_MCP_BLOCK_RE = /^\[\[?mcp_servers\.hindsight(?:\.[^\]]+)?\]\]?[^\n]*\n(?:(?!\[)(?:[^\n]+\n?|\n))*/gm;
 
 const CODEX_ENV_VARS = [
   "HINDSIGHT_ROUTER_CONFIG",
@@ -627,9 +627,19 @@ const CODEX_ENV_VARS = [
   ...Object.values(ENV_KEYS).filter((name) => name !== ENV_KEYS.apiToken),
 ];
 
+type CodexEnvVar = string | { name: string; source?: "local" | "remote" };
+
+function isCodexEnvVar(value: unknown): value is CodexEnvVar {
+  if (typeof value === "string") return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return "name" in value && typeof value.name === "string" &&
+    (!("source" in value) || value.source === "local" || value.source === "remote") &&
+    Object.keys(value).every((key) => key === "name" || key === "source");
+}
+
 interface CodexMcpConfig {
   env?: Record<string, string>;
-  env_vars?: string[];
+  env_vars?: CodexEnvVar[];
   [key: string]: unknown;
 }
 
@@ -652,9 +662,9 @@ function codexMcpBlock(dist: string, existing: string): string {
   if (
     typeof env !== "object" || Array.isArray(env) ||
     !Object.values(env).every((value) => typeof value === "string") ||
-    !Array.isArray(envVars) || !envVars.every((name) => typeof name === "string")
+    !Array.isArray(envVars) || !envVars.every(isCodexEnvVar)
   ) {
-    throw new Error("codex: MCP env must contain strings and env_vars must contain variable names");
+    throw new Error("codex: MCP env must contain strings and env_vars must contain names or { name, source } entries");
   }
   let tokenEnv: string;
   try {
@@ -665,13 +675,15 @@ function codexMcpBlock(dist: string, existing: string): string {
   if (Object.hasOwn(env, tokenEnv)) {
     throw new Error(`codex: export ${tokenEnv} in the host environment and remove its literal MCP env value`);
   }
+  const inheritedNames = new Set(envVars.map((entry) => typeof entry === "string" ? entry : entry.name));
+  const requiredNames = [...new Set([...CODEX_ENV_VARS, tokenEnv])];
   return stringifyToml({
     mcp_servers: {
       hindsight: {
         ...previous,
         command: "node",
         args: [join(dist, "mcp-server.js")],
-        env_vars: [...new Set([...envVars, ...CODEX_ENV_VARS, tokenEnv])],
+        env_vars: [...envVars, ...requiredNames.filter((name) => !inheritedNames.has(name))],
         env: { ...env, HINDSIGHT_MCP_HARNESS: "codex" },
       },
     },
