@@ -1,4 +1,5 @@
 import { AccessDeniedError } from "@memory-router/shared/bank-access";
+import { harnessTransport } from "@memory-router/coding-agents/runtime";
 /**
  * Shared runtime for HOOK-based harnesses (Claude Code, Codex, Cursor CLI, ...).
  *
@@ -368,14 +369,6 @@ export async function runHook(
     return;
   }
 
-  // Before any network work, and deliberately before the bank is resolved: the journal is this
-  // session's only record of what the user said, and a slow or unreachable server must not be able
-  // to cost the turn. Journaling under `retainSessions: false` writes a temp file nothing reads,
-  // which is cheaper than threading that decision through two processes to find out.
-  if (spec.journalPrompt) {
-    appendJournalTurn(journalPath(spec.harness, sessionId), { role: "user", content: prompt });
-  }
-
   const out = (context: string | undefined, notice?: string) =>
     process.stdout.write(JSON.stringify(spec.emit(context ?? "", notice, ev)));
 
@@ -388,6 +381,13 @@ export async function runHook(
   if (cfg.disabled) {
     log.debug(spec.harness, "hook skipped: bank disabled via banks override", { bank: bankId });
     return;
+  }
+  if (
+    spec.journalPrompt &&
+    cfg.retainSessions &&
+    harnessTransport(cfg.routerHarness).access.writeBank === bankId
+  ) {
+    appendJournalTurn(journalPath(spec.harness, sessionId), { role: "user", content: prompt });
   }
   const client = makeClient({
     routerHarness: cfg.routerHarness,
