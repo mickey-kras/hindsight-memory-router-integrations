@@ -26,6 +26,8 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 - Any 401/403 discards the entire read result. Network/408/429/5xx failures permit partial reads.
 - Bank/config/page reads are read operations. Scope checks still belong to Memory Router.
 - OpenClaw retain queues recheck the current write bank before replay.
+- `retainQueueMaxItems` (1,000) and `retainQueueMaxBytes` (16 MiB) cap all principal queues in one `queueDir`. Both must be positive integers. Byte accounting includes 128 bytes per record reserved for replay metadata. A full queue rejects new outage writes with `RetainQueueCapacityError`; existing entries stay in FIFO order.
+- Queue mutations use a directory lock across processes. Writers sharing `queueDir` must use the same limits and this package version. Backlogs already above the byte limit remain on disk; increase the limit to replay them.
 - Every memory op emits a single-line JSON audit record (principal, op, bank, outcome, bounded error
   class) to the host log; memory content is never logged.
 

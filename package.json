@@ -46,11 +46,13 @@
     "upstream:accept": "node scripts/regen-coding-local-changes.mjs && node scripts/regen-openclaw-overlay.mjs && node scripts/verify-coding-upstream.mjs && node scripts/verify-openclaw-overlay.mjs"
   },
   "dependencies": {
-    "@vectorize-io/hindsight-agent-sdk": "0.1.1"
+    "@vectorize-io/hindsight-agent-sdk": "0.1.1",
+    "proper-lockfile": "^4.1.2"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
     "@types/node": "22.20.2",
+    "@types/proper-lockfile": "^4.1.4",
     "@vectorize-io/hindsight-client": "0.10.0",
     "@vitest/coverage-v8": "5.0.0",
     "aislop": "^0.16.1",

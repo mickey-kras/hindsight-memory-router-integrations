@@ -8,6 +8,8 @@ import { type QueuedRetain, type QueuedRetainPayload, RetainQueue } from "../ups
 import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
 import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
+import { QUEUE_FILE_PREFIX, QUEUE_FILE_SUFFIX, RetainQueueStorage } from "./retain-queue-storage.js";
+export { RetainQueueBusyError, RetainQueueCapacityError } from "./retain-queue-storage.js";
 
 export type RetainRequestPayload = QueuedRetainPayload;
 
@@ -36,8 +38,6 @@ export function retainAbandonNotice(item: QueuedRetain, attempts: number): strin
   return `retain replay abandoned after ${attempts} attempts for bank ${item.bankId}; transcript dropped from the queue without delivery`;
 }
 
-const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
-const QUEUE_FILE_SUFFIX = ".jsonl";
 const MAX_REPLAY_ATTEMPTS = 5;
 const REPLAY_BATCH_SIZE = 50;
 
@@ -46,6 +46,7 @@ export class RetainCoordinator {
   private readonly clients: AuthenticatedClientFactory;
   private readonly queueDir: string;
   private readonly queueMaxAgeMs: number;
+  private readonly storage: RetainQueueStorage;
   private readonly log: CoordinatorLogger;
   private readonly onAbandon: RetainAbandonHandler;
   private readonly maxAgeConfigKey: string;
@@ -55,6 +56,8 @@ export class RetainCoordinator {
     clients: AuthenticatedClientFactory;
     queueDir: string;
     queueMaxAgeMs?: number;
+    queueMaxItems?: number;
+    queueMaxBytes?: number;
     logger: CoordinatorLogger;
     onAbandon?: RetainAbandonHandler;
     maxAgeConfigKey?: string;
@@ -63,6 +66,7 @@ export class RetainCoordinator {
     this.clients = options.clients;
     if (!isAbsolute(options.queueDir)) throw new TypeError("queueDir must be absolute");
     this.queueDir = options.queueDir;
+    this.storage = new RetainQueueStorage(this.queueDir, options.queueMaxItems, options.queueMaxBytes);
     this.queueMaxAgeMs = options.queueMaxAgeMs ?? -1;
     this.log = options.logger;
     this.onAbandon = options.onAbandon ?? ((item, attempts) => this.log.error(retainAbandonNotice(item, attempts)));
@@ -80,6 +84,8 @@ export class RetainCoordinator {
     return new RetainQueue({
       filePath: join(this.queueDir, `${QUEUE_FILE_PREFIX}${principalId}${QUEUE_FILE_SUFFIX}`),
       maxAgeMs: this.queueMaxAgeMs,
+      maxReadBytes: this.storage.maxBytes,
+      capacity: this.storage,
     });
   }
 
@@ -107,7 +113,7 @@ export class RetainCoordinator {
         throw error;
       }
       const queue = this.queueFor(principalId);
-      queue.enqueue(bank, request, request.metadata);
+      await this.storage.transaction(() => queue.enqueue(bank, request, request.metadata));
       this.log.warn(`retain queued for later delivery (bank: ${bank})`);
       return { queued: true, bank };
     }
@@ -138,20 +144,30 @@ export class RetainCoordinator {
       this.log.error(`retain queue replay skipped: no routing entry for agent ${principalId}`);
       return; // fail closed: unknown agent's items stay queued
     }
+    await this.storage.replay(principalId, () => this.replayQueue(principalId, credentials));
+  }
+
+  private async replayQueue(
+    principalId: string,
+    credentials: ReturnType<PrincipalCredentialResolver["resolve"]>,
+  ): Promise<void> {
     const client = this.clients.forAgent(credentials);
     const queue = this.queueFor(principalId);
-    queue.cleanup();
+    const items = await this.storage.transaction(() => {
+      queue.cleanup();
+      return queue.peek(REPLAY_BATCH_SIZE);
+    });
     const delivered: string[] = [];
-    for (const item of queue.peek(REPLAY_BATCH_SIZE)) {
+    for (const item of items) {
       try {
         await this.replayItem(principalId, client, queue, item);
         delivered.push(item.id);
       } catch (error) {
-        this.handleReplayError(error, queue, item, delivered);
+        await this.handleReplayError(error, queue, item, delivered);
         break; // preserve FIFO ordering; retry next flush
       }
     }
-    queue.removeMany(delivered);
+    await this.storage.transaction(() => queue.removeMany(delivered));
   }
 
   private async replayItem(
@@ -166,7 +182,9 @@ export class RetainCoordinator {
     if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
       throw new RetainAuthorizationError(item.bankId);
     }
-    const operationId = queue.ensureOperationId(item.id, item.operationId ?? randomUUID());
+    const operationId = await this.storage.transaction(() =>
+      queue.ensureOperationId(item.id, item.operationId ?? randomUUID()),
+    );
     await client.retain(item.bankId, item.content, {
       documentId: item.documentId,
       context: item.context,
@@ -178,7 +196,12 @@ export class RetainCoordinator {
     });
   }
 
-  private handleReplayError(error: unknown, queue: RetainQueue, item: QueuedRetain, delivered: string[]): void {
+  private async handleReplayError(
+    error: unknown,
+    queue: RetainQueue,
+    item: QueuedRetain,
+    delivered: string[],
+  ): Promise<void> {
     if (isAuthorizationError(error)) {
       this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
       return;
@@ -187,7 +210,7 @@ export class RetainCoordinator {
       this.log.error(`retain replay failed permanently for bank ${item.bankId}; item stays queued for review`);
       return;
     }
-    const attempts = queue.incrementReplayAttempts(item.id);
+    const attempts = await this.storage.transaction(() => queue.incrementReplayAttempts(item.id));
     if (attempts >= MAX_REPLAY_ATTEMPTS) {
       delivered.push(item.id);
       try {

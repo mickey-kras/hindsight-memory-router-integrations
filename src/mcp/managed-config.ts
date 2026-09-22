@@ -69,6 +69,8 @@ export function loadMcpStack(env: NodeJS.ProcessEnv, logger: McpLogger): McpStac
       clients,
       queueDir,
       queueMaxAgeMs: config.queueMaxAgeMs,
+      queueMaxItems: config.queueMaxItems,
+      queueMaxBytes: config.queueMaxBytes,
       maxAgeConfigKey: "queueMaxAgeMs",
       logger,
       onAbandon: (item, attempts) => logger.error(retainAbandonNotice(item, attempts)),
