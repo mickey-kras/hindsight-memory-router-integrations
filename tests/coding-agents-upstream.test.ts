@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
@@ -13,6 +14,18 @@ import { run as install } from "../src/upstream/coding-agents/src/installer";
 
 const dirs: string[] = [];
 const token = `mr_codex_${"b".repeat(64)}`;
+const { parse: parseToml } = createRequire(new URL("../src/upstream/coding-agents/package.json", import.meta.url))(
+  "smol-toml",
+) as { parse: (text: string) => { mcp_servers: { hindsight: CodexRegistration } } };
+interface CodexRegistration {
+  command: string;
+  args: string[];
+  env_vars: string[];
+  env: Record<string, string>;
+  startup_timeout_sec?: number;
+  tool_timeout_sec?: number;
+  enabled?: boolean;
+}
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -300,4 +313,168 @@ it.each(["", "\n"])("Codex uninstall preserves adjacent tables with EOF suffix %
     }),
   ).toBe(0);
   expect(readFileSync(path, "utf8")).toBe(kept);
+});
+
+function installPackagedCodex(dir: string) {
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+  return spawnSync(process.execPath, [join(dir, "package", "dist", "installer.js"), "install", "codex"], {
+    env: { ...process.env, HOME: dir },
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 10000,
+  });
+}
+
+function initializeCodexMcp(
+  dir: string,
+  registration: CodexRegistration,
+  hostEnv: NodeJS.ProcessEnv = process.env,
+  cwd = dir,
+) {
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of ["HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "TMPDIR", ...registration.env_vars]) {
+    if (hostEnv[name] !== undefined) env[name] = hostEnv[name];
+  }
+  return spawnSync(registration.command, registration.args, {
+    env: { ...env, HOME: dir, ...registration.env },
+    cwd,
+    input: `${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "codex-env-test", version: "1" } },
+    })}\n`,
+    encoding: "utf8",
+    timeout: 10000,
+  });
+}
+
+it("initializes the staged Codex MCP server through its generated allowlist without storing credentials", () => {
+  const dir = setup();
+  vi.stubEnv("OTHER_PRINCIPAL_TOKEN", "unrelated-secret");
+  expect(installPackagedCodex(dir).status).toBe(0);
+  const toml = readFileSync(join(dir, ".codex", "config.toml"), "utf8");
+  const registration = parseToml(toml).mcp_servers.hindsight;
+  expect(registration.env_vars).toEqual(
+    expect.arrayContaining([
+      "HINDSIGHT_ROUTER_CONFIG",
+      "UPSTREAM_TEST_TOKEN",
+      "HINDSIGHT_CONFIG",
+      "HINDSIGHT_MCP_PROJECT_CWD",
+      "HINDSIGHT_DISABLED",
+      "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",
+      "HINDSIGHT_LOG_FILE",
+      "HINDSIGHT_DIAG_FILE",
+    ]),
+  );
+  expect(toml).not.toContain(token);
+  expect(toml).not.toContain("OTHER_PRINCIPAL_TOKEN");
+  expect(registration.args).toEqual([join(dir, ".hindsight", "coding-agents", "dist", "mcp-server.js")]);
+  const initialized = initializeCodexMcp(dir, registration);
+  expect(initialized.error).toBeUndefined();
+  expect(initialized.status, initialized.stderr).toBe(0);
+  expect(JSON.parse(initialized.stdout).result.serverInfo.name).toBe("hindsight");
+  for (const name of ["HINDSIGHT_ROUTER_CONFIG", "UPSTREAM_TEST_TOKEN"]) {
+    const denied = initializeCodexMcp(dir, registration, { ...process.env, [name]: undefined });
+    expect(denied.status).toBe(1);
+    expect(denied.stdout).toBe("");
+    expect(denied.stderr).not.toContain(token);
+  }
+});
+
+it("forwards the optional project directory to the staged Codex MCP server", () => {
+  const dir = setup();
+  const unmapped = mkdtempSync(join(tmpdir(), "codex-unmapped-"));
+  dirs.push(unmapped);
+  vi.stubEnv("HINDSIGHT_MCP_PROJECT_CWD", dir);
+  expect(installPackagedCodex(dir).status).toBe(0);
+  const registration = parseToml(readFileSync(join(dir, ".codex", "config.toml"), "utf8")).mcp_servers.hindsight;
+  const initialized = initializeCodexMcp(dir, registration, process.env, unmapped);
+  expect(initialized.status, initialized.stderr).toBe(0);
+  expect(JSON.parse(initialized.stdout).result.serverInfo.name).toBe("hindsight");
+  const denied = initializeCodexMcp(
+    dir,
+    registration,
+    { ...process.env, HINDSIGHT_MCP_PROJECT_CWD: undefined },
+    unmapped,
+  );
+  expect(denied.status).toBe(1);
+  expect(denied.stdout).toBe("");
+});
+
+it("preserves Codex overrides and manual allowlist entries when reinstalling with a different managed config", () => {
+  const dir = setup();
+  mkdirSync(join(dir, ".codex"));
+  const path = join(dir, ".codex", "config.toml");
+  const override = join(dir, "override.json");
+  const config = JSON.parse(readFileSync(process.env.HINDSIGHT_ROUTER_CONFIG!, "utf8"));
+  config.principals.codex.tokenEnv = "CUSTOM_CODEX_TOKEN";
+  writeFileSync(override, JSON.stringify(config));
+  vi.stubEnv("CUSTOM_CODEX_TOKEN", token);
+  writeFileSync(
+    path,
+    `[mcp_servers.other]\ncommand = "untouched"\n\n[mcp_servers.hindsight]\ncommand = "old-node"\nargs = ["old.js"]\nenv_vars = ["USER_APPROVED_ENV", "HINDSIGHT_CONFIG"]\nstartup_timeout_sec = 45\ntool_timeout_sec = 180\nenabled = true\n\n[mcp_servers.hindsight.env]\nHINDSIGHT_ROUTER_CONFIG = ${JSON.stringify(override)}\nHINDSIGHT_MCP_HARNESS = "wrong"\nHINDSIGHT_LOG_LEVEL = "error"\n`,
+  );
+  expect(installPackagedCodex(dir).status).toBe(0);
+  const installed = readFileSync(path, "utf8");
+  const registration = parseToml(installed).mcp_servers.hindsight;
+  expect(registration).toMatchObject({
+    startup_timeout_sec: 45,
+    tool_timeout_sec: 180,
+    enabled: true,
+    env: { HINDSIGHT_ROUTER_CONFIG: override, HINDSIGHT_MCP_HARNESS: "codex", HINDSIGHT_LOG_LEVEL: "error" },
+  });
+  expect(registration.env_vars).toEqual(expect.arrayContaining(["CUSTOM_CODEX_TOKEN", "USER_APPROVED_ENV"]));
+  expect(registration.env_vars).not.toContain("UPSTREAM_TEST_TOKEN");
+  expect(installed).toContain('[mcp_servers.other]\ncommand = "untouched"');
+  expect(installed).not.toContain(token);
+  const initialized = initializeCodexMcp(dir, registration);
+  expect(initialized.status, initialized.stderr).toBe(0);
+  expect(JSON.parse(initialized.stdout).result.serverInfo.name).toBe("hindsight");
+  expect(installPackagedCodex(dir).status).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(installed);
+});
+
+it.each(["missing", "invalid", "unknown-principal"])(
+  "refuses Codex installation with %s managed configuration",
+  (kind) => {
+    const dir = setup();
+    if (kind === "missing") vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", "");
+    if (kind === "invalid") writeFileSync(process.env.HINDSIGHT_ROUTER_CONFIG!, "{invalid");
+    if (kind === "unknown-principal") writeFileSync(process.env.HINDSIGHT_ROUTER_CONFIG!, '{"principals":{}}');
+    const installed = installPackagedCodex(dir);
+    expect(installed.status).toBe(1);
+    expect(installed.stderr).toContain("HINDSIGHT_ROUTER_CONFIG");
+    expect(installed.stderr).not.toContain(token);
+    expect(existsSync(join(dir, ".codex", "config.toml"))).toBe(false);
+    expect(existsSync(join(dir, ".codex", "hooks.json"))).toBe(false);
+  },
+);
+
+it("refuses to copy a literal managed token when repairing an existing Codex registration", () => {
+  const dir = setup();
+  mkdirSync(join(dir, ".codex"));
+  const path = join(dir, ".codex", "config.toml");
+  const existing = `[mcp_servers.hindsight]\ncommand = "node"\nenv = { UPSTREAM_TEST_TOKEN = "${token}" }\n`;
+  writeFileSync(path, existing);
+  const installed = installPackagedCodex(dir);
+  expect(installed.status).toBe(1);
+  expect(installed.stderr).toContain("remove its literal MCP env value");
+  expect(installed.stderr).not.toContain(token);
+  expect(readFileSync(path, "utf8")).toBe(existing);
+  expect(existsSync(`${path}.hindsight-backup`)).toBe(false);
+});
+
+it("leaves malformed Codex TOML untouched without reporting its contents", () => {
+  const dir = setup();
+  mkdirSync(join(dir, ".codex"));
+  const path = join(dir, ".codex", "config.toml");
+  const existing = `[mcp_servers.hindsight]\nenv = { UPSTREAM_TEST_TOKEN = "${token}"\n`;
+  writeFileSync(path, existing);
+  const installed = installPackagedCodex(dir);
+  expect(installed.status).toBe(1);
+  expect(installed.stderr).toContain("invalid config.toml");
+  expect(installed.stderr).not.toContain(token);
+  expect(readFileSync(path, "utf8")).toBe(existing);
+  expect(existsSync(join(dir, ".codex", "hooks.json"))).toBe(false);
 });

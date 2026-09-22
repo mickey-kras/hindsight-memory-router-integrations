@@ -42,6 +42,12 @@ Install the committed coding-agents tarball and run its `hindsight-coding-agents
 The upstream harness hooks, plugin entrypoints, transcript readers, and background ingestion remain packaged.
 Install from this artifact; do not run upstream's `npx` installer over it.
 
+For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installing. The installer adds that variable,
+the `codex` principal's `tokenEnv` name, and optional coding-agent settings to MCP `env_vars`.
+Export the token when launching Codex; its value is never written to TOML.
+Reinstall after changing `tokenEnv`. Existing allowlist entries, timeouts, and environment overrides are preserved.
+Remove any literal managed token from the MCP `env` table before reinstalling.
+
 Only explicit managed path mappings opt a project in. Child directories inherit their mapping.
 Use the principal's write bank in mappings for writable projects; map an assigned read bank for a read-only principal.
 Unmapped paths, unknown harnesses, and missing secrets fail closed. No dynamic repository banks.

@@ -40,7 +40,9 @@ import { isatty } from "node:tty";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyEdits, modify } from "jsonc-parser";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { loadManagedConfig } from "@memory-router/shared/managed-config";
+import { ENV_KEYS } from "./core/config";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
@@ -616,28 +618,77 @@ function defaultClaudeMcp(args: string[]): boolean {
  */
 const CODEX_MCP_BLOCK_RE = /^\[mcp_servers\.hindsight(?:\.[^\]]+)?\][^\n]*\n(?:(?!\[)(?:[^\n]+\n?|\n))*/gm;
 
-/** Inline `env`, so CODEX_MCP_BLOCK_RE never has to straddle a `[mcp_servers.hindsight.env]` table. */
-const codexMcpBlock = (dist: string) =>
-  `[mcp_servers.hindsight]\ncommand = "node"\nargs = [${JSON.stringify(join(dist, "mcp-server.js"))}]\n` +
-  `env = { HINDSIGHT_MCP_HARNESS = "codex" }`;
+const CODEX_ENV_VARS = [
+  "HINDSIGHT_ROUTER_CONFIG",
+  "HINDSIGHT_CONFIG",
+  "HINDSIGHT_MCP_PROJECT_CWD",
+  "HINDSIGHT_DIAG_FILE",
+  "HINDSIGHT_LOG_FILE",
+  ...Object.values(ENV_KEYS).filter((name) => name !== ENV_KEYS.apiToken),
+];
+
+interface CodexMcpConfig {
+  env?: Record<string, string>;
+  env_vars?: string[];
+  [key: string]: unknown;
+}
+
+function parseCodexToml(text: string): { mcp_servers?: { hindsight?: CodexMcpConfig } } {
+  try {
+    return parseToml(text) as { mcp_servers?: { hindsight?: CodexMcpConfig } };
+  } catch {
+    throw new Error("codex: invalid config.toml; no host configuration changed");
+  }
+}
+
+function codexMcpBlock(dist: string, existing: string): string {
+  const parsed = parseCodexToml(existing);
+  const previous = parsed.mcp_servers?.hindsight ?? {};
+  if (typeof previous !== "object" || Array.isArray(previous)) {
+    throw new Error("codex: mcp_servers.hindsight must be a table");
+  }
+  const env = previous.env ?? {};
+  const envVars = previous.env_vars ?? [];
+  if (
+    typeof env !== "object" || Array.isArray(env) ||
+    !Object.values(env).every((value) => typeof value === "string") ||
+    !Array.isArray(envVars) || !envVars.every((name) => typeof name === "string")
+  ) {
+    throw new Error("codex: MCP env must contain strings and env_vars must contain variable names");
+  }
+  let tokenEnv: string;
+  try {
+    tokenEnv = loadManagedConfig({ ...process.env, ...env }, "codex").principal.tokenEnv;
+  } catch {
+    throw new Error("codex: set HINDSIGHT_ROUTER_CONFIG to a valid managed config with a codex principal");
+  }
+  if (Object.hasOwn(env, tokenEnv)) {
+    throw new Error(`codex: export ${tokenEnv} in the host environment and remove its literal MCP env value`);
+  }
+  return stringifyToml({
+    mcp_servers: {
+      hindsight: {
+        ...previous,
+        command: "node",
+        args: [join(dist, "mcp-server.js")],
+        env_vars: [...new Set([...envVars, ...CODEX_ENV_VARS, tokenEnv])],
+        env: { ...env, HINDSIGHT_MCP_HARNESS: "codex" },
+      },
+    },
+  }).trimEnd();
+}
 
 const codex: HarnessInstaller = {
   name: "codex",
   detect: (c) => onPath("codex") || existsSync(join(c.home, ".codex")),
   install(c) {
-    const hooksPath = join(c.home, ".codex", "hooks.json");
-    const cfg = readJson(hooksPath);
-    cfg.hooks = cfg.hooks ?? {};
-    mergeHarnessHooks(cfg.hooks, "codex", c.dist);
-    writeJson(hooksPath, cfg);
-    c.log?.(`codex: hooks merged into ${hooksPath}`);
-
+    const tomlPath = join(c.home, ".codex", "config.toml");
+    const existing = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
+    const mcpBlock = codexMcpBlock(c.dist, existing);
     // config.toml: append-only for anything that is not ours (TOML round-tripping is not worth the
     // risk). Our OWN mcp block is stripped and rewritten instead of skipped when present: appending
     // only when absent made this install-once-only, so the harness-less registration that
     // attributed every Codex write to claude-code could never be repaired by re-running install.
-    const tomlPath = join(c.home, ".codex", "config.toml");
-    const existing = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
     const toml = existing.replaceAll(CODEX_MCP_BLOCK_RE, "");
     const additions: string[] = [];
     // Codex ≥ 0.145 deprecates `codex_hooks` for `[features].hooks`; accept either as "already
@@ -651,8 +702,15 @@ const codex: HarnessInstaller = {
         additions.push("[features]\nhooks = true");
       }
     }
-    additions.push(codexMcpBlock(c.dist));
+    additions.push(mcpBlock);
     const next = `${toml.replace(/\n*$/, "\n\n")}${additions.join("\n\n")}\n`;
+    parseCodexToml(next);
+    const hooksPath = join(c.home, ".codex", "hooks.json");
+    const cfg = readJson(hooksPath);
+    cfg.hooks = cfg.hooks ?? {};
+    mergeHarnessHooks(cfg.hooks, "codex", c.dist);
+    writeJson(hooksPath, cfg);
+    c.log?.(`codex: hooks merged into ${hooksPath}`);
     if (next !== existing) {
       if (existsSync(tomlPath) && !existsSync(`${tomlPath}.hindsight-backup`)) {
         copyFileSync(tomlPath, `${tomlPath}.hindsight-backup`);
