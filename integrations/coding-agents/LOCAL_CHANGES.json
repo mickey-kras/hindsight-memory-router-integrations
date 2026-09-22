@@ -1,5 +1,5 @@
 {
-  "DEVIATIONS.md": "9843440298eb40b3e5f8f6c9933e74fc6418a9e08f5e322ad6ec9e646ae33346",
+  "DEVIATIONS.md": "7eeb07acfdd648c27cf91f75a78621afdc9d5d95cc1cb657bb57f486bc454507",
   "LICENSE": "55dd88319dfa99291d635e32df6e70ca55ee1952b323b2d4433def3940ef1594",
   "README.md": "a349d259278235bcda25c249d704405fec9a3ac663d62ef3797996385915eafe",
   "UPSTREAM.json": "270b5748104433a94b6fbe31ef1e2ece92b53b2e029074a50b279a7b30f9aa12",
@@ -19,8 +19,8 @@
   "src/core/hook.ts": "b774cd3b93bcaf653ec926f649ba2611bf3a1a4b211d4e8e0dffd7375adcbd7a",
   "src/core/host-client.ts": "27769b93915bf6e0088226598e680d5209c677e0fbcb22e00edfe7210dff93c2",
   "src/core/inject.ts": "8f9dc29b83755ca98bd6932edeb2c115b0be5c7fc7216e3d39cf6b6107d4f8ec",
-  "src/core/knowledge-tools.test.ts": "ac7b44f73cb203c1e75d84ed81ced999c94d1ec7440241f53b775e64eca65fd3",
-  "src/core/knowledge-tools.ts": "630886c92f119583a47c526e39596d6cdeeab4cea2a41f645174dd093bf1fb1e",
+  "src/core/knowledge-tools.test.ts": "cd5e48f575c0d317cb6d0d97baceedfc59e48e8a690a73fe491ee155c936779f",
+  "src/core/knowledge-tools.ts": "539e9255aa8feb650d4a73839acb2e79b5b4291265d6455ad6a09d60ddc74c71",
   "src/core/legacy.test.ts": "abd72ae1bcae22fa16d81ee614bd27bba183b55e6a6bfb11e74b8f109cff51b2",
   "src/core/missions.test.ts": "fd58c07c1231a927d30c70832328bc2562341a30da2ab7831337fa53be084522",
   "src/core/retain-hook.ts": "ad2f00bf3f0185d588b0aa1db62a678590d97fba77435bc38a62ddcf2df18a4a",
