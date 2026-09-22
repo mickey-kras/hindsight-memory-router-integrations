@@ -366,7 +366,7 @@ describe("buildKnowledgeTools", () => {
     expect(client.retain).toHaveBeenCalledWith(
       "x",
       "ingested document",
-      "notes",
+      "ingest--28a939dccbff00d72d3f023442a9d16f293da56937e299cd36513b64f6760570",
       ["project:repo-a", "source:upload", "harness:codex"],
       "document",
       { metadata: { project: "repo-a", harness: "codex" } }
@@ -374,7 +374,7 @@ describe("buildKnowledgeTools", () => {
     expect(stampFor).toHaveBeenCalledTimes(2);
   });
 
-  it("hindsight_ingest_document slugifies the title and calls client.retain(...) with the 'document' strategy", async () => {
+  it("hindsight_ingest_document hashes the exact title and retains with the document strategy", async () => {
     const client = stubClient();
     const tools = buildKnowledgeTools(client, "repo-a");
     const tool = findTool(tools, "hindsight_ingest_document");
@@ -382,15 +382,15 @@ describe("buildKnowledgeTools", () => {
     expect(client.retain).toHaveBeenCalledWith(
       "some content",
       "ingested document",
-      "my-title",
+      "ingest--c99eea44c1d30750dafd835fdc34b413f54e500cb32582c173c5d56a62631179",
       ["source:upload"],
       "document",
       {} // no harness in these tests: nothing to stamp
     );
-    expect(JSON.parse(result.content[0].text)).toEqual({ ok: true, doc_id: "my-title" });
+    expect(JSON.parse(result.content[0].text)).toEqual({ ok: true, doc_id: "ingest--c99eea44c1d30750dafd835fdc34b413f54e500cb32582c173c5d56a62631179" });
   });
 
-  it("hindsight_ingest_document collapses internal whitespace runs in the title into single hyphens", async () => {
+  it("hindsight_ingest_document includes internal whitespace runs in document identity", async () => {
     const client = stubClient();
     const tools = buildKnowledgeTools(client, "repo-a");
     const tool = findTool(tools, "hindsight_ingest_document");
@@ -398,14 +398,14 @@ describe("buildKnowledgeTools", () => {
     expect(client.retain).toHaveBeenCalledWith(
       "x",
       "ingested document",
-      "repo-core-concepts",
+      "ingest--0c1008209343cf5901fb2a2d80549009e82cc995fbdfd0eb5c406ad83b4cfb55",
       ["source:upload"],
       "document",
       {} // no harness in these tests: nothing to stamp
     );
   });
 
-  it("hindsight_ingest_document strips punctuation from the title into a safe slug", async () => {
+  it("hindsight_ingest_document includes punctuation in document identity", async () => {
     const client = stubClient();
     const tools = buildKnowledgeTools(client, "repo-a");
     const tool = findTool(tools, "hindsight_ingest_document");
@@ -413,7 +413,7 @@ describe("buildKnowledgeTools", () => {
     expect(client.retain).toHaveBeenCalledWith(
       "x",
       "ingested document",
-      "repo-component-map-v2-final",
+      "ingest--d409a199ec0672f274ffd50ab17f1fbceeb5542d931a6fdb7652d1848f0c05ee",
       ["source:upload"],
       "document",
       {} // no harness in these tests: nothing to stamp
