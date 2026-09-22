@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { sessionCacheFile } from "./session-cache";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
 
@@ -19,14 +20,14 @@ afterEach(() => {
 describe("journalPath", () => {
   it("keeps each session in its own file, beside the session cache", () => {
     expect(journalPath("zcode", "sess-1")).toBe(
-      join(tmpdir(), "hindsight-zcode", "sess-1.journal.jsonl")
+      join(dirname(sessionCacheFile("zcode", "sess-1")), "sess-1.journal.jsonl")
     );
     expect(journalPath("zcode", "sess-2")).not.toBe(journalPath("zcode", "sess-1"));
   });
 
   it("falls back to a fixed name when the host sent no session id", () => {
     expect(journalPath("zcode", undefined)).toBe(
-      join(tmpdir(), "hindsight-zcode", "no-session.journal.jsonl")
+      join(dirname(sessionCacheFile("zcode", "sess-1")), "no-session.journal.jsonl")
     );
   });
 });

@@ -21,9 +21,8 @@
  * Fail-open throughout: a journal that cannot be written or read yields no turns, which is exactly
  * the behaviour of a harness whose transcript file is missing.
  */
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { appendFileSync, constants, fstatSync, readFileSync } from "node:fs";
+import { readPrivateFile, sessionStateFile, withPrivateFile } from "./private-state";
 import type { TransportTurn } from "./chat";
 import { stripInjectedMemory } from "./transcript-util";
 
@@ -36,7 +35,7 @@ export const JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
 
 /** The journal file for one session. Same directory as the session cache and the retain cursor. */
 export function journalPath(harness: string, sessionId: string | undefined): string {
-  return join(tmpdir(), `hindsight-${harness}`, `${sessionId || "no-session"}.journal.jsonl`);
+  return sessionStateFile(harness, sessionId || "no-session", ".journal.jsonl");
 }
 
 /**
@@ -50,22 +49,19 @@ export function appendJournalTurn(path: string, turn: TransportTurn): void {
   const content = stripInjectedMemory(turn.content ?? "").trim();
   if (!content) return;
   try {
-    if (statSync(path).size >= JOURNAL_MAX_BYTES) return;
-  } catch {
-    /* no journal yet — this turn opens it */
-  }
-  const last = readJournalTranscript(path).at(-1);
-  if (last && last.role === turn.role && last.content === content) return;
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(
-      path,
-      JSON.stringify({
-        role: turn.role,
-        content,
-        timestamp: turn.timestamp ?? new Date().toISOString(),
-      }) + "\n"
-    );
+    withPrivateFile(path, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT, (fd) => {
+      if (fstatSync(fd).size >= JOURNAL_MAX_BYTES) return;
+      const last = parseJournalTranscript(readFileSync(fd, "utf8")).at(-1);
+      if (last && last.role === turn.role && last.content === content) return;
+      appendFileSync(
+        fd,
+        JSON.stringify({
+          role: turn.role,
+          content,
+          timestamp: turn.timestamp ?? new Date().toISOString(),
+        }) + "\n"
+      );
+    });
   } catch {
     /* best-effort: an unwritable journal costs the tail of one session, never an error */
   }
@@ -75,10 +71,14 @@ export function appendJournalTurn(path: string, turn: TransportTurn): void {
 export function readJournalTranscript(path: string): TransportTurn[] {
   let body: string;
   try {
-    body = readFileSync(path, "utf8");
+    body = readPrivateFile(path);
   } catch {
     return [];
   }
+  return parseJournalTranscript(body);
+}
+
+function parseJournalTranscript(body: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
   for (const line of body.split("\n")) {
     const trimmed = line.trim();
