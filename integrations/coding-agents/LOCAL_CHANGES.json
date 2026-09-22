@@ -1,5 +1,5 @@
 {
-  "DEVIATIONS.md": "7eeb07acfdd648c27cf91f75a78621afdc9d5d95cc1cb657bb57f486bc454507",
+  "DEVIATIONS.md": "12dae2e58a9535f532547f37c6df550198cfb89e34d7385f01cd0526187955f2",
   "LICENSE": "55dd88319dfa99291d635e32df6e70ca55ee1952b323b2d4433def3940ef1594",
   "README.md": "a349d259278235bcda25c249d704405fec9a3ac663d62ef3797996385915eafe",
   "UPSTREAM.json": "270b5748104433a94b6fbe31ef1e2ece92b53b2e029074a50b279a7b30f9aa12",
@@ -23,11 +23,13 @@
   "src/core/knowledge-tools.ts": "539e9255aa8feb650d4a73839acb2e79b5b4291265d6455ad6a09d60ddc74c71",
   "src/core/legacy.test.ts": "abd72ae1bcae22fa16d81ee614bd27bba183b55e6a6bfb11e74b8f109cff51b2",
   "src/core/missions.test.ts": "fd58c07c1231a927d30c70832328bc2562341a30da2ab7831337fa53be084522",
+  "src/core/private-state.test.ts": "20ada3c886ea2fdf141ce7fb2e2cb564e08e413f03c6aa604b4fc7a8b6a315b3",
+  "src/core/private-state.ts": "0c36fc2d7e3d48d3fafdeda6be29986fe9454dba93347e9ba2df4f60a4212922",
   "src/core/retain-hook.ts": "ad2f00bf3f0185d588b0aa1db62a678590d97fba77435bc38a62ddcf2df18a4a",
   "src/core/router-survey.test.ts": "8b1519c9f6fc489566633e88d45f7d803d5826c2bad5d806c00277f24834f4c0",
   "src/core/runtime.ts": "ba62e689c51b929ec1ef1ba52b320d4b98757acb897bad332ed160e5367365b5",
   "src/core/seed.ts": "4ca77f4f6edf091e46058fda0a4b3769265558e49a3892950fab96cbcb679f68",
-  "src/core/session-cache.ts": "292c8074d6b9e87a5cacd9bf5b6dab3f4bc77401df5d9215a1046e1228a9db1d",
+  "src/core/session-cache.ts": "cdaf09ab45fe8b7c7600958525f1522d022693f058cd607761ce8a499f3deeea",
   "src/core/session-start.ts": "3b4c69930915ef8ca1fa4fe5ffa56f32097864c44d3e5428c48e7ced93d0e40a",
   "src/core/survey.test.ts": "71f998965baa840b2e1cdab1fa350349a7127c01ad11c6198fc7b4ae58c84d37",
   "src/core/survey.ts": "b042c0140deb1733752a916ac0d95e81ff93d6465afce8d68e12685a420618b1",
@@ -36,6 +38,8 @@
   "src/core/transcript-dcode.ts": "9f63d0ea54940443809bfe33af35872d5a0834b893d6d80481872d0edebcd3f4",
   "src/core/transcript-dsh.test.ts": "d84035c46cf3f553f42d5704a573a9b0a2d1dc83938e45e60b66565f8ba45fdd",
   "src/core/transcript-util.ts": "c50f2bc97fb7c425fdb95243456277e955fdc55b66378d6d27e2d92d0419f3e8",
+  "src/core/turn-journal.test.ts": "a6c92722138b95d64d001388373b94af5cbf712aa54fea8d4401cf80e6a19504",
+  "src/core/turn-journal.ts": "df3a12ea2480194be6e4edc6175e44be0b921bbbabc4809715b9559b5269f30a",
   "src/core/uuid.ts": "4289ae1c6d45166d925c18b03a87e5cbb616755e5ee9e6122a1d7b46b5584093",
   "src/dcode-plugin.test.ts": "1e668bbfe5bcf2b1034115d722b2f6ca5d144fb078de66f994fe84549659bdc2",
   "src/deepen.ts": "9df1f4d4ce178e8ce102b98b55371f5190a9778e5d2ff54f84cbb036a12913d0",
@@ -53,5 +57,5 @@
   "src/mcp-server.ts": "4cd0d83135702420a6c9e37df0553131bb67cfdeb7f861bee02bdb87881ca046",
   "src/status.ts": "3a9fbc0d4421d067dc03e94ef777c21a9d3766a8ef2da85fa1081114e950e4e6",
   "tsconfig.json": "259ae1a998965db4a5dc00bc729d6c0713885df01e223d14fc783fa04f7b447f",
-  "vitest.config.ts": "aef4737eca3085361feb9e471627aec069e536690a739ee05226ef70ccdbb2a2"
+  "vitest.config.ts": "8435e1cbc4cc78996e6bf80ce86ae85437d9aa855669e41f061102d8a08b1623"
 }

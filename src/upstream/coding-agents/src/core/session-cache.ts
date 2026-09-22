@@ -1,6 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { readPrivateFile, sessionStateFile, writePrivateFileAtomic } from "./private-state";
 import type { PageRef } from "./knowledge-injection";
 import type { RetainCursor, RetainCursorStore } from "./retain-cursor";
 import type { UsageCursorStore } from "./usage";
@@ -17,38 +15,21 @@ export interface SessionCache {
 }
 
 export function sessionCacheFile(harness: string, sessionId: string): string {
-  return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.json`);
+  return sessionStateFile(harness, sessionId, ".json");
 }
 
 export function readSessionCache(cacheFile: string): SessionCache {
   try {
-    const cached = JSON.parse(readFileSync(cacheFile, "utf8")) as SessionCache;
+    const cached = JSON.parse(readPrivateFile(cacheFile)) as SessionCache;
     return { turns: cached.turns, deferInitialReflect: cached.deferInitialReflect, reflectAnswer: cached.reflectAnswer === undefined ? undefined : "" };
   } catch {
     return {};
   }
 }
 
-function writeFileAtomic(path: string, body: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  // The temp name is per-process, so two writers cannot collide on it.
-  const tmp = `${path}.${process.pid}.tmp`;
-  try {
-    writeFileSync(tmp, body);
-    renameSync(tmp, path);
-  } catch (e) {
-    try {
-      rmSync(tmp, { force: true });
-    } catch {
-      /* nothing further to do */
-    }
-    throw e;
-  }
-}
-
 export function writeSessionCache(cacheFile: string, cache: SessionCache): void {
   try {
-    writeFileAtomic(cacheFile, JSON.stringify({ turns: cache.turns, deferInitialReflect: cache.deferInitialReflect, reflectAnswer: cache.reflectAnswer === undefined ? undefined : "" }));
+    writePrivateFileAtomic(cacheFile, JSON.stringify({ turns: cache.turns, deferInitialReflect: cache.deferInitialReflect, reflectAnswer: cache.reflectAnswer === undefined ? undefined : "" }));
   } catch {
     /* session state is best-effort */
   }
@@ -56,7 +37,7 @@ export function writeSessionCache(cacheFile: string, cache: SessionCache): void 
 
 /** The session root's own file, deliberately NOT the shared session cache — see sessionRootDir. */
 function sessionRootFile(harness: string, sessionId: string): string {
-  return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.root`);
+  return sessionStateFile(harness, sessionId, ".root");
 }
 
 /**
@@ -88,13 +69,13 @@ export function sessionRootDir(
   if (!sessionId || !cwd) return cwd;
   const file = sessionRootFile(harness, sessionId);
   try {
-    const recorded = readFileSync(file, "utf8").trim();
+    const recorded = readPrivateFile(file).trim();
     if (recorded) return recorded;
   } catch {
     /* not recorded yet — this hook is the session's first */
   }
   try {
-    writeFileAtomic(file, cwd);
+    writePrivateFileAtomic(file, cwd);
   } catch {
     /* best-effort: an unrecorded root costs stability, never data */
   }
@@ -107,11 +88,11 @@ export function sessionRootDir(
  */
 export function fileUsageCursorStore(harness: string): UsageCursorStore {
   const file = (sessionId: string) =>
-    join(tmpdir(), `hindsight-${harness}`, `${sessionId}.usage.json`);
+    sessionStateFile(harness, sessionId, ".usage.json");
   return {
     read: (sessionId) => {
       try {
-        const turns = (JSON.parse(readFileSync(file(sessionId), "utf8")) as { turns?: unknown })
+        const turns = (JSON.parse(readPrivateFile(file(sessionId))) as { turns?: unknown })
           .turns;
         return typeof turns === "number" ? turns : undefined;
       } catch {
@@ -120,7 +101,7 @@ export function fileUsageCursorStore(harness: string): UsageCursorStore {
     },
     write: (sessionId, turns) => {
       try {
-        writeFileAtomic(file(sessionId), JSON.stringify({ turns }));
+        writePrivateFileAtomic(file(sessionId), JSON.stringify({ turns }));
       } catch {
         /* best-effort */
       }
@@ -130,7 +111,7 @@ export function fileUsageCursorStore(harness: string): UsageCursorStore {
 
 /** The cursor's own file, deliberately NOT the shared session cache — see fileCursorStore. */
 function cursorFile(harness: string, sessionId: string): string {
-  return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.retain.json`);
+  return sessionStateFile(harness, sessionId, ".retain.json");
 }
 
 /**
@@ -152,14 +133,14 @@ export function fileCursorStore(harness: string): RetainCursorStore {
   return {
     read: (sessionId) => {
       try {
-        return JSON.parse(readFileSync(cursorFile(harness, sessionId), "utf8")) as RetainCursor;
+        return JSON.parse(readPrivateFile(cursorFile(harness, sessionId))) as RetainCursor;
       } catch {
         return undefined;
       }
     },
     write: (sessionId, cursor) => {
       try {
-        writeFileAtomic(cursorFile(harness, sessionId), JSON.stringify(cursor));
+        writePrivateFileAtomic(cursorFile(harness, sessionId), JSON.stringify(cursor));
       } catch {
         /* best-effort: a cursor that cannot be written costs a replace, never data */
       }
