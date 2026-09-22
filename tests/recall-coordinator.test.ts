@@ -82,7 +82,7 @@ describe("RecallCoordinator", () => {
           { text: "unique", score: 0.5 },
         ],
       },
-      dev: { results: [{ text: "  Same   Memory ", score: 0.95 }] },
+      dev: { results: [{ text: "same memory", score: 0.95 }] },
     });
     const coordinator = new RecallCoordinator();
     const result = await coordinator.recall(client, {
@@ -311,3 +311,48 @@ describe("RecallCoordinator", () => {
     expect(result.results).toEqual([]);
   });
 });
+
+it("keeps case-sensitive content distinct and ranks the best exact duplicate before trimming", async () => {
+  const coordinator = new RecallCoordinator();
+  const client = fakeClient({
+    first: {
+      results: [
+        { text: "Export API_KEY", score: 0.1 },
+        { text: "unrelated", score: 0.5 },
+      ],
+    },
+    second: {
+      results: [
+        { text: "Export API_KEY", score: 0.9 },
+        { text: "Export api_key", score: 0.8 },
+      ],
+    },
+  });
+  const request = { query: "q", banks: ["first", "second"], timeoutMs: 1000 };
+  expect((await coordinator.recall(client, request)).results).toEqual([
+    { text: "Export API_KEY", score: 0.9 },
+    { text: "Export api_key", score: 0.8 },
+    { text: "unrelated", score: 0.5 },
+  ]);
+  expect((await coordinator.recall(client, { ...request, maxTokens: 25 })).results).toEqual([
+    { text: "Export API_KEY", score: 0.9 },
+  ]);
+});
+
+it.each(["document_id", "type", "unused_metadata"])(
+  "budgets emitted %s metadata before including a recall result",
+  async (field) => {
+    const result = await new RecallCoordinator().recall(
+      fakeClient({
+        main: {
+          results: [
+            { text: "test", [field]: "x".repeat(40_000), score: 1 },
+            { text: "safe", score: 0.5 },
+          ],
+        },
+      }),
+      { query: "q", banks: ["main"], timeoutMs: 1000, maxTokens: 100 },
+    );
+    expect(result.results).toEqual([{ text: "safe", score: 0.5 }]);
+  },
+);

@@ -105,6 +105,7 @@ jobs:
           mcp_repeat="$(npm pack ./src/mcp --pack-destination "$RUNNER_TEMP/repack" --json | jq -r '.[0].filename')"
           test "$mcp_artifact" = "$mcp_repeat"
           cmp "packages/$mcp_artifact" "$RUNNER_TEMP/repack/$mcp_repeat"
+          node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
 
       - name: Install Nix
@@ -210,6 +211,7 @@ jobs:
           npm pack --pack-destination packages --silent
           (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
           npm pack ./src/mcp --pack-destination packages --silent
+          node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
       - name: Resolve tested combination
         id: pins

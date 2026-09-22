@@ -39,8 +39,10 @@ import { homedir, tmpdir } from "node:os";
 import { isatty } from "node:tty";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { applyEdits, modify } from "jsonc-parser";
-import { parse as parseToml } from "smol-toml";
+import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { loadManagedConfig } from "@memory-router/shared/managed-config";
+import { ENV_KEYS } from "./core/config";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
@@ -122,17 +124,11 @@ function readJson(path: string): Record<string, any> {
  * to understand must never be overwritten with just our own key: the caller aborts instead.
  */
 export function parseJsonc(text: string): Record<string, any> | null {
-  const stripped = text
-    // Blank out comments, preserving anything inside string literals.
-    .replaceAll(/"(?:\\.|[^"\\])*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
-    // Trailing commas are legal in JSONC, not in JSON.
-    .replaceAll(/,(\s*[}\]])/g, "$1");
-  try {
-    const v = JSON.parse(stripped);
-    return v && typeof v === "object" ? (v as Record<string, any>) : null;
-  } catch {
-    return null;
-  }
+  const errors: ParseError[] = [];
+  const value: unknown = parse(text, errors, { allowTrailingComma: true });
+  return errors.length === 0 && value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, any>
+    : null;
 }
 
 function writeJson(path: string, value: unknown): void {
@@ -614,30 +610,91 @@ function defaultClaudeMcp(args: string[]): boolean {
  * Our `[mcp_servers.hindsight]` table (plus any sub-table of it): the header line through to the
  * next table header or EOF. Shared by install — which REPLACES the block — and uninstall.
  */
-const CODEX_MCP_BLOCK_RE = /^\[mcp_servers\.hindsight(?:\.[^\]]+)?\][^\n]*\n(?:(?!\[)(?:[^\n]+\n?|\n))*/gm;
+const CODEX_MCP_BLOCK_RE = /^\[\[?mcp_servers\.hindsight(?:\.[^\]]+)?\]\]?[^\n]*\n(?:(?!\[)(?:[^\n]+\n?|\n))*/gm;
 
-/** Inline `env`, so CODEX_MCP_BLOCK_RE never has to straddle a `[mcp_servers.hindsight.env]` table. */
-const codexMcpBlock = (dist: string) =>
-  `[mcp_servers.hindsight]\ncommand = "node"\nargs = [${JSON.stringify(join(dist, "mcp-server.js"))}]\n` +
-  `env = { HINDSIGHT_MCP_HARNESS = "codex" }`;
+const CODEX_ENV_VARS = [
+  "HINDSIGHT_ROUTER_CONFIG",
+  "HINDSIGHT_CONFIG",
+  "HINDSIGHT_MCP_PROJECT_CWD",
+  "HINDSIGHT_DIAG_FILE",
+  "HINDSIGHT_LOG_FILE",
+  ...Object.values(ENV_KEYS).filter((name) => name !== ENV_KEYS.apiToken),
+];
+
+type CodexEnvVar = string | { name: string; source?: "local" | "remote" };
+
+function isCodexEnvVar(value: unknown): value is CodexEnvVar {
+  if (typeof value === "string") return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return "name" in value && typeof value.name === "string" &&
+    (!("source" in value) || value.source === "local" || value.source === "remote") &&
+    Object.keys(value).every((key) => key === "name" || key === "source");
+}
+
+interface CodexMcpConfig {
+  env?: Record<string, string>;
+  env_vars?: CodexEnvVar[];
+  [key: string]: unknown;
+}
+
+function parseCodexToml(text: string): { mcp_servers?: { hindsight?: CodexMcpConfig } } {
+  try {
+    return parseToml(text) as { mcp_servers?: { hindsight?: CodexMcpConfig } };
+  } catch {
+    throw new Error("codex: invalid config.toml; no host configuration changed");
+  }
+}
+
+function codexMcpBlock(dist: string, existing: string): string {
+  const parsed = parseCodexToml(existing);
+  const previous = parsed.mcp_servers?.hindsight ?? {};
+  if (typeof previous !== "object" || Array.isArray(previous)) {
+    throw new Error("codex: mcp_servers.hindsight must be a table");
+  }
+  const env = previous.env ?? {};
+  const envVars = previous.env_vars ?? [];
+  if (
+    typeof env !== "object" || Array.isArray(env) ||
+    !Object.values(env).every((value) => typeof value === "string") ||
+    !Array.isArray(envVars) || !envVars.every(isCodexEnvVar)
+  ) {
+    throw new Error("codex: MCP env must contain strings and env_vars must contain names or { name, source } entries");
+  }
+  let tokenEnv: string;
+  try {
+    tokenEnv = loadManagedConfig({ ...process.env, ...env }, "codex").principal.tokenEnv;
+  } catch {
+    throw new Error("codex: set HINDSIGHT_ROUTER_CONFIG to a valid managed config with a codex principal");
+  }
+  if (Object.hasOwn(env, tokenEnv)) {
+    throw new Error(`codex: export ${tokenEnv} in the host environment and remove its literal MCP env value`);
+  }
+  const inheritedNames = new Set(envVars.map((entry) => typeof entry === "string" ? entry : entry.name));
+  const requiredNames = [...new Set([...CODEX_ENV_VARS, tokenEnv])];
+  return stringifyToml({
+    mcp_servers: {
+      hindsight: {
+        ...previous,
+        command: "node",
+        args: [join(dist, "mcp-server.js")],
+        env_vars: [...envVars, ...requiredNames.filter((name) => !inheritedNames.has(name))],
+        env: { ...env, HINDSIGHT_MCP_HARNESS: "codex" },
+      },
+    },
+  }).trimEnd();
+}
 
 const codex: HarnessInstaller = {
   name: "codex",
   detect: (c) => onPath("codex") || existsSync(join(c.home, ".codex")),
   install(c) {
-    const hooksPath = join(c.home, ".codex", "hooks.json");
-    const cfg = readJson(hooksPath);
-    cfg.hooks = cfg.hooks ?? {};
-    mergeHarnessHooks(cfg.hooks, "codex", c.dist);
-    writeJson(hooksPath, cfg);
-    c.log?.(`codex: hooks merged into ${hooksPath}`);
-
+    const tomlPath = join(c.home, ".codex", "config.toml");
+    const existing = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
+    const mcpBlock = codexMcpBlock(c.dist, existing);
     // config.toml: append-only for anything that is not ours (TOML round-tripping is not worth the
     // risk). Our OWN mcp block is stripped and rewritten instead of skipped when present: appending
     // only when absent made this install-once-only, so the harness-less registration that
     // attributed every Codex write to claude-code could never be repaired by re-running install.
-    const tomlPath = join(c.home, ".codex", "config.toml");
-    const existing = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
     const toml = existing.replaceAll(CODEX_MCP_BLOCK_RE, "");
     const additions: string[] = [];
     // Codex ≥ 0.145 deprecates `codex_hooks` for `[features].hooks`; accept either as "already
@@ -651,8 +708,15 @@ const codex: HarnessInstaller = {
         additions.push("[features]\nhooks = true");
       }
     }
-    additions.push(codexMcpBlock(c.dist));
+    additions.push(mcpBlock);
     const next = `${toml.replace(/\n*$/, "\n\n")}${additions.join("\n\n")}\n`;
+    parseCodexToml(next);
+    const hooksPath = join(c.home, ".codex", "hooks.json");
+    const cfg = readJson(hooksPath);
+    cfg.hooks = cfg.hooks ?? {};
+    mergeHarnessHooks(cfg.hooks, "codex", c.dist);
+    writeJson(hooksPath, cfg);
+    c.log?.(`codex: hooks merged into ${hooksPath}`);
     if (next !== existing) {
       if (existsSync(tomlPath) && !existsSync(`${tomlPath}.hindsight-backup`)) {
         copyFileSync(tomlPath, `${tomlPath}.hindsight-backup`);
@@ -1755,7 +1819,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
  */
 function importConversations(harness: string, ctx: InstallCtx): void {
   const repo = process.cwd();
-  const found = importLocalHistory(harness, repo);
+  const found = importLocalHistory(harness, repo, ctx.home);
   if (!found.supported) {
     ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
     return;
@@ -1779,13 +1843,13 @@ function importConversations(harness: string, ctx: InstallCtx): void {
       `this runs extraction and may take a while`
   );
   try {
-    execFileSync("node", [join(ctx.dist, "deepen.js"), "--repo", repo, "--conversations", file], {
+    execFileSync("node", [join(ctx.dist, "deepen.js"), "--harness", harness, "--repo", repo, "--conversations", file], {
       stdio: "inherit",
     });
   } catch {
     // The wiring is already in place; a failed backfill must not make `install` look failed.
     ctx.log?.(`${harness}: conversation import did not finish — re-run it any time with:`);
-    ctx.log?.(`  node "${join(ctx.dist, "deepen.js")}" --repo "${repo}" --conversations "${file}"`);
+    ctx.log?.(`  node "${join(ctx.dist, "deepen.js")}" --harness "${harness}" --repo "${repo}" --conversations "${file}"`);
   }
 }
 

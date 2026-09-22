@@ -1,5 +1,6 @@
 import { createKnowledgeTools } from "@vectorize-io/hindsight-agent-sdk";
 import { AccessDeniedError, requireBank, visibleBanks } from "./bank-access.js";
+import { ingestDocumentId } from "./ingest-document-id.js";
 import type { RouterTransport } from "./router-transport.js";
 
 const DEFAULT_PAGE_MAX_TOKENS = 4096;
@@ -82,7 +83,7 @@ const TOOL_SPECS: Record<string, ToolSpec> = {
           items: [
             {
               content: params.content,
-              document_id: params.title.toLowerCase().replaceAll(" ", "-"),
+              document_id: ingestDocumentId(params.title),
             },
           ],
         },

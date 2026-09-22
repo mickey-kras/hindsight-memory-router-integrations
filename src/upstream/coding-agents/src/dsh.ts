@@ -160,8 +160,8 @@ function workspaceFor(root: string): Workspace | undefined {
 
   // One shared builder for every long-lived host (core/host-client.ts): the global switch, the
   // per-bank opt-out and `optInOnly` all land in `cfg.disabled`.
-  const { cfg, bankId, client } = resolveHostMemory(HARNESS, root);
-  if (cfg.disabled) {
+  const { disabled, cfg, bankId, client } = resolveHostMemory(HARNESS, root);
+  if (disabled) {
     workspaces.set(root, null); // inert: same agent, no memory (baseline parity)
     return undefined;
   }

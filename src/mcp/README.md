@@ -38,6 +38,8 @@ Config file:
   "recallMaxTokens": 4096,
   "retainQueueFlushIntervalMs": 30000,
   "queueMaxAgeMs": -1,
+  "queueMaxItems": 1000,
+  "queueMaxBytes": 16777216,
   "queueDir": "/absolute/path/for/retain-queue",
   "principals": {
     "my-agent": {
@@ -58,10 +60,16 @@ Rules (all fail closed at startup):
 - `writeBank` may be omitted for a read-only principal (retain/write tools are then not exposed).
 - `recallTimeoutMs`, `recallMaxTokens`, `retainQueueFlushIntervalMs` must be positive integers.
 - `queueMaxAgeMs` must be -1 (default, keep queued retains forever) or a positive integer.
+- `queueMaxItems` (1,000) and `queueMaxBytes` (16 MiB) are positive integer limits shared across every principal in `queueDir`. Each item reserves 128 additional bytes for replay metadata. Full queues reject new retains with `RetainQueueCapacityError`; no success/queued result is returned.
+- Queue writes and replay mutations use OS-owned file locks through `fs-native-extensions`; paused writers keep ownership, and process termination releases it automatically. All writers sharing `queueDir` must use matching limits and this package version on a local filesystem with OS file-lock support. Do not remove the two `.retain-*.lock` files while writers are running. Replay is serialized per directory; enqueue uses a separate lock. Increase the byte limit to replay a legacy backlog larger than the configured limit.
 - `queueDir` must be absolute; defaults to `~/.hindsight-memory-router/retain-queue`. Queued retains are
   plaintext JSONL (mode 0600) and expire only when `queueMaxAgeMs` is set; use full-disk encryption for
   at-rest confidentiality.
   An item whose replay fails 5 times is abandoned: dropped from the queue and logged loudly to stderr.
+
+Upgrade: older queue entries may use `documentId: "conversation"` for requests that omitted an ID.
+Existing IDs are replayed unchanged. Before restarting, remove that field only from entries confirmed
+to have been submitted without an ID; preserve caller-supplied IDs.
 
 ## Run
 

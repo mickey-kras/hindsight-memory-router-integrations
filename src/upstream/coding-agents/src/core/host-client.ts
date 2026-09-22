@@ -20,11 +20,10 @@ import { HindsightClient } from "./hindsight";
 
 /** A host's resolved memory: the config for THIS workspace, the bank it resolved to, and a client
  *  bound to both. */
-export interface HostMemory {
+export type HostMemory = {
   cfg: Config;
   bankId: string;
-  client: HindsightClient;
-}
+} & ({ disabled: true; client: null } | { disabled: false; client: HindsightClient });
 
 /** Resolve config for one workspace: env + file + `harnesses.<name>`, then the `banks.<id>`
  *  section for the bank that directory maps to, with `optInOnly` enforced. */
@@ -44,17 +43,11 @@ export function resolveHostConfig(
   return applyBankConfig(cfg0, bankId, directory);
 }
 
-/**
- * Resolve config for `directory` and build the client for it.
- *
- * Callers still decide what a disabled config means for them (skip registration, cache a null
- * workspace, expose no tools) — `cfg.disabled` on the returned config already accounts for both
- * the global switch and the per-bank opt-out. Building a client has no side effect: nothing is
- * sent until a caller asks for something.
- */
 export function resolveHostMemory(harness: string, directory: string): HostMemory {
   const { cfg, bankId } = resolveHostConfig(harness, directory);
+  if (cfg.disabled) return { disabled: true, cfg, bankId, client: null };
   return {
+    disabled: false,
     cfg,
     bankId,
     client: new HindsightClient({

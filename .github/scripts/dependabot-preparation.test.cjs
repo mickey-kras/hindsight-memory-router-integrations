@@ -8,9 +8,11 @@ const {
   CODING,
   PROVENANCE,
   INPUTS,
+  MANIFESTS,
   hash,
   generatedPaths,
   packagePaths,
+  validateChecksums,
   validateManifest,
   updateProvenance,
 } = require("./dependency-files.cjs");
@@ -62,6 +64,7 @@ const manifest = {
   devDependencies: { example: "1.0.0", "@types/node": "22.20.0" },
 };
 const coding = { ...manifest, name: "@owner/coding" };
+const mcp = { ...manifest, name: "@owner/mcp" };
 const provenance = { "package.json": "old", "npm-shrinkwrap.json": "old", "src/index.ts": "preserved" };
 const commit = { sha: head, author: bot, commit: { verification: { verified: true } } };
 const context = { repo: { owner: "owner", repo: "repo" }, ref: "refs/heads/main", sha: base };
@@ -92,6 +95,7 @@ function harness() {
   };
   const contents = {
     "package.json": JSON.stringify(manifest),
+    "src/mcp/package.json": JSON.stringify(mcp),
     [`${CODING}/package.json`]: JSON.stringify(coding),
     [`${CODING}/npm-shrinkwrap.json`]: "{}",
     [PROVENANCE]: JSON.stringify(provenance),
@@ -139,7 +143,7 @@ function harness() {
   const artifacts = {
     [PROVENANCE]: JSON.stringify(updateProvenance(provenance, contents[`${CODING}/package.json`], "{}")),
   };
-  artifacts.PACKAGE_SHA256 = packagePaths(manifest, coding)
+  artifacts.PACKAGE_SHA256 = packagePaths(manifest, coding, mcp)
     .sort()
     .map((path, index) => `${String(index + 1).repeat(64)}  ${path}\n`)
     .join("");
@@ -691,3 +695,51 @@ for (const [name, mutate] of [
     assert.equal(h.state.published.length, 0);
   });
 }
+
+test("MCP-only dependency updates dispatch preparation and retain all three checksum pins", async () => {
+  const h = harness();
+  h.state.files = ["src/mcp/package.json", "src/mcp/npm-shrinkwrap.json"].map((filename) => ({
+    filename,
+    status: "modified",
+  }));
+  assert.equal(await requestPreparation(h.github, context, pull, { info() {} }), true);
+  assert.equal(h.state.dispatches.length, 1);
+  await inspect(h.github, context, 1, head);
+  assert.equal(await publish(h.github, context, h.payload, "unused", h.metadata), generated);
+  const checksums = h.payload.files.find((file) => file.path === "PACKAGE_SHA256");
+  assert.match(Buffer.from(checksums.contents, "base64").toString(), /owner-mcp-1\.0\.0\.tgz/);
+});
+
+test("checksum inventory rejects missing, duplicate, substituted, and malformed package pins", async () => {
+  const paths = packagePaths(manifest, coding, mcp);
+  const valid = paths.map((path) => `${"a".repeat(64)}  ${path}\n`).join("");
+  assert.doesNotThrow(() => validateChecksums(valid, paths));
+  for (const invalid of [
+    `${valid.split("\n").slice(0, 2).join("\n")}\n`,
+    valid.replace(paths[2], paths[1]),
+    valid.replace(paths[2], "packages/owner-untrusted-1.0.0.tgz"),
+    valid.replace(/^a/, "z"),
+  ]) {
+    const h = harness();
+    h.payload.files.find((file) => file.path === "PACKAGE_SHA256").contents = Buffer.from(invalid).toString("base64");
+    await assert.rejects(publish(h.github, context, h.payload, "unused", h.metadata), /checksum/);
+    assert.equal(h.state.published.length, 0);
+  }
+  assert.throws(() => packagePaths(manifest, coding), /inventory/);
+});
+
+test("MCP dependency preparation still rejects script changes", async () => {
+  const h = harness();
+  const original = h.github.rest.repos.getContent;
+  h.github.rest.repos.getContent = async (args) =>
+    args.path === MANIFESTS[2] && args.ref === head
+      ? {
+          data: {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(JSON.stringify({ ...mcp, scripts: { build: "untrusted" } })).toString("base64"),
+          },
+        }
+      : original(args);
+  await assert.rejects(inspect(h.github, context, 1, head), /Non-dependency/);
+});

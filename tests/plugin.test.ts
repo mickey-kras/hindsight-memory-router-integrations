@@ -1,4 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import * as fs from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,13 +9,20 @@ import plugin, { buildRoutingStack, PLUGIN_ID, type RoutingStack, registerWithSt
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RecallAuthorizationError, RecallCoordinator } from "../src/shared/recall-coordinator.js";
-import { RetainAuthorizationError, RetainCoordinator } from "../src/shared/retain-coordinator.js";
+import {
+  RetainAuthorizationError,
+  RetainCoordinator,
+  RetainQueueCapacityError,
+} from "../src/shared/retain-coordinator.js";
 import type {
   MoltbotPluginAPI,
   PluginHookAgentContext,
   PluginHookEvent,
   PluginToolContext,
 } from "../src/upstream/src/types.js";
+
+vi.mock("node:fs", async (importOriginal) => ({ ...(await importOriginal<typeof import("node:fs")>()) }));
+vi.mock("node:os", async (importOriginal) => ({ ...(await importOriginal<typeof import("node:os")>()) }));
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
 const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
@@ -144,6 +153,43 @@ function instrumentedStack(
 }
 
 describe("plugin wiring", () => {
+  it("logs an explicit capacity failure when auto-retain cannot be queued", async () => {
+    const api = makeApi(queueDir);
+    const stack = instrumentedStack(queueDir, { constructed: [], recalls: [], retains: [] });
+    vi.spyOn(stack.retain, "retain").mockRejectedValue(new RetainQueueCapacityError("items"));
+    registerWithStack(api, stack);
+    await api.handlers.get("agent_end")?.(
+      { messages: [{ role: "user", content: "remember this" }] },
+      {
+        agentId: "main",
+        sessionKey: "normal:capacity",
+      },
+    );
+    expect(api.logger.error).toHaveBeenCalledWith(
+      "retain failed: retain queue items capacity exceeded; retain was not queued",
+    );
+  });
+
+  it("enforces configured aggregate queue limits through the OpenClaw stack", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 429 }));
+    try {
+      const stack = buildRoutingStack(
+        { ...pluginConfig(queueDir), retainQueueMaxItems: 1, retainQueueMaxBytes: 2000 },
+        {
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      );
+      await stack.retain.retain("main", { content: "accepted" });
+      await expect(stack.retain.retain("backend", { content: "overflow" })).rejects.toMatchObject({
+        name: "RetainQueueCapacityError",
+        limit: "items",
+      });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("rejects ambiguous principal maps and invalid numeric limits", () => {
     const config = pluginConfig(queueDir);
     const logger = { warn: vi.fn(), error: vi.fn() };
@@ -162,7 +208,53 @@ describe("plugin wiring", () => {
     queueDir = mkdtempSync(join(tmpdir(), "plugin-test-"));
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(queueDir, { recursive: true, force: true });
+  });
+
+  it("creates a private default queue on first install and replays the first outage write", async () => {
+    vi.spyOn(os, "homedir").mockReturnValue(queueDir);
+    const config = { ...pluginConfig(queueDir), queueDir: undefined };
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    const stack = buildRoutingStack(config, logger);
+    const client = stack.clients.forAgent(stack.credentials.resolve("main"));
+    vi.spyOn(client, "retain").mockRejectedValue(Object.assign(new Error("unavailable"), { statusCode: 503 }));
+
+    await expect(stack.retain.retain("main", { content: "first transcript" })).resolves.toEqual({
+      queued: true,
+      bank: "main",
+    });
+
+    const dataDir = join(queueDir, ".openclaw", "data");
+    const defaultQueueDir = join(dataDir, "hindsight-retain-queue");
+    const queueFile = join(defaultQueueDir, "hindsight-retain-queue.main.jsonl");
+    expect(JSON.parse(readFileSync(queueFile, "utf8")).content).toBe("first transcript");
+    if (process.platform !== "win32") {
+      for (const directory of [join(queueDir, ".openclaw"), dataDir, defaultQueueDir]) {
+        expect(statSync(directory).mode & 0o777).toBe(0o700);
+      }
+      expect(statSync(queueFile).mode & 0o777).toBe(0o600);
+    }
+
+    const restarted = buildRoutingStack(config, logger);
+    const replayClient = restarted.clients.forAgent(restarted.credentials.resolve("main"));
+    const replay = vi.spyOn(replayClient, "retain").mockResolvedValue({});
+    await restarted.retain.flushQueues();
+    expect(replay).toHaveBeenCalledWith("main", "first transcript", expect.any(Object));
+    expect(existsSync(queueFile)).toBe(false);
+  });
+
+  it("fails plugin startup when the queue directory cannot be created", () => {
+    const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    vi.spyOn(fs, "mkdirSync").mockImplementation(() => {
+      throw denied;
+    });
+    const api = makeApi(join(queueDir, "unwritable", "queue"));
+
+    expect(() => plugin(api)).toThrow(denied);
+    expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("plugin disabled:"));
+    expect(api.handlers.size).toBe(0);
+    expect(api.services).toHaveLength(0);
   });
 
   it("registers hooks, service, and knowledge tools", () => {
@@ -287,6 +379,102 @@ describe("plugin wiring", () => {
     expect(sink.retains).toHaveLength(2);
   });
 
+  function retainIdentityFixture() {
+    const api = makeApi(queueDir);
+    const sink = {
+      constructed: [] as Array<{ apiKey: string; agentHeader: string }>,
+      recalls: [] as Array<{ bank: string; query: string }>,
+      retains: [] as Array<{ bank: string; content: string }>,
+    };
+    const stack = instrumentedStack(queueDir, sink);
+    stack.credentials = new PrincipalCredentialResolver({
+      principals: {
+        main: { token: TOKEN_MAIN, writeBank: "main" },
+        backend: { token: TOKEN_BACKEND, writeBank: "main" },
+        a: { token: TOKEN_MAIN, writeBank: "main" },
+        "a:b": { token: TOKEN_BACKEND, writeBank: "main" },
+      },
+    });
+    stack.retain = new RetainCoordinator({
+      credentials: stack.credentials,
+      clients: stack.clients,
+      queueDir,
+      logger: api.logger,
+    });
+    const retain = vi.spyOn(stack.retain, "retain");
+    registerWithStack(api, stack);
+    const handler = api.handlers.get("agent_end");
+    const sessionEnd = api.handlers.get("session_end");
+    if (!handler || !sessionEnd) throw new Error("retain hooks not registered");
+    return {
+      retain,
+      sink,
+      event: { messages: [{ role: "user", content: "remember this exact turn" }] },
+      handler,
+      sessionEnd,
+    };
+  }
+
+  it("retains a revisited session in a new document after digest-state eviction", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    const original = { agentId: "main", sessionKey: "original" };
+    await handler(event, original);
+    for (let index = 0; index < 1000; index++) {
+      await handler(event, { agentId: "main", sessionKey: `other-${index}` });
+    }
+    await handler(event, original);
+
+    const documentIds = retain.mock.calls.map(([, request]) => request.documentId);
+    expect(documentIds).toHaveLength(1002);
+    expect(new Set(documentIds).size).toBe(1002);
+  });
+
+  it.each([
+    ["room/a", "room_a"],
+    ["room__a", "room_a"],
+    [" room ", "room"],
+    ["", "session"],
+    [undefined, "session"],
+    [undefined, ""],
+  ])("keeps exact session identities %j and %j independent", async (firstSession, secondSession) => {
+    const { handler, event, retain } = retainIdentityFixture();
+    await handler(event, { agentId: "main", sessionKey: firstSession });
+    await handler(event, { agentId: "main", sessionKey: secondSession });
+
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
+  });
+
+  it("keeps documents independent for principals writing the same session to a shared bank", async () => {
+    const { handler, event, retain, sink } = retainIdentityFixture();
+    await handler(event, { agentId: "main", sessionKey: "shared" });
+    await handler(event, { agentId: "backend", sessionKey: "shared" });
+
+    expect(sink.retains.map(({ bank }) => bank)).toEqual(["main", "main"]);
+    expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
+  });
+
+  it("does not suppress distinct principal/session tuples containing colons", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    await handler(event, { agentId: "a", sessionKey: "b:c" });
+    await handler(event, { agentId: "a:b", sessionKey: "c" });
+    await handler(event, { agentId: "a", sessionKey: "b:c" });
+    await handler(event, { agentId: "a:b", sessionKey: "c" });
+
+    expect(retain.mock.calls.map(([principal]) => principal)).toEqual(["a", "a:b"]);
+  });
+
+  it("keeps new session documents independent after session_end clears deduplication state", async () => {
+    const { sessionEnd, handler, event, retain } = retainIdentityFixture();
+    const context = { agentId: "main", sessionKey: "reused" };
+    await handler(event, context);
+    await sessionEnd(event, context);
+    await handler(event, context);
+
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
+  });
+
   it("auto-recall fails closed for unknown agents: no client, no injection", async () => {
     const api = makeApi(queueDir);
     const sink = {
@@ -399,6 +587,59 @@ describe("plugin wiring", () => {
         bankId: "dev,dev-best-practices",
       }),
     ]);
+  });
+
+  it("does not register unsupported reflection and honors capped per-call recall options", async () => {
+    const api = makeApi(queueDir);
+    const stack = buildRoutingStack(pluginConfig(queueDir), api.logger);
+    stack.config.recallMaxTokens = 100;
+    stack.config.recallTypes = ["world", "observation"];
+    registerWithStack(api, stack);
+    const { factory, opts } = api.toolFactories[0];
+    const tools = factory({ agentId: "main" }) as Array<{
+      name: string;
+      execute(id: string, params: Record<string, unknown>): Promise<unknown>;
+    }>;
+    expect(opts?.names).not.toContain("agent_knowledge_reflect");
+    expect(tools.map((tool) => tool.name)).not.toContain("agent_knowledge_reflect");
+    const recall = tools.find((tool) => tool.name === "agent_knowledge_recall");
+    if (!recall) throw new Error("recall tool missing");
+    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ results: [] }));
+    await recall.execute("one", { query: "q", max_tokens: 40, fact_types: ["observation"] });
+    expect(send.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      expect.objectContaining({ max_tokens: 20, types: ["observation"] }),
+      expect.objectContaining({ max_tokens: 20, types: ["observation"] }),
+    ]);
+    send.mockClear();
+    await recall.execute("two", { query: "q", max_tokens: 1000, types: ["world", "experience"] });
+    expect(send.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      expect.objectContaining({ max_tokens: 50, types: ["world"] }),
+      expect.objectContaining({ max_tokens: 50, types: ["world"] }),
+    ]);
+    send.mockClear();
+    for (const params of [
+      { query: " " },
+      { query: "q", max_tokens: 0 },
+      { query: "q", fact_types: ["invalid"] },
+      { query: "q", fact_types: ["experience"] },
+    ]) {
+      await expect(recall.execute("invalid", params)).rejects.toThrow();
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not inject identifiers that exceed the shared recall budget", async () => {
+    const api = makeApi(queueDir);
+    const stack = buildRoutingStack(pluginConfig(queueDir), api.logger);
+    stack.config.recallMaxTokens = 1;
+    registerWithStack(api, stack);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ results: [{ text: "test", document_id: "x".repeat(40_000) }] }),
+    );
+    const handler = api.handlers.get("before_prompt_build");
+    if (!handler) throw new Error("recall hook missing");
+    const result = await handler({ prompt: "remember facts" }, { agentId: "main" });
+    expect(result).toBeUndefined();
   });
 
   it("exposes recall only for a read-only agent", () => {
@@ -599,9 +840,9 @@ describe("plugin wiring", () => {
 
     expect(retainMock).toHaveBeenCalledTimes(3);
     expect(retainMock.mock.calls.map(([, request]) => request.documentId)).toEqual([
-      expect.stringContaining("openclaw:normal:queued:"),
-      expect.stringContaining("openclaw:normal:denied:"),
-      expect.stringContaining("openclaw:normal:failed:"),
+      expect.stringMatching(/^openclaw:[a-f0-9]{64}:[a-f0-9-]{36}$/),
+      expect.stringMatching(/^openclaw:[a-f0-9]{64}:[a-f0-9-]{36}$/),
+      expect.stringMatching(/^openclaw:[a-f0-9]{64}:[a-f0-9-]{36}$/),
     ]);
     expect(auditRecords(api)).toEqual([
       expect.objectContaining({ principal: "main", op: "retain", outcome: "success", bankId: "main" }),

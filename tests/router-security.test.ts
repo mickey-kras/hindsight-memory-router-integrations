@@ -6,7 +6,7 @@ import { harnessTransport, managedBank, managedSettings } from "../src/coding-ag
 import { AccessDeniedError, classifyOperation, requireBank, visibleBanks } from "../src/shared/bank-access.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { readAcrossBanks } from "../src/shared/read-execution.js";
-import { RouterRequestError, RouterTransport } from "../src/shared/router-transport.js";
+import { boundedRetryAfterMs, RouterRequestError, RouterTransport } from "../src/shared/router-transport.js";
 
 const token = (id: string) => `mr_${id}_${"a".repeat(64)}`;
 const access = { writeBank: "A", additionalReadBanks: ["B", "C"] };
@@ -329,4 +329,43 @@ it("rejects query/body bank overrides before transport and reports credential av
   send.mockResolvedValueOnce(new Response("denied", { status: 401 }));
   await expect(client.request(client.bankUrl("A"))).rejects.toThrow(AccessDeniedError);
   expect(client.hasCredentials()).toBe(false);
+});
+
+it.each([
+  ["8", 8000],
+  ["999999999999999999999", 60000],
+  ["0", 0],
+  ["soon", 0],
+  ["", 0],
+  [null, 0],
+])("bounds transport retry metadata %j to %i ms", (header, expected) => {
+  expect(boundedRetryAfterMs(header)).toBe(expected);
+});
+
+it("accepts a future Retry-After date and ignores dates in the past", () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    expect(boundedRetryAfterMs("Thu, 01 Jan 2026 00:00:08 GMT")).toBe(8000);
+    expect(boundedRetryAfterMs("Wed, 31 Dec 2025 00:00:00 GMT")).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("carries bounded Retry-After through a typed transport error without response bodies", async () => {
+  const { client } = transport(
+    vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("PRIVATE BODY", {
+        status: 429,
+        headers: { "Retry-After": "8" },
+      }),
+    ),
+  );
+  await expect(client.request(client.bankUrl("A"))).rejects.toMatchObject({
+    name: "RouterRequestError",
+    statusCode: 429,
+    retryAfterMs: 8000,
+    message: "memory request failed (429)",
+  });
 });

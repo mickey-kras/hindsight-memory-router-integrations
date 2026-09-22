@@ -1,4 +1,3 @@
-import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { formatMemoryOperationAudit, type MemoryAuditLogger, safeAuditLogger } from "../shared/audit.js";
@@ -55,7 +54,6 @@ export function loadMcpStack(env: NodeJS.ProcessEnv, logger: McpLogger): McpStac
     userAgent: `hindsight-memory-router-mcp/${PACKAGE_VERSION}`,
   });
   const queueDir = config.queueDir ?? join(homedir(), ".hindsight-memory-router", "retain-queue");
-  mkdirSync(queueDir, { recursive: true, mode: 0o700 });
   return {
     principalId,
     source: principal.source,
@@ -69,6 +67,8 @@ export function loadMcpStack(env: NodeJS.ProcessEnv, logger: McpLogger): McpStac
       clients,
       queueDir,
       queueMaxAgeMs: config.queueMaxAgeMs,
+      queueMaxItems: config.queueMaxItems,
+      queueMaxBytes: config.queueMaxBytes,
       maxAgeConfigKey: "queueMaxAgeMs",
       logger,
       onAbandon: (item, attempts) => logger.error(retainAbandonNotice(item, attempts)),

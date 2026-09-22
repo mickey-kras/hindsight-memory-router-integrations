@@ -3,7 +3,11 @@ const { isDeepStrictEqual } = require("node:util");
 
 const CODING = "src/upstream/coding-agents";
 const PROVENANCE = "integrations/coding-agents/LOCAL_CHANGES.json";
-const INPUTS = ["package.json", "npm-shrinkwrap.json", `${CODING}/package.json`, `${CODING}/npm-shrinkwrap.json`];
+const PACKAGES = ["", CODING, "src/mcp"];
+const MANIFESTS = PACKAGES.map((directory) => (directory ? `${directory}/package.json` : "package.json"));
+const INPUTS = PACKAGES.flatMap((directory) =>
+  ["package.json", "npm-shrinkwrap.json"].map((file) => (directory ? `${directory}/${file}` : file)),
+);
 
 function hash(content, encoding = "hex") {
   return createHash("sha256").update(content).digest(encoding);
@@ -22,8 +26,22 @@ function generatedPaths() {
   return [PROVENANCE, "PACKAGE_SHA256", "PACKAGE_NIX_HASHES"];
 }
 
-function packagePaths(root, coding) {
-  return [packagePath(root), packagePath(coding)];
+function packagePaths(...manifests) {
+  if (manifests.length !== PACKAGES.length) throw new Error("Incomplete package inventory");
+  return manifests.map(packagePath);
+}
+
+function validateChecksums(checksums, tarballs) {
+  const lines = checksums.split("\n");
+  if (
+    lines.length !== tarballs.length + 1 ||
+    lines.at(-1) !== "" ||
+    !lines.slice(0, -1).every((line) => /^[0-9a-f]{64} {2}packages\/[a-z0-9.-]+\.tgz$/.test(line))
+  ) {
+    throw new Error("Invalid package checksums");
+  }
+  const listed = lines.slice(0, -1).map((line) => line.slice(66));
+  if (!isDeepStrictEqual(listed.sort(), tarballs.slice().sort())) throw new Error("Package checksum mismatch");
 }
 
 function validateManifest(before, after) {
@@ -58,11 +76,14 @@ function updateProvenance(before, packageJson, shrinkwrap) {
 
 module.exports = {
   CODING,
+  PACKAGES,
+  MANIFESTS,
   PROVENANCE,
   INPUTS,
   hash,
   packagePath,
   packagePaths,
+  validateChecksums,
   generatedPaths,
   validateManifest,
   updateProvenance,

@@ -3,10 +3,20 @@ import { TOKEN_FORMAT_PATTERN } from "./patterns.js";
 import { validateRouterUrl } from "./router-url.js";
 
 export class RouterRequestError extends Error {
-  constructor(readonly statusCode: number) {
+  constructor(
+    readonly statusCode: number,
+    readonly retryAfterMs = 0,
+  ) {
     super(`memory request failed (${statusCode})`);
     this.name = "RouterRequestError";
   }
+}
+
+export function boundedRetryAfterMs(header: string | null | undefined): number {
+  if (!header?.trim()) return 0;
+  const value = header.trim();
+  const delay = /^\d+(?:\.\d+)?$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.min(60_000, Math.max(0, delay)) : 0;
 }
 
 const ROUTING_KEYS = ["bankId", "bank_id", "bank_ids"];
@@ -126,7 +136,12 @@ export class RouterTransport {
       throw new AccessDeniedError();
     }
     // Never expose server error bodies, which may echo credentials or bank existence.
-    if (!response.ok && (response.status !== 404 || method !== "GET")) throw new RouterRequestError(response.status);
+    if (!response.ok && (response.status !== 404 || method !== "GET")) {
+      throw new RouterRequestError(
+        response.status,
+        response.status === 429 ? boundedRetryAfterMs(response.headers.get("retry-after")) : 0,
+      );
+    }
     if (listing && response.ok) {
       return filterVisibleBanks(response, this.access);
     }

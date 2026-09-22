@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto";
-
 import type { RouterClient } from "./authenticated-client-factory.js";
-import { type RecallItem, recallItemText } from "./recall-item.js";
+import { type RecallItem, recallItemText, formatRecallItem } from "./recall-item.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
 
 export type { RecallItem } from "./recall-item.js";
@@ -50,13 +48,9 @@ function timeoutAfter(
   return { promise, timer };
 }
 
-function dedupeKey(item: RecallItem): string {
-  const normalized = recallItemText(item).trim().toLowerCase().replaceAll(/\s+/g, " ");
-  return createHash("sha256").update(normalized).digest("hex");
-}
-
 function estimateTokens(item: RecallItem): number {
-  return Math.max(1, Math.ceil(recallItemText(item).length / 4));
+  const characters = Math.max(JSON.stringify({ results: [item] }, null, 2).length, formatRecallItem(item).length + 2);
+  return Math.max(1, Math.ceil(characters / 4));
 }
 
 interface BankRecallResult {
@@ -74,8 +68,7 @@ function mergeSettledResults(
   banks: readonly string[],
 ): { merged: BankItem[]; failedBanks: string[] } {
   const failedBanks: string[] = [];
-  const merged: BankItem[] = [];
-  const seen = new Set<string>();
+  const representatives = new Map<string, BankItem>();
   settled.forEach((outcome, index) => {
     const bank = banks[index];
     if (outcome.status === "rejected") {
@@ -85,14 +78,15 @@ function mergeSettledResults(
       return;
     }
     for (const item of outcome.value.results) {
-      const key = dedupeKey(item);
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push({ bank, item });
+      const key = recallItemText(item);
+      const candidate = { bank, item };
+      const previous = representatives.get(key);
+      if (!previous || compareBankItems(candidate, previous) < 0) {
+        representatives.set(key, candidate);
       }
     }
   });
-  return { merged, failedBanks };
+  return { merged: [...representatives.values()], failedBanks };
 }
 
 function compareBankItems(a: BankItem, b: BankItem): number {

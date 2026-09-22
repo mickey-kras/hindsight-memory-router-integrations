@@ -44,6 +44,19 @@ const validPrincipal = {
 };
 
 describe("loadMcpStack", () => {
+  it("enforces managed aggregate queue limits selected by the MCP environment", async () => {
+    const { path, dir } = configure(validPrincipal);
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...config, queueDir: dir, queueMaxItems: 1, queueMaxBytes: 2000 }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 429 }));
+    const stack = loadMcpStack(process.env, logger);
+    await stack.retain.retain("agent", { content: "accepted" });
+    await expect(stack.retain.retain("agent", { content: "overflow" })).rejects.toMatchObject({
+      name: "RetainQueueCapacityError",
+      limit: "items",
+    });
+  });
+
   it("loads the managed principal through tokenEnv indirection", () => {
     configure(validPrincipal);
     const stack = loadMcpStack(process.env, logger);
