@@ -89,14 +89,20 @@ export class RetainCoordinator {
     const credentials = this.credentials.resolve(principalId);
     const bank = this.credentials.resolveWriteBank(principalId);
     const client = this.clients.forAgent(credentials);
+    const payload = {
+      ...request,
+      metadata: toStringMetadata(request.metadata),
+      tags: request.tags?.slice(),
+      operationId: request.operationId ?? randomUUID(),
+    };
     try {
-      await client.retain(bank, request.content, {
-        documentId: request.documentId,
-        context: request.context,
-        metadata: toStringMetadata(request.metadata),
-        tags: request.tags,
-        updateMode: request.updateMode,
-        operationId: request.operationId ?? randomUUID(),
+      await client.retain(bank, payload.content, {
+        documentId: payload.documentId,
+        context: payload.context,
+        metadata: payload.metadata,
+        tags: payload.tags,
+        updateMode: payload.updateMode,
+        operationId: payload.operationId,
         async: true,
       });
       return { queued: false, bank };
@@ -108,7 +114,7 @@ export class RetainCoordinator {
         throw error;
       }
       const queue = this.queueFor(principalId);
-      queue.enqueue(bank, request, request.metadata);
+      queue.enqueue(bank, payload, payload.metadata);
       this.log.warn(`retain queued for later delivery (bank: ${bank})`);
       return { queued: true, bank };
     }
