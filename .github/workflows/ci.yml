@@ -193,7 +193,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22.20.0
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
       - name: Pack tested packages
         # packages/ is gitignored; the smoke gate packs from source and pins
         # the bytes against PACKAGE_SHA256 before testing them.
