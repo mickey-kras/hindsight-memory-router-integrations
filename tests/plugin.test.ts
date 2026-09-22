@@ -1,4 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import * as fs from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +16,9 @@ import type {
   PluginHookEvent,
   PluginToolContext,
 } from "../src/upstream/src/types.js";
+
+vi.mock("node:fs", async (importOriginal) => ({ ...(await importOriginal<typeof import("node:fs")>()) }));
+vi.mock("node:os", async (importOriginal) => ({ ...(await importOriginal<typeof import("node:os")>()) }));
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
 const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
@@ -163,7 +168,53 @@ describe("plugin wiring", () => {
     queueDir = mkdtempSync(join(tmpdir(), "plugin-test-"));
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(queueDir, { recursive: true, force: true });
+  });
+
+  it("creates a private default queue on first install and replays the first outage write", async () => {
+    vi.spyOn(os, "homedir").mockReturnValue(queueDir);
+    const config = { ...pluginConfig(queueDir), queueDir: undefined };
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    const stack = buildRoutingStack(config, logger);
+    const client = stack.clients.forAgent(stack.credentials.resolve("main"));
+    vi.spyOn(client, "retain").mockRejectedValue(Object.assign(new Error("unavailable"), { statusCode: 503 }));
+
+    await expect(stack.retain.retain("main", { content: "first transcript" })).resolves.toEqual({
+      queued: true,
+      bank: "main",
+    });
+
+    const dataDir = join(queueDir, ".openclaw", "data");
+    const defaultQueueDir = join(dataDir, "hindsight-retain-queue");
+    const queueFile = join(defaultQueueDir, "hindsight-retain-queue.main.jsonl");
+    expect(JSON.parse(readFileSync(queueFile, "utf8")).content).toBe("first transcript");
+    if (process.platform !== "win32") {
+      for (const directory of [join(queueDir, ".openclaw"), dataDir, defaultQueueDir]) {
+        expect(statSync(directory).mode & 0o777).toBe(0o700);
+      }
+      expect(statSync(queueFile).mode & 0o777).toBe(0o600);
+    }
+
+    const restarted = buildRoutingStack(config, logger);
+    const replayClient = restarted.clients.forAgent(restarted.credentials.resolve("main"));
+    const replay = vi.spyOn(replayClient, "retain").mockResolvedValue({});
+    await restarted.retain.flushQueues();
+    expect(replay).toHaveBeenCalledWith("main", "first transcript", expect.any(Object));
+    expect(existsSync(queueFile)).toBe(false);
+  });
+
+  it("fails plugin startup when the queue directory cannot be created", () => {
+    const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    vi.spyOn(fs, "mkdirSync").mockImplementation(() => {
+      throw denied;
+    });
+    const api = makeApi(join(queueDir, "unwritable", "queue"));
+
+    expect(() => plugin(api)).toThrow(denied);
+    expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("plugin disabled:"));
+    expect(api.handlers.size).toBe(0);
+    expect(api.services).toHaveLength(0);
   });
 
   it("registers hooks, service, and knowledge tools", () => {
