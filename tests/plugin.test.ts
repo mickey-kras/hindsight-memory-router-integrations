@@ -9,7 +9,11 @@ import plugin, { buildRoutingStack, PLUGIN_ID, type RoutingStack, registerWithSt
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RecallAuthorizationError, RecallCoordinator } from "../src/shared/recall-coordinator.js";
-import { RetainAuthorizationError, RetainCoordinator } from "../src/shared/retain-coordinator.js";
+import {
+  RetainAuthorizationError,
+  RetainCoordinator,
+  RetainQueueCapacityError,
+} from "../src/shared/retain-coordinator.js";
 import type {
   MoltbotPluginAPI,
   PluginHookAgentContext,
@@ -150,6 +154,43 @@ function instrumentedStack(
 }
 
 describe("plugin wiring", () => {
+  it("logs an explicit capacity failure when auto-retain cannot be queued", async () => {
+    const api = makeApi(queueDir);
+    const stack = instrumentedStack(queueDir, { constructed: [], recalls: [], retains: [] });
+    vi.spyOn(stack.retain, "retain").mockRejectedValue(new RetainQueueCapacityError("items"));
+    registerWithStack(api, stack);
+    await api.handlers.get("agent_end")?.(
+      { messages: [{ role: "user", content: "remember this" }] },
+      {
+        agentId: "main",
+        sessionKey: "normal:capacity",
+      },
+    );
+    expect(api.logger.error).toHaveBeenCalledWith(
+      "retain failed: retain queue items capacity exceeded; retain was not queued",
+    );
+  });
+
+  it("enforces configured aggregate queue limits through the OpenClaw stack", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 429 }));
+    try {
+      const stack = buildRoutingStack(
+        { ...pluginConfig(queueDir), retainQueueMaxItems: 1, retainQueueMaxBytes: 2000 },
+        {
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      );
+      await stack.retain.retain("main", { content: "accepted" });
+      await expect(stack.retain.retain("backend", { content: "overflow" })).rejects.toMatchObject({
+        name: "RetainQueueCapacityError",
+        limit: "items",
+      });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("rejects ambiguous principal maps and invalid numeric limits", () => {
     const config = pluginConfig(queueDir);
     const logger = { warn: vi.fn(), error: vi.fn() };

@@ -27,6 +27,8 @@ function makeStack(options: {
   apiKeys?: string[];
   logger?: { warn(msg: string): void; error(msg: string): void };
   queueMaxAgeMs?: number;
+  queueMaxItems?: number;
+  queueMaxBytes?: number;
   onAbandon?: (item: { bankId: string }, attempts: number) => void;
   maxAgeConfigKey?: string;
 }) {
@@ -71,6 +73,8 @@ function makeStack(options: {
     clients,
     queueDir: options.queueDir,
     queueMaxAgeMs: options.queueMaxAgeMs,
+    queueMaxItems: options.queueMaxItems,
+    queueMaxBytes: options.queueMaxBytes,
     logger: options.logger ?? silentLog,
     onAbandon: options.onAbandon,
     maxAgeConfigKey: options.maxAgeConfigKey,
@@ -594,5 +598,107 @@ describe("RetainCoordinator", () => {
     const renamed = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: renamed, maxAgeConfigKey: "queueMaxAgeMs" });
     expect(renamed.warn.mock.calls.flat().join("\n")).toContain("set queueMaxAgeMs to bound retention");
+  });
+  it("caps outage writes across principals, preserves FIFO, and frees capacity after replay", async () => {
+    let unavailable = true;
+    const stack = makeStack({
+      queueDir,
+      queueMaxItems: 2,
+      behavior: () => {
+        if (unavailable) throw httpError(429);
+      },
+    });
+    await stack.retain.retain("main", { content: "first" });
+    await stack.retain.retain("backend", { content: "second" });
+    await expect(stack.retain.retain("main", { content: "rejected" })).rejects.toMatchObject({
+      name: "RetainQueueCapacityError",
+      code: "RETAIN_QUEUE_CAPACITY",
+      limit: "items",
+    });
+    unavailable = false;
+    await stack.retain.flushQueues();
+    expect(stack.fakeClients.get("main")?.retains.map((item) => item.content)).toEqual(["first"]);
+    expect(stack.fakeClients.get("backend")?.retains.map((item) => item.content)).toEqual(["second"]);
+    unavailable = true;
+    await expect(stack.retain.retain("backend", { content: "after replay" })).resolves.toMatchObject({ queued: true });
+  });
+
+  it("counts metadata and UTF-8 payload bytes and retains accepted data on capacity rejection", async () => {
+    const stack = makeStack({
+      queueDir,
+      queueMaxBytes: 1000,
+      behavior: () => {
+        throw httpError(503);
+      },
+    });
+    await stack.retain.retain("main", { content: "accepted" });
+    const file = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const before = readFileSync(file, "utf8");
+    await expect(
+      stack.retain.retain("backend", { content: "x", metadata: { junk: "🚀".repeat(200) } }),
+    ).rejects.toMatchObject({ name: "RetainQueueCapacityError", limit: "bytes" });
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("counts queues belonging to unknown principals after restart", async () => {
+    const first = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(429);
+      },
+    });
+    await first.retain.retain("main", { content: "before restart" });
+    writeFileSync(join(queueDir, "hindsight-retain-queue.retired.jsonl"), "malformed\n");
+    const restarted = makeStack({
+      queueDir,
+      queueMaxItems: 2,
+      behavior: () => {
+        throw httpError(429);
+      },
+    });
+    await expect(restarted.retain.retain("backend", { content: "after restart" })).rejects.toMatchObject({
+      name: "RetainQueueCapacityError",
+      limit: "items",
+    });
+  });
+
+  it("serializes simultaneous enqueue and replay mutations without losing accepted writes", async () => {
+    const failing = makeStack({
+      queueDir,
+      queueMaxItems: 10,
+      behavior: () => {
+        throw httpError(429);
+      },
+    });
+    await failing.retain.retain("main", { content: "old" });
+    const replay = makeStack({ queueDir, queueMaxItems: 10 });
+    await Promise.all([
+      replay.retain.flushQueues(),
+      ...Array.from({ length: 5 }, (_, index) => failing.retain.retain("main", { content: `new-${index}` })),
+    ]);
+    await replay.retain.flushQueues();
+    expect(
+      replay.fakeClients
+        .get("main")
+        ?.retains.map((item) => item.content)
+        .sort(),
+    ).toEqual(["new-0", "new-1", "new-2", "new-3", "new-4", "old"]);
+  });
+  it("does not deserialize backlog records while accepting subsequent outage writes", async () => {
+    const stack = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(429);
+      },
+    });
+    await stack.retain.retain("main", { content: "existing" });
+    const parse = vi.spyOn(JSON, "parse");
+    try {
+      await stack.retain.retain("main", { content: "next" });
+      await stack.retain.retain("backend", { content: "another principal" });
+      expect(parse).not.toHaveBeenCalledWith(expect.stringContaining('"bankId":'));
+    } finally {
+      parse.mockRestore();
+    }
   });
 });

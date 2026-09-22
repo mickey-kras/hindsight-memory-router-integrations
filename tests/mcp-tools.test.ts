@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver, UnknownPrincipalError } from "../src/shared/principal-credential-resolver.js";
 import { RecallCoordinator } from "../src/shared/recall-coordinator.js";
-import { RetainCoordinator } from "../src/shared/retain-coordinator.js";
+import { RetainCoordinator, RetainQueueCapacityError, RetainQueueBusyError } from "../src/shared/retain-coordinator.js";
 import type { McpStack } from "../src/mcp/managed-config.js";
 import { buildTools, type McpTool } from "../src/mcp/tools.js";
 
@@ -63,12 +63,22 @@ function tool(tools: McpTool[], name: string): McpTool {
 }
 
 function stubFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) =>
-    Promise.resolve(handler(String(input), init ?? {})),
-  );
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation((input, init) => Promise.resolve(handler(String(input), init ?? {})));
 }
 
 describe("memory_router_retain", () => {
+  it.each([new RetainQueueCapacityError("bytes"), new RetainQueueBusyError({})])(
+    "returns an explicit failure when outage queueing fails: %s",
+    async (error) => {
+      const stack = makeStack({});
+      vi.spyOn(stack.retain, "retain").mockRejectedValue(error);
+      const result = await tool(buildTools(stack), "memory_router_retain").handler({ content: "never stored" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("retain was not queued");
+    },
+  );
   it("retains only into the principal's write bank", async () => {
     const retained: Array<{ bank: string; content: string; options?: Record<string, unknown> }> = [];
     const stack = makeStack({
@@ -253,7 +263,9 @@ describe("memory_router_recall", () => {
 
   it("marks the result partial without naming failed banks", async () => {
     const send = stubFetch((url) =>
-      url.includes("shared-bank") ? Response.json({}, { status: 503 }) : Response.json({ results: [{ text: "alpha" }] }),
+      url.includes("shared-bank")
+        ? Response.json({}, { status: 503 })
+        : Response.json({ results: [{ text: "alpha" }] }),
     );
     const stack = makeStack({});
     const result = await tool(buildTools(stack), "memory_router_recall").handler({ query: "deploy" });
