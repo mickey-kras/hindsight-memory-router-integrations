@@ -14,6 +14,7 @@
  * in core/hook.ts.
  */
 import { readFileSync } from "node:fs";
+import { harnessTransport } from "@memory-router/coding-agents/runtime";
 import { deriveBankIdOrSkip } from "./bank";
 import { retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
@@ -202,21 +203,7 @@ export async function runRetainHook(
   setLogLevel(cfg.logLevel);
   if (cfg.disabled) return;
 
-  // A journal harness closes the turn HERE, at the first point past the kill switch: the host's
-  // copy of the reply is ephemeral (ZCode deletes its Stop transcript the moment this hook
-  // returns), so it has to be read before anything that can block or fail. Reading the journal
-  // back as the transcript is what makes the rest of this function identical to every other
-  // harness's — the same full conversation, planned against the same retain cursor.
-  if (spec.journal) {
-    transcriptPath = journalPath(spec.harness, sessionId);
-    readTranscript = readJournalTranscript;
-    appendJournalTurn(transcriptPath, {
-      role: "assistant",
-      content: spec.journal.assistantText(ev),
-    });
-  }
-
-  if (!transcriptPath) return;
+  if (!transcriptPath && !spec.journal) return;
 
   const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
   const derived = deriveBankIdOrSkip(cfg, cwd, spec.harness, sessionRoot);
@@ -230,10 +217,19 @@ export async function runRetainHook(
   // Checked only HERE, after the bank is resolved, so a `banks.<id>` section can turn write-back
   // back on for one repo under a global `retainSessions: false` (and vice versa). Before the
   // daemon start below: a session that writes nothing has no reason to bring a server up.
-  if (!cfg.retainSessions) {
+  if (!cfg.retainSessions || harnessTransport(cfg.routerHarness).access.writeBank !== bankId) {
     diag(spec.harness, "retain_disabled", { bank: bankId, session: sessionId });
     return;
   }
+  if (spec.journal) {
+    transcriptPath = journalPath(spec.harness, sessionId);
+    readTranscript = readJournalTranscript;
+    appendJournalTurn(transcriptPath, {
+      role: "assistant",
+      content: spec.journal.assistantText(ev),
+    });
+  }
+  if (!transcriptPath) return;
   // Last chance to get the daemon up: this is the write path, and a session whose daemon never
   // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
   // any hook and nothing is waiting on its result, so it can afford the longer wait.
