@@ -23,6 +23,7 @@ type FakeClient = RouterClient & {
 function makeStack(options: {
   queueDir: string;
   behavior?: (bank: string) => void;
+  attempts?: FakeClient["retains"];
   apiKeys?: string[];
   logger?: { warn(msg: string): void; error(msg: string): void };
   queueMaxAgeMs?: number;
@@ -53,6 +54,7 @@ function makeStack(options: {
       const client: FakeClient = {
         retains: [],
         async retain(bank, content, retainOptions) {
+          options.attempts?.push({ bank, content, options: retainOptions });
           options.behavior?.(bank);
           this.retains.push({ bank, content, options: retainOptions });
         },
@@ -248,13 +250,58 @@ describe("RetainCoordinator", () => {
     await expect(retain.retain("main", { content: "offline" })).resolves.toEqual({ queued: true, bank: "main" });
   });
 
-  it("assigns and persists an operation id for replay identity", async () => {
-    const { retain, fakeClients } = makeStack({ queueDir });
-    await retain.retain("main", { content: "with-op-id" });
-    const options = fakeClients.get("main")?.retains[0].options;
-    expect(typeof options?.operationId).toBe("string");
-    expect(String(options?.operationId)).not.toBe("");
-  });
+  it.each([undefined, "93fbc267-ec50-40fb-b065-77e34d613ec9"])(
+    "preserves the initial operation and payload across lost acknowledgements with operationId=%s",
+    async (operationId) => {
+      const attempts: FakeClient["retains"] = [];
+      const request = {
+        content: "accepted before the acknowledgement was lost",
+        documentId: "document",
+        context: "context",
+        tags: ["original"],
+        updateMode: "append" as const,
+        operationId,
+        metadata: { count: 2, large: 3n, nested: { value: "original" } },
+      };
+      const first = makeStack({
+        queueDir,
+        attempts,
+        behavior: () => {
+          request.content = "changed while the request was pending";
+          request.tags.push("changed");
+          request.metadata.nested.value = "changed";
+          throw new TypeError("fetch failed");
+        },
+      });
+      await expect(first.retain.retain("main", request)).resolves.toEqual({ queued: true, bank: "main" });
+      const initial = attempts[0];
+      const initialId = initial.options?.operationId;
+      expect(initialId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      if (operationId !== undefined) expect(initialId).toBe(operationId);
+      const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+      expect(JSON.parse(readFileSync(queueFile, "utf8"))).toMatchObject({
+        content: initial.content,
+        documentId: "document",
+        context: "context",
+        tags: ["original"],
+        updateMode: "append",
+        operationId: initialId,
+        metadata: { count: "2", large: "3", nested: '{"value":"original"}' },
+      });
+      const retry = makeStack({
+        queueDir,
+        attempts,
+        behavior: () => {
+          throw httpError(503);
+        },
+      });
+      await retry.retain.flushQueues();
+      const restarted = makeStack({ queueDir, attempts });
+      await restarted.retain.flushQueues();
+      expect(attempts).toEqual([initial, initial, initial]);
+      expect(() => readFileSync(queueFile, "utf8")).toThrow();
+    },
+  );
 
   it.each([401, 408, 429, 503])("classifies HTTP %i correctly", async (statusCode) => {
     const { retain } = makeStack({
