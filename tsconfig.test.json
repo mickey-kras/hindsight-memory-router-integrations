@@ -7,6 +7,7 @@
       "@modelcontextprotocol/sdk/client/index.js": [
         "./src/mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.d.ts"
       ],
+      "@modelcontextprotocol/sdk/types.js": ["./src/mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/types.d.ts"],
       "@modelcontextprotocol/sdk/inMemory.js": [
         "./src/mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.d.ts"
       ]

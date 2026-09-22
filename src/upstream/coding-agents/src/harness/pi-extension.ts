@@ -149,8 +149,8 @@ export function createPiHooks(
 }
 
 function createRuntime(harness: string, repoPath: string): RuntimeCore | undefined {
-  const { cfg, bankId, client } = resolveHostMemory(harness, repoPath);
-  if (cfg.disabled) return undefined; // global switch, per-bank opt-out or optInOnly
+  const { disabled, cfg, bankId, client } = resolveHostMemory(harness, repoPath);
+  if (disabled) return undefined; // global switch, per-bank opt-out or optInOnly
   return new RuntimeCore(client, bankId, cfg, harness, repoPath);
 }
 

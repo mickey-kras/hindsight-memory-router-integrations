@@ -8,9 +8,11 @@ const {
   CODING,
   PROVENANCE,
   INPUTS,
+  MANIFESTS,
   hash,
   generatedPaths,
   packagePaths,
+  validateChecksums,
   validateManifest,
   updateProvenance,
 } = require("./dependency-files.cjs");
@@ -23,11 +25,22 @@ const {
 } = require("./dependabot-preparation.cjs");
 const { requestValidation, runDispatchedPolicy } = require("./dependabot-validation.cjs");
 
-const prGuardScript = execFileSync("python3", ["-c",
-  "import sys,yaml; w=yaml.safe_load(open(sys.argv[1])); print(w['jobs']['guard']['steps'][-1]['with']['script'])",
-  resolve(__dirname, "../workflows/pr-validation.yml"),
-], { encoding: "utf8" });
-const executePrGuard = new (Object.getPrototypeOf(async function () {}).constructor)("github", "context", "core", "require", prGuardScript);
+const prGuardScript = execFileSync(
+  "python3",
+  [
+    "-c",
+    "import sys,yaml; w=yaml.safe_load(open(sys.argv[1])); print(w['jobs']['guard']['steps'][-1]['with']['script'])",
+    resolve(__dirname, "../workflows/pr-validation.yml"),
+  ],
+  { encoding: "utf8" },
+);
+const executePrGuard = new (Object.getPrototypeOf(async function () {}).constructor)(
+  "github",
+  "context",
+  "core",
+  "require",
+  prGuardScript,
+);
 async function runPullRequestPolicy(github, event, core, trustedMainSha, policy) {
   await executePrGuard(github, event, core, (module) => {
     if (module === "node:child_process") return { execFileSync: () => trustedMainSha };
@@ -51,6 +64,7 @@ const manifest = {
   devDependencies: { example: "1.0.0", "@types/node": "22.20.0" },
 };
 const coding = { ...manifest, name: "@owner/coding" };
+const mcp = { ...manifest, name: "@owner/mcp" };
 const provenance = { "package.json": "old", "npm-shrinkwrap.json": "old", "src/index.ts": "preserved" };
 const commit = { sha: head, author: bot, commit: { verification: { verified: true } } };
 const context = { repo: { owner: "owner", repo: "repo" }, ref: "refs/heads/main", sha: base };
@@ -81,6 +95,7 @@ function harness() {
   };
   const contents = {
     "package.json": JSON.stringify(manifest),
+    "src/mcp/package.json": JSON.stringify(mcp),
     [`${CODING}/package.json`]: JSON.stringify(coding),
     [`${CODING}/npm-shrinkwrap.json`]: "{}",
     [PROVENANCE]: JSON.stringify(provenance),
@@ -119,7 +134,8 @@ function harness() {
       },
       issues: { listComments: "comments", createComment: async (input) => state.messages.push(input) },
     },
-    paginate: async (endpoint, params) => state[endpoint === "runs" && params.workflow_id === "dependabot-guard.yml" ? "guardRuns" : endpoint],
+    paginate: async (endpoint, params) =>
+      state[endpoint === "runs" && params.workflow_id === "dependabot-guard.yml" ? "guardRuns" : endpoint],
   };
   const paths = generatedPaths();
   // Tarballs are CI-built and gitignored; prepared commits carry text-only
@@ -127,7 +143,7 @@ function harness() {
   const artifacts = {
     [PROVENANCE]: JSON.stringify(updateProvenance(provenance, contents[`${CODING}/package.json`], "{}")),
   };
-  artifacts.PACKAGE_SHA256 = packagePaths(manifest, coding)
+  artifacts.PACKAGE_SHA256 = packagePaths(manifest, coding, mcp)
     .sort()
     .map((path, index) => `${String(index + 1).repeat(64)}  ${path}\n`)
     .join("");
@@ -363,20 +379,29 @@ const dispatchedContext = {
 };
 
 function pullRequestContext(current) {
-  return { repo: context.repo, eventName: "pull_request", ref: "refs/pull/1/merge",
-    payload: { pull_request: structuredClone(current) } };
+  return {
+    repo: context.repo,
+    eventName: "pull_request",
+    ref: "refs/pull/1/merge",
+    payload: { pull_request: structuredClone(current) },
+  };
 }
 
 test("PR validation evaluates regular and prepared heads with trusted main policy", async () => {
   for (const create of [harness, preparedHarness]) {
     const h = create();
     let evaluated;
-    await runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, base,
+    await runPullRequestPolicy(
+      h.github,
+      pullRequestContext(h.state.pull),
+      { info() {} },
+      base,
       async (_github, repo, current, files) => {
         assert.deepEqual(repo, context.repo);
         assert.equal(files, h.state.files);
         evaluated = current.head.sha;
-      });
+      },
+    );
     assert.equal(evaluated, h.state.pull.head.sha);
     assert.deepEqual(h.state.reported, []);
   }
@@ -384,10 +409,18 @@ test("PR validation evaluates regular and prepared heads with trusted main polic
 
 test("PR validation rejects stale events and untrusted policy revisions", async () => {
   for (const change of [
-    (event) => { event.eventName = "push"; },
-    (event) => { event.ref = "refs/heads/main"; },
-    (event) => { event.payload.pull_request.head.sha = generated; },
-    (event) => { event.payload.pull_request.base.sha = generated; },
+    (event) => {
+      event.eventName = "push";
+    },
+    (event) => {
+      event.ref = "refs/heads/main";
+    },
+    (event) => {
+      event.payload.pull_request.head.sha = generated;
+    },
+    (event) => {
+      event.payload.pull_request.base.sha = generated;
+    },
   ]) {
     const h = harness();
     const event = pullRequestContext(h.state.pull);
@@ -395,20 +428,30 @@ test("PR validation rejects stale events and untrusted policy revisions", async 
     await assert.rejects(runPullRequestPolicy(h.github, event, { info() {} }, base, async () => assert.fail()));
   }
   const h = harness();
-  await assert.rejects(runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, head,
-    async () => assert.fail()));
+  await assert.rejects(
+    runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, head, async () => assert.fail()),
+  );
 });
 
 test("PR policy failures and changes during evaluation fail the guard", async () => {
   for (const evaluate of [
-    async () => { throw new Error("Policy failed"); },
-    async (h) => { h.state.pull = { ...h.state.pull, head: { ...h.state.pull.head, sha: generated } }; },
-    async (h) => { h.state.pull = { ...h.state.pull, base: { ...h.state.pull.base, sha: generated } }; },
-    async (h) => { h.state.pull = { ...h.state.pull, state: "closed" }; },
+    async () => {
+      throw new Error("Policy failed");
+    },
+    async (h) => {
+      h.state.pull = { ...h.state.pull, head: { ...h.state.pull.head, sha: generated } };
+    },
+    async (h) => {
+      h.state.pull = { ...h.state.pull, base: { ...h.state.pull.base, sha: generated } };
+    },
+    async (h) => {
+      h.state.pull = { ...h.state.pull, state: "closed" };
+    },
   ]) {
     const h = harness();
-    await assert.rejects(runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, base,
-      async () => evaluate(h)));
+    await assert.rejects(
+      runPullRequestPolicy(h.github, pullRequestContext(h.state.pull), { info() {} }, base, async () => evaluate(h)),
+    );
   }
 });
 
@@ -470,7 +513,10 @@ test("cancelled or approval-blocked validation is recovered without replacing fa
     h.state.runs = [{ head_sha: generated, event: "pull_request", conclusion }];
     h.state.guardRuns = [{ head_sha: generated, event: "workflow_dispatch", conclusion: "failure" }];
     await requestValidation(h.github, context, h.state.pull, { info() {} });
-    assert.deepEqual(h.state.dispatches.map((dispatch) => dispatch.workflow_id), ["pr-validation.yml"]);
+    assert.deepEqual(
+      h.state.dispatches.map((dispatch) => dispatch.workflow_id),
+      ["pr-validation.yml"],
+    );
   }
 });
 
@@ -649,3 +695,51 @@ for (const [name, mutate] of [
     assert.equal(h.state.published.length, 0);
   });
 }
+
+test("MCP-only dependency updates dispatch preparation and retain all three checksum pins", async () => {
+  const h = harness();
+  h.state.files = ["src/mcp/package.json", "src/mcp/npm-shrinkwrap.json"].map((filename) => ({
+    filename,
+    status: "modified",
+  }));
+  assert.equal(await requestPreparation(h.github, context, pull, { info() {} }), true);
+  assert.equal(h.state.dispatches.length, 1);
+  await inspect(h.github, context, 1, head);
+  assert.equal(await publish(h.github, context, h.payload, "unused", h.metadata), generated);
+  const checksums = h.payload.files.find((file) => file.path === "PACKAGE_SHA256");
+  assert.match(Buffer.from(checksums.contents, "base64").toString(), /owner-mcp-1\.0\.0\.tgz/);
+});
+
+test("checksum inventory rejects missing, duplicate, substituted, and malformed package pins", async () => {
+  const paths = packagePaths(manifest, coding, mcp);
+  const valid = paths.map((path) => `${"a".repeat(64)}  ${path}\n`).join("");
+  assert.doesNotThrow(() => validateChecksums(valid, paths));
+  for (const invalid of [
+    `${valid.split("\n").slice(0, 2).join("\n")}\n`,
+    valid.replace(paths[2], paths[1]),
+    valid.replace(paths[2], "packages/owner-untrusted-1.0.0.tgz"),
+    valid.replace(/^a/, "z"),
+  ]) {
+    const h = harness();
+    h.payload.files.find((file) => file.path === "PACKAGE_SHA256").contents = Buffer.from(invalid).toString("base64");
+    await assert.rejects(publish(h.github, context, h.payload, "unused", h.metadata), /checksum/);
+    assert.equal(h.state.published.length, 0);
+  }
+  assert.throws(() => packagePaths(manifest, coding), /inventory/);
+});
+
+test("MCP dependency preparation still rejects script changes", async () => {
+  const h = harness();
+  const original = h.github.rest.repos.getContent;
+  h.github.rest.repos.getContent = async (args) =>
+    args.path === MANIFESTS[2] && args.ref === head
+      ? {
+          data: {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(JSON.stringify({ ...mcp, scripts: { build: "untrusted" } })).toString("base64"),
+          },
+        }
+      : original(args);
+  await assert.rejects(inspect(h.github, context, 1, head), /Non-dependency/);
+});

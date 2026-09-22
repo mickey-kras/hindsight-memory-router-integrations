@@ -40,10 +40,10 @@ export function createPluginEntry(harness: string): Plugin {
   return async (input) => {
     const projectDir = resolveProjectDirectory(input);
     const dir = projectDir || process.cwd();
-    const { cfg, bankId, client } = resolveHostMemory(harness, dir);
+    const { disabled, cfg, bankId, client } = resolveHostMemory(harness, dir);
     // Global switch, per-bank opt-out and optInOnly all land here: inert plugin, same agent, no
     // memory (baseline parity).
-    if (cfg.disabled) return {};
+    if (disabled) return {};
     const core = new RuntimeCore(client, bankId, cfg, harness, dir);
     // Visible presence via the host's own notice API (POST /tui/show-toast) — never stderr, which
     // these TUIs render at the cursor, wedging text against the input bar.

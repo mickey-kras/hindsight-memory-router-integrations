@@ -2,10 +2,12 @@ const { isDeepStrictEqual } = require("node:util");
 const { setTimeout: pause } = require("node:timers/promises");
 const {
   CODING,
+  MANIFESTS,
   PROVENANCE,
   INPUTS,
   generatedPaths,
   packagePaths,
+  validateChecksums,
   validateManifest,
   updateProvenance,
 } = require("./dependency-files.cjs");
@@ -30,10 +32,10 @@ async function pathsFor() {
 }
 
 async function tarballsFor(github, repo, ref) {
-  const [root, coding] = await Promise.all(
-    ["package.json", `${CODING}/package.json`].map(async (path) => JSON.parse(await content(github, repo, path, ref))),
+  const manifests = await Promise.all(
+    MANIFESTS.map(async (path) => JSON.parse(await content(github, repo, path, ref))),
   );
-  return packagePaths(root, coding);
+  return packagePaths(...manifests);
 }
 
 async function dependencyCommits(github, repo, pull, commits) {
@@ -106,7 +108,7 @@ async function inspect(github, context, number, expectedHead) {
   if (!files.length || files.some((file) => file.status !== "modified" || !INPUTS.includes(file.filename))) {
     throw new Error("Preparation only accepts npm dependency files");
   }
-  for (const path of ["package.json", `${CODING}/package.json`]) {
+  for (const path of MANIFESTS) {
     const before = JSON.parse(await content(github, context.repo, path, pull.base.sha));
     const after = JSON.parse(await content(github, context.repo, path, expectedHead));
     validateManifest(before, after);
@@ -174,19 +176,7 @@ async function publish(github, context, payload, metadataPath, metadata) {
   // the PR's own ci.yml run rebuilds every package and byte-compares it
   // against these pins before auto-merge can proceed.
   const checksums = files.get("PACKAGE_SHA256").toString();
-  const lines = checksums.split("\n");
-  if (
-    lines.length !== 3 ||
-    lines[2] !== "" ||
-    !lines.slice(0, 2).every((line) => /^[0-9a-f]{64} {2}packages\/[a-z0-9.-]+\.tgz$/.test(line))
-  ) {
-    throw new Error("Invalid package checksums");
-  }
-  const listed = lines.slice(0, 2).map((line) => line.slice(66));
-  const tarballs = await tarballsFor(github, context.repo, payload.head);
-  if (!isDeepStrictEqual(listed.slice().sort(), tarballs.slice().sort())) {
-    throw new Error("Package checksum mismatch");
-  }
+  validateChecksums(checksums, await tarballsFor(github, context.repo, payload.head));
   const nixHashes = files.get("PACKAGE_NIX_HASHES").toString();
   if (!/^source=sha256-[A-Za-z0-9+/]{43}=\nnpm_deps=sha256-[A-Za-z0-9+/]{43}=\n$/.test(nixHashes)) {
     throw new Error("Invalid package Nix hashes");
