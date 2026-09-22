@@ -188,8 +188,8 @@ export function createClineHooks(
 
 function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefined {
   const dir = workspaceRoot || process.cwd();
-  const { cfg, bankId, client } = resolveHostMemory(HARNESS, dir);
-  if (cfg.disabled) return undefined; // global switch, per-bank opt-out or optInOnly
+  const { disabled, cfg, bankId, client } = resolveHostMemory(HARNESS, dir);
+  if (disabled) return undefined; // global switch, per-bank opt-out or optInOnly
   return new RuntimeCore(client, bankId, cfg, HARNESS, dir);
 }
 

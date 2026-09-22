@@ -40,6 +40,7 @@ describe("resolveHostMemory", () => {
     const { resolveHostMemory } = await loadFactory();
 
     const { client } = resolveHostMemory("dsh", root);
+    if (!client) throw new Error("expected active client");
     expect(client.apiUrl).toBe("http://server");
     expect(client.apiToken).toBe("k");
     expect(client.maxParallelRetains).toBe(3);
@@ -69,6 +70,7 @@ describe("resolveHostMemory", () => {
     writeConfig({ apiUrl: "http://server", apiToken: "old-key" });
     const { resolveHostMemory } = await loadFactory();
     const { client } = resolveHostMemory("dsh", root);
+    if (!client) throw new Error("expected active client");
     expect(client.apiToken).toBe("old-key");
 
     // The operator rotates the credential while the host keeps running; the next 401 picks it up.
@@ -104,7 +106,7 @@ describe("resolveHostMemory", () => {
       banks: { [bankId]: { apiToken: "per-bank" } },
     });
     const { resolveHostMemory } = await loadFactory();
-    expect(resolveHostMemory("dsh", root).client.apiToken).toBe("per-bank");
+    expect(resolveHostMemory("dsh", root).client?.apiToken).toBe("per-bank");
   });
 });
 

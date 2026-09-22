@@ -3,6 +3,8 @@ const { readFileSync, writeFileSync, lstatSync, mkdirSync } = require("node:fs")
 const { join, resolve } = require("node:path");
 const {
   CODING,
+  PACKAGES,
+  MANIFESTS,
   PROVENANCE,
   INPUTS,
   hash,
@@ -32,11 +34,11 @@ function refresh(directory, number, head, base, output) {
   const changed = run("git", ["diff", "--name-only", base, head]).trim().split("\n");
   if (!changed.length || changed.some((path) => !INPUTS.includes(path)))
     throw new Error("Unexpected dependency input files");
-  for (const path of ["package.json", `${CODING}/package.json`]) {
+  for (const path of MANIFESTS) {
     validateManifest(JSON.parse(run("git", ["show", `${base}:${path}`])), JSON.parse(read(path)));
   }
   const paths = generatedPaths();
-  const tarballs = packagePaths(JSON.parse(read("package.json")), JSON.parse(read(`${CODING}/package.json`)));
+  const tarballs = packagePaths(...MANIFESTS.map((path) => JSON.parse(read(path))));
   const provenance = updateProvenance(
     JSON.parse(read(PROVENANCE)),
     read(`${CODING}/package.json`),
@@ -45,13 +47,14 @@ function refresh(directory, number, head, base, output) {
   writeFileSync(join(root, PROVENANCE), `${JSON.stringify(provenance, null, 2)}\n`);
   run("node", ["scripts/verify-coding-upstream.mjs"]);
   run("node", ["scripts/verify-openclaw-overlay.mjs"]);
-  run("npm", ["ci"]);
-  run("npm", ["ci"], join(root, CODING));
-  run("npm", ["run", "build"]);
-  run("npm", ["run", "build:coding-agents"]);
+  for (const directory of PACKAGES) {
+    run("npm", ["ci"], join(root, directory));
+    run("npm", ["run", "build"], join(root, directory));
+  }
   mkdirSync(join(root, "packages"), { recursive: true });
-  run("npm", ["pack", "--pack-destination", join(root, "packages"), "--silent"]);
-  run("npm", ["pack", "--pack-destination", join(root, "packages"), "--silent"], join(root, CODING));
+  for (const directory of PACKAGES) {
+    run("npm", ["pack", "--pack-destination", join(root, "packages"), "--silent"], join(root, directory));
+  }
   // packages/*.tgz stay gitignored local build outputs; only their hashes are
   // committed, and CI rebuilds and byte-compares the tarballs from source.
   writeFileSync(

@@ -39,7 +39,7 @@ import { homedir, tmpdir } from "node:os";
 import { isatty } from "node:tty";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { applyEdits, modify } from "jsonc-parser";
+import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
@@ -122,17 +122,11 @@ function readJson(path: string): Record<string, any> {
  * to understand must never be overwritten with just our own key: the caller aborts instead.
  */
 export function parseJsonc(text: string): Record<string, any> | null {
-  const stripped = text
-    // Blank out comments, preserving anything inside string literals.
-    .replaceAll(/"(?:\\.|[^"\\])*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
-    // Trailing commas are legal in JSONC, not in JSON.
-    .replaceAll(/,(\s*[}\]])/g, "$1");
-  try {
-    const v = JSON.parse(stripped);
-    return v && typeof v === "object" ? (v as Record<string, any>) : null;
-  } catch {
-    return null;
-  }
+  const errors: ParseError[] = [];
+  const value: unknown = parse(text, errors, { allowTrailingComma: true });
+  return errors.length === 0 && value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, any>
+    : null;
 }
 
 function writeJson(path: string, value: unknown): void {
@@ -1755,7 +1749,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
  */
 function importConversations(harness: string, ctx: InstallCtx): void {
   const repo = process.cwd();
-  const found = importLocalHistory(harness, repo);
+  const found = importLocalHistory(harness, repo, ctx.home);
   if (!found.supported) {
     ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
     return;
@@ -1779,13 +1773,13 @@ function importConversations(harness: string, ctx: InstallCtx): void {
       `this runs extraction and may take a while`
   );
   try {
-    execFileSync("node", [join(ctx.dist, "deepen.js"), "--repo", repo, "--conversations", file], {
+    execFileSync("node", [join(ctx.dist, "deepen.js"), "--harness", harness, "--repo", repo, "--conversations", file], {
       stdio: "inherit",
     });
   } catch {
     // The wiring is already in place; a failed backfill must not make `install` look failed.
     ctx.log?.(`${harness}: conversation import did not finish — re-run it any time with:`);
-    ctx.log?.(`  node "${join(ctx.dist, "deepen.js")}" --repo "${repo}" --conversations "${file}"`);
+    ctx.log?.(`  node "${join(ctx.dist, "deepen.js")}" --harness "${harness}" --repo "${repo}" --conversations "${file}"`);
   }
 }
 

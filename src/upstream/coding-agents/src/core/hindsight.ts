@@ -1,7 +1,7 @@
 import { visibleBanks } from "@memory-router/shared/bank-access";
 import { harnessTransport } from "@memory-router/coding-agents/runtime";
 import { readAcrossBanks } from "@memory-router/shared/read-execution";
-import type { RouterTransport } from "@memory-router/shared/router-transport";
+import { RouterRequestError, boundedRetryAfterMs, type RouterTransport } from "@memory-router/shared/router-transport";
 /**
  * Harness-agnostic Hindsight HTTP client (raw fetch, no SDK dep).
  *
@@ -163,11 +163,7 @@ export class RateLimitedError extends Error {
 
 /** Parse a `Retry-After` header (delta-seconds or HTTP-date) into ms; 0 when absent or unusable. */
 export function retryAfterMs(header: string | null | undefined): number {
-  if (!header) return 0;
-  const secs = Number(header.trim());
-  if (Number.isFinite(secs) && secs >= 0) return secs * 1000;
-  const at = Date.parse(header);
-  return Number.isNaN(at) ? 0 : Math.max(0, at - Date.now());
+  return boundedRetryAfterMs(header);
 }
 
 /** Raised when the target server predates the knowledge-pages API surface. */
@@ -292,7 +288,8 @@ export class HindsightClient {
     this.assertAuthorized();
     this.transport.bankUrl(bank);
     return new HindsightClient({ routerHarness: this.routerHarness, apiUrl: this.apiUrl, bank,
-      project: this.project, maxParallelRetains: this.maxParallelRetains, observationScopes: this.observationScopes });
+      project: this.project, maxParallelRetains: this.maxParallelRetains, observationScopes: this.observationScopes,
+      pageSearchLimit: this.pageSearchLimit, recallOptions: this.recallOptions, log: this.log });
   }
 
   get apiToken(): undefined { return undefined; }
@@ -323,11 +320,18 @@ export class HindsightClient {
   ): Promise<Response> {
     // Hard cap on EVERY request: a stalled server (pool deadlock, network) must degrade to a
     // memoryless turn — never hang a host that awaits us (opencode blocks its BOOT on plugin init).
-    const r = await this.fetchWithAuth(url, {
-      method,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    let r: Response;
+    try {
+      r = await this.fetchWithAuth(url, {
+        method,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      if (!(error instanceof RouterRequestError) || error.statusCode !== 429) throw error;
+      if (!tolerate.includes(429)) throw new RateLimitedError(error.retryAfterMs);
+      r = new Response(null, { status: 429, headers: { "retry-after": String(error.retryAfterMs / 1000) } });
+    }
     if (r.status === 429 && !tolerate.includes(429))
       throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
     if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
@@ -542,8 +546,10 @@ export class HindsightClient {
             pending.delete(id);
             if (st !== "completed") failed++;
           }
-        } catch {
-          /* transient — retry next cycle */
+        } catch (error) {
+          if (error instanceof RouterRequestError && error.statusCode === 429) {
+            backoffMs = Math.min(RETRY_AFTER_CEILING_MS, Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, error.retryAfterMs));
+          }
         }
       });
       if (pending.size) {
@@ -566,6 +572,9 @@ export class HindsightClient {
    */
   async reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string> {
     const result = await readAcrossBanks(this.transport, "reflect", { query, budget: opts.budget ?? "high" }, { timeoutMs: opts.timeoutMs, maxTokens: 4096 });
+    if (result.failedBanks.length === this.visibleBanks().length) {
+      throw new ReflectError("reflection unavailable for all assigned banks", 503, false);
+    }
     if (result.partial) this.log("partial memory read: assigned bank unavailable");
     return result.results.map(item => item.text ?? item.content ?? "").join("\n\n");
   }

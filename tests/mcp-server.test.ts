@@ -1,49 +1,22 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadMcpStack } from "../src/mcp/managed-config.js";
-import type { buildMcpServer } from "../src/mcp/server.js";
+import { buildMcpServer, SERVER_NAME } from "../src/mcp/server.js";
 import { buildTools } from "../src/mcp/tools.js";
-
-interface McpSdk {
-  Client: typeof Client;
-  InMemoryTransport: typeof InMemoryTransport;
-  buildMcpServer: typeof buildMcpServer;
-  serverName: string;
-}
-
-async function loadSdk(): Promise<McpSdk | undefined> {
-  try {
-    const [{ Client: ClientImpl }, { InMemoryTransport: Transport }, server] = await Promise.all([
-      import("@modelcontextprotocol/sdk/client/index.js"),
-      import("@modelcontextprotocol/sdk/inMemory.js"),
-      import("../src/mcp/server.js"),
-    ]);
-    return {
-      Client: ClientImpl,
-      InMemoryTransport: Transport,
-      buildMcpServer: server.buildMcpServer,
-      serverName: server.SERVER_NAME,
-    };
-  } catch {
-    // The main-workflow coverage job runs the root suite without installing src/mcp deps.
-    return undefined;
-  }
-}
-
-const sdk = await loadSdk();
 
 const TOKEN = `mr_agent-key_${"a".repeat(64)}`;
 const ROUTER = "https://router.example.test";
 const dirs: string[] = [];
-const logger = { warn: vi.fn(), error: vi.fn() };
+const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  vi.clearAllMocks();
   dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }));
 });
 
@@ -59,11 +32,11 @@ function configure(principal: Record<string, unknown>) {
   vi.stubEnv("TEST_AGENT_TOKEN", TOKEN);
 }
 
-async function wiredClient(loaded: McpSdk) {
+async function wiredClient() {
   const stack = loadMcpStack(process.env, logger);
-  const [clientTransport, serverTransport] = loaded.InMemoryTransport.createLinkedPair();
-  const server = loaded.buildMcpServer(buildTools(stack));
-  const client = new loaded.Client({ name: "test-client", version: "0.1.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = buildMcpServer(buildTools(stack));
+  const client = new Client({ name: "test-client", version: "0.1.0" });
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   return {
@@ -75,15 +48,13 @@ async function wiredClient(loaded: McpSdk) {
   };
 }
 
-describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
-  const loaded = sdk as McpSdk;
-
+describe("MCP wire protocol", () => {
   it("advertises the routed tools with explicit safety annotations", async () => {
     configure({ tokenEnv: "TEST_AGENT_TOKEN", writeBank: "agent-bank", additionalReadBanks: ["shared-bank"] });
-    const { client, close } = await wiredClient(loaded);
+    const { client, close } = await wiredClient();
     try {
       expect(client.getServerCapabilities()).toMatchObject({ tools: { listChanged: true } });
-      expect(client.getServerVersion()).toMatchObject({ name: loaded.serverName });
+      expect(client.getServerVersion()).toMatchObject({ name: SERVER_NAME });
       const listed = await client.listTools();
       const annotations = Object.fromEntries(listed.tools.map((entry) => [entry.name, entry.annotations]));
       expect(Object.keys(annotations).sort()).toEqual(
@@ -111,7 +82,7 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
 
   it("exposes only read tools for a read-only principal", async () => {
     configure({ tokenEnv: "TEST_AGENT_TOKEN", additionalReadBanks: ["shared-bank"] });
-    const { client, close } = await wiredClient(loaded);
+    const { client, close } = await wiredClient();
     try {
       const listed = await client.listTools();
       const names = listed.tools.map((entry) => entry.name);
@@ -128,7 +99,7 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
   it("retains through the wire into the write bank only", async () => {
     configure({ tokenEnv: "TEST_AGENT_TOKEN", writeBank: "agent-bank", additionalReadBanks: ["shared-bank"] });
     const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}));
-    const { client, close } = await wiredClient(loaded);
+    const { client, close } = await wiredClient();
     try {
       const result = await client.callTool({
         name: "memory_router_retain",
@@ -151,7 +122,7 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
       if (url.includes("shared-bank")) return Response.json({ results: [{ text: "shared fact", score: 0.9 }] });
       return Response.json({ results: [{ text: "own fact", score: 0.8 }] });
     });
-    const { client, close } = await wiredClient(loaded);
+    const { client, close } = await wiredClient();
     try {
       const result = await client.callTool({ name: "memory_router_recall", arguments: { query: "facts" } });
       expect(result.isError).toBeUndefined();
@@ -169,7 +140,7 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
 
   it("answers unknown tools with a bounded error", async () => {
     configure({ tokenEnv: "TEST_AGENT_TOKEN", writeBank: "agent-bank" });
-    const { client, close } = await wiredClient(loaded);
+    const { client, close } = await wiredClient();
     try {
       const result = await client.callTool({ name: "memory_router_admin", arguments: {} });
       expect(result.isError).toBe(true);
@@ -186,7 +157,7 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       Response.json({ grants: ["agent-bank"], token: TOKEN }, { status: 401 }),
     );
-    const { client, close } = await wiredClient(loaded);
+    const { client, close } = await wiredClient();
     try {
       const denied = await client.callTool({ name: "memory_router_recall", arguments: { query: "q" } });
       expect(denied.isError).toBe(true);
@@ -213,7 +184,7 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
         ? Response.json({ results: [{ text: `hit from ${url.split("/banks/")[1]}` }] })
         : Response.json({});
     });
-    const { client, close } = await wiredClient(loaded);
+    const { client, close } = await wiredClient();
     try {
       const calls = Array.from({ length: 12 }, (_, index) =>
         index % 2 === 0
@@ -231,4 +202,27 @@ describe.runIf(sdk !== undefined)("MCP wire protocol", () => {
       await close();
     }
   });
+});
+
+it.each(["   ", 123, undefined])("audits malformed retain content %j through real MCP dispatch", async (content) => {
+  configure({ tokenEnv: "TEST_AGENT_TOKEN", writeBank: "agent-bank" });
+  const send = vi.spyOn(globalThis, "fetch");
+  const { client, close } = await wiredClient();
+  try {
+    const result = await client.callTool({ name: "memory_router_retain", arguments: { content } });
+    expect(result.isError).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    const records = logger.info.mock.calls.map(([line]) => JSON.parse(line));
+    expect(records).toEqual([
+      expect.objectContaining({
+        principal: "agent",
+        op: "memory_router_retain",
+        outcome: "failure",
+        errorClass: "invalid_arguments",
+      }),
+    ]);
+    expect(records[0]).not.toHaveProperty("content");
+  } finally {
+    await close();
+  }
 });

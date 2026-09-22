@@ -2,6 +2,7 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { PACKAGE_VERSION } from "../shared/package-version.js";
 import { loadMcpStack, scheduleQueueFlush, startupErrorMessage } from "./managed-config.js";
@@ -24,6 +25,17 @@ export function buildMcpServer(tools: McpTool[]): McpServer {
       async (args) => tool.handler(args),
     );
   }
+  const handlers = new Map(tools.map((tool) => [tool.name, tool.handler]));
+  server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const handler = handlers.get(request.params.name);
+    if (!handler) {
+      return {
+        content: [{ type: "text", text: `MCP error -32602: Tool ${request.params.name} not found` }],
+        isError: true,
+      };
+    }
+    return handler(request.params.arguments ?? {});
+  });
   return server;
 }
 

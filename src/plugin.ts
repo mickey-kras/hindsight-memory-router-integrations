@@ -21,7 +21,7 @@ import {
   UnknownPrincipalError,
 } from "./shared/principal-credential-resolver.js";
 import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "./shared/recall-coordinator.js";
-import { recallItemText } from "./shared/recall-item.js";
+import { formatRecallItem } from "./shared/recall-item.js";
 import { RetainAuthorizationError, RetainCoordinator } from "./shared/retain-coordinator.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./upstream/src/session-patterns.js";
 import type {
@@ -96,14 +96,7 @@ function formatCurrentTimeForRecall(date = new Date()): string {
 }
 
 function formatMemories(results: RecallItem[]): string {
-  return results
-    .map((item) => {
-      const text = recallItemText(item);
-      const type = typeof item.type === "string" ? ` [${item.type}]` : "";
-      const doc = typeof item.document_id === "string" ? ` [doc:${item.document_id}]` : "";
-      return `- ${text}${type}${doc}`;
-    })
-    .join("\n\n");
+  return results.map(formatRecallItem).join("\n\n");
 }
 
 function extractPrompt(event: { prompt?: unknown; messages?: unknown; rawMessage?: unknown }): string | null {
@@ -499,6 +492,8 @@ interface KnowledgeRoute {
   recallBanks: string[];
 }
 
+const SUPPORTED_KNOWLEDGE_TOOLS: readonly string[] = TOOL_NAMES.filter((name) => name !== "agent_knowledge_reflect");
+
 const READ_KNOWLEDGE_TOOLS = new Set([
   "agent_knowledge_recall",
   "agent_knowledge_list_pages",
@@ -559,6 +554,40 @@ function knowledgeBankTool(tool: RoutedKnowledgeTool, route: KnowledgeRoute, aud
   };
 }
 
+function requestedRecallOptions(params: Record<string, unknown>, config: RuntimePluginConfig) {
+  if (typeof params.query !== "string" || params.query.trim() === "") {
+    throw new TypeError("query must be a non-empty string");
+  }
+  if (
+    params.max_tokens !== undefined &&
+    (typeof params.max_tokens !== "number" || !Number.isSafeInteger(params.max_tokens) || params.max_tokens <= 0)
+  ) {
+    throw new RangeError("max_tokens must be a positive integer");
+  }
+  const requestedTypes = params.fact_types ?? params.types;
+  if (
+    requestedTypes !== undefined &&
+    (!Array.isArray(requestedTypes) ||
+      requestedTypes.length === 0 ||
+      requestedTypes.some((type) => typeof type !== "string" || !["world", "experience", "observation"].includes(type)))
+  ) {
+    throw new TypeError("fact_types must contain supported memory types");
+  }
+  const types =
+    requestedTypes && config.recallTypes
+      ? (requestedTypes as string[]).filter((type) => config.recallTypes?.includes(type))
+      : ((requestedTypes as string[] | undefined) ?? config.recallTypes);
+  if (types?.length === 0) throw new RangeError("fact_types must overlap configured recall types");
+  return {
+    query: params.query,
+    maxTokens: Math.min(
+      (params.max_tokens as number | undefined) ?? Number.POSITIVE_INFINITY,
+      config.recallMaxTokens ?? RUNTIME_DEFAULTS.recallMaxTokens,
+    ),
+    types,
+  };
+}
+
 // The recall tool routes through the multi-bank coordinator: same
 // identity, same recall banks, same shared budget and timeout.
 function knowledgeRecallTool(
@@ -573,18 +602,33 @@ function knowledgeRecallTool(
     name: tool.name,
     label: tool.label,
     description: tool.description,
-    parameters: tool.parameters,
+    parameters: {
+      ...tool.parameters,
+      properties: {
+        ...(tool.parameters.properties as Record<string, unknown>),
+        max_tokens: {
+          type: "integer",
+          minimum: 1,
+          maximum: config.recallMaxTokens ?? RUNTIME_DEFAULTS.recallMaxTokens,
+          description: "Shared recall token budget, capped by the configured maximum.",
+        },
+        fact_types: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", enum: ["world", "experience", "observation"] },
+          description: "Recall types within the configured filter; omitted uses the configured filter.",
+        },
+      },
+    },
     async execute(_id: string, params: Record<string, unknown>) {
-      const query = typeof params.query === "string" ? params.query : "";
       const client = stack.clients.forAgent(route.credentials);
       try {
+        const request = requestedRecallOptions(params, config);
         const recalled = await stack.recall.recall(client, {
-          query,
+          ...request,
           banks: route.recallBanks,
           timeoutMs: config.recallTimeoutMs ?? RUNTIME_DEFAULTS.recallTimeoutMs,
-          maxTokens: config.recallMaxTokens ?? RUNTIME_DEFAULTS.recallMaxTokens,
           budget: config.recallBudget,
-          types: config.recallTypes,
           preferObservations: config.preferObservations,
         });
         audit({
@@ -630,6 +674,7 @@ function knowledgeToolsForContext(
     return null;
   }
   return routedKnowledgeTools(stack.clients.transportFor(route.credentials))
+    .filter((tool) => SUPPORTED_KNOWLEDGE_TOOLS.includes(tool.name))
     .filter((tool) => (READ_KNOWLEDGE_TOOLS.has(tool.name) ? route.recallBanks.length > 0 : route.writeBank !== null))
     .map((tool) =>
       tool.name === "agent_knowledge_recall"
@@ -647,7 +692,7 @@ function registerKnowledgeTools(api: MoltbotPluginAPI, stack: RoutingStack): voi
   }
   const audit = auditLogger(log);
   api.registerTool((ctx: PluginToolContext) => knowledgeToolsForContext(stack, log, audit, ctx), {
-    names: [...TOOL_NAMES],
+    names: [...SUPPORTED_KNOWLEDGE_TOOLS],
     optional: false,
   });
   log.info("knowledge tools registered");

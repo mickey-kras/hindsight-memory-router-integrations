@@ -402,6 +402,59 @@ describe("plugin wiring", () => {
     ]);
   });
 
+  it("does not register unsupported reflection and honors capped per-call recall options", async () => {
+    const api = makeApi(queueDir);
+    const stack = buildRoutingStack(pluginConfig(queueDir), api.logger);
+    stack.config.recallMaxTokens = 100;
+    stack.config.recallTypes = ["world", "observation"];
+    registerWithStack(api, stack);
+    const { factory, opts } = api.toolFactories[0];
+    const tools = factory({ agentId: "main" }) as Array<{
+      name: string;
+      execute(id: string, params: Record<string, unknown>): Promise<unknown>;
+    }>;
+    expect(opts?.names).not.toContain("agent_knowledge_reflect");
+    expect(tools.map((tool) => tool.name)).not.toContain("agent_knowledge_reflect");
+    const recall = tools.find((tool) => tool.name === "agent_knowledge_recall");
+    if (!recall) throw new Error("recall tool missing");
+    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ results: [] }));
+    await recall.execute("one", { query: "q", max_tokens: 40, fact_types: ["observation"] });
+    expect(send.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      expect.objectContaining({ max_tokens: 20, types: ["observation"] }),
+      expect.objectContaining({ max_tokens: 20, types: ["observation"] }),
+    ]);
+    send.mockClear();
+    await recall.execute("two", { query: "q", max_tokens: 1000, types: ["world", "experience"] });
+    expect(send.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      expect.objectContaining({ max_tokens: 50, types: ["world"] }),
+      expect.objectContaining({ max_tokens: 50, types: ["world"] }),
+    ]);
+    send.mockClear();
+    for (const params of [
+      { query: " " },
+      { query: "q", max_tokens: 0 },
+      { query: "q", fact_types: ["invalid"] },
+      { query: "q", fact_types: ["experience"] },
+    ]) {
+      await expect(recall.execute("invalid", params)).rejects.toThrow();
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not inject identifiers that exceed the shared recall budget", async () => {
+    const api = makeApi(queueDir);
+    const stack = buildRoutingStack(pluginConfig(queueDir), api.logger);
+    stack.config.recallMaxTokens = 1;
+    registerWithStack(api, stack);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ results: [{ text: "test", document_id: "x".repeat(40_000) }] }),
+    );
+    const handler = api.handlers.get("before_prompt_build");
+    if (!handler) throw new Error("recall hook missing");
+    const result = await handler({ prompt: "remember facts" }, { agentId: "main" });
+    expect(result).toBeUndefined();
+  });
+
   it("exposes recall only for a read-only agent", () => {
     const api = makeApi(queueDir);
     const sink = {

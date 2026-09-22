@@ -89,6 +89,7 @@ jobs:
 
       - run: npm ci
       - run: npm ci --prefix src/upstream/coding-agents
+      - run: npm ci --prefix src/mcp
       - name: Generate coverage for SonarQube
         run: npm run test:coverage
 
@@ -156,6 +157,7 @@ jobs:
           npm pack --pack-destination packages --silent
           (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
           npm pack ./src/mcp --pack-destination packages --silent
+          node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
       - name: Install release tools
         run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
@@ -216,6 +218,7 @@ jobs:
           npm pack --pack-destination packages --silent
           (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
           npm pack ./src/mcp --pack-destination packages --silent
+          node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
       - name: Release preflight
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3

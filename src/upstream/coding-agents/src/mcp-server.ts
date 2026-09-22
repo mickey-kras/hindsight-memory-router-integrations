@@ -106,9 +106,9 @@ async function main() {
   // Mirrors that harness's hooks: it selects the config `harnesses.<name>` section and feeds the
   // `{harness}` bank template, so both routes into a repo land in ONE bank.
   const harness = resolveHarness();
-  const { cfg, bankId, client } = resolveHostMemory(harness, cwd);
-
-  const server = buildMcpServer(selectTools(cfg, client, bankId, { cwd, harness }));
+  const memory = resolveHostMemory(harness, cwd);
+  const tools = memory.disabled ? [] : selectTools(memory.cfg, memory.client, memory.bankId, { cwd, harness });
+  const server = buildMcpServer(tools);
 
   await server.connect(new StdioServerTransport());
 }
