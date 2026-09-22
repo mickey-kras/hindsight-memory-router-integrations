@@ -33,6 +33,15 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 
 [OpenClaw configuration](docs/OPENCLAW.md) · [Coding agents](integrations/coding-agents/README.md)
 
+## Ingest document identity
+
+Coding-agent, OpenClaw and MCP ingest tools use `ingest--<SHA-256 of JSON-encoded title>`.
+The exact title, including case, whitespace and Unicode, identifies the document within its bank.
+Reusing that title replaces its content across these tools; changing the title creates a separate document.
+
+Legacy document IDs remain untouched. The first re-ingest after upgrading creates a new document;
+verify its contents before manually removing the old document. No automatic deletion or ID migration runs.
+
 ## Verify
 
 ```sh

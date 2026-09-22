@@ -650,7 +650,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
  * does not survive flattening into one env var. They stay file-only.
  */
-const ENV_KEYS = {
+export const ENV_KEYS = {
   serverMode: "HINDSIGHT_SERVER_MODE",
   apiUrl: "HINDSIGHT_API_URL",
   apiToken: "HINDSIGHT_API_TOKEN",

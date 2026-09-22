@@ -67,6 +67,10 @@ Rules (all fail closed at startup):
   at-rest confidentiality.
   An item whose replay fails 5 times is abandoned: dropped from the queue and logged loudly to stderr.
 
+Upgrade: older queue entries may use `documentId: "conversation"` for requests that omitted an ID.
+Existing IDs are replayed unchanged. Before restarting, remove that field only from entries confirmed
+to have been submitted without an ID; preserve caller-supplied IDs.
+
 ## Run
 
 ```sh
