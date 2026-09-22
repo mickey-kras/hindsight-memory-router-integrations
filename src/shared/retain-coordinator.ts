@@ -1,7 +1,7 @@
 /** Per-agent retain routing and transient-failure queueing. */
 
 import { randomUUID } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import { type QueuedRetain, type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
@@ -63,6 +63,7 @@ export class RetainCoordinator {
     this.clients = options.clients;
     if (!isAbsolute(options.queueDir)) throw new TypeError("queueDir must be absolute");
     this.queueDir = options.queueDir;
+    mkdirSync(this.queueDir, { recursive: true, mode: 0o700 });
     this.queueMaxAgeMs = options.queueMaxAgeMs ?? -1;
     this.log = options.logger;
     this.onAbandon = options.onAbandon ?? ((item, attempts) => this.log.error(retainAbandonNotice(item, attempts)));
@@ -88,14 +89,20 @@ export class RetainCoordinator {
     const credentials = this.credentials.resolve(principalId);
     const bank = this.credentials.resolveWriteBank(principalId);
     const client = this.clients.forAgent(credentials);
+    const payload = {
+      ...request,
+      metadata: toStringMetadata(request.metadata),
+      tags: request.tags?.slice(),
+      operationId: request.operationId ?? randomUUID(),
+    };
     try {
-      await client.retain(bank, request.content, {
-        documentId: request.documentId,
-        context: request.context,
-        metadata: toStringMetadata(request.metadata),
-        tags: request.tags,
-        updateMode: request.updateMode,
-        operationId: request.operationId ?? randomUUID(),
+      await client.retain(bank, payload.content, {
+        documentId: payload.documentId,
+        context: payload.context,
+        metadata: payload.metadata,
+        tags: payload.tags,
+        updateMode: payload.updateMode,
+        operationId: payload.operationId,
         async: true,
       });
       return { queued: false, bank };
@@ -107,7 +114,7 @@ export class RetainCoordinator {
         throw error;
       }
       const queue = this.queueFor(principalId);
-      queue.enqueue(bank, request, request.metadata);
+      queue.enqueue(bank, payload, payload.metadata);
       this.log.warn(`retain queued for later delivery (bank: ${bank})`);
       return { queued: true, bank };
     }
