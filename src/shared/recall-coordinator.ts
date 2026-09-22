@@ -1,5 +1,3 @@
-/** Multi-bank recall with one timeout, one budget, and deterministic merge. */
-
 import { createHash } from "node:crypto";
 
 import type { RouterClient } from "./authenticated-client-factory.js";
@@ -11,9 +9,7 @@ export type { RecallItem } from "./recall-item.js";
 export interface CoordinatedRecallRequest {
   query: string;
   banks: readonly string[];
-  /** Shared deadline across all banks (ms). */
   timeoutMs: number;
-  /** Shared context token budget across all banks. */
   maxTokens?: number;
   budget?: "low" | "mid" | "high";
   types?: string[];
@@ -59,7 +55,6 @@ function dedupeKey(item: RecallItem): string {
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-/** Rough token estimate for budget trimming (~4 chars per token). */
 function estimateTokens(item: RecallItem): number {
   return Math.max(1, Math.ceil(recallItemText(item).length / 4));
 }
@@ -166,10 +161,8 @@ export class RecallCoordinator {
 
     const { merged, failedBanks } = mergeSettledResults(settled, banks);
 
-    // Deterministic ranking: score desc, bank asc, content asc.
     merged.sort(compareBankItems);
 
-    // Trim merged list to the shared context token budget.
     const results = trimToTokenBudget(
       merged.map((entry) => entry.item),
       request.maxTokens,

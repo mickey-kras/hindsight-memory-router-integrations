@@ -1,5 +1,3 @@
-/** Per-agent retain routing and transient-failure queueing. */
-
 import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -83,7 +81,6 @@ export class RetainCoordinator {
     });
   }
 
-  /** Retain into the agent's default write bank; queue on transient failure. */
   async retain(principalId: string, request: RetainRequestPayload): Promise<RetainOutcome> {
     const credentials = this.credentials.resolve(principalId);
     const bank = this.credentials.resolveWriteBank(principalId);
@@ -113,7 +110,6 @@ export class RetainCoordinator {
     }
   }
 
-  /** Replay all per-agent queues, preserving agent identity and bank target. */
   async flushQueues(): Promise<void> {
     let files: string[];
     try {

@@ -36,6 +36,7 @@ jobs:
       - run: npm ci --prefix src/upstream/coding-agents
       - run: npm ci --prefix src/mcp
       - run: npm run lint
+      - run: npm run format:check
       - run: npm run typecheck
       - name: Tests and coverage
         run: npm run test:coverage

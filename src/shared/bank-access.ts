@@ -27,7 +27,7 @@ export function requireBank(access: BankAccess, bank: string, operation: "read" 
   }
 }
 
-/** Unknown operations are denied; POST does not by itself imply mutation. */
+// Unknown operations are denied; POST does not by itself imply mutation.
 export function classifyOperation(method: string, suffix: string): "read" | "write" {
   if (method === "POST" && ["/memories/recall", "/reflect"].includes(suffix)) return "read";
   if (

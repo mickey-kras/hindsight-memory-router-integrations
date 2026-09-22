@@ -81,9 +81,9 @@ function tool(tools: McpTool[], name: string): McpTool {
 }
 
 function stubFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) =>
-    Promise.resolve(handler(String(input), init ?? {})),
-  );
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation((input, init) => Promise.resolve(handler(String(input), init ?? {})));
 }
 
 describe("argument validation branches", () => {

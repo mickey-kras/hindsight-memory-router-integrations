@@ -187,12 +187,7 @@ it("lets page tools address assigned read banks while denying hidden banks and m
 
 it("installs harness-specific MCP identities without migrating or storing tokens", () => {
   const dir = setup();
-  execFileSync("tar", [
-    "-xzf",
-    codingAgentsPackage(),
-    "-C",
-    dir,
-  ]);
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
   const packageRoot = join(dir, "package");
   const cli = vi.fn(() => true);
   const context = {
@@ -215,12 +210,7 @@ it("installs harness-specific MCP identities without migrating or storing tokens
 
 it("runs the packaged Codex hook with harness-bound credentials and fails closed without them", () => {
   const dir = setup();
-  execFileSync("tar", [
-    "-xzf",
-    codingAgentsPackage(),
-    "-C",
-    dir,
-  ]);
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
   const normal = join(dir, "normal.json");
   writeFileSync(
     normal,

@@ -63,9 +63,9 @@ function tool(tools: McpTool[], name: string): McpTool {
 }
 
 function stubFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) =>
-    Promise.resolve(handler(String(input), init ?? {})),
-  );
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation((input, init) => Promise.resolve(handler(String(input), init ?? {})));
 }
 
 describe("memory_router_retain", () => {
@@ -253,7 +253,9 @@ describe("memory_router_recall", () => {
 
   it("marks the result partial without naming failed banks", async () => {
     const send = stubFetch((url) =>
-      url.includes("shared-bank") ? Response.json({}, { status: 503 }) : Response.json({ results: [{ text: "alpha" }] }),
+      url.includes("shared-bank")
+        ? Response.json({}, { status: 503 })
+        : Response.json({ results: [{ text: "alpha" }] }),
     );
     const stack = makeStack({});
     const result = await tool(buildTools(stack), "memory_router_recall").handler({ query: "deploy" });

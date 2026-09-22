@@ -1,26 +1,17 @@
 import { type BankAccess, visibleBanks } from "./bank-access.js";
 import { BANK_ID_PATTERN, PRINCIPAL_ID_PATTERN, TOKEN_FORMAT_PATTERN } from "./patterns.js";
-/** Maps trusted runtime agent IDs to tokens and routes. No fallback identity. */
 
 export interface PrincipalConfig {
-  /** Resolved bearer token string (SecretRef already resolved by runtime). */
   token?: unknown;
-  /** The agent's single default write bank. */
   writeBank?: unknown;
-  /** Additional read-only banks. */
   additionalReadBanks?: unknown;
 }
 
 export interface RouterPluginConfig {
-  /** Memory Router base URL. Must be https, no userinfo. */
   routerUrl?: unknown;
-  /** Per-agent routing entries keyed by agent ID. */
   principals?: Record<string, PrincipalConfig>;
-  /** Shared recall timeout across all banks (ms). */
   recallTimeoutMs?: number;
-  /** Shared recall context token budget across all banks. */
   recallMaxTokens?: number;
-  /** Directory for per-agent retain queue files. */
   queueDir?: string;
 }
 
@@ -60,11 +51,7 @@ export {
   TOKEN_FORMAT_PATTERN,
 } from "./patterns.js";
 
-/**
- * A SecretRef that runtime did not resolve arrives as an object. Tokens must
- * be plain strings by the time they reach this layer; anything else fails
- * closed so a SecretRef descriptor is never mistaken for a credential.
- */
+// Unresolved SecretRef objects must never be mistaken for credentials.
 function isUnresolvedSecretRef(value: unknown): boolean {
   return typeof value === "object" && value !== null;
 }
@@ -76,7 +63,6 @@ export class PrincipalCredentialResolver {
     this.principals = config.principals ?? {};
   }
 
-  /** Validate configured routes at startup; unresolved secrets fail closed. */
   validateConfiguredPrincipals(): void {
     const principalIds = Object.keys(this.principals);
     if (principalIds.length === 0) {
@@ -92,15 +78,10 @@ export class PrincipalCredentialResolver {
     }
   }
 
-  /** Whether a routing entry exists for this agent ID. */
   has(principalId: string): boolean {
     return Object.hasOwn(this.principals, principalId);
   }
 
-  /**
-   * Resolve credentials for a trusted agent ID.
-   * Throws UnknownPrincipalError / CredentialResolutionError; never returns null.
-   */
   resolve(principalId: string | undefined): PrincipalCredentials {
     if (!principalId || !PRINCIPAL_ID_PATTERN.test(principalId) || principalId === "." || principalId === "..") {
       throw new UnknownPrincipalError(principalId);
@@ -133,7 +114,6 @@ export class PrincipalCredentialResolver {
     });
   }
 
-  /** Resolve the agent's single default write bank. */
   resolveWriteBank(principalId: string): string {
     const bank = this.resolveOptionalWriteBank(principalId);
     if (bank === null) {
@@ -142,7 +122,6 @@ export class PrincipalCredentialResolver {
     return bank;
   }
 
-  /** Resolve an optional write bank. Null is valid for read-only principals. */
   resolveOptionalWriteBank(principalId: string): string | null {
     const entry = this.requireEntry(principalId);
     const bank = entry.writeBank;
@@ -155,7 +134,6 @@ export class PrincipalCredentialResolver {
     return bank;
   }
 
-  /** Resolve the agent's recall banks (deduplicated, configured order). */
   resolveReadBanks(principalId: string): string[] {
     const entry = this.requireEntry(principalId);
     const raw = entry.additionalReadBanks;

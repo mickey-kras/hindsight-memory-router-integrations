@@ -93,7 +93,6 @@ function auditRecords(api: FakeApi): Array<Record<string, unknown>> {
     .filter((record): record is Record<string, unknown> => typeof record?.op === "string");
 }
 
-/** Stack whose clients record their credentials and serve canned responses. */
 function instrumentedStack(
   queueDir: string,
   sink: {

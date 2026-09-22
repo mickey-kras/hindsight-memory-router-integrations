@@ -99,9 +99,7 @@ describe("loadMcpStack", () => {
       error: vi.fn(),
     };
     const stack = loadMcpStack(process.env, infoLogger);
-    expect(() =>
-      stack.audit({ principal: "agent", op: "memory_router_retain", outcome: "success" }),
-    ).not.toThrow();
+    expect(() => stack.audit({ principal: "agent", op: "memory_router_retain", outcome: "success" })).not.toThrow();
   });
 
   it.each([

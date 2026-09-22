@@ -38,7 +38,7 @@ Create matching per-principal + bank + scope grants in Memory Router first.
 
 **client routing != authorization; Memory Router grants are authoritative**
 
-Install the committed coding-agents tarball and run its `hindsight-coding-agents install` command.
+Download the coding-agents `.tgz` asset from the [GitHub release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases), install it, and run its `hindsight-coding-agents install` command.
 The upstream harness hooks, plugin entrypoints, transcript readers, and background ingestion remain packaged.
 Install from this artifact; do not run upstream's `npx` installer over it.
 

@@ -21,9 +21,7 @@ function fixture({ mergeable = true, ahead = 1, fail = false, fork = false, user
         get: async () => ({
           data: {
             ...pull,
-            mergeable: Array.isArray(mergeable)
-              ? mergeable[Math.min(reads++, mergeable.length - 1)]
-              : mergeable,
+            mergeable: Array.isArray(mergeable) ? mergeable[Math.min(reads++, mergeable.length - 1)] : mergeable,
           },
         }),
       },

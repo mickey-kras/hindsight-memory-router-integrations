@@ -27,7 +27,9 @@ describe("formatMemoryOperationAudit", () => {
       { principal: "agent", op: "memory_router_retain", outcome: "success" },
       new Date("2026-09-19T00:00:00Z"),
     );
-    expect(line).toBe('{"at":"2026-09-19T00:00:00.000Z","principal":"agent","op":"memory_router_retain","outcome":"success"}');
+    expect(line).toBe(
+      '{"at":"2026-09-19T00:00:00.000Z","principal":"agent","op":"memory_router_retain","outcome":"success"}',
+    );
   });
 
   it("includes bank and bounded error class when present", () => {
