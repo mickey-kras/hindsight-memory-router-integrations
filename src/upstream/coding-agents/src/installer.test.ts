@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { INSTALLERS, MARKER, parseJsonc, run, type InstallCtx } from "./installer";
 import { SKILL_DIRS } from "./core/skill-dirs";
+import { parse as parseToml } from "smol-toml";
 
 // Every test gets a FRESH temp dir as ctx.home (never the real $HOME) and a stubbed
 // claudeMcp so the real `claude` CLI is never executed. run() is always called with
@@ -240,10 +241,339 @@ describe("qwen-code installer", () => {
   });
 });
 
+describe("factory-droid installer", () => {
+  const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".factory", "hooks.json");
+  const mcpPath = (ctx: InstallCtx) => join(ctx.home, ".factory", "mcp.json");
+
+  it("installs lifecycle and cancellation hooks at the top level", () => {
+    // Droid's user-level hooks file is a standalone event map (no wrapping "hooks" key, unlike
+    // Claude Code's settings.json) with Claude-shaped matcher groups. Writing a "hooks" wrapper
+    // would register nothing.
+    const ctx = makeCtx();
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    const hooks = readJson(hooksPath(ctx));
+    expect(Object.keys(hooks).sort()).toEqual([
+      "Notification",
+      "SessionStart",
+      "Stop",
+      "UserPromptSubmit",
+    ]);
+    const entry = (ev: string) => hooks[ev][0].hooks[0];
+    expect(entry("SessionStart").timeout).toBe(30);
+    expect(entry("UserPromptSubmit").timeout).toBe(30);
+    expect(entry("Stop").timeout).toBe(60);
+    expect(entry("Notification").timeout).toBe(60);
+    expect(entry("SessionStart").command).toContain("droid-sessionstart-hook.js");
+    expect(entry("UserPromptSubmit").command).toContain("droid-hook.js");
+    expect(entry("Stop").command).toContain("droid-stop-hook.js");
+    expect(entry("Notification").command).toContain("droid-stop-hook.js");
+  });
+
+  it("copies settings.json fallback hooks before creating hooks.json", () => {
+    const ctx = makeCtx();
+    const settingsPath = join(ctx.home, ".factory", "settings.json");
+    writeJsonAt(settingsPath, {
+      hooks: {
+        PreToolUse: [{ matcher: "Execute", hooks: [{ command: "their-hook", type: "command" }] }],
+      },
+      untouched: true,
+    });
+
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    expect(JSON.stringify(readJson(hooksPath(ctx)).PreToolUse)).toContain("their-hook");
+    expect(readJson(settingsPath)).toMatchObject({ untouched: true });
+  });
+
+  it("registers the stdio MCP server in mcp.json with the factory-droid harness env", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    const mcp = readJson(mcpPath(ctx));
+    expect(mcp.mcpServers.hindsight).toMatchObject({
+      command: "node",
+      env: { HINDSIGHT_MCP_HARNESS: "factory-droid" },
+    });
+    expect(mcp.mcpServers.hindsight.args[0]).toContain("mcp-server.js");
+  });
+
+  it("replaces an existing package-owned MCP entry and preserves other servers", () => {
+    const ctx = makeCtx();
+    writeJsonAt(mcpPath(ctx), {
+      mcpServers: {
+        playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest"] },
+        hindsight: {
+          command: "node",
+          args: ["/old/node_modules/@vectorize-io/hindsight-coding-agents/dist/mcp-server.js"],
+        },
+      },
+    });
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    const mcp = readJson(mcpPath(ctx));
+    expect(mcp.mcpServers.playwright).toBeDefined();
+    expect(mcp.mcpServers.hindsight.env.HINDSIGHT_MCP_HARNESS).toBe("factory-droid");
+  });
+
+  it("refuses to overwrite a user-managed MCP server with the same name", () => {
+    const ctx = makeCtx();
+    const existing = {
+      mcpServers: {
+        // An incidental marker string is not proof that this package created the registration.
+        hindsight: { command: "coding-agents-proxy", args: ["serve"] },
+      },
+    };
+    writeJsonAt(mcpPath(ctx), existing);
+
+    expect(
+      run(
+        ["install", "factory-droid", "--server", "self-hosted", "--api-url", "http://box:8888"],
+        ctx
+      )
+    ).toBe(1);
+    expect(readJson(mcpPath(ctx))).toEqual(existing);
+    expect(existsSync(hooksPath(ctx))).toBe(false);
+    expect(existsSync(join(ctx.home, ".hindsight", "coding-agent.json"))).toBe(false);
+  });
+
+  it("installs the companion skill into ~/.factory/skills", () => {
+    const ctx = makeCtx();
+    // makeCtx's pkgRoot is a synthetic /opt path the test cannot write; stage the packaged skill
+    // in a real temp package root like the skills-sync family test does.
+    const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-droidskill-"));
+    homes.push(pkgRoot);
+    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), "packaged skill body");
+    const droidCtx: InstallCtx = { ...ctx, pkgRoot, dist: join(pkgRoot, "dist") };
+    expect(run(["install", "factory-droid"], droidCtx)).toBe(0);
+    const skill = join(
+      droidCtx.home,
+      ...SKILL_DIRS["factory-droid"],
+      "hindsight-coding-agent",
+      "SKILL.md"
+    );
+    expect(readFileSync(skill, "utf8")).toBe("packaged skill body");
+  });
+
+  it("uninstall strips our hooks and MCP entry and keeps foreign ones", () => {
+    const ctx = makeCtx();
+    writeJsonAt(hooksPath(ctx), {
+      Stop: [{ hooks: [{ type: "command", command: "their-tool", timeout: 5 }] }],
+    });
+    writeJsonAt(mcpPath(ctx), {
+      mcpServers: {
+        playwright: { command: "npx" },
+        hindsight: {
+          command: "node",
+          args: ["/old/coding-agents/dist/mcp-server.js"],
+        },
+      },
+    });
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    expect(run(["uninstall", "factory-droid"], ctx)).toBe(0);
+    const hooks = readJson(hooksPath(ctx));
+    expect(JSON.stringify(hooks)).toContain("their-tool");
+    expect(JSON.stringify(hooks)).not.toContain("droid-stop-hook.js");
+    const mcp = readJson(mcpPath(ctx));
+    expect(mcp.mcpServers.playwright).toBeDefined();
+    expect(mcp.mcpServers.hindsight).toBeUndefined();
+  });
+
+  it("uninstall preserves a same-named MCP server that no longer belongs to the package", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    const mcp = readJson(mcpPath(ctx));
+    mcp.mcpServers.hindsight = { command: "coding-agents-proxy", args: ["serve"] };
+    writeJsonAt(mcpPath(ctx), mcp);
+
+    expect(run(["uninstall", "factory-droid"], ctx)).toBe(0);
+    expect(readJson(mcpPath(ctx)).mcpServers.hindsight).toEqual({
+      command: "coding-agents-proxy",
+      args: ["serve"],
+    });
+  });
+
+  it("uninstall removes empty config files it created", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    expect(run(["uninstall", "factory-droid"], ctx)).toBe(0);
+    expect(existsSync(hooksPath(ctx))).toBe(false);
+    expect(existsSync(mcpPath(ctx))).toBe(false);
+    expect(existsSync(join(SKILL_DIRS["factory-droid"].join("/"), "hindsight-coding-agent"))).toBe(
+      false
+    );
+  });
+});
+
+describe("zcode installer", () => {
+  const configPath = (ctx: InstallCtx) => join(ctx.home, ".zcode", "cli", "config.json");
+
+  it("registers the three hooks in ZCode's own CLI config, in its process shape", () => {
+    // ZCode spawns hooks WITHOUT a shell, so a `node "…/zcode-hook.js"` command string would be
+    // looked up verbatim as an executable and never run. The argv split is the whole point.
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const hooks = readJson(configPath(ctx)).hooks;
+    expect(Object.keys(hooks.events).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
+    const entry = (ev: string) => hooks.events[ev][0].hooks[0];
+    for (const ev of ["SessionStart", "Stop", "UserPromptSubmit"]) {
+      expect(entry(ev).type).toBe("process");
+      expect(entry(ev).command).toBe("node");
+      expect(entry(ev).command).not.toContain(".js");
+    }
+    expect(entry("SessionStart").args[0]).toContain("zcode-sessionstart-hook.js");
+    expect(entry("UserPromptSubmit").args[0]).toContain("zcode-hook.js");
+    expect(entry("Stop").args[0]).toContain("zcode-stop-hook.js");
+  });
+
+  it("writes the budgets as timeoutMs, in milliseconds", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const entry = (ev: string) => readJson(configPath(ctx)).hooks.events[ev][0].hooks[0];
+    expect(entry("SessionStart")).toMatchObject({ timeoutMs: 30_000 });
+    expect(entry("UserPromptSubmit")).toMatchObject({ timeoutMs: 30_000 });
+    expect(entry("Stop")).toMatchObject({ timeoutMs: 60_000 });
+    // `timeout` seconds is another host's field: writing it here registers no budget at all.
+    expect(entry("Stop").timeout).toBeUndefined();
+  });
+
+  it("turns ZCode's hook system on — it ships disabled, and off it fires nothing", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).hooks).toMatchObject({
+      enabled: true,
+      maxOutputBytes: 32768,
+    });
+  });
+
+  it("leaves a tuned maxOutputBytes alone", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), { hooks: { maxOutputBytes: 65536 } });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).hooks.maxOutputBytes).toBe(65536);
+  });
+
+  it("preserves the rest of the CLI config and any foreign hooks", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), {
+      model: "glm-4.6",
+      theme: "dark",
+      hooks: {
+        events: {
+          UserPromptSubmit: [{ hooks: [{ type: "process", command: "their-hook" }] }],
+          PreToolUse: [{ hooks: [{ type: "process", command: "their-other-hook" }] }],
+        },
+      },
+    });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const config = readJson(configPath(ctx));
+    expect(config).toMatchObject({ model: "glm-4.6", theme: "dark" });
+    expect(JSON.stringify(config.hooks.events)).toContain("their-hook");
+    expect(config.hooks.events.PreToolUse).toBeDefined();
+    expect(config.hooks.events.UserPromptSubmit).toHaveLength(2);
+  });
+
+  it("is idempotent — a second install replaces our entries rather than stacking them", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).hooks.events.UserPromptSubmit).toHaveLength(1);
+  });
+
+  it("registers the stdio MCP server in the same config, tagged with the zcode harness", () => {
+    // ZCode's server schema is strict — {type?, command, args?, cwd?, env?, enabled?, timeoutMs?} —
+    // and infers type "stdio" from a command, which is why the shared entry shape drops straight in.
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const server = readJson(configPath(ctx)).mcp.servers.hindsight;
+    expect(server).toMatchObject({ command: "node", env: { HINDSIGHT_MCP_HARNESS: "zcode" } });
+    expect(server.args[0]).toContain("mcp-server.js");
+  });
+
+  it("refuses to overwrite a user-managed MCP server already named hindsight", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), {
+      mcp: { servers: { hindsight: { command: "their-own-proxy", args: ["serve"] } } },
+    });
+    expect(run(["install", "zcode"], ctx)).not.toBe(0);
+    expect(readJson(configPath(ctx)).mcp.servers.hindsight.command).toBe("their-own-proxy");
+  });
+
+  /** makeCtx's pkgRoot is a synthetic /opt path the test cannot write; stage the packaged skill in
+   *  a real temp package root, like the droid and skills-sync tests do. */
+  const ctxWithPackagedSkill = (): InstallCtx => {
+    const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-zcodeskill-"));
+    homes.push(pkgRoot);
+    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), "packaged skill body");
+    return { ...makeCtx(), pkgRoot, dist: join(pkgRoot, "dist") };
+  };
+
+  it("installs the companion skill in ZCode's own root, not the shared agentskills one", () => {
+    const ctx = ctxWithPackagedSkill();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const skill = join(ctx.home, ...SKILL_DIRS.zcode, "hindsight-coding-agent", "SKILL.md");
+    expect(readFileSync(skill, "utf8")).toBe("packaged skill body");
+    // ~/.agents/skills is Codex's and dsh's copy; uninstalling zcode must never take it.
+    expect(existsSync(join(ctx.home, ".agents", "skills", "hindsight-coding-agent"))).toBe(false);
+  });
+
+  it("uninstall takes the skill back out of ZCode's root", () => {
+    const ctx = ctxWithPackagedSkill();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, ...SKILL_DIRS.zcode, "hindsight-coding-agent"))).toBe(false);
+  });
+
+  it("uninstall removes our MCP entry and keeps a foreign server", () => {
+    // Plain makeCtx: ownership is decided by the dist path (isOurMcpEntry), which only the real
+    // package layout satisfies — a temp pkgRoot would read as someone else's server.
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), { mcp: { servers: { playwright: { command: "npx" } } } });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    const config = readJson(configPath(ctx));
+    expect(config.mcp.servers.playwright).toBeDefined();
+    expect(config.mcp.servers.hindsight).toBeUndefined();
+  });
+
+  it("uninstall preserves a same-named MCP server that no longer belongs to the package", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const config = readJson(configPath(ctx));
+    config.mcp.servers.hindsight = { command: "coding-agents-proxy", args: ["serve"] };
+    writeJsonAt(configPath(ctx), config);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).mcp.servers.hindsight).toEqual({
+      command: "coding-agents-proxy",
+      args: ["serve"],
+    });
+  });
+
+  it("uninstall removes the whole hooks block, so the host goes back to its off default", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), { model: "glm-4.6" });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    const config = readJson(configPath(ctx));
+    expect(config.hooks).toBeUndefined();
+    expect(config).toMatchObject({ model: "glm-4.6" });
+  });
+
+  it("uninstall keeps foreign hooks — and the enabled switch they now depend on", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), {
+      hooks: { events: { PreToolUse: [{ hooks: [{ type: "process", command: "their-hook" }] }] } },
+    });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    const hooks = readJson(configPath(ctx)).hooks;
+    expect(JSON.stringify(hooks)).toContain("their-hook");
+    expect(JSON.stringify(hooks)).not.toContain("zcode-hook.js");
+    expect(hooks.enabled).toBe(true);
+  });
+});
+
 describe("codex installer", () => {
   const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".codex", "hooks.json");
   const tomlPath = (ctx: InstallCtx) => join(ctx.home, ".codex", "config.toml");
-
   it("install writes the 3 hook events into hooks.json", () => {
     const ctx = makeCtx();
     expect(run(["install", "codex"], ctx)).toBe(0);
@@ -969,6 +1299,89 @@ describe("grok-build installer", () => {
     expect(existsSync(join(ctx.home, ".claude"))).toBe(false);
   });
 
+  // A config written before the markers existed (or hand-edited so they were lost) keeps an
+  // unmarked `[mcp_servers.hindsight]` + hook entries. TOML forbids redefining a table, so
+  // appending on top of them made the whole file unparsable and disabled every MCP server.
+  const legacyToml = (dist: string) =>
+    `[ui]\ntheme = "dark"\n\n` +
+    `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = "command"\n  command = "node \\"${join(dist, "grok-sessionstart-hook.js")}\\""\n  timeout = 30\n\n` +
+    `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = "command"\n  command = "node \\"${join(dist, "grok-hook.js")}\\""\n  timeout = 30\n\n` +
+    `[mcp_servers.hindsight]\ncommand = "node"\nargs = ["${join(dist, "mcp-server.js")}"]\n`;
+
+  it("replaces an unmarked legacy block instead of duplicating the TOML tables", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    writeFileSync(configPath(ctx), legacyToml(join("/opt", MARKER, "old-dist")));
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+
+    const toml = readFileSync(configPath(ctx), "utf8");
+    // The whole point: the file still parses. A duplicate table makes Grok drop every MCP server.
+    const parsed = parseToml(toml) as any;
+    expect(Object.keys(parsed.mcp_servers)).toEqual(["hindsight"]);
+    expect(toml.match(/\[mcp_servers\.hindsight\]/g)).toHaveLength(1);
+    expect(toml.match(/\[\[hooks\.SessionStart\]\]/g)).toHaveLength(1);
+    expect(toml.match(/\[\[hooks\.UserPromptSubmit\]\]/g)).toHaveLength(1);
+    expect(toml).not.toContain(join("/opt", MARKER, "old-dist"));
+    expect(toml).toContain(join(ctx.dist, "mcp-server.js"));
+    expect(toml).toContain('[ui]\ntheme = "dark"'); // foreign config preserved
+  });
+
+  it("leaves a foreign MCP server and unrelated hooks untouched", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    writeFileSync(
+      configPath(ctx),
+      `${legacyToml(join("/opt", MARKER, "old-dist"))}\n` +
+        `[mcp_servers.other]\ncommand = "other-server"\n\n` +
+        `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = "command"\n  command = "my-own-script"\n`
+    );
+    run(["install", "grok-build"], ctx);
+
+    const toml = readFileSync(configPath(ctx), "utf8");
+    const parsed = parseToml(toml) as any;
+    expect(parsed.mcp_servers.other.command).toBe("other-server");
+    expect(parsed.hooks.Stop[0].hooks[0].command).toBe("my-own-script");
+    expect(toml).toContain('[mcp_servers.other]\ncommand = "other-server"');
+    expect(toml).toContain('command = "my-own-script"');
+    expect(toml.match(/\[mcp_servers\.hindsight\]/g)).toHaveLength(1);
+  });
+
+  // The reported end state (#4295): the duplicate already exists, so config.toml no longer parses
+  // and `grok mcp list` shows nothing. Re-running install must repair it.
+  it("repairs a config already broken by a duplicated block", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    const legacy = legacyToml(join("/opt", MARKER, "old-dist"));
+    writeFileSync(configPath(ctx), legacy);
+    run(["install", "grok-build"], ctx);
+    // Re-create the pre-fix damage: the marked block appended on top of the untouched legacy one.
+    const installed = readFileSync(configPath(ctx), "utf8");
+    const marked = installed.slice(installed.indexOf("# HINDSIGHT_CODING_AGENTS_GROK_START"));
+    const broken = `${legacy}\n${marked}`;
+    expect(() => parseToml(broken)).toThrow();
+    writeFileSync(configPath(ctx), broken);
+
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+    const toml = readFileSync(configPath(ctx), "utf8");
+    const parsed = parseToml(toml) as any;
+    expect(Object.keys(parsed.mcp_servers)).toEqual(["hindsight"]);
+    expect(parsed.mcp_servers.hindsight.args).toEqual([join(ctx.dist, "mcp-server.js")]);
+    expect(toml.match(/HINDSIGHT_CODING_AGENTS_GROK_START/g)).toHaveLength(1);
+  });
+
+  it("uninstall removes an unmarked legacy block too", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    writeFileSync(configPath(ctx), legacyToml(join("/opt", MARKER, "old-dist")));
+    run(["uninstall", "grok-build"], ctx);
+
+    const toml = readFileSync(configPath(ctx), "utf8");
+    expect(parseToml(toml)).toEqual({ ui: { theme: "dark" } });
+    expect(toml).not.toContain("[mcp_servers.hindsight]");
+    expect(toml).not.toContain("grok-sessionstart-hook.js");
+    expect(toml).toContain('[ui]\ntheme = "dark"');
+  });
+
   it("removes only its marked Grok TOML block", () => {
     const ctx = makeCtx();
     mkdirSync(dirname(configPath(ctx)), { recursive: true });
@@ -1177,6 +1590,8 @@ describe("run() CLI behavior", () => {
       "cline-cli",
       "dcode",
       "dsh",
+      "factory-droid",
+      "zcode",
     ]);
   });
 });

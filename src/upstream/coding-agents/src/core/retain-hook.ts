@@ -24,9 +24,11 @@ import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import type { RetainCursorStore } from "./retain-cursor";
 import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
-import { fileCursorStore, sessionRootDir } from "./session-cache";
+import { fileCursorStore, fileUsageCursorStore, sessionRootDir } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
+import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
 import { stripInjectedMemory } from "./transcript-util";
+import { recordUsage, type UsageCursorStore } from "./usage";
 
 /** Headroom left before the host's kill: the response still has to come back after the last wait. */
 const HOST_DEADLINE_MARGIN_MS = 2000;
@@ -60,10 +62,25 @@ export interface RetainHookSpec {
   hostTimeoutSec: number;
   /** Read the fields out of the harness's stdin event (shapes differ per harness). */
   parse(event: Record<string, unknown>): RetainHookEventFields;
+  /** Optional event gate for one entry point registered on multiple host events. Evaluated before
+   *  config loading or daemon startup, so irrelevant notifications stay cheap no-ops. */
+  accept?(event: Record<string, unknown>): boolean;
   /** Harness-specific transcript parser. Defaults to the Claude JSONL reader. */
   readTranscript?: TranscriptReader;
   /** Harness-specific decoder for `lastAssistantMessage`. Defaults to identity. */
   readLastMessage?: LastMessageReader;
+  /**
+   * Hosts that expose no durable transcript retain from the plugin's OWN per-session journal
+   * (core/turn-journal.ts) instead of a host file: the prompt hook has already appended the user
+   * turn, and this closes the turn with the reply read out of the Stop event.
+   *
+   * Declaring it here rather than in `parse` is what keeps `parse` pure — resolving the reply is a
+   * read of the ephemeral transcript the host is about to delete, and closing the turn is a write.
+   */
+  journal?: {
+    /** The assistant reply for this turn, from the Stop event. "" when the host sent none. */
+    assistantText(event: Record<string, unknown>): string;
+  };
 }
 
 /** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. The
@@ -93,6 +110,10 @@ export async function buildRetain(args: {
   cursors?: RetainCursorStore;
   /** Absolute time the host will kill this process; bounds any rate-limit retry. */
   retryUntil?: number;
+  /** Resolved bank, recorded on the usage line. */
+  bankId?: string;
+  /** Injectable for tests; defaults to the per-session temp file. */
+  usageCursors?: UsageCursorStore;
 }): Promise<void> {
   const { harness, sessionId, transcriptPath, client } = args;
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
@@ -117,6 +138,19 @@ export async function buildRetain(args: {
     });
   }
   if (turns.length === 0) return;
+  // Stop fires once the reply is finished, so every turn in the transcript is complete.
+  recordUsage({
+    harness,
+    sessionId,
+    bankId: args.bankId ?? "",
+    turns,
+    cursors: args.usageCursors ?? fileUsageCursorStore(harness),
+    lastTurnComplete: true,
+    // The host has usually not flushed this turn's final reply yet — and that is
+    // the message carrying the credit line. Re-emit the previous turn so the next
+    // Stop, reading a complete transcript, corrects it. See recordUsage.
+    reviseLastTurn: true,
+  });
 
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
   const t0 = Date.now();
@@ -157,12 +191,30 @@ export async function runRetainHook(
   } catch {
     return; // no/invalid event: stay silent
   }
-  const { sessionId, transcriptPath, cwd: rawCwd, lastAssistantMessage } = spec.parse(ev);
+  if (spec.accept && !spec.accept(ev)) return;
+  const parsed = spec.parse(ev);
+  const { sessionId, cwd: rawCwd, lastAssistantMessage } = parsed;
   const cwd = rawCwd || process.cwd();
+  let transcriptPath = parsed.transcriptPath;
+  let readTranscript = spec.readTranscript;
 
   let cfg = loadConfig({ harness: spec.harness });
   setLogLevel(cfg.logLevel);
   if (cfg.disabled) return;
+
+  // A journal harness closes the turn HERE, at the first point past the kill switch: the host's
+  // copy of the reply is ephemeral (ZCode deletes its Stop transcript the moment this hook
+  // returns), so it has to be read before anything that can block or fail. Reading the journal
+  // back as the transcript is what makes the rest of this function identical to every other
+  // harness's — the same full conversation, planned against the same retain cursor.
+  if (spec.journal) {
+    transcriptPath = journalPath(spec.harness, sessionId);
+    readTranscript = readJournalTranscript;
+    appendJournalTurn(transcriptPath, {
+      role: "assistant",
+      content: spec.journal.assistantText(ev),
+    });
+  }
 
   if (!transcriptPath) return;
 
@@ -202,10 +254,11 @@ export async function runRetainHook(
     sessionId: sessionId || "no-session",
     transcriptPath,
     client,
-    readTranscript: spec.readTranscript,
+    readTranscript,
     lastAssistantMessage,
     readLastMessage: spec.readLastMessage,
     retryUntil: hostDeadline,
+    bankId,
     stamp: buildRetainStamp(cfg, {
       directory: cwd,
       sessionRoot,

@@ -89,7 +89,8 @@ basis instead:
    guard may require an owner-reviewed bootstrap before it accepts the new workflow.
    Keep that guard enabled; do not fabricate statuses or bypass it with the release App.
 2. Create a dedicated GitHub App, installed only on these repositories, with
-   **Contents: read and write** and implicit Metadata read. No Administration permission.
+   **Contents: read and write**, **Pull requests: read and write**, and implicit Metadata read.
+   No Administration permission. Approve changed installation permissions before releasing.
 3. In each repository, create environment **release-automation**, allowing branches
    `main` and `release/*`. Add environment secret `RELEASE_APP_PRIVATE_KEY` and repository
    variable `RELEASE_APP_ID`. Leave environment reviewers unset for automatic publication.
@@ -133,7 +134,9 @@ basis instead:
 - **Different bytes needed after publication started, or retained image expired:** use
   a new version. Never replace a tag or asset. Avoid merging fixes during publication.
 - **Only `latest` failed:** rerun the failed job; it verifies the release and retries promotion.
-- **Released:** retain its branch/tag. Future work gets another version.
+- **Released:** automation opens a next-version PR for manual review and merge, deletes
+  the published release branch, and prunes older published branches that still match
+  their tags. The protected tags and immutable releases stay. Future work gets another version.
 
 Publication across GitHub and two registries is not atomic; exact digest references
 remain usable if a partial failure temporarily leaves aliases different.

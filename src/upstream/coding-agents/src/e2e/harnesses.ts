@@ -18,6 +18,8 @@ import { join } from "node:path";
 import type { HarnessDockerSetup } from "./harness";
 import { codexDockerSetup } from "./codex";
 import { dcodeDockerSetup } from "./dcode";
+import { factoryDroidDockerSetup } from "./droid";
+import { zcodeDockerSetup } from "./zcode";
 
 const home = (...parts: string[]) => join(homedir(), ...parts);
 
@@ -39,7 +41,7 @@ export const opencodeDockerSetup: HarnessDockerSetup = {
 };
 
 /**
- * opencode2 — opencode v2's separate `opencode2` binary, installed ALONGSIDE v1.
+ * opencode2: the distinct alias that lets this image invoke opencode v2 explicitly.
  *
  * It shares v1's credential file (`~/.local/share/opencode/auth.json`) and its config file, so the
  * setup differs from opencode's only in the CLI it drives and the harness it reports. `run` prints
@@ -317,4 +319,6 @@ export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   piDockerSetup,
   primeAgentDockerSetup,
   dshDockerSetup,
+  factoryDroidDockerSetup,
+  zcodeDockerSetup,
 ];

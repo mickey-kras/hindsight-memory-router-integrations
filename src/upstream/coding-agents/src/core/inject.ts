@@ -32,6 +32,45 @@ export function buildReflectQuery(prompt: string): string {
   );
 }
 
+const PAGE_FALLBACK_LEAD =
+  "(Hindsight's synthesis was unavailable this turn; these knowledge pages matched the goal by " +
+  "search. Read one with hindsight_read_knowledge_page(<id>) if it looks relevant.)";
+export const PAGE_INJECT_LEAD =
+  "(These knowledge pages matched the goal by search. Read one with " +
+  "hindsight_read_knowledge_page(<id>) if it looks relevant.)";
+
+/** The memory body injected from knowledge-page search: after a failed reflect (default lead), or
+ *  as the configured `autoInject: "pages"` source. */
+export function formatPageFallback(
+  hits: { id: string; name: string; snippet: string }[],
+  lead = PAGE_FALLBACK_LEAD
+): string {
+  return (
+    `${lead}\n` +
+    hits
+      .map((h) => {
+        const snippet = h.snippet.replace(/\s+/g, " ").trim();
+        return `- ${h.name} (${h.id})${snippet ? `: ${snippet}` : ""}`;
+      })
+      .join("\n")
+  );
+}
+
+// Deliberately says "memories", not "observations": `recallOptions` decides what comes back, so a
+// bank that recalls world/experience facts would otherwise be told they are consolidated
+// observations — a claim about provenance that the injected block has no business guessing at.
+const RECALL_FALLBACK_LEAD =
+  "(Hindsight's synthesis was unavailable this turn; these memories were recalled from the bank " +
+  "for the goal, unsynthesized.)";
+export const RECALL_INJECT_LEAD =
+  "(These memories were recalled from the bank for the goal, unsynthesized.)";
+
+/** The memory body injected from a raw recall over the bank (`recallOptions`): after a failed
+ *  reflect found no page (default lead), or as the configured `autoInject: "recall"`. */
+export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD): string {
+  return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
+}
+
 export function buildSystemInjection(memory: string): string {
   // The <hindsight_memory> wrapper is LOAD-BEARING: the transcript readers strip this exact tag
   // (transcript-util MEMORY_TAG_RE) so the session write-back never re-ingests the injected

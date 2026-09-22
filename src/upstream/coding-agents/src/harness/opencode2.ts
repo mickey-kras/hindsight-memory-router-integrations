@@ -1,7 +1,7 @@
 /**
  * opencode2 (opencode v2) harness adapter — full parity with the v1 opencode plugin.
  *
- * opencode v2 (`npm @opencode-ai/cli@beta`, binary `opencode2`) is a ground-up rewrite of the
+ * opencode v2 (`npm @opencode/cli`, binary `opencode2`) is a ground-up rewrite of the
  * plugin API, so NOTHING from harness/opencode.ts carries over. A v1 plugin is a function returning
  * a bag of named hooks; a v2 plugin is `{id, setup(ctx)}` where `ctx` hands out per-domain
  * registration calls. The mapping this file implements:
@@ -42,7 +42,7 @@
  * This is the only opencode2-specific file besides the entrypoint; everything it uses is in ../core.
  */
 import { z } from "zod";
-import type { Plugin } from "@opencode-ai/plugin-v2";
+import type { Plugin } from "@opencode/plugin";
 
 import { resolveHostMemory } from "../core/host-client";
 import { describeError } from "../core/log";
@@ -50,6 +50,7 @@ import { diag } from "../core/diag";
 import { RuntimeCore } from "../core/runtime";
 import type { ToolSpec } from "../core/knowledge-tools";
 import { readOpencode2Messages, type Oc2Message } from "../core/transcript-opencode2";
+import { readPackagedSkill } from "../core/skill-sync";
 import { resolveProjectDirectory } from "./plugin-entry";
 
 /** The v2 SDK exports its plugin surface as a namespace (`export * as Plugin`), so the interface a
@@ -73,6 +74,10 @@ const IDLE_EVENTS = new Set([
   "session.execution.failed",
   "session.execution.interrupted",
 ]);
+
+/** The companion skill's directory name everywhere else (core/skill-dirs.ts), reused as the id and
+ *  name this host registers it under so the two routes name the same skill. */
+const SKILL_ID = "hindsight-coding-agent";
 
 /** Structural subset of the v2 event envelope we act on. */
 interface Oc2Event {
@@ -111,6 +116,33 @@ function toOpencode2Tool(spec: ToolSpec) {
 }
 
 /**
+ * Publish the packaged companion skill into this host's skill registry.
+ *
+ * Every other skills-capable host gets the skill as a COPY our installer drops in its skills
+ * directory (core/skill-dirs.ts). opencode2 has none to drop into: it discovers `~/.claude/skills`
+ * and `~/.agents/skills`, both of them other hosts' roots that `uninstall` removes by fixed
+ * directory name — so writing there would make uninstalling Codex or dsh take opencode2's skill
+ * with it. An opencode2-only install therefore shipped the tools with no skill at all (#4352).
+ *
+ * v2 can register one in memory instead, so nothing is written to disk and no second copy can go
+ * stale: the content is read from the PACKAGE at setup, which is what makes `npm update -g` upgrade
+ * the skill here too. Fail-open like every other seam in this adapter — an older v2 without
+ * `ctx.skill` (or a host that rejects the draft) loses the skill, never the memory.
+ */
+async function registerCompanionSkill(ctx: Opencode2Context, harness: string): Promise<void> {
+  const skill = readPackagedSkill();
+  if (!skill) return;
+  try {
+    await ctx.skill.transform((draft) =>
+      draft.add({ id: SKILL_ID, name: SKILL_ID, ...skill } as never)
+    );
+    diag(harness, "skill_registered", { id: SKILL_ID });
+  } catch (e) {
+    diag(harness, "skill_register_failed", { error: describeError(e) });
+  }
+}
+
+/**
  * Wire a RuntimeCore onto one opencode2 plugin context and return the teardown.
  *
  * Split out of `createOpencode2PluginEntry` so the hook wiring can be exercised against a fake
@@ -133,6 +165,8 @@ export async function wireOpencode2Runtime(
   await ctx.tool.transform((draft) => {
     for (const spec of core.toolSpecs()) draft.add(toOpencode2Tool(spec));
   });
+
+  await registerCompanionSkill(ctx, harness);
 
   // Sessions THIS plugin instance owns. See the event loop below for why the write-back cannot do
   // without it.

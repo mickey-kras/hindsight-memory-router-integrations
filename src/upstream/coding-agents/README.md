@@ -1,6 +1,6 @@
 # Coding agents
 
-Source: `vectorize-io/hindsight/hindsight-integrations/coding-agents`, v0.5.1.
+Source: `vectorize-io/hindsight/hindsight-integrations/coding-agents`, v0.6.1.
 The superseded per-agent integrations are not imported.
 
 Set `HINDSIGHT_ROUTER_CONFIG` to an absolute, operator-managed JSON file:

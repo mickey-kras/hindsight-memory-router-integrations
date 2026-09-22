@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_PARALLEL_RETAINS,
   DEFAULT_OBSERVATION_SCOPES,
   HindsightClient,
+  ReflectError,
   retryAfterMs,
 } from "./hindsight";
 
@@ -516,5 +517,146 @@ describe("every client-building entrypoint forwards observationScopes", () => {
       return buildsClient && !src.includes("observationScopes:");
     });
     expect(dropped).toEqual([]);
+  });
+});
+
+describe("HindsightClient.reflect failures", () => {
+  it("keeps the server's error body, not just the status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(500, { detail: "tool_call ids must be unique" }))
+    );
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    await expect(client.reflect("why?", { timeoutMs: 5_000 })).rejects.toThrow(
+      /^reflect 500 .*tool_call ids must be unique/
+    );
+  });
+
+  it("names its own deadline instead of a bare 'operation was aborted'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          })
+      )
+    );
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    await expect(client.reflect("why?", { timeoutMs: 10 })).rejects.toThrow(
+      "reflect timed out after 10ms"
+    );
+  });
+
+  it("types the failure so the hook can tell a fallback-worthy one apart", async () => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    const failWith = async (status: number) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => jsonResponse(status, { detail: "x" }))
+      );
+      return client.reflect("why?", { timeoutMs: 5_000 }).catch((e: unknown) => e);
+    };
+
+    const e503 = await failWith(503);
+    expect(e503).toBeInstanceOf(ReflectError);
+    expect((e503 as ReflectError).status).toBe(503);
+    expect((e503 as ReflectError).fallbackEligible).toBe(true);
+    // A 4xx fails the same way on every endpoint (auth, missing bank): no fallback.
+    expect(((await failWith(401)) as ReflectError).fallbackEligible).toBe(false);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          })
+      )
+    );
+    const timeout = (await client
+      .reflect("why?", { timeoutMs: 10 })
+      .catch((e) => e)) as ReflectError;
+    expect(timeout.timedOut).toBe(true);
+    expect(timeout.fallbackEligible).toBe(true);
+  });
+});
+
+describe("HindsightClient.recallObservations", () => {
+  it("merges recallOptions key-by-key over the defaults, leaving untouched keys alone", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { results: [{ text: "only" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      recallOptions: { types: ["world", "experience"], max_tokens: 250, tags: ["t"] },
+    }).recallObservations("goal", { timeoutMs: 5_000 });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      query: "goal",
+      types: ["world", "experience"],
+      max_tokens: 250,
+      // An option the client knows nothing about rides along untouched — the point of the object.
+      tags: ["t"],
+      // Not overridden, so the defaults stand.
+      budget: "low",
+      include: { entities: null },
+    });
+  });
+
+  it("asks for every fact type when recallOptions sets types to null", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { results: [{ text: "only" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      recallOptions: { types: null },
+    }).recallObservations("goal", { timeoutMs: 5_000 });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).types).toBeNull();
+  });
+
+  it("never lets recallOptions replace the query — the goal is not configurable", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { results: [{ text: "only" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      recallOptions: { query: "a fixed string" },
+    }).recallObservations("the real goal", { timeoutMs: 5_000 });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).query).toBe("the real goal");
+  });
+
+  it("recalls only observations, low budget, no entities, and returns their texts in order", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { results: [{ text: " first " }, { text: "" }, { text: "second" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    const out = await client.recallObservations("goal", { timeoutMs: 5_000 });
+
+    expect(out).toEqual(["first", "second"]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("http://x/v1/default/banks/b/memories/recall");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      query: "goal",
+      types: ["observation"],
+      budget: "low",
+      max_tokens: 2000,
+      include: { entities: null },
+    });
   });
 });

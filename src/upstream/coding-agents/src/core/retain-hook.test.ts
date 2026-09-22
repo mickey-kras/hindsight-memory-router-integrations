@@ -4,11 +4,14 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deriveBankId } from "./bank";
+import type { TransportTurn } from "./chat";
 import { type RawConfig, resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
 import { buildRetain, runRetainHook } from "./retain-hook";
-import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
+import { fingerprintTurns, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
+import { readCodexTranscript } from "./transcript-codex";
 import { dcodeAssistantText } from "./transcript-dcode";
+import { memoryUsageCursorStore } from "./usage";
 
 /** The Stop event `runRetainHook` reads from fd 0; every other read stays real. */
 let stdin = "";
@@ -41,7 +44,224 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+describe("buildRetain usage stats", () => {
+  it("records the Hindsight calls and credit of a real Claude Code transcript", async () => {
+    // The raw host format end to end: tool_use blocks through readClaudeTranscript's action turns.
+    const usageFile = join(root, "usage.jsonl");
+    vi.stubEnv("HINDSIGHT_USAGE_FILE", usageFile);
+    const msg = (type: string, content: unknown) =>
+      JSON.stringify({ type, message: { role: type, content } });
+    writeFileSync(
+      file,
+      [
+        msg("user", "how do we round?"),
+        msg("assistant", [
+          {
+            type: "tool_use",
+            name: "mcp__hindsight__hindsight_search_knowledge_pages",
+            input: { query: "rounding" },
+          },
+          { type: "tool_use", name: "Grep", input: { pattern: "round" } },
+        ]),
+        msg("user", [{ type: "tool_result", content: "page kp-1" }]),
+        msg("assistant", [{ type: "text", text: "> 🧠 **From Hindsight memory** — half up" }]),
+      ].join("\n")
+    );
+    try {
+      await buildRetain({
+        harness: "claude-code",
+        sessionId: "sess-usage",
+        transcriptPath: file,
+        bankId: "bank-1",
+        usageCursors: memoryUsageCursorStore(),
+        client: { retain: vi.fn().mockResolvedValue(undefined) } as unknown as HindsightClient,
+      });
+      expect(JSON.parse(readFileSync(usageFile, "utf8"))).toMatchObject({
+        harness: "claude-code",
+        session: "sess-usage",
+        bank: "bank-1",
+        turn: 1,
+        calls: ["hindsight_search_knowledge_pages"],
+        credited: true,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("buildRetain", () => {
+  it("retains only UserMessage-event user turns and advances its cursor normally", async () => {
+    const genuine = "# AGENTS.md instructions for /example\nExplain this heading.";
+    const message = (role: string, text: string, phase?: string) =>
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role,
+          phase,
+          content: [{ type: role === "user" ? "input_text" : "output_text", text }],
+        },
+      });
+    const userEvent = (text: string) =>
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "item_completed",
+          item: { type: "UserMessage", content: [{ type: "text", text }] },
+        },
+      });
+    const lines = [
+      message("user", "<recommended_plugins>guidance</recommended_plugins>"),
+      message("user", genuine),
+      userEvent(genuine),
+      message("assistant", "I will check.", "commentary"),
+      JSON.stringify({
+        type: "response_item",
+        payload: { type: "function_call", name: "calculator", arguments: "{}" },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: { type: "function_call_output", output: "raw output" },
+      }),
+      message("assistant", "Done.", "final_answer"),
+    ];
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const args = {
+      harness: "codex",
+      sessionId: "sess-origin",
+      transcriptPath: file,
+      readTranscript: readCodexTranscript,
+      cursors: memoryCursorStore(),
+      client: { retain, bank: "test-bank", supportsIdempotentRetain: async () => true },
+    };
+    writeFileSync(file, lines.join("\n"));
+    await buildRetain(args);
+    expect(retain).toHaveBeenCalledTimes(1);
+    expect(retain.mock.calls[0][2]).toBe("conversation:sess-origin");
+    expect(retain.mock.calls[0][5].updateMode).toBeUndefined();
+    expect(retain.mock.calls[0][0].split("\n").map((line: string) => JSON.parse(line))).toEqual([
+      {
+        role: "system",
+        content: "REF-ID: conversation:sess-origin",
+        timestamp: expect.any(String),
+      },
+      { role: "user", content: genuine },
+      { role: "assistant", content: "I will check." },
+      { role: "action", content: "calculator" },
+      { role: "assistant", content: "Done." },
+    ]);
+    await buildRetain(args);
+    expect(retain).toHaveBeenCalledTimes(1);
+    lines.push(
+      message("user", "Next question"),
+      userEvent("Next question"),
+      message("assistant", "Next answer")
+    );
+    writeFileSync(file, lines.join("\n"));
+    await buildRetain(args);
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[1][5].updateMode).toBe("append");
+    expect(retain.mock.calls[1][0].split("\n").map((line: string) => JSON.parse(line))).toEqual([
+      { role: "user", content: "Next question" },
+      { role: "assistant", content: "Next answer" },
+    ]);
+  });
+
+  it("removes Desktop startup from the retained document, preserves conversation, then appends normally", async () => {
+    const startup =
+      "<recommended_plugins>Use available tools.</recommended_plugins>\n" +
+      "# AGENTS.md instructions\n<INSTRUCTIONS>Follow project conventions.</INSTRUCTIONS>\n" +
+      "<environment_context><cwd>/example</cwd></environment_context>";
+    const message = (role: string, text: string, phase?: string) =>
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role,
+          phase,
+          content: [{ type: role === "user" ? "input_text" : "output_text", text }],
+        },
+      });
+    const userEvent = (text: string) =>
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "item_completed",
+          item: { type: "UserMessage", content: [{ type: "text", text }] },
+        },
+      });
+    const lines = [
+      message("user", startup),
+      message("user", "What is 2 + 2?"),
+      userEvent("What is 2 + 2?"),
+      message("assistant", "I will calculate it.", "commentary"),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "calculator",
+          arguments: "{}",
+        },
+      }),
+      message("assistant", "4.", "final_answer"),
+    ];
+    const conversation: TransportTurn[] = [
+      { role: "user", content: "What is 2 + 2?" },
+      { role: "assistant", content: "I will calculate it." },
+      { role: "action", content: "calculator" },
+      { role: "assistant", content: "4." },
+    ];
+    const previouslyRetained: TransportTurn[] = [
+      { role: "user", content: startup },
+      ...conversation,
+    ];
+    const cursors = memoryCursorStore();
+    // A normal Stop after upgrading encounters the old prefix; no historical replay is needed.
+    cursors.write("sess-desktop", {
+      turns: previouslyRetained.length,
+      fingerprint: fingerprintTurns(previouslyRetained, previouslyRetained.length),
+      bank: "test-bank",
+    });
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const args = {
+      harness: "codex",
+      sessionId: "sess-desktop",
+      transcriptPath: file,
+      readTranscript: readCodexTranscript,
+      cursors,
+      client: { retain, bank: "test-bank", supportsIdempotentRetain: async () => true },
+    };
+    writeFileSync(file, lines.join("\n"));
+    await buildRetain(args);
+    expect(retain).toHaveBeenCalledTimes(1);
+    const [content, , documentId, tags, strategy, options] = retain.mock.calls[0];
+    expect(documentId).toBe("conversation:sess-desktop");
+    expect(tags).toEqual(["source:chat", "harness:codex"]);
+    expect(strategy).toBe("conversation");
+    expect(options.updateMode).toBeUndefined();
+    expect(content.split("\n").map((line: string) => JSON.parse(line))).toEqual([
+      {
+        role: "system",
+        content: "REF-ID: conversation:sess-desktop",
+        timestamp: expect.any(String),
+      },
+      ...conversation,
+    ]);
+
+    lines.push(message("user", "And 3 + 3?"), userEvent("And 3 + 3?"), message("assistant", "6."));
+    writeFileSync(file, lines.join("\n"));
+    await buildRetain(args);
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[1][5].updateMode).toBe("append");
+    expect(retain.mock.calls[1][0].split("\n").map((line: string) => JSON.parse(line))).toEqual([
+      { role: "user", content: "And 3 + 3?" },
+      { role: "assistant", content: "6." },
+    ]);
+    await buildRetain(args);
+    expect(retain).toHaveBeenCalledTimes(2);
+  });
+
   /** Turns retained by one buildRetain call, in order. */
   async function retainedTurns(
     args: Parameters<typeof buildRetain>[0] & { retainSpy: ReturnType<typeof vi.fn> }
@@ -324,7 +544,7 @@ describe("buildRetain — incremental write-back across Stop hooks", () => {
     expect(JSON.parse(rewritten[1])).toMatchObject({ content: "summary of the work so far" });
   });
 
-  it("a failed write is not silently skipped by the next one — it replaces", async () => {
+  it("a failed write is not silently skipped by the next one — it is replayed", async () => {
     const { retain, client } = stubClient();
     const cursors = memoryCursorStore();
     writeFileSync(file, [line(0), line(1)].join("\n"));
@@ -333,14 +553,21 @@ describe("buildRetain — incremental write-back across Stop hooks", () => {
     retain.mockRejectedValueOnce(new Error("server unreachable"));
     writeFileSync(file, [line(0), line(1), line(2)].join("\n"));
     await stop(client, cursors); // buildRetain swallows the failure by design
+    const failed = retain.mock.calls[1];
 
     writeFileSync(file, [line(0), line(1), line(2), line(3)].join("\n"));
     await stop(client, cursors);
 
-    expect(retain).toHaveBeenCalledTimes(3);
-    expect(retain.mock.calls[2][5].updateMode).toBeUndefined();
-    // Everything the failed append would have carried is back in the replaced document.
-    expect((retain.mock.calls[2][0] as string).split("\n")).toHaveLength(5);
+    // The next Stop replays the failed slice verbatim and then appends the new one. Neither is a
+    // replace: an outage costs one retried append, not a full re-extraction per Stop (#3989).
+    expect(retain).toHaveBeenCalledTimes(4);
+    expect(retain.mock.calls[2][0]).toBe(failed[0]);
+    expect(retain.mock.calls[2][5].operationId).toBe(failed[5].operationId);
+    expect(retain.mock.calls.slice(1).map((c) => c[5].updateMode)).toEqual([
+      "append",
+      "append",
+      "append",
+    ]);
   });
 });
 
@@ -400,6 +627,23 @@ describe("runRetainHook honors retainSessions", () => {
   it("writes the transcript back by default", async () => {
     const { retain, makeClient } = stubClient();
     await runRetainHook(spec, makeClient);
+    expect(retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies an event gate before building a client", async () => {
+    const { retain, makeClient } = stubClient();
+    const notificationSpec = {
+      ...spec,
+      accept: (ev: Record<string, unknown>) => ev.notification_type === "idle_prompt",
+    };
+
+    stdin = JSON.stringify({ ...event(), notification_type: "permission_prompt" });
+    await runRetainHook(notificationSpec, makeClient);
+    expect(retain).not.toHaveBeenCalled();
+    expect(makeClient).not.toHaveBeenCalled();
+
+    stdin = JSON.stringify({ ...event(), notification_type: "idle_prompt" });
+    await runRetainHook(notificationSpec, makeClient);
     expect(retain).toHaveBeenCalledTimes(1);
   });
 
