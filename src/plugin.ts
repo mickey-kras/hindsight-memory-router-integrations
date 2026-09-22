@@ -22,7 +22,13 @@ import {
 } from "./shared/principal-credential-resolver.js";
 import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "./shared/recall-coordinator.js";
 import { recallItemText } from "./shared/recall-item.js";
-import { RetainAuthorizationError, RetainCoordinator } from "./shared/retain-coordinator.js";
+import {
+  RetainAuthorizationError,
+  RetainCoordinator,
+  RetainQueueBusyError,
+  RetainQueueCapacityError,
+} from "./shared/retain-coordinator.js";
+import { DEFAULT_QUEUE_MAX_BYTES, DEFAULT_QUEUE_MAX_ITEMS } from "./shared/retain-queue-storage.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./upstream/src/session-patterns.js";
 import type {
   MoltbotPluginAPI,
@@ -45,6 +51,8 @@ export const RUNTIME_DEFAULTS = Object.freeze({
   enableKnowledgeTools: false,
   retainQueueFlushIntervalMs: 30000,
   retainQueueMaxAgeMs: -1,
+  retainQueueMaxItems: DEFAULT_QUEUE_MAX_ITEMS,
+  retainQueueMaxBytes: DEFAULT_QUEUE_MAX_BYTES,
 });
 const MAX_SESSION_STATE_ENTRIES = 1000;
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
@@ -68,6 +76,8 @@ interface RuntimePluginConfig extends RouterPluginConfig {
   enableKnowledgeTools?: boolean;
   retainQueueFlushIntervalMs?: number;
   retainQueueMaxAgeMs?: number;
+  retainQueueMaxItems?: number;
+  retainQueueMaxBytes?: number;
   ignoreSessionPatterns?: string[];
   statelessSessionPatterns?: string[];
   excludeProviders?: string[];
@@ -194,7 +204,9 @@ function isIdentityError(error: unknown): boolean {
 }
 
 function memoryErrorMessage(error: unknown): string {
-  return isIdentityError(error) ? (error as Error).message : "memory operation failed";
+  return isIdentityError(error) || error instanceof RetainQueueCapacityError || error instanceof RetainQueueBusyError
+    ? (error as Error).message
+    : "memory operation failed";
 }
 
 function auditLogger(log: { info(msg: string): void }): MemoryAuditLogger {
@@ -252,6 +264,8 @@ export function buildRoutingStack(
     ["recallMaxTokens", config.recallMaxTokens],
     ["recallTopK", config.recallTopK],
     ["retainQueueFlushIntervalMs", config.retainQueueFlushIntervalMs],
+    ["retainQueueMaxItems", config.retainQueueMaxItems],
+    ["retainQueueMaxBytes", config.retainQueueMaxBytes],
   ] as const) {
     if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
       throw new RangeError(`${name} must be a positive integer`);
@@ -277,6 +291,8 @@ export function buildRoutingStack(
     clients,
     queueDir: config.queueDir ?? join(homedir(), ".openclaw", "data", "hindsight-retain-queue"),
     queueMaxAgeMs: config.retainQueueMaxAgeMs ?? RUNTIME_DEFAULTS.retainQueueMaxAgeMs,
+    queueMaxItems: config.retainQueueMaxItems,
+    queueMaxBytes: config.retainQueueMaxBytes,
     logger,
   });
   return {
