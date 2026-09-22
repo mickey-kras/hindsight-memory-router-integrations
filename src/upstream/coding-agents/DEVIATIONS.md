@@ -14,6 +14,7 @@ The regression suite covers unchanged transcript/provenance code; root tests cov
 Live harness and deployed Memory Router compatibility must be verified before rollout.
 
 Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back.
+Session state uses per-user private directories (0700 on POSIX), regular files (0600), and exclusive atomic temporary files. Owned legacy directories are secured and migrated; symlinks, hard links, and foreign-owned paths are rejected.
 Memory content is not reused from session caches; lifecycle flags remain cached. Authorization failures disable that client until restart.
 
 Reliability fixes use explicit sorting, global replacements, Node ANSI stripping, optional arguments, and non-empty installer regex matches. Transcript escape decoding retains UTF-16 surrogate behavior.
