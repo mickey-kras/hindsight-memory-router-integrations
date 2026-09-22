@@ -99,6 +99,22 @@ describe("RetainCoordinator", () => {
     expect(fakeClients.get("backend")?.retains[0].bank).toBe("dev");
   });
 
+  it("preserves an existing backlog when another coordinator opens its directory", async () => {
+    const first = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(503);
+      },
+    });
+    await first.retain.retain("main", { content: "already queued" });
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const backlog = readFileSync(queueFile, "utf8");
+
+    makeStack({ queueDir });
+
+    expect(readFileSync(queueFile, "utf8")).toBe(backlog);
+  });
+
   it("fails closed on authorization denial: typed error, nothing queued", async () => {
     const { retain } = makeStack({
       queueDir,

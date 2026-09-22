@@ -1,7 +1,7 @@
 /** Per-agent retain routing and transient-failure queueing. */
 
 import { randomUUID } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import { type QueuedRetain, type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
@@ -63,6 +63,7 @@ export class RetainCoordinator {
     this.clients = options.clients;
     if (!isAbsolute(options.queueDir)) throw new TypeError("queueDir must be absolute");
     this.queueDir = options.queueDir;
+    mkdirSync(this.queueDir, { recursive: true, mode: 0o700 });
     this.queueMaxAgeMs = options.queueMaxAgeMs ?? -1;
     this.log = options.logger;
     this.onAbandon = options.onAbandon ?? ((item, attempts) => this.log.error(retainAbandonNotice(item, attempts)));
