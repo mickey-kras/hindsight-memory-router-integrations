@@ -33,7 +33,7 @@ export interface QueuedRetain {
   id: string;
   bankId: string;
   content: string;
-  documentId: string;
+  documentId?: string;
   context?: string;
   metadata: Record<string, unknown>;
   tags?: string[];
@@ -67,7 +67,7 @@ export class RetainQueue {
       id: `${Date.now()}-${randomBytes(4).toString("hex")}`,
       bankId,
       content: request.content,
-      documentId: request.documentId || "conversation",
+      documentId: request.documentId,
       context: request.context,
       metadata: metadata || request.metadata || {},
       tags: request.tags,

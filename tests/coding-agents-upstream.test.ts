@@ -3,6 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { loadMcpStack } from "../src/mcp/managed-config.js";
+import { buildTools } from "../src/mcp/tools.js";
+import plugin, { PLUGIN_ID } from "../src/plugin.js";
 import { deriveBankId } from "../src/upstream/coding-agents/src/core/bank";
 import { applyBankConfig, loadConfig, resolveConfig } from "../src/upstream/coding-agents/src/core/config";
 import { HindsightClient } from "../src/upstream/coding-agents/src/core/hindsight";
@@ -48,6 +51,7 @@ function setup() {
     path,
     JSON.stringify({
       routerUrl: "https://router.test",
+      queueDir: join(dir, "queue"),
       principals: {
         codex: {
           writeBank: "A",
@@ -212,6 +216,83 @@ it("installs harness-specific MCP identities without migrating or storing tokens
   expect(cli.mock.calls.flat(2).join(" ")).toContain("HINDSIGHT_MCP_HARNESS=claude-code");
   expect(() => install(["install", "codex", "--api-token", "plaintext"], context)).toThrow("tokenEnv");
 });
+
+it.each([
+  ["C# setup", "C++ setup"],
+  ["a b", "a-b"],
+  ["Runbook", "runbook"],
+  ["Notes", " Notes "],
+  ["记忆文档一", "记忆文档二"],
+  ["Résumé", "Re\u0301sume\u0301"],
+  ["\ud800", "\ud801"],
+  ["\ufffd", "\ud800"],
+  ["!!!", "???"],
+])(
+  "ingest handlers keep exact titles distinct and update the same document across hosts: %j / %j",
+  async (title, otherTitle) => {
+    const dir = setup();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const documents = new Map<string, string>([["c-setup", "legacy content"]]);
+    const sentIds: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      expect(String(url)).toBe("https://router.test/v1/default/banks/A/memories");
+      expect(init?.method).toBe("POST");
+      const body = JSON.parse(String(init?.body)) as { items: Array<{ document_id: string; content: string }> };
+      const item = body.items[0];
+      documents.set(item.document_id, item.content);
+      sentIds.push(item.document_id);
+      return Response.json({});
+    });
+    const client = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A" });
+    const coding = buildKnowledgeTools(client, "A").find((tool) => tool.name === "hindsight_ingest_document");
+    const mcp = buildTools(loadMcpStack({ ...process.env, HINDSIGHT_ROUTER_PRINCIPAL: "codex" }, logger)).find(
+      (tool) => tool.name === "agent_knowledge_ingest",
+    );
+    let openclawTools: Array<{ name: string; execute(id: string, params: Record<string, unknown>): Promise<unknown> }> =
+      [];
+    plugin({
+      config: {
+        plugins: {
+          entries: {
+            [PLUGIN_ID]: {
+              config: {
+                routerUrl: "https://router.test",
+                agents: { codex: { token, writeBank: "A" } },
+                enableKnowledgeTools: true,
+                queueDir: join(dir, "queue"),
+              },
+            },
+          },
+        },
+      },
+      logger,
+      on: vi.fn(),
+      registerService: vi.fn(),
+      registerTool(factory) {
+        openclawTools = factory({ agentId: "codex" }) as typeof openclawTools;
+      },
+    });
+    const openclaw = openclawTools.find((tool) => tool.name === "agent_knowledge_ingest");
+    if (!coding || !mcp || !openclaw) throw new Error("ingest tool missing");
+    const handlers = [coding.handler, mcp.handler, (args: Record<string, unknown>) => openclaw.execute("call", args)];
+    for (const handler of handlers) {
+      expect(await handler({ title, content: "first document" })).not.toMatchObject({ isError: true });
+      expect(await handler({ title: otherTitle, content: "second document" })).not.toMatchObject({ isError: true });
+      expect(await handler({ title, content: "updated first document" })).not.toMatchObject({ isError: true });
+      const [firstId, secondId, updatedId] = sentIds.slice(-3);
+      expect(firstId).not.toBe(secondId);
+      expect(updatedId).toBe(firstId);
+      expect(documents).toEqual(
+        new Map([
+          ["c-setup", "legacy content"],
+          [firstId, "updated first document"],
+          [secondId, "second document"],
+        ]),
+      );
+    }
+    expect(sentIds).toHaveLength(9);
+  },
+);
 
 it("runs the packaged Codex hook with harness-bound credentials and fails closed without them", () => {
   const dir = setup();
