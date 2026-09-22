@@ -135,7 +135,8 @@ export class RetainQueue {
 
   /** Number of items waiting (cached, O(1)). */
   size(): number {
-    return (this.cachedSize ??= this.readAll().length);
+    this.cachedSize ??= this.readAll().length;
+    return this.cachedSize;
   }
 
   /** Drop items older than `maxAgeMs`. No-op when `maxAgeMs < 0`. */

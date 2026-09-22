@@ -74,9 +74,11 @@ export class RetainQueueStorage {
   async transaction<T>(action: () => T): Promise<T> {
     const fd = openSync(join(this.directory, ".retain-queue.lock"), "a", 0o600);
     try {
-      for (let attempt = 0; !tryLock(fd); attempt++) {
+      let attempt = 0;
+      while (!tryLock(fd)) {
         if (attempt === 30) throw new RetainQueueBusyError();
         await setTimeout(100);
+        attempt++;
       }
       for (const name of readdirSync(this.directory)) {
         if (name.startsWith(QUEUE_FILE_PREFIX) && name.endsWith(`${QUEUE_FILE_SUFFIX}.tmp`)) {
