@@ -4,7 +4,11 @@ import { AccessDeniedError } from "../shared/bank-access.js";
 import { routedKnowledgeTools } from "../shared/knowledge-tools.js";
 import { RecallAuthorizationError } from "../shared/recall-coordinator.js";
 import { RouterRequestError } from "../shared/router-transport.js";
-import { RetainAuthorizationError } from "../shared/retain-coordinator.js";
+import {
+  RetainAuthorizationError,
+  RetainQueueBusyError,
+  RetainQueueCapacityError,
+} from "../shared/retain-coordinator.js";
 import type { McpStack } from "./managed-config.js";
 
 export interface ToolResult {
@@ -83,6 +87,9 @@ function boundedError(error: unknown): ToolResult {
     error instanceof RetainAuthorizationError
   ) {
     return rejected("memory access denied");
+  }
+  if (error instanceof RetainQueueCapacityError || error instanceof RetainQueueBusyError) {
+    return rejected(error.message);
   }
   if (error instanceof RouterRequestError) {
     return rejected(`memory request failed (${error.statusCode})`);

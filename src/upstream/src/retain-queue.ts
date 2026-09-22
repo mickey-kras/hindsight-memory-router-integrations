@@ -15,6 +15,7 @@ import {
   existsSync,
   renameSync,
   unlinkSync,
+  statSync,
 } from "node:fs";
 import { randomBytes } from "node:crypto";
 
@@ -33,7 +34,7 @@ export interface QueuedRetain {
   id: string;
   bankId: string;
   content: string;
-  documentId: string;
+  documentId?: string;
   context?: string;
   metadata: Record<string, unknown>;
   tags?: string[];
@@ -48,17 +49,23 @@ export interface RetainQueueOptions {
   filePath: string;
   /** Max age in ms for queued items. `-1` (default) keeps items forever. */
   maxAgeMs?: number;
+  maxReadBytes?: number;
+  capacity?: {
+    assertAppend(bytes: number): void;
+    didAppend(filePath: string): void;
+  };
 }
 
 export class RetainQueue {
   private readonly filePath: string;
   private readonly maxAgeMs: number;
-  private cachedSize: number;
+  private cachedSize: number | undefined;
+  private readonly options: RetainQueueOptions;
 
   constructor(opts: RetainQueueOptions) {
     this.filePath = opts.filePath;
     this.maxAgeMs = opts.maxAgeMs ?? -1;
-    this.cachedSize = this.readAll().length;
+    this.options = opts;
   }
 
   /** Append a failed retain for later delivery. */
@@ -67,7 +74,7 @@ export class RetainQueue {
       id: `${Date.now()}-${randomBytes(4).toString("hex")}`,
       bankId,
       content: request.content,
-      documentId: request.documentId || "conversation",
+      documentId: request.documentId,
       context: request.context,
       metadata: metadata || request.metadata || {},
       tags: request.tags,
@@ -75,8 +82,11 @@ export class RetainQueue {
       updateMode: request.updateMode,
       createdAt: new Date().toISOString(),
     };
-    appendFileSync(this.filePath, JSON.stringify(item) + "\n", { encoding: "utf8", mode: 0o600 });
-    this.cachedSize++;
+    const serialized = JSON.stringify(item) + "\n";
+    this.options.capacity?.assertAppend(Buffer.byteLength(serialized));
+    appendFileSync(this.filePath, serialized, { encoding: "utf8", mode: 0o600 });
+    this.options.capacity?.didAppend(this.filePath);
+    if (this.cachedSize !== undefined) this.cachedSize++;
   }
 
   /** Get up to `limit` oldest pending items (FIFO). */
@@ -125,7 +135,7 @@ export class RetainQueue {
 
   /** Number of items waiting (cached, O(1)). */
   size(): number {
-    return this.cachedSize;
+    return (this.cachedSize ??= this.readAll().length);
   }
 
   /** Drop items older than `maxAgeMs`. No-op when `maxAgeMs < 0`. */
@@ -146,6 +156,9 @@ export class RetainQueue {
 
   private readAll(): QueuedRetain[] {
     if (!existsSync(this.filePath)) return [];
+    if (this.options.maxReadBytes !== undefined && statSync(this.filePath).size > this.options.maxReadBytes) {
+      throw new RangeError("retain queue exceeds configured byte limit; increase the limit to replay this legacy backlog");
+    }
     const content = readFileSync(this.filePath, "utf8").trim();
     if (!content) return [];
     const items: QueuedRetain[] = [];

@@ -147,6 +147,18 @@
         "description": "Max age of queued retains (-1 keeps forever).",
         "default": -1
       },
+      "retainQueueMaxItems": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum queued items across all principals in queueDir.",
+        "default": 1000
+      },
+      "retainQueueMaxBytes": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum queue bytes across all principals, including replay metadata reserve.",
+        "default": 16777216
+      },
       "ignoreSessionPatterns": {
         "type": "array",
         "items": { "type": "string" },

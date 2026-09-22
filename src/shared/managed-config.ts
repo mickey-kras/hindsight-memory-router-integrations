@@ -14,6 +14,8 @@ export interface ManagedRouterConfig {
   recallMaxTokens?: number;
   retainQueueFlushIntervalMs?: number;
   queueMaxAgeMs?: number;
+  queueMaxItems?: number;
+  queueMaxBytes?: number;
   queueDir?: string;
   principals: Record<string, ManagedPrincipal>;
 }
@@ -43,7 +45,13 @@ function validatePositiveInteger(value: number | undefined): void {
 }
 
 function validateQueueOptions(config: ManagedRouterConfig): void {
-  for (const value of [config.recallTimeoutMs, config.recallMaxTokens, config.retainQueueFlushIntervalMs]) {
+  for (const value of [
+    config.recallTimeoutMs,
+    config.recallMaxTokens,
+    config.retainQueueFlushIntervalMs,
+    config.queueMaxItems,
+    config.queueMaxBytes,
+  ]) {
     validatePositiveInteger(value);
   }
   if (

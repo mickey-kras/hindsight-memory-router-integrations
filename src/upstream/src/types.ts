@@ -155,6 +155,8 @@ export interface PluginConfig {
   logLevel?: "off" | "error" | "warning" | "info" | "debug"; // Console log verbosity (default: 'info').
   logSummaryIntervalMs?: number; // Batch retain/recall log summaries over this interval in ms. 0 = log every event. Default: 300000 (5 min).
   retainQueuePath?: string; // Path to JSONL file for buffering failed retains. Default: ~/.openclaw/data/hindsight-retain-queue.jsonl
+  retainQueueMaxItems?: number;
+  retainQueueMaxBytes?: number;
   retainQueueMaxAgeMs?: number; // Max age in ms for queued items. -1 = keep forever (default: -1)
   retainQueueFlushIntervalMs?: number; // How often to attempt flushing the queue in ms. Default: 60000 (1 min)
   enableKnowledgeTools?: boolean; // Register agent_knowledge_* tools. Default: false. Set to true by the self-driving-agents CLI.

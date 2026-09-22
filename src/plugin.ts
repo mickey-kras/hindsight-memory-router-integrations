@@ -22,7 +22,13 @@ import {
 } from "./shared/principal-credential-resolver.js";
 import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "./shared/recall-coordinator.js";
 import { formatRecallItem } from "./shared/recall-item.js";
-import { RetainAuthorizationError, RetainCoordinator } from "./shared/retain-coordinator.js";
+import {
+  RetainAuthorizationError,
+  RetainCoordinator,
+  RetainQueueBusyError,
+  RetainQueueCapacityError,
+} from "./shared/retain-coordinator.js";
+import { DEFAULT_QUEUE_MAX_BYTES, DEFAULT_QUEUE_MAX_ITEMS } from "./shared/retain-queue-storage.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./upstream/src/session-patterns.js";
 import type {
   MoltbotPluginAPI,
@@ -45,13 +51,14 @@ export const RUNTIME_DEFAULTS = Object.freeze({
   enableKnowledgeTools: false,
   retainQueueFlushIntervalMs: 30000,
   retainQueueMaxAgeMs: -1,
+  retainQueueMaxItems: DEFAULT_QUEUE_MAX_ITEMS,
+  retainQueueMaxBytes: DEFAULT_QUEUE_MAX_BYTES,
 });
 const MAX_SESSION_STATE_ENTRIES = 1000;
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
   "Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:";
 const DEFAULT_RETAIN_CONTEXT =
   "OpenClaw conversation transcript. User messages are human input; assistant messages are AI output. Routing IDs and tags are metadata, not people or organizations.";
-const PROCESS_ID = randomUUID();
 
 interface RuntimePluginConfig extends RouterPluginConfig {
   agents?: Record<string, import("./shared/principal-credential-resolver.js").PrincipalConfig>;
@@ -69,6 +76,8 @@ interface RuntimePluginConfig extends RouterPluginConfig {
   enableKnowledgeTools?: boolean;
   retainQueueFlushIntervalMs?: number;
   retainQueueMaxAgeMs?: number;
+  retainQueueMaxItems?: number;
+  retainQueueMaxBytes?: number;
   ignoreSessionPatterns?: string[];
   statelessSessionPatterns?: string[];
   excludeProviders?: string[];
@@ -183,28 +192,14 @@ function extractTranscript(event: {
   return normalized.length > 0 ? JSON.stringify(normalized) : null;
 }
 
-function sanitizeDocumentIdPart(value: string | undefined, fallback: string): string {
-  const normalized = (value || "").trim();
-  if (!normalized) {
-    return fallback;
-  }
-  const sanitized = normalized.replaceAll(/[^a-zA-Z0-9:_-]+/g, "_").replaceAll(/_+/g, "_");
-  const withoutLeadingUnderscore = sanitized.startsWith("_") ? sanitized.slice(1) : sanitized;
-  const withoutEdgeUnderscores = withoutLeadingUnderscore.endsWith("_")
-    ? withoutLeadingUnderscore.slice(0, -1)
-    : withoutLeadingUnderscore;
-  if (!withoutEdgeUnderscores) {
-    return fallback;
-  }
-  return withoutEdgeUnderscores;
-}
-
 function isIdentityError(error: unknown): boolean {
   return error instanceof UnknownPrincipalError || error instanceof CredentialResolutionError;
 }
 
 function memoryErrorMessage(error: unknown): string {
-  return isIdentityError(error) ? (error as Error).message : "memory operation failed";
+  return isIdentityError(error) || error instanceof RetainQueueCapacityError || error instanceof RetainQueueBusyError
+    ? (error as Error).message
+    : "memory operation failed";
 }
 
 function auditLogger(log: { info(msg: string): void }): MemoryAuditLogger {
@@ -262,6 +257,8 @@ export function buildRoutingStack(
     ["recallMaxTokens", config.recallMaxTokens],
     ["recallTopK", config.recallTopK],
     ["retainQueueFlushIntervalMs", config.retainQueueFlushIntervalMs],
+    ["retainQueueMaxItems", config.retainQueueMaxItems],
+    ["retainQueueMaxBytes", config.retainQueueMaxBytes],
   ] as const) {
     if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
       throw new RangeError(`${name} must be a positive integer`);
@@ -287,6 +284,8 @@ export function buildRoutingStack(
     clients,
     queueDir: config.queueDir ?? join(homedir(), ".openclaw", "data", "hindsight-retain-queue"),
     queueMaxAgeMs: config.retainQueueMaxAgeMs ?? RUNTIME_DEFAULTS.retainQueueMaxAgeMs,
+    queueMaxItems: config.retainQueueMaxItems,
+    queueMaxBytes: config.retainQueueMaxBytes,
     logger,
   });
   return {
@@ -393,7 +392,6 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const config = stack.config;
   const ignorePatterns = compileSessionPatterns(config.ignoreSessionPatterns ?? []);
   const statelessPatterns = compileSessionPatterns(config.statelessSessionPatterns ?? []);
-  const sessionSequences = new Map<string, number>();
   const retainedDigests = new Map<string, string>();
 
   const runRetain = async (
@@ -406,7 +404,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
     if (shouldSkipRetain(sessionKey, ctx, config, ignorePatterns, statelessPatterns)) {
       return;
     }
-    let sequenceKey: string | undefined;
+    let digestKey: string | undefined;
     let principal = agentId ?? "unknown";
     try {
       const credentials = stack.credentials.resolve(agentId);
@@ -418,16 +416,15 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
       if (!transcript) {
         return;
       }
-      sequenceKey = `${credentials.principalId}:${sessionKey ?? "session"}`;
+      digestKey = JSON.stringify([credentials.principalId, sessionKey ?? null]);
       const digest = createHash("sha256").update(transcript).digest("hex");
-      if (retainedDigests.get(sequenceKey) === digest) {
+      if (retainedDigests.get(digestKey) === digest) {
         return;
       }
-      const sequence = (sessionSequences.get(sequenceKey) ?? 0) + 1;
-      setBounded(sessionSequences, sequenceKey, sequence);
+      const scopeId = createHash("sha256").update(digestKey).digest("hex");
       const outcome = await stack.retain.retain(credentials.principalId, {
         content: transcript,
-        documentId: `openclaw:${sanitizeDocumentIdPart(sessionKey, "session")}:${PROCESS_ID}:${sequence}`,
+        documentId: `openclaw:${scopeId}:${randomUUID()}`,
         context: config.retainContext ?? DEFAULT_RETAIN_CONTEXT,
         metadata: {
           source: config.retainSource ?? RUNTIME_DEFAULTS.retainSource,
@@ -436,7 +433,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
         },
         tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.principalId}`],
       });
-      setBounded(retainedDigests, sequenceKey, digest);
+      setBounded(retainedDigests, digestKey, digest);
       audit({ principal, op: "retain", outcome: "success", bankId: outcome.bank });
       if (outcome.queued) {
         log.warn(`retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`);
@@ -453,9 +450,8 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
       }
       log.error(`retain failed: ${memoryErrorMessage(error)}`);
     } finally {
-      if (hookName === "session_end" && sequenceKey) {
-        sessionSequences.delete(sequenceKey);
-        retainedDigests.delete(sequenceKey);
+      if (hookName === "session_end" && digestKey) {
+        retainedDigests.delete(digestKey);
       }
     }
   };
