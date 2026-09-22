@@ -28,6 +28,7 @@ export interface McpTool {
   inputSchema: ToolInputShape;
   annotations: ToolSafetyAnnotations;
   handler(args: Record<string, unknown>): Promise<ToolResult>;
+  auditInvalidArguments?(): void;
 }
 
 const READ_ONLY: ToolSafetyAnnotations = {
@@ -288,5 +289,15 @@ export function buildTools(stack: McpStack): McpTool[] {
   if (stack.credentials.resolveOptionalWriteBank(stack.principalId) !== null) {
     tools.unshift(retainTool(stack));
   }
-  return tools;
+  const audit = safeAuditLogger(stack.audit);
+  return tools.map((tool) => ({
+    ...tool,
+    auditInvalidArguments: () =>
+      audit({
+        principal: stack.principalId,
+        op: tool.name,
+        outcome: "failure",
+        errorClass: "invalid_arguments",
+      }),
+  }));
 }

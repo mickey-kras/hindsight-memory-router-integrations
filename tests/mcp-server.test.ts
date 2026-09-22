@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadMcpStack } from "../src/mcp/managed-config.js";
@@ -226,3 +227,36 @@ it.each(["   ", 123, undefined])("audits malformed retain content %j through rea
     await close();
   }
 });
+
+it.each([123, [], null, "PRIVATE INPUT"])(
+  "audits malformed arguments container %j once while retaining protocol rejection",
+  async (args) => {
+    configure({ tokenEnv: "TEST_AGENT_TOKEN", writeBank: "agent-bank" });
+    const send = vi.spyOn(globalThis, "fetch");
+    const { client, close } = await wiredClient();
+    try {
+      await expect(
+        client.request(
+          {
+            method: "tools/call",
+            params: { name: "memory_router_retain", arguments: args },
+          },
+          CallToolResultSchema,
+        ),
+      ).rejects.toMatchObject({ code: -32603 });
+      expect(send).not.toHaveBeenCalled();
+      const records = logger.info.mock.calls.map(([line]) => JSON.parse(line));
+      expect(records).toEqual([
+        expect.objectContaining({
+          principal: "agent",
+          op: "memory_router_retain",
+          outcome: "failure",
+          errorClass: "invalid_arguments",
+        }),
+      ]);
+      expect(Object.keys(records[0]).sort()).toEqual(["at", "errorClass", "op", "outcome", "principal"]);
+    } finally {
+      await close();
+    }
+  },
+);

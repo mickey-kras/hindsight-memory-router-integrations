@@ -8,6 +8,7 @@ export default defineConfig({
       "@memory-router": new URL("./src", import.meta.url).pathname,
       "@modelcontextprotocol/sdk/client/index.js": `${mcpSdk}/client/index.js`,
       "@modelcontextprotocol/sdk/inMemory.js": `${mcpSdk}/inMemory.js`,
+      "@modelcontextprotocol/sdk/types.js": `${mcpSdk}/types.js`,
     },
   },
   test: {

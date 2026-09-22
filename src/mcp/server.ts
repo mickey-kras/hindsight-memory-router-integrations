@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 import { PACKAGE_VERSION } from "../shared/package-version.js";
 import { loadMcpStack, scheduleQueueFlush, startupErrorMessage } from "./managed-config.js";
 import { buildTools, type McpTool } from "./tools.js";
@@ -25,9 +26,20 @@ export function buildMcpServer(tools: McpTool[]): McpServer {
       async (args) => tool.handler(args),
     );
   }
-  const handlers = new Map(tools.map((tool) => [tool.name, tool.handler]));
-  server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const handler = handlers.get(request.params.name);
+  const toolByName = new Map(tools.map((tool) => [tool.name, tool]));
+  const requestSchema = CallToolRequestSchema.extend({
+    params: z.preprocess((params) => {
+      if (params !== null && typeof params === "object" && "name" in params && typeof params.name === "string") {
+        const args = "arguments" in params ? params.arguments : undefined;
+        if (args !== undefined && (args === null || typeof args !== "object" || Array.isArray(args))) {
+          toolByName.get(params.name)?.auditInvalidArguments?.();
+        }
+      }
+      return params;
+    }, CallToolRequestSchema.shape.params),
+  });
+  server.server.setRequestHandler(requestSchema, async (request) => {
+    const handler = toolByName.get(request.params.name)?.handler;
     if (!handler) {
       return {
         content: [{ type: "text", text: `MCP error -32602: Tool ${request.params.name} not found` }],
