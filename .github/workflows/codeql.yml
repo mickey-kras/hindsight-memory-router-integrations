@@ -2,11 +2,18 @@ name: codeql
 
 on:
   workflow_call:
+    inputs:
+      candidate_ref:
+        type: string
+        default: ''
+      candidate_sha:
+        type: string
+        default: ''
   schedule:
     - cron: "31 3 * * 1"
 
 concurrency:
-  group: codeql-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: codeql-${{ github.event_name }}-${{ inputs.candidate_sha || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -23,6 +30,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
 
       - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
@@ -32,3 +40,5 @@ jobs:
       - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           category: .github/workflows/main.yml:analyze
+          ref: ${{ inputs.candidate_ref }}
+          sha: ${{ inputs.candidate_sha }}

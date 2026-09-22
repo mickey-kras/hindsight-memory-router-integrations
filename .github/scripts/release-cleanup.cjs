@@ -1,15 +1,4 @@
-// Removes the orphaned state of a failed release run: the protected release
-// branch. Integrations releases publish tarballs as immutable-release assets,
-// so there are no registry tags to remove; the tag/draft-release state a
-// half-finished finalize leaves behind is resumable and must be kept. Strictly
-// scoped to the release branch of the failed run's version, or to release
-// branches frozen by the failed preparation run. Never touches tags,
-// releases, assets, attestations, or any other branch. Every target is
-// best-effort: failures are logged, never thrown, so cleanup can never mask the
-// original release failure.
-
 const releaseTag = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-const commitSha = /^[a-f0-9]{40}$/;
 
 class CleanupError extends Error {}
 
@@ -17,15 +6,15 @@ function requireValue(condition, message) {
   if (!condition) throw new CleanupError(message);
 }
 
-function targets(context) {
-  requireValue(
-    context.eventName === "push" && context.workflow === "release" && context.ref.startsWith("refs/heads/release/"),
-    "Cleanup is allowed only through the release workflow",
-  );
-  const version = context.ref.slice("refs/heads/release/".length);
-  requireValue(releaseTag.test(`v${version}`), "Invalid release branch version");
-  requireValue(commitSha.test(context.sha), "Invalid release commit");
-  return { version, sha: context.sha };
+function targets(context, target) {
+  const { releaseTarget, ReleaseError } = require("./release.cjs");
+  try {
+    const { version, sha } = releaseTarget(context, target);
+    return { version, sha };
+  } catch (error) {
+    if (error instanceof ReleaseError) throw new CleanupError(error.message, { cause: error });
+    throw error;
+  }
 }
 
 async function published(github, repository, version) {
@@ -40,21 +29,8 @@ async function published(github, repository, version) {
   return tag || release;
 }
 
-async function attempt(core, summary, name, action) {
-  try {
-    const removed = await action();
-    const detail = removed.length
-      ? `deleted ${removed.map((item) => `\`${item}\``).join(", ")}`
-      : "nothing left to delete";
-    await summary.addRaw(`- ${name}: ${detail}\n`);
-  } catch (error) {
-    core.error(`${name} cleanup failed: ${error.message}`);
-    await summary.addRaw(`- ${name}: **failed** (${error.message}); remove the leftover manually\n`);
-  }
-}
-
-async function branch({ github, context, core }) {
-  const { version } = targets(context);
+async function branch({ github, context, core, target }) {
+  const { version, sha } = targets(context, target);
   const summary = core.summary.addHeading("Failed release cleanup: branch", 3);
   if (await published(github, context.repo, version)) {
     await summary
@@ -76,23 +52,23 @@ async function branch({ github, context, core }) {
     await summary.addRaw(`Branch \`release/${version}\` is already absent.\n`).write();
     return;
   }
-  if (current.object.sha !== context.sha) {
+  if (current.object.sha !== sha) {
     await summary
       .addRaw(`Kept \`release/${version}\`: the branch advanced past the failed run; its newest attempt owns it.\n`)
       .write();
     return;
   }
-  await attempt(core, summary, `Branch \`release/${version}\``, async () => {
-    await github.rest.git.deleteRef({ ...context.repo, ref });
-    return [ref];
-  });
-  await summary.write();
+  await summary
+    .addRaw(
+      `Kept \`release/${version}\` at ${sha} for recovery. Re-run failed jobs or dispatch release from the same main snapshot.\n`,
+    )
+    .write();
 }
 
 function preparationTargets(context) {
   requireValue(
-    context.eventName === "workflow_dispatch" && context.ref === "refs/heads/main",
-    "Preparation cleanup is allowed only from the main workflow button",
+    context.eventName === "workflow_dispatch" && context.workflow === "release" && context.ref === "refs/heads/main",
+    "Preparation cleanup is allowed only from the main release dispatch",
   );
   requireValue(Number.isSafeInteger(context.runId) && context.runId > 0, "Invalid preparation run");
   return context.runId;
@@ -120,7 +96,7 @@ async function preparation({ github, context, core }) {
     if (prepared.preparation_run === runId) orphans.push(version);
   }
   if (!orphans.length) {
-    await summary.addRaw(`No release branch from preparation run ${runId}; nothing to delete.\n`).write();
+    await summary.addRaw(`No release branch from preparation run ${runId}; nothing to retain.\n`).write();
     return;
   }
   for (const version of orphans) {
@@ -128,10 +104,7 @@ async function preparation({ github, context, core }) {
       await summary.addRaw(`Kept \`release/${version}\`: \`v${version}\` already exists.\n`);
       continue;
     }
-    await attempt(core, summary, `Branch \`release/${version}\``, async () => {
-      await github.rest.git.deleteRef({ ...context.repo, ref: `heads/release/${version}` });
-      return [`heads/release/${version}`];
-    });
+    await summary.addRaw(`Kept \`release/${version}\` for recovery; preparation retries reuse its frozen commit.\n`);
   }
   await summary.write();
 }

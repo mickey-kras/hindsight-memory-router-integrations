@@ -1,25 +1,153 @@
 name: release
 
 on:
-  push:
-    branches: ['release/*']
+  workflow_dispatch:
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: dependabot-auto-merge-${{ github.repository }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  release:
+  entry:
+    name: require main
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Reject release dispatches outside main
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            if (context.eventName !== 'workflow_dispatch' || context.ref !== 'refs/heads/main') {
+              throw new Error('Release dispatch is allowed only from main');
+            }
+
+  baseline:
+    name: validate main
+    needs: entry
     permissions:
-      contents: write
+      contents: read
+      actions: read
       security-events: write
       id-token: write
       attestations: write
-      pull-requests: write
       issues: write
     uses: ./.github/workflows/main.yml
     secrets:
+      TAILSCALE_OAUTH_CLIENT_ID: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+      TAILSCALE_AUDIENCE: ${{ secrets.TAILSCALE_AUDIENCE }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+  prepare-release:
+    name: prepare candidate
+    needs: baseline
+    runs-on: ubuntu-latest
+    environment: release-automation
+    outputs:
+      sha: ${{ steps.prepared.outputs.sha }}
+      ref: ${{ steps.prepared.outputs.ref }}
+    permissions:
+      contents: read
+      actions: write
+    env:
+      RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+      RELEASE_SETTINGS_REVIEW: ${{ vars.RELEASE_SETTINGS_REVIEW }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate release entry point
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: require('./.github/scripts/release.cjs').dispatchContext(context);
+      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.20.0
+      - name: Build and verify packages
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/mcp --ignore-scripts --no-audit --no-fund
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm run build:coding-agents
+          npm run build --prefix src/mcp
+          mkdir -p packages
+          npm pack --pack-destination packages --silent
+          (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
+          npm pack ./src/mcp --pack-destination packages --silent
+          node .github/scripts/verify-package-inventory.cjs
+          sha256sum --check PACKAGE_SHA256
+      - name: Install release tools
+        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
+      - name: Release App token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Freeze inputs and create release branch
+        id: prepared
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: await require('./.github/scripts/release.cjs').prepare({ github, context, core });
+      - name: Resume the prepared release
+        if: steps.prepared.outputs.resume_sha != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          RELEASE_VERSION: ${{ steps.prepared.outputs.version }}
+          RELEASE_SHA: ${{ steps.prepared.outputs.resume_sha }}
+          RELEASE_RUN: ${{ steps.prepared.outputs.resume_run }}
+        with:
+          script: |
+            await require('./.github/scripts/release.cjs').resumePreparedRelease({
+              github, context, core, version: process.env.RELEASE_VERSION, sha: process.env.RELEASE_SHA,
+              runId: process.env.RELEASE_RUN ? Number(process.env.RELEASE_RUN) : undefined,
+            });
+
+  release:
+    name: validate and publish candidate
+    needs: prepare-release
+    if: needs.prepare-release.outputs.sha != ''
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+      id-token: write
+      attestations: write
+      issues: write
+    uses: ./.github/workflows/main.yml
+    with:
+      candidate_sha: ${{ needs.prepare-release.outputs.sha }}
+      candidate_ref: ${{ needs.prepare-release.outputs.ref }}
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+  retain-preparation:
+    name: retain failed preparation
+    needs: prepare-release
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.prepare-release.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: await require('./.github/scripts/release-cleanup.cjs').preparation({ github, context, core });

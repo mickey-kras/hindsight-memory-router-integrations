@@ -106,28 +106,19 @@ test("branch deletion skips advanced and absent branches", async () => {
   assert.equal(state.errors.length, 0);
 });
 
-test("branch deletion removes the failed run's branch", async () => {
+test("failed candidates stay available for exact retries", async () => {
   const { core, state } = fakeCore();
   const github = fakeGithub();
   await cleanup.branch({ github, context: fakeContext(), core });
-  assert.equal(github.deleted, true);
-  assert.match(state.summary, /deleted `heads\/release\/0\.1\.0`/);
-  assert.equal(state.errors.length, 0);
-});
-
-test("branch deletion failures are logged, never thrown", async () => {
-  const { core, state } = fakeCore();
-  const github = fakeGithub({ deleteFails: true });
-  await cleanup.branch({ github, context: fakeContext(), core });
   assert.equal(github.deleted, false);
-  assert.equal(state.errors.length, 1);
-  assert.match(state.summary, /\*\*failed\*\* \(forbidden\)/);
+  assert.match(state.summary, /for recovery/);
+  assert.equal(state.errors.length, 0);
 });
 
 function fakeDispatchContext(overrides = {}) {
   return fakeContext({
     eventName: "workflow_dispatch",
-    workflow: "main",
+    workflow: "release",
     ref: "refs/heads/main",
     runId: 42,
     ...overrides,
@@ -177,7 +168,7 @@ test("preparationTargets accepts only main workflow dispatches with a run id", (
   assert.throws(() => cleanup.preparationTargets(fakeDispatchContext({ runId: "42" })), cleanup.CleanupError);
 });
 
-test("preparation deletes only branches frozen by the failed run", async () => {
+test("preparation retains its own candidate without touching other runs", async () => {
   const { core, state } = fakeCore();
   const github = fakePreparationGithub({
     manifests: {
@@ -188,8 +179,8 @@ test("preparation deletes only branches frozen by the failed run", async () => {
     },
   });
   await cleanup.preparation({ github, context: fakeDispatchContext(), core });
-  assert.deepEqual(github.deleted, ["heads/release/0.2.0"]);
-  assert.match(state.summary, /deleted `heads\/release\/0\.2\.0`/);
+  assert.deepEqual(github.deleted, []);
+  assert.match(state.summary, /Kept `release\/0\.2\.0` for recovery/);
   assert.equal(state.errors.length, 0);
 });
 
@@ -198,15 +189,15 @@ test("preparation cleanup without a matching branch is a quiet no-op", async () 
   const github = fakePreparationGithub({ manifests: { "release/0.2.0": { preparation_run: 41 } } });
   await cleanup.preparation({ github, context: fakeDispatchContext(), core });
   assert.deepEqual(github.deleted, []);
-  assert.match(state.summary, /nothing to delete/);
+  assert.match(state.summary, /nothing to retain/);
   assert.equal(state.errors.length, 0);
 });
 
-test("preparation deletion failures are logged, never thrown", async () => {
-  const { core, state } = fakeCore();
-  const github = fakePreparationGithub({ manifests: { "release/0.2.0": { preparation_run: 42 } }, deleteFails: true });
-  await cleanup.preparation({ github, context: fakeDispatchContext(), core });
-  assert.deepEqual(github.deleted, []);
-  assert.equal(state.errors.length, 1);
-  assert.match(state.summary, /\*\*failed\*\* \(forbidden\)/);
+test("preparation API failures remain visible", async () => {
+  const { core } = fakeCore();
+  const github = fakePreparationGithub();
+  github.paginate = async () => {
+    throw new Error("forbidden");
+  };
+  await assert.rejects(cleanup.preparation({ github, context: fakeDispatchContext(), core }), /forbidden/);
 });

@@ -82,7 +82,12 @@ function mock() {
         listTags: () => data(state.tags),
         listBranches: () => data(state.branches),
         getCommit: () => data({ sha: base }),
-        getContent: () => data(encode(state.prepared)),
+        getContent: ({ path }) =>
+          data(
+            path === "release.json"
+              ? encode(state.prepared)
+              : { type: "file", encoding: "base64", content: readFileSync(path).toString("base64") },
+          ),
         compareCommitsWithBasehead: ({ basehead }) =>
           data(basehead.endsWith("...main") ? { status: "identical" } : state.comparison),
         getReleaseByTag: () => (state.release ? data(state.release) : notFound()),
@@ -104,7 +109,7 @@ function mock() {
         listReleases: () => data(state.releases),
         updateRelease: (args) => {
           state.calls.push("publish");
-          Object.assign(state.release, args);
+          Object.assign(state.release, args, { immutable: !args.draft });
           return data(state.release);
         },
         createOrUpdateFileContents: (args) => {
@@ -180,6 +185,7 @@ function mock() {
   const context = {
     repo: { owner: "example", repo: "hindsight-memory-router" },
     eventName: "workflow_dispatch",
+    workflow: "release",
     ref: "refs/heads/main",
     sha: base,
     runId: 5,
@@ -297,6 +303,7 @@ test("preparation freezes inputs and retains the reviewed independent version", 
     assert.equal(files["pyproject.toml"], undefined);
     assert.equal(JSON.parse(files["release.json"]).version, "0.1.0");
     m.state.prepared = JSON.parse(files["release.json"]);
+    put("compat/hindsight.json", { channel: "release", ...pin });
     m.state.branches = [{ name: "release/0.1.0" }];
     await release.prepare(m);
     assert.equal(m.state.calls.length, 3, "rerunning preparation must not create another branch");
@@ -306,7 +313,7 @@ test("preparation rejects non-main dispatches and a main branch that advanced du
   fixture(async () => {
     const m = mock();
     m.context.ref = "refs/heads/ci/example";
-    await assert.rejects(release.prepare(m), /main workflow button/);
+    await assert.rejects(release.prepare(m), /only from main/);
     m.context.ref = "refs/heads/main";
     m.context.sha = sha;
     await assert.rejects(release.prepare(m), /Main advanced/);
@@ -348,10 +355,6 @@ test("finalization publishes only after uploading assets and never moves or recr
       "asset:release.json",
       "asset:image-digests.txt",
       "publish",
-      "refs/heads/ci/release-version-0-1-1",
-      "file:ci/release-version-0-1-1",
-      "pr:ci/release-version-0-1-1",
-      "delete:heads/release/0.1.0",
     ]);
     assert.equal(m.outputs.latest, "true");
     const ref = m.state.refs["tags/v0.1.0"];
@@ -361,7 +364,7 @@ test("finalization publishes only after uploading assets and never moves or recr
     await release.finalize(m);
     assert.equal(m.state.calls.filter((call) => call.startsWith("refs/tags/")).length, 1);
     assert.equal(m.state.calls.filter((call) => call.startsWith("tag:")).length, 1);
-    assert.equal(m.state.calls.filter((call) => call.startsWith("pr:")).length, 1);
+    assert.equal(m.state.calls.filter((call) => call.startsWith("pr:")).length, 0);
     m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
     m.state.assets[0].digest = `sha256:${"f".repeat(64)}`;
     await assert.rejects(release.finalize(m), /Existing release asset differs/);
@@ -386,7 +389,7 @@ test("publication rejects dispatch even when the selected ref is a release branc
     const m = mock();
     prepared(m);
     m.context.eventName = "workflow_dispatch";
-    await assert.rejects(release.finalize(m), /only through the release workflow/);
+    await assert.rejects(release.finalize(m), /only from main/);
     assert.deepEqual(m.state.calls, []);
   }));
 
@@ -408,7 +411,7 @@ test("integration package fixes can update tested assets while upstream pins rem
     });
     mkdirSync("src/upstream/coding-agents", { recursive: true });
     mkdirSync("src/mcp", { recursive: true });
-    mkdirSync("packages");
+    mkdirSync("packages", { recursive: true });
     put("package.json", { name: "@example/openclaw", version: "0.12.0" });
     put("src/upstream/coding-agents/package.json", { name: "@example/coding-agents", version: "0.6.0" });
     put("src/mcp/package.json", { name: "@example/mcp", version: "0.1.0" });
@@ -594,78 +597,437 @@ test("latestHindsight retries transient release lookups and inspect failures", a
   assert.equal(inspects, 2);
 });
 
-test("follow-up opens the next-version PR and deletes the published branch, loudly but non-fatally", () =>
+function integrationPrepared(m, unified = true) {
+  const manifest = prepared(m);
+  m.context.repo.repo = "hindsight-memory-router-integrations";
+  writeFileSync(
+    "UPSTREAM_VERSION",
+    `upstream_repo=vectorize-io/hindsight\nupstream_version=0.11.1\nupstream_commit=${base}\nupstream_path=hindsight-integrations/openclaw\n`,
+  );
+  mkdirSync("integrations/coding-agents", { recursive: true });
+  put("integrations/coding-agents/UPSTREAM.json", {
+    source: "https://github.com/vectorize-io/hindsight",
+    version: "0.5.1",
+    commit: base,
+    path: "hindsight-integrations/coding-agents",
+  });
+  mkdirSync("src/upstream/coding-agents", { recursive: true });
+  mkdirSync("src/mcp", { recursive: true });
+  mkdirSync("packages", { recursive: true });
+  put("package.json", { name: "@example/openclaw", version: "0.12.0" });
+  put("src/upstream/coding-agents/package.json", { name: "@example/coding-agents", version: "0.6.0" });
+  put("src/mcp/package.json", { name: "@example/mcp", version: "0.1.0" });
+  writeFileSync("packages/example-openclaw-0.12.0.tgz", "original test fixture");
+  writeFileSync("packages/example-coding-agents-0.6.0.tgz", "coding test fixture");
+  writeFileSync("packages/example-mcp-0.1.0.tgz", "mcp test fixture");
+  manifest.packages = release.packageAssets();
+  assert.deepEqual(
+    manifest.packages.map((pkg) => pkg.name),
+    ["@example/openclaw", "@example/coding-agents", "@example/mcp"],
+    "the bundle must carry all three packages as separate entries",
+  );
+  manifest.nix_openclaw = base;
+  manifest.router = {
+    version: "0.1.0",
+    sha: base,
+    image: `ghcr.io/mickey-kras/hindsight-memory-router@${digest}`,
+    dockerhub_image: `docker.io/mickeykrasilnikov/hindsight-memory-router@${digest}`,
+  };
+  manifest.integration_upstreams = release.integrationUpstreams();
+  m.state.prepared = structuredClone(manifest);
+  put("release.json", manifest);
+  if (unified) {
+    manifest.publication_run = m.context.runId;
+    m.context.eventName = "workflow_dispatch";
+    m.context.ref = "refs/heads/main";
+    m.context.sha = base;
+    m.target = { ref: "refs/heads/release/0.1.0", sha };
+    m.state.prepared = structuredClone(manifest);
+    put("release.json", manifest);
+  }
+  writeFileSync("PACKAGE_SHA256", "fixture checksums");
+  writeFileSync("PACKAGE_NIX_HASHES", "fixture Nix hashes");
+  return manifest;
+}
+
+function bumpApi(m) {
+  m.state.refs["tags/v0.1.0"] = { object: { type: "commit", sha } };
+  m.state.release = { id: 1, immutable: true, draft: false, prerelease: false };
+  m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
+  m.github.rest.pulls.get = () => ({
+    data: {
+      state: "open",
+      draft: false,
+      base: { ref: "main" },
+      head: {
+        ref: "ci/bump-release-version-0-1-1",
+        sha,
+        repo: { full_name: "example/hindsight-memory-router-integrations" },
+      },
+    },
+  });
+  m.github.rest.pulls.listFiles = () => ({
+    data: [
+      {
+        filename: "release-version.json",
+        status: "modified",
+        additions: 1,
+        deletions: 1,
+        patch: '-  "version": "0.1.0"\n+  "version": "0.1.1"',
+      },
+    ],
+  });
+  m.merge = (args) => {
+    m.state.calls.push(`merge:${args.number}:${args.sha}`);
+  };
+}
+
+test("main-only dispatch rejects another workflow, PR, tag, or branch before API access", async () => {
+  for (const change of [
+    { workflow: "main" },
+    { eventName: "pull_request" },
+    { ref: "refs/tags/v0.1.0" },
+    { ref: "refs/heads/release/0.1.0" },
+    { sha: "main" },
+  ]) {
+    const m = mock();
+    Object.assign(m.context, change);
+    m.github = {};
+    await assert.rejects(release.prepare(m), /only from main/);
+  }
+});
+
+test("unified publication uses the explicit candidate while preserving its main caller", () =>
   fixture(async () => {
     const m = mock();
-    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
-    await release.followUp(m, "0.1.0");
-    assert.deepEqual(m.state.errors, []);
-    assert.deepEqual(m.state.calls, [
-      "refs/heads/ci/release-version-0-1-1",
-      "file:ci/release-version-0-1-1",
-      "pr:ci/release-version-0-1-1",
-      "delete:heads/release/0.1.0",
-    ]);
-    assert.equal(m.state.errors.length, 0);
-    await release.followUp(m, "0.1.0");
-    assert.equal(m.state.calls.filter((call) => call.startsWith("pr:")).length, 1);
-    m.state.failDelete = true;
-    m.github.rest.pulls.create = () => Promise.reject(new Error("forbidden"));
-    m.state.pulls = [];
-    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
-    await release.followUp(m, "0.1.0");
-    assert.equal(m.state.errors.length, 2);
-    assert.match(m.state.errors[0], /Next version PR failed: forbidden/);
-    assert.match(m.state.errors[1], /release\/0\.1\.0.*failed: forbidden/);
+    integrationPrepared(m);
+    await release.finalize(m);
+    const tagged = m.state.tagObjects[m.state.refs["tags/v0.1.0"].object.sha];
+    assert.equal(tagged.object.sha, sha);
+    assert.equal(m.state.release.target_commitish, sha);
+    assert.equal(m.context.sha, base);
+    assert.equal(m.context.ref, "refs/heads/main");
+    assert.deepEqual(
+      m.state.assets.map((asset) => asset.name),
+      [
+        "release.json",
+        "example-openclaw-0.12.0.tgz",
+        "example-coding-agents-0.6.0.tgz",
+        "example-mcp-0.1.0.tgz",
+        "PACKAGE_SHA256",
+        "PACKAGE_NIX_HASHES",
+      ],
+    );
   }));
 
-test("follow-up prunes stale published branches and keeps advanced or unpublished ones", () =>
+test("publication rejects a candidate from another base or a candidate changed after preparation", () =>
   fixture(async () => {
     const m = mock();
-    m.state.refs["heads/release/0.1.0"] = { object: { type: "commit", sha } };
-    m.state.refs["heads/release/0.0.9"] = { object: { type: "commit", sha: base } };
-    m.state.refs["tags/v0.0.9"] = { object: { type: "commit", sha: base } };
-    m.state.refs["heads/release/0.2.0"] = { object: { type: "commit", sha: "d".repeat(40) } };
-    m.state.refs["tags/v0.2.0"] = { object: { type: "commit", sha: "e".repeat(40) } };
-    m.state.refs["heads/release/0.3.0"] = { object: { type: "commit", sha: base } };
-    m.state.refs["heads/release/0.4.0"] = { object: { type: "commit", sha: base } };
-    m.state.tagObjects["f".repeat(40)] = { object: { type: "commit", sha: base } };
-    m.state.refs["tags/v0.4.0"] = { object: { type: "tag", sha: "f".repeat(40) } };
-    m.state.branches = [
-      { name: "main", commit: { sha: base } },
-      { name: "release/0.1.0", commit: { sha } },
-      { name: "release/0.0.9", commit: { sha: base } },
-      { name: "release/0.2.0", commit: { sha: "d".repeat(40) } },
-      { name: "release/0.3.0", commit: { sha: base } },
-      { name: "release/0.4.0", commit: { sha: base } },
-      { name: "release/candidate", commit: { sha: base } },
-    ];
-    const lines = [];
-    m.core.summary = {
-      addHeading: () => m.core.summary,
-      addRaw: (text) => {
-        lines.push(text);
-        return m.core.summary;
-      },
-      write: async () => {},
+    integrationPrepared(m);
+    m.context.sha = "c".repeat(40);
+    await assert.rejects(release.validate(m), /another main snapshot/);
+    m.context.sha = base;
+    m.state.comparison.total_commits = 2;
+    m.state.comparison.commits.push({ sha: "d".repeat(40) });
+    await assert.rejects(release.validate(m), /changed after preparation/);
+    assert.deepEqual(m.state.calls, []);
+  }));
+
+test("native preparation retry retains its frozen candidate even after main advances", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    m.state.branches = [{ name: "release/0.1.0" }];
+    m.state.refs["heads/main"].object.sha = "d".repeat(40);
+    m.github.rest.repos.getLatestRelease = () => {
+      throw new Error("must not refresh pins");
     };
-    await release.followUp(m, "0.1.0");
-    assert.deepEqual(m.state.errors, []);
-    assert.deepEqual(
-      m.state.calls.filter((call) => call.startsWith("delete:")),
-      ["delete:heads/release/0.1.0", "delete:heads/release/0.0.9", "delete:heads/release/0.4.0"],
+    await release.prepare(m);
+    assert.equal(m.outputs.sha, sha);
+    assert.equal(m.outputs.ref, m.target.ref);
+    assert.deepEqual(m.state.calls, []);
+  }));
+
+test("another dispatch delegates recovery to the original run without starting publication", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    m.state.branches = [{ name: "release/0.1.0" }];
+    m.context.runId = 9;
+    await release.prepare(m);
+    assert.equal(m.outputs.resume_run, 5);
+    assert.equal(m.outputs.resume_sha, sha);
+    assert.equal(m.outputs.sha, undefined);
+  }));
+
+test("preparation recovers an acknowledged-lost branch creation without reserving another version", () =>
+  fixture(async () => {
+    const m = mock();
+    const create = m.github.rest.git.createRef;
+    m.github.rest.git.createRef = (args) => {
+      create(args);
+      m.state.prepared = JSON.parse(m.state.tree.find((file) => file.path === "release.json").content);
+      m.state.branches = [{ name: "release/0.1.0" }];
+      throw new Error("lost response");
+    };
+    await assert.rejects(release.prepare(m), /lost response/);
+    put("compat/hindsight.json", { channel: "release", ...pin });
+    await release.prepare(m);
+    assert.equal(m.outputs.sha, sha);
+    assert.equal(m.state.calls.filter((call) => call === "refs/heads/release/0.1.0").length, 1);
+  }));
+
+test("native retries recover after successful annotated-tag publication and candidate cleanup", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    await release.finalize(m);
+    delete m.state.refs["heads/release/0.1.0"];
+    m.state.tags = [{ name: "v0.1.0" }];
+    m.state.refs["heads/main"].object.sha = "d".repeat(40);
+    await release.prepare(m);
+    assert.equal(m.outputs.sha, sha);
+    await release.finalize(m);
+    assert.equal(m.state.calls.filter((call) => call === "refs/tags/v0.1.0").length, 1);
+    m.state.assets[2].digest = `sha256:${"e".repeat(64)}`;
+    await assert.rejects(release.finalize(m), /Existing release asset differs/);
+  }));
+
+test("missing candidate recovery rejects drafts and foreign immutable tag targets", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    delete m.state.refs["heads/release/0.1.0"];
+    m.state.release = { draft: true };
+    await assert.rejects(release.validate(m), /no immutable release/);
+    m.state.release = { immutable: true, draft: false, prerelease: false };
+    m.state.refs["tags/v0.1.0"] = { object: { type: "commit", sha: base } };
+    await assert.rejects(release.validate(m), /not immutable and published at this commit/);
+  }));
+
+function recoveryApi(m, conclusion = "failure") {
+  m.github.rest.actions = {
+    getWorkflowRun: async () => ({
+      data: {
+        id: 5,
+        path: ".github/workflows/release.yml",
+        event: "workflow_dispatch",
+        head_branch: "main",
+        head_sha: base,
+        status: "completed",
+        conclusion,
+      },
+    }),
+    reRunWorkflowFailedJobs: async () => {
+      m.state.calls.push("retry-failed");
+    },
+    reRunWorkflow: async () => {
+      m.state.calls.push("retry-all");
+    },
+  };
+  m.context.runId = 9;
+}
+
+test("failed and cancelled releases use native recovery on their original run", () =>
+  fixture(async () => {
+    for (const conclusion of ["failure", "cancelled"]) {
+      const m = mock();
+      integrationPrepared(m);
+      recoveryApi(m, conclusion);
+      await release.resumePreparedRelease({ ...m, version: "0.1.0", sha, runId: 5 });
+      assert.deepEqual(m.state.calls, [conclusion === "failure" ? "retry-failed" : "retry-all"]);
+    }
+  }));
+
+test("recovery refuses a foreign run and a candidate that moved before retry", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    recoveryApi(m);
+    const fetchRun = m.github.rest.actions.getWorkflowRun;
+    m.github.rest.actions.getWorkflowRun = async () => {
+      const value = await fetchRun();
+      value.data.head_sha = sha;
+      return value;
+    };
+    await assert.rejects(release.resumePreparedRelease({ ...m, version: "0.1.0", sha, runId: 5 }), /source snapshot/);
+    m.github.rest.actions.getWorkflowRun = async () => {
+      m.state.refs["heads/release/0.1.0"].object.sha = base;
+      return fetchRun();
+    };
+    await assert.rejects(
+      release.resumePreparedRelease({ ...m, version: "0.1.0", sha, runId: 5 }),
+      /advanced before retry/,
     );
-    assert.equal(m.state.refs["heads/release/0.0.9"], undefined);
-    assert.equal(m.state.refs["heads/release/0.4.0"], undefined);
-    assert.ok(m.state.refs["heads/release/0.2.0"], "advanced branch must be kept");
-    assert.ok(m.state.refs["heads/release/0.3.0"], "unpublished branch must be kept");
-    const stale = lines.find((line) => line.includes("Stale published branches"));
-    assert.match(stale, /deleted `release\/0\.0\.9`, deleted `release\/0\.4\.0`/);
-    assert.match(stale, /kept `release\/0\.2\.0` \(advanced past its tag\)/);
-    assert.ok(!stale.includes("0.3.0") && !stale.includes("candidate"));
-    m.state.failDelete = true;
-    m.state.branches = [{ name: "release/0.0.9", commit: { sha: base } }];
+    assert.deepEqual(m.state.calls, []);
+  }));
+
+test("retained package retries reuse bytes and fail closed on expired or missing publication artifacts", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    const saved = { id: 17, name: `packages-${sha}`, expired: false };
+    let artifacts = [saved];
+    m.github.rest.actions = { listWorkflowRunArtifacts: async () => ({ data: artifacts }) };
+    await release.retryPackages(m);
+    assert.equal(m.outputs.artifact, "17");
+    saved.expired = true;
+    await assert.rejects(release.retryPackages(m), /expired/);
+    artifacts = [];
+    m.state.refs["tags/v0.1.0"] = { object: { type: "commit", sha } };
+    await assert.rejects(release.retryPackages(m), /retained release packages are missing/);
+  }));
+
+test("candidate provenance appends source identity without replacing authenticated workflow claims", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    const before = process.env.RUNNER_TEMP;
+    process.env.RUNNER_TEMP = process.cwd();
+    const uri = `git+https://github.com/${m.context.repo.owner}/${m.context.repo.repo}@refs/heads/main`;
+    const predicate = {
+      type: "https://slsa.dev/provenance/v1",
+      params: {
+        buildDefinition: { resolvedDependencies: [{ uri, digest: { gitCommit: base } }] },
+        runDetails: { builder: { id: "authenticated-builder" } },
+      },
+    };
+    try {
+      const result = await release.candidateProvenance({ ...m, build: async () => structuredClone(predicate) });
+      assert.deepEqual(result.params.runDetails, predicate.params.runDetails);
+      assert.deepEqual(result.params.buildDefinition.resolvedDependencies, [
+        predicate.params.buildDefinition.resolvedDependencies[0],
+        { name: "release-candidate", uri: uri.replace("refs/heads/main", m.target.ref), digest: { gitCommit: sha } },
+      ]);
+      predicate.params.buildDefinition.resolvedDependencies[0].digest.gitCommit = sha;
+      await assert.rejects(release.candidateProvenance({ ...m, build: async () => predicate }), /claims differ/);
+    } finally {
+      if (before === undefined) delete process.env.RUNNER_TEMP;
+      else process.env.RUNNER_TEMP = before;
+    }
+  }));
+
+test("version follow-up queues only the single manifest bump and preserves package versions", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    bumpApi(m);
+    await release.bumpReleasedVersion(m);
+    assert.deepEqual(
+      m.state.tree.map((file) => file.path),
+      ["release-version.json"],
+    );
+    assert.equal(m.state.calls.at(-1), `merge:7:${sha}`);
+    assert.ok(m.state.refs["heads/release/0.1.0"]);
+    await release.bumpReleasedVersion(m);
+    assert.equal(m.state.calls.filter((call) => call.startsWith("pr:")).length, 1);
+    await release.deletePublishedBranch(m);
+    assert.equal(m.state.refs["heads/release/0.1.0"], undefined);
+  }));
+
+test("version follow-up fails loudly and retains the candidate when queueing fails", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    bumpApi(m);
+    m.merge = () => {
+      throw new Error("queue unavailable");
+    };
+    await assert.rejects(release.bumpReleasedVersion(m), /queue unavailable/);
+    assert.ok(m.state.refs["heads/release/0.1.0"]);
+    assert.ok(!m.state.calls.some((call) => call.startsWith("delete:heads/release/")));
+  }));
+
+test("version follow-up rejects edited PRs and unpublished tags before merging or deleting", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    bumpApi(m);
+    m.state.pulls = [{ number: 7 }];
+    m.github.rest.pulls.listFiles = () => ({ data: [{ filename: "README.md" }] });
+    await assert.rejects(release.bumpReleasedVersion(m), /beyond the next patch version/);
+    m.state.release.draft = true;
+    await assert.rejects(release.deletePublishedBranch(m), /not immutable/);
+    assert.deepEqual(m.state.calls, []);
+  }));
+
+test("cleanup does not delete a candidate advanced beyond its published tag", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    bumpApi(m);
+    m.state.refs["heads/release/0.1.0"].object.sha = base;
+    await assert.rejects(release.deletePublishedBranch(m), /advanced past the published commit/);
+    assert.deepEqual(m.state.calls, []);
+  }));
+
+test("preparation freezes all three packages with the tested router and upstream pins", () =>
+  fixture(async () => {
+    const m = mock();
+    const fixtureManifest = integrationPrepared(m);
+    delete m.state.refs["heads/release/0.1.0"];
+    put("compat/hindsight.json", { channel: "latest" });
+    const routerManifest = { schema: 2, version: "0.1.0", hindsight: pin, packages: [] };
+    const bytes = Buffer.from(
+      `version=0.1.0\ncommit=${base}\nghcr=${fixtureManifest.router.image}\ndockerhub=${fixtureManifest.router.dockerhub_image}\n`,
+    );
+    m.github.rest.repos.getLatestRelease = ({ repo }) => ({
+      data:
+        repo === "hindsight"
+          ? { tag_name: "v0.9.2", draft: false, prerelease: false }
+          : { id: 19, tag_name: "v0.1.0", immutable: true, draft: false, prerelease: false },
+    });
+    const getRef = m.github.rest.git.getRef;
+    m.github.rest.git.getRef = (args) =>
+      args.repo === "hindsight-memory-router" ? { data: { object: { type: "commit", sha: base } } } : getRef(args);
+    m.github.rest.repos.getContent = () => ({ data: encode(routerManifest) });
+    m.github.rest.repos.listReleaseAssets = () => ({
+      data: [
+        { id: 20, name: "image-digests.txt", digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}` },
+      ],
+    });
+    m.github.rest.repos.getReleaseAsset = () => ({ data: bytes });
+    await release.prepare(m);
+    const manifest = JSON.parse(m.state.tree.find((file) => file.path === "release.json").content);
+    assert.deepEqual(manifest.packages, fixtureManifest.packages);
+    assert.deepEqual(manifest.router, fixtureManifest.router);
+    assert.deepEqual(manifest.integration_upstreams, fixtureManifest.integration_upstreams);
+    assert.equal(manifest.nix_openclaw, base);
+    assert.equal(manifest.publication_run, m.context.runId);
+    assert.equal(m.outputs.sha, sha);
+  }));
+
+test("version follow-up accepts a later main version but rejects a rollback or invalid version", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    bumpApi(m);
+    put("release-version.json", { version: "0.2.0" });
+    await release.bumpReleasedVersion(m);
+    assert.deepEqual(m.state.calls, []);
+    for (const version of ["0.0.9", "invalid"]) {
+      put("release-version.json", { version });
+      await assert.rejects(release.bumpReleasedVersion(m), /must advance/);
+    }
+  }));
+
+test("cleanup retry resumes after deleting its candidate when pruning an older branch failed", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    bumpApi(m);
+    m.state.branches = [{ name: "release/0.0.9" }];
     m.state.refs["heads/release/0.0.9"] = { object: { type: "commit", sha: base } };
-    await release.followUp(m, "0.1.0");
-    assert.ok(m.state.errors.some((error) => /Stale published branches failed: forbidden/.test(error)));
+    m.state.tagObjects["f".repeat(40)] = { object: { type: "commit", sha: base } };
+    m.state.refs["tags/v0.0.9"] = { object: { type: "tag", sha: "f".repeat(40) } };
+    const remove = m.github.rest.git.deleteRef;
+    m.github.rest.git.deleteRef = async (args) => {
+      if (args.ref === "heads/release/0.0.9") throw new Error("temporary prune failure");
+      return remove(args);
+    };
+    await assert.rejects(release.deletePublishedBranch(m), /temporary prune failure/);
+    assert.equal(m.state.refs["heads/release/0.1.0"], undefined);
+    m.github.rest.git.deleteRef = remove;
+    await release.deletePublishedBranch(m);
+    assert.equal(m.state.refs["heads/release/0.0.9"], undefined);
   }));

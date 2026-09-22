@@ -1,20 +1,22 @@
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function validateContext(context) {
+  if (
+    !["push", "workflow_dispatch"].includes(context.eventName) ||
+    !/^refs\/heads\/(main|release\/(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/.test(context.ref)
+  ) {
+    throw new Error("PR updates require a push or dispatch on main or a release branch");
+  }
+  return context.ref.slice("refs/heads/".length);
+}
+
 async function updatePull({ github, owner, repo, number, sleep, baseBranch }) {
   for (let attempt = 0; attempt < 4; attempt++) {
-    const { data: pull } = await github.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: number,
-    });
+    const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: number });
     if (pull.state !== "open" || pull.base.ref !== baseBranch || pull.head.repo?.full_name !== `${owner}/${repo}`)
       return "ineligible";
     // PR base metadata can lag behind the branch tip after a merge.
-    const { data: main } = await github.rest.git.getRef({
-      owner,
-      repo,
-      ref: `heads/${baseBranch}`,
-    });
+    const { data: main } = await github.rest.git.getRef({ owner, repo, ref: `heads/${baseBranch}` });
     const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
       owner,
       repo,
@@ -22,11 +24,13 @@ async function updatePull({ github, owner, repo, number, sleep, baseBranch }) {
     });
     // With the PR head as the comparison base, ahead_by counts missing main commits.
     if (comparison.ahead_by === 0) return "current";
-    if (!Number.isInteger(comparison.ahead_by) || comparison.ahead_by < 0) throw new Error("invalid commit comparison");
-    // Scheduled Dependabot runs rebase with Dependabot's own identity. Bot-posted
-    // recreate commands are rejected, so stale Dependabot branches are left to them.
-    if (pull.user?.login === "dependabot[bot]" && pull.user.id === 49699333)
+    if (!Number.isInteger(comparison.ahead_by) || comparison.ahead_by < 0) {
+      throw new Error("invalid commit comparison");
+    }
+    // Scheduled Dependabot runs rebase with Dependabot's own identity.
+    if (pull.user?.login === "dependabot[bot]" && pull.user.id === 49699333) {
       return "managed by scheduled Dependabot rebasing";
+    }
     if (pull.mergeable === false) return "conflicting";
     if (pull.mergeable === true) {
       await github.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch", {
@@ -43,11 +47,8 @@ async function updatePull({ github, owner, repo, number, sleep, baseBranch }) {
 }
 
 async function run({ github, context, core, sleep = pause }) {
+  const baseBranch = validateContext(context);
   const { owner, repo } = context.repo;
-  const baseBranch = context.ref?.replace(/^refs\/heads\//, "") || "main";
-  if (baseBranch !== "main" && !/^release\/(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(baseBranch)) {
-    throw new Error("PR updates require main or a release branch");
-  }
   const pulls = await github.paginate(github.rest.pulls.list, {
     owner,
     repo,
@@ -84,4 +85,4 @@ async function run({ github, context, core, sleep = pause }) {
   if (unresolved) core.setFailed(`${unresolved} PR branch update(s) unresolved`);
 }
 
-module.exports = { run };
+module.exports = { run, validateContext };
