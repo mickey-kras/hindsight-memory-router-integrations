@@ -195,13 +195,14 @@ test("stale updates wait for native rebasing before preparation", async () => {
 test("prepared updates recover validation before the compatibility-score decision", async () => {
   const h = harness();
   const paginate = h.options.github.paginate;
-  h.options.github.paginate = async (endpoint) => endpoint.name === "listCommits"
-    ? [...commits, { author: { login: "github-actions[bot]" } }]
-    : paginate(endpoint);
+  h.options.github.paginate = async (endpoint) =>
+    endpoint.name === "listCommits" ? [...commits, { author: { login: "github-actions[bot]" } }] : paginate(endpoint);
   h.options.verify = async () => commits;
   h.options.metadata = () => [{ ...dependency, compatScore: 0 }];
   let validated = false;
-  h.options.validate = async () => { validated = true; };
+  h.options.validate = async () => {
+    validated = true;
+  };
   await run(h.options);
   assert.equal(validated, true);
   assert.deepEqual(h.commands, []);
@@ -273,7 +274,9 @@ test("manual auto-merge still recovers prepared validation without a metadata lo
   const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }], metadataError: true });
   h.options.verify = async () => commits.slice(0, -1);
   let validated = false;
-  h.options.validate = async () => { validated = true; };
+  h.options.validate = async () => {
+    validated = true;
+  };
   await run(h.options);
   assert.equal(validated, true);
   assert.deepEqual(h.commands, []);
@@ -283,7 +286,9 @@ test("manual auto-merge still recovers prepared validation without a metadata lo
 test("manual auto-merge cannot hide a validation recovery failure", async () => {
   const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "owner" } } }] });
   h.options.verify = async () => commits.slice(0, -1);
-  h.options.validate = async () => { throw new Error("Validation failed"); };
+  h.options.validate = async () => {
+    throw new Error("Validation failed");
+  };
   await run(h.options);
   assert.deepEqual(h.commands, []);
   assert.equal(h.failures.length, 1);

@@ -1,5 +1,3 @@
-/** Creates one HTTPS Memory Router client per agent and active token. */
-
 import { AccessDeniedError } from "./bank-access.js";
 import type { PrincipalCredentials } from "./principal-credential-resolver.js";
 import { RouterTransport } from "./router-transport.js";
@@ -10,7 +8,6 @@ export { RouterUrlError, validateRouterUrl } from "./router-url.js";
 
 import { validateRouterUrl } from "./router-url.js";
 
-/** The subset of HindsightClient the routing layer depends on. */
 export interface RouterClient {
   retain(
     bankId: string,
@@ -56,7 +53,6 @@ export class AuthenticatedClientFactory {
   constructor(options: {
     routerUrl: unknown;
     userAgent: string;
-    /** Injection point for tests; production builds a raw-fetch client over RouterTransport. */
     construct?: ClientConstructor;
   }) {
     this.baseUrl = validateRouterUrl(options.routerUrl);
@@ -64,7 +60,6 @@ export class AuthenticatedClientFactory {
     this.construct = options.construct;
   }
 
-  /** Client authenticated as this agent. Never shares credentials across principals. */
   forAgent(credentials: PrincipalCredentials): RouterClient {
     const cached = this.cache.get(credentials.principalId);
     if (cached?.token === credentials.token) {

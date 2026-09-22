@@ -1,5 +1,3 @@
-/** Multi-bank recall with one timeout, one budget, and deterministic merge. */
-
 import type { RouterClient } from "./authenticated-client-factory.js";
 import { type RecallItem, recallItemText, formatRecallItem } from "./recall-item.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
@@ -9,9 +7,7 @@ export type { RecallItem } from "./recall-item.js";
 export interface CoordinatedRecallRequest {
   query: string;
   banks: readonly string[];
-  /** Shared deadline across all banks (ms). */
   timeoutMs: number;
-  /** Shared context token budget across all banks. */
   maxTokens?: number;
   budget?: "low" | "mid" | "high";
   types?: string[];
@@ -159,10 +155,8 @@ export class RecallCoordinator {
 
     const { merged, failedBanks } = mergeSettledResults(settled, banks);
 
-    // Deterministic ranking: score desc, bank asc, content asc.
     merged.sort(compareBankItems);
 
-    // Trim merged list to the shared context token budget.
     const results = trimToTokenBudget(
       merged.map((entry) => entry.item),
       request.maxTokens,

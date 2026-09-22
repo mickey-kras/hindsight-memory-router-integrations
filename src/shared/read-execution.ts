@@ -2,7 +2,6 @@ import { visibleBanks } from "./bank-access.js";
 import { RecallCoordinator, type RecallItem } from "./recall-coordinator.js";
 import type { RouterTransport } from "./router-transport.js";
 
-/** Recall and reflect share deadlines, budgets, failure handling and deterministic merging. */
 export async function readAcrossBanks(
   transport: RouterTransport,
   operation: "recall" | "reflect",

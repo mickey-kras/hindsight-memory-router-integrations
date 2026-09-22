@@ -93,7 +93,6 @@ const TOOL_SPECS: Record<string, ToolSpec> = {
 };
 
 export function routedKnowledgeTools(transport: RouterTransport) {
-  // Reuse upstream descriptions and schemas; all execution uses the guarded transport.
   const definitions = createKnowledgeTools({
     apiUrl: transport.baseUrl,
     bankId: "router-managed",

@@ -14,7 +14,7 @@ export function harnessTransport(harness: string | undefined): RouterTransport {
   });
 }
 
-/** The supplied harness is the entrypoint identity, never a normal-config override. */
+// The supplied harness is the entrypoint identity, never a normal-config override.
 export function managedSettings(harness: string | undefined) {
   if (!harness) throw new AccessDeniedError();
   const transport = harnessTransport(harness);

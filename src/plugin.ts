@@ -1,7 +1,5 @@
 import { routedKnowledgeTools } from "./shared/knowledge-tools.js";
 
-/** Plugin composition root. Identity comes only from trusted `ctx.agentId`. */
-
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -311,7 +309,6 @@ export default function hindsightMemoryRouterPlugin(api: MoltbotPluginAPI): void
   registerWithStack(api, stack);
 }
 
-/** Registration, separated from stack construction for tests. */
 export function registerWithStack(api: MoltbotPluginAPI, stack: RoutingStack): void {
   registerRecallHook(api, stack);
   registerRetainHooks(api, stack);
@@ -584,8 +581,6 @@ function requestedRecallOptions(params: Record<string, unknown>, config: Runtime
   };
 }
 
-// The recall tool routes through the multi-bank coordinator: same
-// identity, same recall banks, same shared budget and timeout.
 function knowledgeRecallTool(
   tool: RoutedKnowledgeTool,
   stack: RoutingStack,

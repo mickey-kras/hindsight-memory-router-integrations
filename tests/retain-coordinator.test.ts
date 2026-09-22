@@ -166,7 +166,6 @@ describe("RetainCoordinator", () => {
     expect(second.fakeClients.get("backend")?.retains).toHaveLength(1);
     expect(second.fakeClients.get("backend")?.retains[0].bank).toBe("dev");
     expect(second.fakeClients.get("backend")?.retains[0].content).toBe("queued work");
-    // Replay authenticated with the backend token, not any other agent's.
     expect(apiKeys).toEqual([TOKEN_BACKEND, TOKEN_BACKEND]);
   });
 
