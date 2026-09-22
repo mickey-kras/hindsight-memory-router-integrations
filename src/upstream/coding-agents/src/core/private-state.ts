@@ -3,7 +3,6 @@ import {
   closeSync,
   chmodSync,
   constants,
-  existsSync,
   fchmodSync,
   fstatSync,
   lstatSync,
@@ -52,16 +51,21 @@ function privateDirectory(path: string, create = true): void {
 export function sessionStateFile(harness: string, sessionId: string, suffix: string): string {
   const user = process.geteuid?.() ?? createHash("sha256").update(homedir()).digest("hex");
   const directory = join(tmpdir(), `hindsight-${user}-${encodeURIComponent(harness)}`);
-  if (!/[\\/]/.test(harness)) {
+  const file = join(directory, `${encodeURIComponent(sessionId)}${suffix}`);
+  if (!/[\\/]/.test(harness) && !/[\\/]/.test(sessionId)) {
     const legacy = join(tmpdir(), `hindsight-${harness}`);
     try {
       privateDirectory(legacy, false);
-      if (!existsSync(directory)) renameSync(legacy, directory);
+      privateDirectory(directory);
+      if (!lstatSync(file, { throwIfNoEntry: false })) {
+        const previous = join(legacy, `${sessionId}${suffix}`);
+        withPrivateFile(previous, constants.O_RDONLY, () => renameSync(previous, file));
+      }
     } catch {
       // Unowned legacy paths are never followed or migrated.
     }
   }
-  return join(directory, `${encodeURIComponent(sessionId)}${suffix}`);
+  return file;
 }
 
 function assertPrivateFile(stat: Stats): void {

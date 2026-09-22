@@ -70,10 +70,34 @@ describe.skipIf(process.platform === "win32")("private session state", () => {
     appendJournalTurn(journal, { role: "assistant", content: "after upgrade" });
     expect(readJournalTranscript(journal).map((turn) => turn.content)).toEqual(["before upgrade", "after upgrade"]);
     expect(fileCursorStore(name).read("session")?.turns).toBe(1);
-    expect(fs.existsSync(legacy)).toBe(false);
+    expect(fs.statSync(legacy).mode & 0o777).toBe(0o700);
+    expect(fs.readdirSync(legacy)).toEqual([]);
     expect(fs.statSync(dirname(journal)).mode & 0o777).toBe(0o700);
     expect(fs.statSync(journal).mode & 0o777).toBe(0o600);
     expect(fs.statSync(sessionStateFile(name, "session", ".retain.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it.each([false, true])("preserves exact legacy identities across encoding collisions (reverse order: %s)", (reverse) => {
+    const name = harness();
+    const legacy = join(tmpdir(), `hindsight-${name}`);
+    const sessions = ["session%id", "session%25id", "session id", "session%20id"];
+    fs.mkdirSync(legacy, { mode: 0o755 });
+    for (const id of sessions) {
+      const pending = [{ content: `private prompt for ${id}`, operationId: id, at: 1 }];
+      fs.writeFileSync(join(legacy, `${id}.retain.json`), JSON.stringify({ bank: "A", turns: 1, fingerprint: id, pending }));
+      fs.writeFileSync(join(legacy, `${id}.journal.jsonl`), JSON.stringify({ role: "user", content: id }) + "\n");
+    }
+
+    for (const id of reverse ? [...sessions].reverse() : sessions) {
+      const cursor = fileCursorStore(name).read(id);
+      expect(cursor?.pending).toEqual([{ content: `private prompt for ${id}`, operationId: id, at: 1 }]);
+      expect(readJournalTranscript(journalPath(name, id))[0].content).toBe(id);
+      fileCursorStore(name).write(id, { bank: "A", turns: 2, fingerprint: id });
+    }
+    for (const id of sessions) {
+      expect(fileCursorStore(name).read(id)).toEqual({ bank: "A", turns: 2, fingerprint: id });
+    }
+    expect(fs.readdirSync(legacy)).toEqual([]);
   });
 
   it("tightens an existing destination directory and journal before appending", () => {
