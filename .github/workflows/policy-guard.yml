@@ -1141,16 +1141,17 @@ jobs:
                   fail(f'{path}: automation must match its reviewed workflow shape')
 
           RELEASE_SOURCE_HASHES = {
+              '.github/scripts/combination-identity.cjs': '28da02fbdd428f83a87973b3cccb963fb7bd2236ca7457957f792c98b31e0c12',
               '.github/scripts/package.json': ('9c5ae4358d83ef9a326dedb33bec455aed50f32107ba0f72b502059f92a95aa5', 'db0324a5389e1d9005519058dff2b4f17b2b8632c8392e87d2a0b0d1a5be3470'),
               '.github/scripts/package-lock.json': ('a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e', '315d29db2dc593d1d8072be2a1fc05340a43740ce820858e81223a7cea003090'),
               '.github/scripts/combination.cjs': ('dad2f629eca60a28c0979d286edc1954ac487911a70355f5d9c83692ed15af0c', '7866bdaf091681673f643b9e70221ff3d828e2198dfb5a41bd5bb3da6ee94850'),
-              '.github/scripts/combination-smoke.sh': '3074e9c0b6b8f4c3e8e36586478a93f37271694dff5b93511ac6946717f5d53f',
-              '.github/scripts/combination-smoke.mjs': '7bdb7f4b189c8ab538eaa49ad16395da9d9fb9950f8d263cc68dafb9e6587622',
-              '.github/scripts/combination.test.cjs': ('0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2', 'de885e0207e66dcd3a2e3210b15c5fd3059c17452aa58b54579300d010e9562b'),
+              '.github/scripts/combination-smoke.sh': ('3074e9c0b6b8f4c3e8e36586478a93f37271694dff5b93511ac6946717f5d53f', '052e5e4155cff8f5c8b19eda4b908aa5b69441f4e6461ae8af8572cb183c49e1'),
+              '.github/scripts/combination-smoke.mjs': ('7bdb7f4b189c8ab538eaa49ad16395da9d9fb9950f8d263cc68dafb9e6587622', '14c32c344feb9b026613f67e1dbfd465ef2ab3195b1b4cc0e05b2e8e337e3f51'),
+              '.github/scripts/combination.test.cjs': ('0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2', 'de885e0207e66dcd3a2e3210b15c5fd3059c17452aa58b54579300d010e9562b', '3d2d763b4213340109fe6c909e7e693142a1e926a839a2d3053dfa307af191d7'),
               '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77', 'f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36', 'e5c150df0b2cd53c7c552d2a6af9a340afaa1d94900f0f695363b978fc88bba8', '04cdad684a138433c2db8ab9c5086ee1d671523aeeea7a0b3ff807fde1c5fd69', '412d76a8d9c99e8a695a4e1e2d5b440c7367101c6af8e6a777c2b48565ea1af3'),
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5', 'f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23', 'f206b57c6feb37a573b3a8cd9f211dd6d7e9a216d5121e6459978ca6f4fdd31f', '5d2f482546b4ba0431717950c49f7533dd37381efa00017551995d2d39789540', '214c7178e1e2cc01e38e96a6b8cc29e9e2b1aab3c24e8c290e99d328054201a4'),
-              '.github/scripts/release-policy.test.py': ('55f3adf7fac689176e8d7c57a7a36297d5774302960a0d56a4e99653f020831c', '46afaf1bf072c752ca64958c494f811fc9beafd69b59d3b739bd1788ef305e8f'),
+              '.github/scripts/release-policy.test.py': ('55f3adf7fac689176e8d7c57a7a36297d5774302960a0d56a4e99653f020831c', '46afaf1bf072c752ca64958c494f811fc9beafd69b59d3b739bd1788ef305e8f', '867ceabf8ff06aa1a1a2e308b9506bb90ece36cc9fda009c6143f046ca45d56d'),
               '.github/scripts/release-cleanup.cjs': ('f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533', '3ec27d21d0df5fad08222606bce4bb3eaa07226f72ae3bd37c3e70bf83ff87e9', 'bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8'),
               '.github/scripts/release-cleanup.test.cjs': ('99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd', '9495c6943363dfb0984573d0efce88e95e25cbb0c7691cb52bfc0a5820ada5be', '1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956'),
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
