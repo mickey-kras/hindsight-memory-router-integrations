@@ -743,3 +743,65 @@ test("MCP dependency preparation still rejects script changes", async () => {
       : original(args);
   await assert.rejects(inspect(h.github, context, 1, head), /Non-dependency/);
 });
+
+test("a synchronized or rebased bot head regenerates and validates package and Nix pins on the same PR", async () => {
+  const h = harness();
+  const core = { info() {} };
+  await requestPreparation(h.github, context, h.state.pull, core);
+  h.state.runs.push({ display_title: `Prepare dependencies #1 at ${head}`, conclusion: "success" });
+  const updatedHead = "d".repeat(40);
+  const updatedBase = "e".repeat(40);
+  h.state.pull = { ...pull, head: { ...pull.head, sha: updatedHead }, base: { ...pull.base, sha: updatedBase } };
+  h.state.commits = [{ ...commit, sha: updatedHead }];
+  h.state.files = ["package.json", "npm-shrinkwrap.json"].map((filename) => ({ filename, status: "modified" }));
+  const current = { ...context, sha: updatedBase };
+  await requestPreparation(h.github, current, h.state.pull, core);
+  assert.deepEqual(h.state.dispatches.at(-1).inputs, { number: "1", expected_head: updatedHead });
+  await assert.rejects(publish(h.github, current, h.payload, "unused", h.metadata), /current same-repository/);
+  const payload = { ...h.payload, head: updatedHead, base: updatedBase };
+  payload.files = payload.files.map((file) =>
+    file.path === "PACKAGE_NIX_HASHES"
+      ? {
+          ...file,
+          contents: Buffer.from(
+            `source=sha256-${hash("updated root archive", "base64")}\nnpm_deps=sha256-${hash("updated dependencies", "base64")}\n`,
+          ).toString("base64"),
+        }
+      : file.path === "PACKAGE_SHA256"
+        ? {
+            ...file,
+            contents: Buffer.from(
+              packagePaths(manifest, coding, mcp)
+                .sort()
+                .map((path) => `${hash(`updated ${path}`)}  ${path}\n`)
+                .join(""),
+            ).toString("base64"),
+          }
+        : file,
+  );
+  await publish(h.github, current, payload, "unused", h.metadata);
+  const published = h.state.published[0].input;
+  assert.equal(published.branch.branchName, pull.head.ref);
+  assert.equal(published.expectedHeadOid, updatedHead);
+  assert.deepEqual(published.fileChanges.additions, payload.files);
+  h.state.commits = [
+    h.state.commits[0],
+    {
+      sha: generated,
+      author: actions,
+      commit: {
+        verification: { verified: true },
+        message: `Regenerate dependency artifacts\n\nDependabot-Head: ${updatedHead}`,
+      },
+    },
+  ];
+  h.state.generated.parents = [{ sha: updatedHead }];
+  h.state.files.push(...generatedPaths().map((filename) => ({ filename, status: "modified" })));
+  await requestValidation(h.github, current, h.state.pull, core);
+  assert.deepEqual(h.state.dispatches.at(-1), {
+    ...context.repo,
+    workflow_id: "pr-validation.yml",
+    ref: pull.head.ref,
+    inputs: { number: "1", expected_head: generated },
+  });
+});

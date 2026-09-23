@@ -14,18 +14,23 @@
   tarballs are rebuilt from source by CI and byte-compared against the pins,
   never committed.
   A separate job commits only generated files with `GITHUB_TOKEN` and
-  dispatches any missing PR validation, including guard.
+  dispatches any missing PR validation, including guard. Each clean Dependabot update or
+  rebase gets preparation for its exact head. Publication rejects stale head
+  or base snapshots; regenerated package and Nix pins are committed on the same PR
+  and checked at that generated commit before it can merge.
 - Only signed Dependabot commits plus a GitHub-signed artifact commit from
   Actions or the owner qualify. Source and workflow edits stay manual.
 - Guard runs inside PR validation on PR events and recovery dispatches,
   using policy code from main with read-only permissions. Existing validation
   is reused; failed checks remain blocking.
-- Every main update asks Dependabot to recreate stale, verified dependency PRs;
+- Stale dependency PRs wait for Dependabot's native rebasing;
   the 30-minute refresh remains a retry path. Missing validation starts after
   preparation. Failed checks remain blocking; rerun after fixing the cause.
 - The refresh also starts missing main validation for the current default
   branch tip when it is a Dependabot merge. Existing push/dispatch runs are
   reused; failed runs remain visible rather than being retried automatically.
+  The inputless **main** workflow button runs validation only, on `main`; release
+  creation and publication remain exclusive to **release**.
 
 The pinned `dependabot/fetch-metadata` bundle supplies per-dependency scores.
 Its single `compatibility-score` output covers only the first dependency, so

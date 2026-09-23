@@ -136,10 +136,11 @@ class ReleasePolicyTests(unittest.TestCase):
     def test_main_and_candidate_share_gates_without_main_publication(self):
         main = yaml.safe_load((ROOT / MAIN).read_text())
         events = main.get("on", main.get(True))
-        self.assertEqual(set(events), {"push", "workflow_call"})
+        self.assertEqual(set(events), {"push", "workflow_call", "workflow_dispatch"})
+        self.assertIsNone(events["workflow_dispatch"])
         self.assertEqual(events["push"], {"branches": ["main"]})
         publish = main["jobs"]["publish"]
-        self.assertEqual(publish["if"], "inputs.candidate_sha != ''")
+        self.assertEqual(publish["if"], "github.ref == 'refs/heads/main' && inputs.candidate_sha != ''")
         self.assertEqual(publish["needs"], ["quality", "aislop", "codeql"])
         for name in ["sonar", "update-pr-branches"]:
             self.assertEqual(main["jobs"][name]["if"], "github.ref == 'refs/heads/main' && inputs.candidate_sha == ''")
@@ -192,6 +193,19 @@ class ReleasePolicyTests(unittest.TestCase):
         ]:
             self.assertNotEqual(content, original)
             self.assertTrue(policy({MAIN: content}))
+
+    def test_main_dispatch_stays_inputless_and_all_jobs_require_main(self):
+        doc = yaml.safe_load((ROOT / MAIN).read_text())
+        for job in doc["jobs"].values():
+            self.assertIn("github.ref == 'refs/heads/main'", job["if"])
+        original = (ROOT / MAIN).read_text()
+        for changed in [
+            original.replace("  workflow_dispatch:\n", ""),
+            original.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n    inputs:\n      candidate_sha:\n        type: string\n"),
+            original.replace("github.ref == 'refs/heads/main' && inputs.candidate_sha != ''", "inputs.candidate_sha != ''"),
+        ]:
+            self.assertNotEqual(changed, original)
+            self.assertTrue(policy({MAIN: changed}))
 
     def test_new_release_trigger_or_missing_entry_guard_fails(self):
         path = ".github/workflows/release.yml"
