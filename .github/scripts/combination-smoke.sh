@@ -41,4 +41,5 @@ finish() {
 }
 trap finish EXIT
 "${compose[@]}" up --wait --wait-timeout 300
+node .github/scripts/combination-identity.cjs "$root/.router/release-version.json" "${compose[@]}"
 NODE_EXTRA_CA_CERTS="$state/cert.pem" node .github/scripts/combination-smoke.mjs test

@@ -54,6 +54,9 @@ The integrations smoke gate runs packaged OpenClaw retain/recall, a packaged Cod
 hook and packaged MCP server retain/recall against that router and real Hindsight,
 with a deterministic test LLM.
 On main and ordinary PRs, this gate builds router main at a resolved commit.
+For both built and released images, it verifies the running router's installed
+`hindsight-memory-router` distribution against that checkout's `release-version.json`.
+The liveness response is checked separately for HTTP 200 and `status: alive`.
 
 The integrations manifest records all three package versions/checksums, the tested
 router, upstream integration versions/commits, Hindsight, and the current
