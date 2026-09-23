@@ -13,7 +13,8 @@ const {
 } = require("./dependency-files.cjs");
 
 const WORKFLOW = "dependabot-preparation.yml";
-const COMMIT_TITLE = "Regenerate dependency artifacts";
+const LEGACY_COMMIT_TITLE = "Regenerate dependency artifacts";
+const COMMIT_TITLE = `${LEGACY_COMMIT_TITLE} [dependabot skip]`;
 
 function signedDependabot(commit) {
   return (
@@ -53,7 +54,9 @@ async function dependencyCommits(github, repo, pull, commits) {
       (generated.author?.login === "github-actions[bot]" && generated.author.id === 41898282)
     ) ||
     !generated.commit.verification?.verified ||
-    generated.commit.message.trim() !== `${COMMIT_TITLE}\n\nDependabot-Head: ${parent}`
+    ![COMMIT_TITLE, LEGACY_COMMIT_TITLE].some(
+      (title) => generated.commit.message.trim() === `${title}\n\nDependabot-Head: ${parent}`,
+    )
   ) {
     throw new Error("Unsigned or untrusted commits require manual review");
   }

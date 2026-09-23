@@ -18,6 +18,9 @@
   rebase gets preparation for its exact head. Publication rejects stale head
   or base snapshots; regenerated package and Nix pins are committed on the same PR
   and checked at that generated commit before it can merge.
+  Generated commits include `[dependabot skip]`, allowing Dependabot to replace
+  them during native rebasing. Preparation rebuilds the pins for the new bot head;
+  the marker does not skip CI. Existing signed preparation commits remain valid.
 - Only signed Dependabot commits plus a GitHub-signed artifact commit from
   Actions or the owner qualify. Source and workflow edits stay manual.
 - Guard runs inside PR validation on PR events and recovery dispatches,
