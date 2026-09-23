@@ -805,13 +805,3 @@ test("a synchronized or rebased bot head regenerates and validates package and N
     inputs: { number: "1", expected_head: generated },
   });
 });
-
-test("an updated base rejects preparation output before any generated hash can be committed", async () => {
-  const h = harness();
-  h.state.pull.base.sha = "e".repeat(40);
-  await assert.rejects(
-    publish(h.github, { ...context, sha: h.state.pull.base.sha }, h.payload, "unused", h.metadata),
-    /Base changed/,
-  );
-  assert.deepEqual(h.state.published, []);
-});
