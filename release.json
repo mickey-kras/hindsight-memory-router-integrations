@@ -1,0 +1,51 @@
+{
+  "schema": 2,
+  "version": "0.2.1",
+  "base": "95f9186b28f9f9fde66a1acb02111effe8b0f2ee",
+  "preparation_run": 35805376448,
+  "hindsight": {
+    "version": "0.10.1",
+    "sha": "f8950b0c07d9e34c76493dba802bb309f0ce60fd",
+    "image": "ghcr.io/vectorize-io/hindsight:0.10.1@sha256:b4d3b76f363aa40cf348450e7f8f52a50653008731b99824b14623a196182e73"
+  },
+  "packages": [
+    {
+      "name": "@mickey-kras/hindsight-memory-router-openclaw",
+      "path": "packages/mickey-kras-hindsight-memory-router-openclaw-0.13.0.tgz",
+      "version": "0.13.0",
+      "sha256": "45f963c8de6e9c132a634b2735941e17aba62fec3e1347cf72646fda9fdc71d4"
+    },
+    {
+      "name": "@mickey-kras/hindsight-memory-router-coding-agents",
+      "path": "packages/mickey-kras-hindsight-memory-router-coding-agents-0.7.0.tgz",
+      "version": "0.7.0",
+      "sha256": "b2277df218ad193b7884bc88701430cd282c3eb8b3be42d1ed96146b5a463ec0"
+    },
+    {
+      "name": "@mickey-kras/hindsight-memory-router-mcp",
+      "path": "packages/mickey-kras-hindsight-memory-router-mcp-0.1.1.tgz",
+      "version": "0.1.1",
+      "sha256": "63a938aeeb0a278a98d357e1bd239620138110d51d6f58cdd59e1d4280143c40"
+    }
+  ],
+  "publication_run": 35805376448,
+  "router": {
+    "version": "0.1.5",
+    "sha": "2b538312ac14bf1425edadddeebbd67fc65f9499",
+    "image": "ghcr.io/mickey-kras/hindsight-memory-router@sha256:012034bd3bc0856533a79a3b2cce8dca337005445dd16b3099d70b57d665a894",
+    "dockerhub_image": "docker.io/mickeykrasilnikov/hindsight-memory-router@sha256:012034bd3bc0856533a79a3b2cce8dca337005445dd16b3099d70b57d665a894"
+  },
+  "integration_upstreams": {
+    "openclaw": {
+      "version": "0.13.0",
+      "sha": "680406b3dd9cca2108c7f0e204820a09b4e30906",
+      "path": "hindsight-integrations/openclaw"
+    },
+    "coding_agents": {
+      "version": "0.6.1",
+      "sha": "680406b3dd9cca2108c7f0e204820a09b4e30906",
+      "path": "hindsight-integrations/coding-agents"
+    }
+  },
+  "nix_openclaw": "00cd3d011c9ad67be457c8285eebb1b64275aad1"
+}
