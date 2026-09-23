@@ -28,5 +28,5 @@ Audit trail: every recall, retain, and knowledge-tool invocation logs one single
 via the host logger (`info` level) with `at`, `principal`, `op`, `bankId`, `outcome`, and a bounded
 `errorClass` on failure. Memory content, transcripts, and page titles are never logged.
 
-Artifact: `mickey-kras-hindsight-memory-router-openclaw-0.13.0.tgz`, built by CI from source and attached to the GitHub release (SHA-256 pinned in `PACKAGE_SHA256`).
+Artifact: `mickey-kras-hindsight-memory-router-openclaw-0.13.1.tgz`, built by CI from source and attached to the GitHub release (SHA-256 pinned in `PACKAGE_SHA256`).
 Nix hashes: `PACKAGE_NIX_HASHES`.
