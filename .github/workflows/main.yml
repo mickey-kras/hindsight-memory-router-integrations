@@ -20,6 +20,7 @@ on:
         required: false
       SONAR_HOST_URL:
         required: false
+  workflow_dispatch:
   push:
     branches: [main]
 
@@ -140,7 +141,7 @@ jobs:
   publish:
     name: publish packages
     needs: [quality, aislop, codeql]
-    if: inputs.candidate_sha != ''
+    if: github.ref == 'refs/heads/main' && inputs.candidate_sha != ''
     outputs:
       released: ${{ steps.finalized.outputs.latest }}
     runs-on: ubuntu-latest
