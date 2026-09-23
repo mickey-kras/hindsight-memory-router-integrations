@@ -1,3 +1,6 @@
 {
-  "channel": "latest"
+  "channel": "release",
+  "version": "0.10.1",
+  "sha": "f8950b0c07d9e34c76493dba802bb309f0ce60fd",
+  "image": "ghcr.io/vectorize-io/hindsight:0.10.1@sha256:b4d3b76f363aa40cf348450e7f8f52a50653008731b99824b14623a196182e73"
 }
