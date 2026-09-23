@@ -2,9 +2,16 @@ name: aislop
 
 on:
   workflow_call:
+    inputs:
+      candidate_ref:
+        type: string
+        default: ''
+      candidate_sha:
+        type: string
+        default: ''
 
 concurrency:
-  group: aislop-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: aislop-${{ github.event_name }}-${{ inputs.candidate_sha || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -23,6 +30,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -44,7 +52,7 @@ jobs:
           fi
 
       - name: Aislop SARIF
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -55,7 +63,7 @@ jobs:
           fi
 
       - name: Aislop findings gate
-        if: always() && hashFiles('aislop.sarif') != ''
+        if: ${{ !cancelled() && hashFiles('aislop.sarif') != '' }}
         run: |
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
@@ -75,7 +83,7 @@ jobs:
       - name: Upload Aislop SARIF
         if: >-
           ${{
-            always() &&
+            !cancelled() &&
             hashFiles('aislop.sarif') != '' &&
             (
               github.event_name != 'pull_request' ||
@@ -86,3 +94,5 @@ jobs:
         with:
           sarif_file: aislop.sarif
           category: .github/workflows/main.yml:status
+          ref: ${{ inputs.candidate_ref }}
+          sha: ${{ inputs.candidate_sha }}

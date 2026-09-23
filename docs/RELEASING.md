@@ -3,13 +3,17 @@
 ## Release
 
 1. Merge the intended version changes into `main`.
-2. Open **Actions → main → Run workflow**, select **main**, check **Create a pinned release branch and automatically release after checks**, and run.
-3. Main checks, including Sonar, pass → automation creates `release/X.Y.Z` with frozen upstream inputs → release checks run without Sonar → artifacts publish → protected annotated `vX.Y.Z` tag and immutable GitHub release → `latest` advances.
+2. Open **Actions → release → Run workflow**, select **main**, and run.
+3. The same run validates main (including Sonar), prepares a frozen candidate, validates and publishes its packages, queues the next-version PR, and removes the completed candidate branch.
 
-Checking the box authorizes publication after green gates. There is no second button.
-Normal main runs never publish. Create release branches and tags only through this workflow.
-Release preparation pauses Dependabot auto-merge while it runs. If main advanced
-during preparation, the run fails closed; rerun the workflow from current main.
+Dispatch is accepted only from `main`, before credentials or release work begin.
+There is no branch/version input or second publication run. Main pushes and PRs run
+CI only. Candidate validation repeats all release gates, including the packaged
+router/Hindsight combination, without repeating main-only Sonar.
+
+Release dispatch pauses Dependabot auto-merge. If main advances before preparation
+freezes a candidate, dispatch again from current main. Native retries keep the
+original candidate even if main subsequently advances.
 
 ## Versions
 
@@ -31,10 +35,9 @@ compatible fixes; after 1.0, use normal SemVer major/minor/patch rules.
 Update package locks, rebuild changed packages, and refresh checksums/Nix hashes.
 Already-published package versions can be reused only with identical bytes.
 
-Every preparation reserves its version while its branch or tag exists. A failed
-release run deletes its branch automatically (see Recovery), which frees the version;
-while a failed attempt's tag or branch remains, resume that release or bump the
-repository release version through a main PR.
+Every preparation reserves its version while its branch or tag exists. Failed and
+cancelled runs retain their candidate for exact retries. Changes to code, automation,
+or frozen pins require a reviewed main change and a new release version.
 An upstream Hindsight upgrade does not dictate any component's version number.
 
 ## Tested inputs
@@ -62,7 +65,9 @@ for installation. Upstream bases remain in `UPSTREAM_VERSION` and the coding pro
 Router publishes the scanned image to Docker Hub and GHCR with version and commit tags,
 signs/attests the digests, and attaches `image-digests.txt`. Integrations builds its
 tarballs from the release commit, verifies them against `PACKAGE_SHA256`, and
-attaches the tarballs, `PACKAGE_SHA256`, `PACKAGE_NIX_HASHES`, and provenance to GitHub.
+attaches the tarballs, `PACKAGE_SHA256`, and `PACKAGE_NIX_HASHES` to GitHub.
+Package attestations retain the authenticated workflow's main ref/SHA and record
+the validated candidate ref/SHA as an additional source dependency.
 There is no integrations Docker image or npm publication.
 `latest` means the highest successfully released repository version; an older-line fix
 cannot move it backwards. The compatibility combination is authoritative in the
@@ -123,43 +128,15 @@ basis instead:
 
 ## Recovery
 
-- **Checks failed:** create `fix/...` from the release branch, open a PR back to that
-  branch, and squash merge after checks. Publication retries automatically. Keep all
-  upstream pins and `.github/` unchanged. Forward-port code fixes separately to main.
-- **Package fix:** bump only that package if needed, rebuild it, update checksums/Nix
-  hashes and its `release.json` entry in the same fix PR. Preserve unchanged tarballs.
-- **Different pins or automation needed:** prepare a new version from main.
-- **Upload/signing failed:** use **Re-run failed jobs**. Router retains the tested image
-  for 30 days and repeats smoke/scanning on retry. Existing tags and assets must match.
-- **Different bytes needed after publication started, or retained image expired:** use
-  a new version. Never replace a tag or asset. Avoid merging fixes during publication.
-- **Only `latest` failed:** rerun the failed job; it verifies the release and retries promotion.
-- **Released:** automation opens a next-version PR for manual review and merge, deletes
-  the published release branch, and prunes older published branches that still match
-  their tags. The protected tags and immutable releases stay. Future work gets another version.
+- **Checks, upload, attestation, or follow-up failed:** use **Re-run failed jobs** on the original release run. The frozen candidate and tested tarballs are retained for 30 days. Existing tags and release assets must match the original bytes.
+- **Cancelled:** use **Re-run all jobs** on that run. Cancellation does not delete the candidate or open failure issues.
+- **Preparation response was lost:** rerun the original run. It finds the candidate by its manifest and resumes without reserving another version or refreshing pins.
+- **Repeated dispatch from the same main snapshot:** automation requests a native retry of the original failed run or links to an active/successful run. It does not create a second publisher.
+- **Candidate branch already removed:** a retry verifies the immutable annotated tag and release, then resumes follow-up at the same commit.
+- **Code, pins, package bytes, or automation need changes:** merge the fix to main and prepare a new repository version. Bump a package version if its previously published bytes change; refresh its checksums and Nix hashes. Candidate branch edits are rejected.
+- **Retained tarballs expired or publication bytes are missing:** use a new version. Tags and published assets are never replaced.
+- **Released:** automation queues a squash-only next-version PR that changes only `release-version.json`. Required PR checks still apply. Only after this succeeds does it delete the completed candidate and prune older immutable releases' matching branches. A failed follow-up fails the run and remains retryable.
 
-Publication across GitHub and two registries is not atomic; exact digest references
-remain usable if a partial failure temporarily leaves aliases different.
-
-### Failed release cleanup
-
-When a release run fails before the immutable release is finalized, the **clean up
-failed release** job removes the run's leftover automatically and posts a summary of
-what it did: the `release/X.Y.Z` branch, deleted with the release App token (the App
-is the only bypass actor on the deletion ruleset). The branch is kept when it advanced
-past the failed run — its newest attempt owns it — or when `vX.Y.Z` already has a git
-tag or release; that state is resumable, so re-run the failed jobs to finish the
-release instead. Cleanup never runs on success, on cancellation, or on main runs, and
-it never touches tags, releases, assets, attestations, or any other branch.
-
-Manual cleanup remains needed only when:
-
-- the run fails before any job executes (caller startup failure) or is cancelled —
-  no cleanup job runs, so delete the orphaned branch manually;
-- the cleanup job itself fails — its summary names the leftover to remove;
-- a half-finished finalize left the `vX.Y.Z` tag or a draft release — resume with
-  **Re-run failed jobs**; only when abandoning the version, delete the draft release
-  manually (the protected tag stays and keeps the version reserved);
-- tarball attestations from a failed attempt — they are content-addressed, stay valid
-  if identical bytes are released later, and cannot be deleted with the automation's
-  credentials; they are accepted residue, not release state.
+If a run fails before any job starts, fix the startup cause and rerun it. Failed
+candidates, draft releases, and content-addressed attestations are resumable state;
+release automation does not delete them on failure or cancellation.

@@ -36,6 +36,18 @@ test("release combinations keep pinned inputs even when newer upstream commits e
     assert.equal(outputs.router_image, router.image);
     assert.equal(outputs.image, pin.image);
     assert.equal(outputs.router_sha, sha);
+    options.context = {
+      eventName: "workflow_dispatch",
+      workflow: "release",
+      ref: "refs/heads/main",
+      sha: "c".repeat(40),
+      payload: {},
+    };
+    options.target = { ref: "refs/heads/release/0.1.0", sha };
+    await combination(options);
+    assert.equal(outputs.router_image, router.image);
+    assert.equal(outputs.image, pin.image);
+    assert.equal(options.context.ref, "refs/heads/main");
     writeFileSync("release.json", JSON.stringify({ router: { ...router, image: "latest" } }));
     await assert.rejects(combination(options), /digest/);
   } finally {

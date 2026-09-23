@@ -2,20 +2,29 @@ name: main
 
 on:
   workflow_call:
+    inputs:
+      candidate_ref:
+        type: string
+        default: ''
+      candidate_sha:
+        type: string
+        default: ''
     secrets:
       RELEASE_APP_PRIVATE_KEY:
         required: false
-  workflow_dispatch:
-    inputs:
-      create_release:
-        description: Create a pinned release branch and automatically release after checks
-        type: boolean
-        default: false
+      TAILSCALE_OAUTH_CLIENT_ID:
+        required: false
+      TAILSCALE_AUDIENCE:
+        required: false
+      SONAR_TOKEN:
+        required: false
+      SONAR_HOST_URL:
+        required: false
   push:
     branches: [main]
 
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && inputs.create_release && format('dependabot-auto-merge-{0}', github.repository) || format('main-{0}', github.ref) }}
+  group: main-${{ github.event_name }}-${{ inputs.candidate_sha || github.sha }}
   cancel-in-progress: false
 
 permissions:
@@ -24,39 +33,49 @@ permissions:
 jobs:
   update-pr-branches:
     name: update PR branches
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
+    if: github.ref == 'refs/heads/main' && inputs.candidate_sha == ''
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     uses: ./.github/workflows/pr-branch-updater.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
   quality:
     name: quality
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       security-events: write
     uses: ./.github/workflows/ci.yml
+    with:
+      candidate_sha: ${{ inputs.candidate_sha }}
+      candidate_ref: ${{ inputs.candidate_ref }}
 
   aislop:
     name: aislop
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       security-events: write
     uses: ./.github/workflows/aislop.yml
+    with:
+      candidate_sha: ${{ inputs.candidate_sha }}
+      candidate_ref: ${{ inputs.candidate_ref }}
 
   codeql:
     name: codeql
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       security-events: write
     uses: ./.github/workflows/codeql.yml
+    with:
+      candidate_sha: ${{ inputs.candidate_sha }}
+      candidate_ref: ${{ inputs.candidate_ref }}
 
   sonar:
     name: sonar
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.candidate_sha == ''
     permissions:
       contents: read
       id-token: write
@@ -71,6 +90,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
 
       - name: Connect to the tailnet
@@ -110,74 +130,17 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: Synchronize SonarQube findings
-        if: failure() && steps.sonar-quality-gate.outcome == 'failure' && github.ref == 'refs/heads/main'
+        if: ${{ !cancelled() && failure() && steps.sonar-quality-gate.outcome == 'failure' && github.ref == 'refs/heads/main' }}
         env:
           GH_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: python3 .github/scripts/sync-sonar-findings.py .scannerwork/report-task.txt
 
-  prepare-release:
-    name: create release branch
-    needs: [quality, aislop, codeql, sonar]
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.create_release
-    runs-on: ubuntu-latest
-    environment: release-automation
-    concurrency:
-      group: release-preparation-${{ github.repository }}
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    env:
-      RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
-      RELEASE_SETTINGS_REVIEW: ${{ vars.RELEASE_SETTINGS_REVIEW }}
-    steps:
-      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 22.20.0
-      - name: Build and verify packages
-        # packages/ is gitignored; release inputs freeze the CI-reproducible
-        # package bytes pinned by PACKAGE_SHA256, not committed binaries.
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
-          npm ci --prefix src/mcp --ignore-scripts --no-audit --no-fund
-          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
-          npm run build
-          npm run build:coding-agents
-          npm run build --prefix src/mcp
-          mkdir -p packages
-          npm pack --pack-destination packages --silent
-          (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
-          npm pack ./src/mcp --pack-destination packages --silent
-          node .github/scripts/verify-package-inventory.cjs
-          sha256sum --check PACKAGE_SHA256
-      - name: Install release tools
-        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
-      - name: Release App token
-        id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-      - name: Freeze inputs and create release branch
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        with:
-          github-token: ${{ steps.app.outputs.token }}
-          script: await require('./.github/scripts/release.cjs').prepare({ github, context, core });
-
   publish:
     name: publish packages
     needs: [quality, aislop, codeql]
-    if: startsWith(github.ref, 'refs/heads/release/')
+    if: inputs.candidate_sha != ''
     outputs:
       released: ${{ steps.finalized.outputs.latest }}
     runs-on: ubuntu-latest
@@ -189,9 +152,12 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      actions: read
     env:
       RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
       RELEASE_SETTINGS_REVIEW: ${{ vars.RELEASE_SETTINGS_REVIEW }}
+      CANDIDATE_REF: ${{ inputs.candidate_ref }}
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
@@ -199,13 +165,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22.20.0
+      - name: Resolve retained packages
+        id: retained
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            await require('./.github/scripts/release.cjs').retryPackages({
+              github, context, core,
+              target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
+            });
+      - name: Restore retained packages
+        if: steps.retained.outputs.artifact != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.retained.outputs.artifact }}
+          path: packages
+          merge-multiple: true
       - name: Build and verify packages
-        # packages/ is gitignored; the release publishes and attests the
-        # CI-reproducible package bytes pinned by PACKAGE_SHA256.
+        if: steps.retained.outputs.artifact == ''
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
@@ -220,24 +202,53 @@ jobs:
           npm pack ./src/mcp --pack-destination packages --silent
           node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
+      - name: Verify retained package inventory
+        run: |
+          node .github/scripts/verify-package-inventory.cjs
+          sha256sum --check PACKAGE_SHA256
+      - name: Retain tested packages
+        if: steps.retained.outputs.artifact == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: packages-${{ inputs.candidate_sha }}
+          path: packages/*.tgz
+          if-no-files-found: error
+          retention-days: 30
       - name: Release preflight
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
-          script: await require('./.github/scripts/release.cjs').validate({ github, context, core });
+          script: |
+            await require('./.github/scripts/release.cjs').validate({
+              github, context, core,
+              target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
+            });
 
+      - name: Install release tools
+        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
+      - name: Candidate provenance
+        id: provenance
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            await require('./.github/scripts/release.cjs').candidateProvenance({
+              github, context, core,
+              target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
+            });
       - name: Attest tested packages
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-path: packages/*.tgz
+          predicate-path: ${{ steps.provenance.outputs.path }}
+          predicate-type: ${{ steps.provenance.outputs.type }}
           create-storage-record: true
-      - name: Install release tools
-        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Release App token
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
       - name: Publish immutable release
@@ -245,65 +256,28 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           github-token: ${{ steps.app.outputs.token }}
-          script: await require('./.github/scripts/release.cjs').finalize({ github, context, core });
-
-  cleanup:
-    name: clean up failed release
-    needs: [quality, aislop, codeql, publish, prepare-release]
-    if: >-
-      ${{
-        always() &&
-        (
-          (
-            startsWith(github.ref, 'refs/heads/release/') &&
-            needs.publish.outputs.released == '' &&
-            (
-              needs.quality.result == 'failure' ||
-              needs.aislop.result == 'failure' ||
-              needs.codeql.result == 'failure' ||
-              needs.publish.result == 'failure'
-            )
-          ) ||
-          (
-            github.event_name == 'workflow_dispatch' &&
-            github.ref == 'refs/heads/main' &&
-            inputs.create_release &&
-            needs.prepare-release.result == 'failure'
-          )
-        )
-      }}
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    environment: release-automation
-    concurrency:
-      group: package-release-${{ github.repository }}
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    steps:
-      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+          script: |
+            await require('./.github/scripts/release.cjs').finalize({
+              github, context, core,
+              target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
+            });
+      - name: Queue next version
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
         with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Release App token
-        id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-      - name: Delete the failed release branch
-        if: startsWith(github.ref, 'refs/heads/release/')
+          github-token: ${{ steps.app.outputs.token }}
+          script: |
+            await require('./.github/scripts/release-follow-up.cjs').bumpReleasedVersion({
+              github, context, core,
+              target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
+            });
+      - name: Delete published candidate
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           github-token: ${{ steps.app.outputs.token }}
-          script: await require('./.github/scripts/release-cleanup.cjs').branch({ github, context, core });
-      - name: Delete failed preparation branches
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        with:
-          github-token: ${{ steps.app.outputs.token }}
-          script: await require('./.github/scripts/release-cleanup.cjs').preparation({ github, context, core });
+          script: |
+            await require('./.github/scripts/release-follow-up.cjs').deletePublishedBranch({
+              github, context, core,
+              target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
+            });

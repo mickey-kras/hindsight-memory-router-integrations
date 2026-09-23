@@ -19,7 +19,17 @@ PATHS = [
     MAIN,
     ".github/workflows/release.yml",
     ".github/workflows/ci.yml",
+    ".github/workflows/aislop.yml",
+    ".github/workflows/codeql.yml",
+    ".github/workflows/pr-branch-updater.yml",
+    ".github/scripts/package.json",
+    ".github/scripts/package-lock.json",
+    ".github/scripts/combination.cjs",
+    ".github/scripts/combination.test.cjs",
+    ".github/scripts/release.test.cjs",
+    ".github/scripts/release-policy.test.py",
     ".github/scripts/release.cjs",
+    ".github/scripts/release-follow-up.cjs",
     ".github/scripts/release-settings.cjs",
     ".github/rulesets/protect-release-branches.json",
 ]
@@ -34,7 +44,7 @@ def policy(overrides=None):
     files = {
         str(path.relative_to(ROOT)): path.read_text()
         for path in (ROOT / ".github").rglob("*")
-        if path.is_file() and path.suffix in {".yml", ".yaml", ".cjs", ".mjs", ".py", ".sh", ".json"}
+        if "node_modules" not in path.parts and path.is_file() and path.suffix in {".yml", ".yaml", ".cjs", ".mjs", ".py", ".sh", ".json"}
     }
     files["package.json"] = (ROOT / "package.json").read_text()
     files.update(overrides or {})
@@ -101,150 +111,130 @@ new AsyncFunction('github', 'context', 'core', 'require', input.script)(github, 
 
 
 class ReleasePolicyTests(unittest.TestCase):
-    def test_workflow_release_contract(self):
+    def test_release_dispatch_rejects_non_main_before_preparation(self):
+        release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+        self.assertEqual(release.get("on", release.get(True)), {"workflow_dispatch": None})
+        entry = release["jobs"]["entry"]
+        self.assertEqual(entry["permissions"], {})
+        script = entry["steps"][0]["with"]["script"]
+        for ref, event, accepted in [
+            ("refs/heads/main", "workflow_dispatch", True),
+            ("refs/heads/release/0.2.0", "workflow_dispatch", False),
+            ("refs/heads/fix/example", "workflow_dispatch", False),
+            ("refs/heads/main", "push", False),
+        ]:
+            driver = "const context=" + json.dumps({"ref": ref, "eventName": event}) + ";" + script
+            result = subprocess.run(["node", "-e", driver], capture_output=True)
+            self.assertEqual(result.returncode == 0, accepted)
+        self.assertEqual(release["jobs"]["baseline"]["needs"], "entry")
+        self.assertEqual(release["jobs"]["prepare-release"]["needs"], "baseline")
+        self.assertEqual(release["jobs"]["release"]["needs"], "prepare-release")
+
+    def test_main_and_candidate_share_gates_without_main_publication(self):
         main = yaml.safe_load((ROOT / MAIN).read_text())
         events = main.get("on", main.get(True))
+        self.assertEqual(set(events), {"push", "workflow_call"})
         self.assertEqual(events["push"], {"branches": ["main"]})
-        self.assertEqual(events["workflow_dispatch"]["inputs"]["create_release"]["default"], False)
-        prepare = main["jobs"]["prepare-release"]
-        for condition in ["workflow_dispatch", "refs/heads/main", "inputs.create_release"]:
-            self.assertIn(condition, prepare["if"])
-        self.assertEqual(prepare["environment"], "release-automation")
-        self.assertTrue({"quality", "aislop", "codeql"} <= set(prepare["needs"]))
-        release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-        self.assertEqual(
-            release.get("on", release.get(True)), {"push": {"branches": ["release/*"]}}
-        )
-        self.assertNotEqual(main["concurrency"]["group"], release["concurrency"]["group"])
         publish = main["jobs"]["publish"]
-        self.assertTrue({"quality", "aislop", "codeql"} <= set(publish["needs"]))
-        self.assertNotIn("sonar", publish["needs"])
-        steps = {step.get("name"): step for step in publish["steps"]}
-        if ROUTER:
-            self.assertIn("publish", prepare["needs"])
-            for name in [
-                "Log in to GHCR",
-                "Log in to Docker Hub",
-                "Push the scanned image",
-                "Release App token",
-            ]:
-                self.assertEqual(steps[name]["if"], "startsWith(github.ref, 'refs/heads/release/')")
-            for name in ["SonarQube analysis", "SonarQube quality gate"]:
-                self.assertIn("github.ref == 'refs/heads/main'", steps[name]["if"])
-            self.assertEqual(
-                steps["Publish immutable release"]["if"], "steps.push.outputs.published == 'true'"
-            )
-            self.assertEqual(
-                steps["Promote latest released image"]["if"],
-                "steps.finalized.outputs.latest == 'true'",
-            )
-            self.assertIn("Default Compose smoke", steps)
-            self.assertIn("Real Hindsight router-storage parity", steps)
-            self.assertIn("--exit-code 1", steps["Trivy critical gate"]["run"])
-            self.assertEqual(
-                publish["env"]["HINDSIGHT_TEST_IMAGE"],
-                "${{ needs.quality.outputs.hindsight_image }}",
-            )
-        else:
-            self.assertIn("sonar", prepare["needs"])
-            self.assertEqual(publish["if"], "startsWith(github.ref, 'refs/heads/release/')")
-            self.assertEqual(main["jobs"]["sonar"]["if"], "github.ref == 'refs/heads/main'")
+        self.assertEqual(publish["if"], "inputs.candidate_sha != ''")
+        self.assertEqual(publish["needs"], ["quality", "aislop", "codeql"])
+        for name in ["sonar", "update-pr-branches"]:
+            self.assertEqual(main["jobs"][name]["if"], "github.ref == 'refs/heads/main' && inputs.candidate_sha == ''")
+        steps = [step.get("name") for step in publish["steps"]]
+        self.assertLess(steps.index("Release preflight"), steps.index("Release App token"))
+        self.assertLess(steps.index("Publish immutable release"), steps.index("Queue next version"))
+        self.assertLess(steps.index("Queue next version"), steps.index("Delete published candidate"))
+        self.assertTrue(all(not step.get("continue-on-error") for step in publish["steps"]))
 
-    def test_release_cleanup_contract(self):
-        if ROUTER:
-            self.skipTest("integrations main workflow required")
+    def test_candidate_identity_reaches_checks_and_attestations(self):
         main = yaml.safe_load((ROOT / MAIN).read_text())
-        publish = main["jobs"]["publish"]
-        self.assertEqual(publish["outputs"]["released"], "${{ steps.finalized.outputs.latest }}")
-        publish_steps = {step.get("name"): step for step in publish["steps"]}
-        self.assertEqual(publish_steps["Publish immutable release"].get("id"), "finalized")
-        cleanup = main["jobs"]["cleanup"]
-        self.assertTrue({"quality", "aislop", "codeql", "publish"} <= set(cleanup["needs"]))
-        self.assertIs(cleanup["continue-on-error"], True)
-        condition = cleanup["if"]
-        for guard in [
-            "always()",
-            "startsWith(github.ref, 'refs/heads/release/')",
-            "needs.publish.outputs.released == ''",
-            "needs.quality.result == 'failure'",
-            "needs.aislop.result == 'failure'",
-            "needs.codeql.result == 'failure'",
-            "needs.publish.result == 'failure'",
-        ]:
-            self.assertIn(guard, condition)
-        self.assertEqual(cleanup["environment"], "release-automation")
-        self.assertEqual(cleanup["permissions"], {"contents": "read"})
-        self.assertEqual(cleanup["concurrency"]["group"], publish["concurrency"]["group"])
-        self.assertIs(cleanup["concurrency"]["cancel-in-progress"], False)
-        steps = {step.get("name"): step for step in cleanup["steps"]}
-        self.assertEqual(
-            steps["Release App token"]["with"]["private-key"], "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"
-        )
-        branch = steps["Delete the failed release branch"]
-        self.assertEqual(branch["with"]["github-token"], "${{ steps.app.outputs.token }}")
-        self.assertIn("release-cleanup.cjs').branch(", branch["with"]["script"])
+        for name in ["quality", "aislop", "codeql"]:
+            self.assertEqual(main["jobs"][name]["with"], {
+                "candidate_sha": "${{ inputs.candidate_sha }}",
+                "candidate_ref": "${{ inputs.candidate_ref }}",
+            })
+        steps = {step.get("name"): step for step in main["jobs"]["publish"]["steps"]}
+        self.assertEqual(steps["Attest tested packages"]["with"]["predicate-path"], "${{ steps.provenance.outputs.path }}")
+        self.assertEqual(steps["Retain tested packages"]["with"]["name"], "packages-${{ inputs.candidate_sha }}")
+        self.assertEqual(steps["Restore retained packages"]["with"]["artifact-ids"], "${{ steps.retained.outputs.artifact }}")
+
+    def test_cancellation_keeps_recovery_state_and_suppresses_reporting(self):
+        main = yaml.safe_load((ROOT / MAIN).read_text())
+        self.assertNotIn("cleanup", main["jobs"])
+        sonar = {step.get("name"): step for step in main["jobs"]["sonar"]["steps"]}
+        self.assertIn("!cancelled()", sonar["Synchronize SonarQube findings"]["if"])
+        release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+        retained = release["jobs"]["retain-preparation"]
+        self.assertIn("!cancelled()", retained["if"])
+        self.assertEqual(retained["permissions"], {"contents": "read"})
+        self.assertTrue(all("app-token" not in step.get("uses", "") for step in retained["steps"]))
+
+    def test_gitleaks_artifacts_are_unique_per_source_and_attempt(self):
+        ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        steps = {step.get("name"): step for step in ci["jobs"]["checks"]["steps"]}
+        self.assertIs(steps["Gitleaks"]["env"]["GITLEAKS_ENABLE_UPLOAD_ARTIFACT"], False)
+        self.assertEqual(steps["Retain Gitleaks report"]["with"]["name"],
+                         "gitleaks-${{ inputs.candidate_sha || github.sha }}-${{ github.run_attempt }}")
 
     def test_reviewed_release_workflows_pass(self):
         self.assertEqual(policy(), [])
 
-    def test_main_publishing_and_release_gate_bypass_fail(self):
+    def test_publication_cannot_drop_a_gate_or_run_on_main_push(self):
         original = (ROOT / MAIN).read_text()
-        mutations = [
-            original.replace(
-                "startsWith(github.ref, 'refs/heads/release/')", "github.ref == 'refs/heads/main'"
-            ),
-            original.replace(
-                "      - name: Release preflight",
-                "      - if: false\n        name: Release preflight",
-            ),
-            original.replace("needs: [quality, aislop, codeql", "needs: [quality, codeql"),
-        ]
-        for content in mutations:
-            with self.subTest(content=content[:30]):
-                self.assertNotEqual(content, original)
-                self.assertTrue(policy({MAIN: content}))
+        for content in [
+            original.replace("inputs.candidate_sha != ''", "github.ref == 'refs/heads/main'"),
+            original.replace("      - name: Release preflight", "      - if: false\n        name: Release preflight"),
+            original.replace("needs: [quality, aislop, codeql]", "needs: [quality, codeql]"),
+            original.replace("candidate_sha: ${{ inputs.candidate_sha }}", "candidate_sha: ${{ github.sha }}"),
+        ]:
+            self.assertNotEqual(content, original)
+            self.assertTrue(policy({MAIN: content}))
 
-    def test_new_manual_release_trigger_fails(self):
+    def test_new_release_trigger_or_missing_entry_guard_fails(self):
         path = ".github/workflows/release.yml"
-        self.assertTrue(
-            policy(
-                {path: (ROOT / path).read_text().replace("on:\n", "on:\n  workflow_dispatch:\n")}
-            )
-        )
+        original = (ROOT / path).read_text()
+        for content in [
+            original.replace("on:\n", "on:\n  push:\n    branches: ['release/*']\n"),
+            original.replace("needs: entry", "if: always()"),
+            original.replace("context.ref !== 'refs/heads/main'", "false"),
+        ]:
+            self.assertTrue(policy({path: content}))
 
     def test_release_script_mutation_fails(self):
-        path = ".github/scripts/release.cjs"
-        self.assertTrue(
-            policy({path: (ROOT / path).read_text().replace("if (!condition)", "if (false)")})
-        )
+        for path, old, new in [
+            (".github/scripts/release.cjs", "if (!condition)", "if (false)"),
+            (".github/scripts/release-follow-up.cjs", "files.length === 1", "true"),
+        ]:
+            original = (ROOT / path).read_text()
+            changed = original.replace(old, new)
+            self.assertNotEqual(changed, original)
+            self.assertTrue(policy({path: changed}))
 
     def test_scan_neutralization_fails(self):
         path = ".github/workflows/ci.yml"
-        name = "Trivy PR gate" if ROUTER else "Trivy dependency gate"
-        changed = (
-            (ROOT / path)
-            .read_text()
-            .replace(
-                f"      - name: {name}", f"      - continue-on-error: true\n        name: {name}"
-            )
-        )
+        changed = (ROOT / path).read_text().replace(
+            "      - name: Trivy dependency gate", "      - continue-on-error: true\n        name: Trivy dependency gate")
         self.assertTrue(policy({path: changed}))
 
     def test_combination_cannot_use_floating_router_images(self):
         path = ".github/workflows/ci.yml"
         original = (ROOT / path).read_text()
         changed = original.replace("${{ steps.pins.outputs.router_image }}", "latest")
-        self.assertNotEqual(changed, original)
         self.assertTrue(policy({path: changed}))
+
+    def test_candidate_scans_cannot_report_main_or_checkout_floating_sources(self):
+        for path in [".github/workflows/ci.yml", ".github/workflows/aislop.yml", ".github/workflows/codeql.yml"]:
+            original = (ROOT / path).read_text()
+            for changed in [
+                original.replace("ref: ${{ inputs.candidate_sha || github.sha }}", "ref: main"),
+                original.replace("sha: ${{ inputs.candidate_sha }}", "sha: ${{ github.sha }}"),
+            ]:
+                self.assertNotEqual(changed, original)
+                self.assertTrue(policy({path: changed}))
 
     def test_full_action_pin_refresh_is_allowed(self):
         doc = yaml.safe_load((ROOT / MAIN).read_text())
-        action = next(
-            step["uses"]
-            for job in doc["jobs"].values()
-            for step in job.get("steps", [])
-            if "uses" in step
-        )
+        action = next(step["uses"] for job in doc["jobs"].values() for step in job.get("steps", []) if "uses" in step)
         changed = (ROOT / MAIN).read_text().replace(action, action.split("@")[0] + "@" + "f" * 40)
         self.assertEqual(policy({MAIN: changed}), [])
 

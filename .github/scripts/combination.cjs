@@ -1,9 +1,11 @@
 const { existsSync, readFileSync } = require("node:fs");
-const { ReleaseError, resolve, validateRouter } = require("./release.cjs");
+const { ReleaseError, resolve, validateRouter, releaseTarget } = require("./release.cjs");
 
-module.exports = async ({ github, context, core, inspect }) => {
-  await resolve({ github, context, core, inspect });
-  const branch = context.payload.pull_request?.base.ref || context.ref.replace("refs/heads/", "");
+module.exports = async ({ github, context, core, inspect, target }) => {
+  await resolve({ github, context, core, inspect, target });
+  const branch = target
+    ? releaseTarget(context, target).ref.replace("refs/heads/", "")
+    : context.payload.pull_request?.base.ref || context.ref.replace("refs/heads/", "");
   if (branch.startsWith("release/")) {
     if (!existsSync("release.json")) throw new ReleaseError("Release manifest is missing");
     const manifest = JSON.parse(readFileSync("release.json", "utf8"));
