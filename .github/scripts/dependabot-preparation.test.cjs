@@ -105,7 +105,18 @@ function harness() {
       if (query.startsWith("mutation")) {
         state.published.push(input);
         state.pull = { ...state.pull, head: { ...state.pull.head, sha: generated } };
-        state.commits.push({ sha: generated });
+        state.commits.push({
+          sha: generated,
+          author: actions,
+          commit: {
+            verification: { verified: true },
+            message: `${input.input.message.headline}\n\n${input.input.message.body}`,
+          },
+        });
+        state.generated = {
+          parents: [{ sha: input.input.expectedHeadOid }],
+          files: input.input.fileChanges.additions.map(({ path }) => ({ filename: path, status: "modified" })),
+        };
         return { createCommitOnBranch: { commit: { oid: generated } } };
       }
       return { repository: { object: { signature: { isValid: true, wasSignedByGitHub: true } } } };
@@ -212,7 +223,7 @@ test("a signed preparation commit may only follow signed Dependabot commits and 
     author: actions,
     commit: {
       verification: { verified: true },
-      message: `Regenerate dependency artifacts\n\nDependabot-Head: ${head}`,
+      message: `Regenerate dependency artifacts [dependabot skip]\n\nDependabot-Head: ${head}`,
     },
   };
   const updated = { ...pull, head: { ...pull.head, sha: generated } };
@@ -225,6 +236,9 @@ test("a signed preparation commit may only follow signed Dependabot commits and 
     { ...prepared, author: { login: "github-actions[bot]", id: 200 } },
     { ...prepared, commit: { ...prepared.commit, verification: { verified: false } } },
     { ...prepared, commit: { ...prepared.commit, message: "unrelated commit" } },
+    { ...prepared, commit: { ...prepared.commit, message: `Unrelated [dependabot skip]\n\nDependabot-Head: ${head}` } },
+    { ...prepared, commit: { ...prepared.commit, message: `${prepared.commit.message}\n[skip ci]` } },
+    { ...prepared, commit: { ...prepared.commit, message: prepared.commit.message.replace(head, base) } },
   ])
     await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, invalid]));
   h.state.generated.files = [{ filename: `${CODING}/package.json`, status: "modified" }];
@@ -744,10 +758,16 @@ test("MCP dependency preparation still rejects script changes", async () => {
   await assert.rejects(inspect(h.github, context, 1, head), /Non-dependency/);
 });
 
-test("a synchronized or rebased bot head regenerates and validates package and Nix pins on the same PR", async () => {
+test("generated artifact commits allow Dependabot rebasing and the new bot head gets fresh pins", async () => {
   const h = harness();
   const core = { info() {} };
   await requestPreparation(h.github, context, h.state.pull, core);
+  await publish(h.github, context, h.payload, "unused", h.metadata);
+  assert.deepEqual(h.state.published[0].input.message, {
+    headline: "Regenerate dependency artifacts [dependabot skip]",
+    body: `Dependabot-Head: ${head}`,
+  });
+  assert.deepEqual(await dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits), [commit]);
   h.state.runs.push({ display_title: `Prepare dependencies #1 at ${head}`, conclusion: "success" });
   const updatedHead = "d".repeat(40);
   const updatedBase = "e".repeat(40);
@@ -780,22 +800,10 @@ test("a synchronized or rebased bot head regenerates and validates package and N
         : file,
   );
   await publish(h.github, current, payload, "unused", h.metadata);
-  const published = h.state.published[0].input;
+  const published = h.state.published.at(-1).input;
   assert.equal(published.branch.branchName, pull.head.ref);
   assert.equal(published.expectedHeadOid, updatedHead);
   assert.deepEqual(published.fileChanges.additions, payload.files);
-  h.state.commits = [
-    h.state.commits[0],
-    {
-      sha: generated,
-      author: actions,
-      commit: {
-        verification: { verified: true },
-        message: `Regenerate dependency artifacts\n\nDependabot-Head: ${updatedHead}`,
-      },
-    },
-  ];
-  h.state.generated.parents = [{ sha: updatedHead }];
   h.state.files.push(...generatedPaths().map((filename) => ({ filename, status: "modified" })));
   await requestValidation(h.github, current, h.state.pull, core);
   assert.deepEqual(h.state.dispatches.at(-1), {
