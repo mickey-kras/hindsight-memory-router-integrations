@@ -29,6 +29,7 @@ PATHS = [
     ".github/scripts/release.test.cjs",
     ".github/scripts/release-policy.test.py",
     ".github/scripts/release.cjs",
+    ".github/scripts/release-follow-up.cjs",
     ".github/scripts/release-settings.cjs",
     ".github/rulesets/protect-release-branches.json",
 ]
@@ -200,8 +201,14 @@ class ReleasePolicyTests(unittest.TestCase):
             self.assertTrue(policy({path: content}))
 
     def test_release_script_mutation_fails(self):
-        path = ".github/scripts/release.cjs"
-        self.assertTrue(policy({path: (ROOT / path).read_text().replace("if (!condition)", "if (false)")}))
+        for path, old, new in [
+            (".github/scripts/release.cjs", "if (!condition)", "if (false)"),
+            (".github/scripts/release-follow-up.cjs", "files.length === 1", "true"),
+        ]:
+            original = (ROOT / path).read_text()
+            changed = original.replace(old, new)
+            self.assertNotEqual(changed, original)
+            self.assertTrue(policy({path: changed}))
 
     def test_scan_neutralization_fails(self):
         path = ".github/workflows/ci.yml"

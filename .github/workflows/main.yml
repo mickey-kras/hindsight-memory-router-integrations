@@ -268,7 +268,7 @@ jobs:
         with:
           github-token: ${{ steps.app.outputs.token }}
           script: |
-            await require('./.github/scripts/release.cjs').bumpReleasedVersion({
+            await require('./.github/scripts/release-follow-up.cjs').bumpReleasedVersion({
               github, context, core,
               target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
             });
@@ -277,7 +277,7 @@ jobs:
         with:
           github-token: ${{ steps.app.outputs.token }}
           script: |
-            await require('./.github/scripts/release.cjs').deletePublishedBranch({
+            await require('./.github/scripts/release-follow-up.cjs').deletePublishedBranch({
               github, context, core,
               target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
             });

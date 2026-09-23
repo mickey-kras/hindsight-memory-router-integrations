@@ -5,6 +5,7 @@ const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { createHash } = require("node:crypto");
 const release = require("./release.cjs");
+const followUp = require("./release-follow-up.cjs");
 const { rulesets } = require("./release-settings.cjs");
 
 const base = "a".repeat(40);
@@ -912,16 +913,16 @@ test("version follow-up queues only the single manifest bump and preserves packa
     const m = mock();
     integrationPrepared(m);
     bumpApi(m);
-    await release.bumpReleasedVersion(m);
+    await followUp.bumpReleasedVersion(m);
     assert.deepEqual(
       m.state.tree.map((file) => file.path),
       ["release-version.json"],
     );
     assert.equal(m.state.calls.at(-1), `merge:7:${sha}`);
     assert.ok(m.state.refs["heads/release/0.1.0"]);
-    await release.bumpReleasedVersion(m);
+    await followUp.bumpReleasedVersion(m);
     assert.equal(m.state.calls.filter((call) => call.startsWith("pr:")).length, 1);
-    await release.deletePublishedBranch(m);
+    await followUp.deletePublishedBranch(m);
     assert.equal(m.state.refs["heads/release/0.1.0"], undefined);
   }));
 
@@ -933,7 +934,7 @@ test("version follow-up fails loudly and retains the candidate when queueing fai
     m.merge = () => {
       throw new Error("queue unavailable");
     };
-    await assert.rejects(release.bumpReleasedVersion(m), /queue unavailable/);
+    await assert.rejects(followUp.bumpReleasedVersion(m), /queue unavailable/);
     assert.ok(m.state.refs["heads/release/0.1.0"]);
     assert.ok(!m.state.calls.some((call) => call.startsWith("delete:heads/release/")));
   }));
@@ -945,9 +946,9 @@ test("version follow-up rejects edited PRs and unpublished tags before merging o
     bumpApi(m);
     m.state.pulls = [{ number: 7 }];
     m.github.rest.pulls.listFiles = () => ({ data: [{ filename: "README.md" }] });
-    await assert.rejects(release.bumpReleasedVersion(m), /beyond the next patch version/);
+    await assert.rejects(followUp.bumpReleasedVersion(m), /beyond the next patch version/);
     m.state.release.draft = true;
-    await assert.rejects(release.deletePublishedBranch(m), /not immutable/);
+    await assert.rejects(followUp.deletePublishedBranch(m), /not immutable/);
     assert.deepEqual(m.state.calls, []);
   }));
 
@@ -957,7 +958,7 @@ test("cleanup does not delete a candidate advanced beyond its published tag", ()
     integrationPrepared(m);
     bumpApi(m);
     m.state.refs["heads/release/0.1.0"].object.sha = base;
-    await assert.rejects(release.deletePublishedBranch(m), /advanced past the published commit/);
+    await assert.rejects(followUp.deletePublishedBranch(m), /advanced past the published commit/);
     assert.deepEqual(m.state.calls, []);
   }));
 
@@ -1003,11 +1004,11 @@ test("version follow-up accepts a later main version but rejects a rollback or i
     integrationPrepared(m);
     bumpApi(m);
     put("release-version.json", { version: "0.2.0" });
-    await release.bumpReleasedVersion(m);
+    await followUp.bumpReleasedVersion(m);
     assert.deepEqual(m.state.calls, []);
     for (const version of ["0.0.9", "invalid"]) {
       put("release-version.json", { version });
-      await assert.rejects(release.bumpReleasedVersion(m), /must advance/);
+      await assert.rejects(followUp.bumpReleasedVersion(m), /must advance/);
     }
   }));
 
@@ -1025,9 +1026,9 @@ test("cleanup retry resumes after deleting its candidate when pruning an older b
       if (args.ref === "heads/release/0.0.9") throw new Error("temporary prune failure");
       return remove(args);
     };
-    await assert.rejects(release.deletePublishedBranch(m), /temporary prune failure/);
+    await assert.rejects(followUp.deletePublishedBranch(m), /temporary prune failure/);
     assert.equal(m.state.refs["heads/release/0.1.0"], undefined);
     m.github.rest.git.deleteRef = remove;
-    await release.deletePublishedBranch(m);
+    await followUp.deletePublishedBranch(m);
     assert.equal(m.state.refs["heads/release/0.0.9"], undefined);
   }));
