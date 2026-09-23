@@ -25,6 +25,9 @@ PATHS = [
     ".github/scripts/package.json",
     ".github/scripts/package-lock.json",
     ".github/scripts/combination.cjs",
+    ".github/scripts/combination-identity.cjs",
+    ".github/scripts/combination-smoke.sh",
+    ".github/scripts/combination-smoke.mjs",
     ".github/scripts/combination.test.cjs",
     ".github/scripts/release.test.cjs",
     ".github/scripts/release-policy.test.py",
@@ -204,6 +207,17 @@ class ReleasePolicyTests(unittest.TestCase):
         for path, old, new in [
             (".github/scripts/release.cjs", "if (!condition)", "if (false)"),
             (".github/scripts/release-follow-up.cjs", "files.length === 1", "true"),
+        ]:
+            original = (ROOT / path).read_text()
+            changed = original.replace(old, new)
+            self.assertNotEqual(changed, original)
+            self.assertTrue(policy({path: changed}))
+
+    def test_smoke_identity_and_liveness_checks_cannot_be_removed(self):
+        for path, old, new in [
+            (".github/scripts/combination-smoke.sh", "node .github/scripts/combination-identity.cjs", "true"),
+            (".github/scripts/combination-smoke.mjs", "await assertLiveness(await fetch(`${routerUrl}/health/live`));", ""),
+            (".github/scripts/combination-identity.cjs", "assert.equal(actual,", "assert.notEqual(actual,"),
         ]:
             original = (ROOT / path).read_text()
             changed = original.replace(old, new)

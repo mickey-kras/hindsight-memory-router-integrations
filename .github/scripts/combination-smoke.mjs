@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { constants, createDecipheriv, createHash, privateDecrypt, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { request } from "node:http";
 import { createServer } from "node:https";
 import { createRequire } from "node:module";
-import { request } from "node:http";
-import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { assertLiveness } from "./combination-identity.cjs";
 
 const state = process.env.COMBINATION_STATE;
 assert.ok(state);
@@ -172,8 +173,7 @@ if (process.argv[2] === "prepare") {
     server.listen(9443, "localhost", resolve);
   });
   try {
-    const live = await (await fetch(`${routerUrl}/health/live`)).json();
-    if (process.env.ROUTER_TEST_VERSION) assert.equal(live.version, process.env.ROUTER_TEST_VERSION);
+    await assertLiveness(await fetch(`${routerUrl}/health/live`));
     const { AuthenticatedClientFactory } = await import(
       pathToFileURL(join(state, "openclaw/package/dist/shared/authenticated-client-factory.js"))
     );
