@@ -51,7 +51,7 @@
     "fs-native-extensions": "^1.5.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
+    "@biomejs/biome": "2.5.14",
     "@types/node": "22.20.3",
     "@vectorize-io/hindsight-client": "0.10.0",
     "@vitest/coverage-v8": "5.0.1",
