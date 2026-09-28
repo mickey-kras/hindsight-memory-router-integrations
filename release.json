@@ -1,0 +1,51 @@
+{
+  "schema": 2,
+  "version": "0.2.3",
+  "base": "31f52ca74bbe5b06d102a449edead77304393c3b",
+  "preparation_run": 36380640852,
+  "hindsight": {
+    "version": "0.10.1",
+    "sha": "f8950b0c07d9e34c76493dba802bb309f0ce60fd",
+    "image": "ghcr.io/vectorize-io/hindsight:0.10.1@sha256:b4d3b76f363aa40cf348450e7f8f52a50653008731b99824b14623a196182e73"
+  },
+  "packages": [
+    {
+      "name": "@mickey-kras/hindsight-memory-router-openclaw",
+      "path": "packages/mickey-kras-hindsight-memory-router-openclaw-0.13.2.tgz",
+      "version": "0.13.2",
+      "sha256": "1a56e249b09b52a8097fd101a297be5b673888379187befed2e493e79dfe3424"
+    },
+    {
+      "name": "@mickey-kras/hindsight-memory-router-coding-agents",
+      "path": "packages/mickey-kras-hindsight-memory-router-coding-agents-0.7.2.tgz",
+      "version": "0.7.2",
+      "sha256": "fb8c61721116cc588bc046719d8a73cb846e0399ffd122495b3902aa3258cbc5"
+    },
+    {
+      "name": "@mickey-kras/hindsight-memory-router-mcp",
+      "path": "packages/mickey-kras-hindsight-memory-router-mcp-0.1.1.tgz",
+      "version": "0.1.1",
+      "sha256": "63a938aeeb0a278a98d357e1bd239620138110d51d6f58cdd59e1d4280143c40"
+    }
+  ],
+  "publication_run": 36380640852,
+  "router": {
+    "version": "0.1.7",
+    "sha": "8de7e231a4e5182d9a3513c09c56298c5be2b753",
+    "image": "ghcr.io/mickey-kras/hindsight-memory-router@sha256:a5b02f85f8e61dbd52757cdf48b8425c2940b7364e738ad0b973ef6af850f6fa",
+    "dockerhub_image": "docker.io/mickeykrasilnikov/hindsight-memory-router@sha256:a5b02f85f8e61dbd52757cdf48b8425c2940b7364e738ad0b973ef6af850f6fa"
+  },
+  "integration_upstreams": {
+    "openclaw": {
+      "version": "0.13.0",
+      "sha": "680406b3dd9cca2108c7f0e204820a09b4e30906",
+      "path": "hindsight-integrations/openclaw"
+    },
+    "coding_agents": {
+      "version": "0.6.1",
+      "sha": "680406b3dd9cca2108c7f0e204820a09b4e30906",
+      "path": "hindsight-integrations/coding-agents"
+    }
+  },
+  "nix_openclaw": "f62d33f760bcbdbc6a52ac589eae22bf99201f90"
+}
