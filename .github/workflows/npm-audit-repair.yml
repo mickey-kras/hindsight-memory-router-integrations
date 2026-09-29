@@ -1,0 +1,121 @@
+name: npm audit repair
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 12 * * *'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: npm-audit-repair-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.20.0
+      - run: npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+
+      - name: Repair package dependency locks
+        id: locks
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=security/npm-audit
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for directory in . src/upstream/coding-agents src/mcp; do
+            if ! npm audit --prefix "$directory" --audit-level=moderate; then
+              npm audit fix --prefix "$directory" --package-lock-only --ignore-scripts --no-fund
+              npm audit --prefix "$directory" --audit-level=moderate
+            fi
+          done
+          while IFS= read -r path; do
+            case "$path" in
+              package.json|npm-shrinkwrap.json|src/upstream/coding-agents/package.json|src/upstream/coding-agents/npm-shrinkwrap.json|src/mcp/package.json|src/mcp/npm-shrinkwrap.json) ;;
+              *) echo "Unexpected audit change: $path" >&2; exit 1 ;;
+            esac
+          done < <(git diff --name-only)
+          git diff --check
+          if ! git diff --quiet; then
+            git add -- package.json npm-shrinkwrap.json src/upstream/coding-agents/package.json src/upstream/coding-agents/npm-shrinkwrap.json src/mcp/package.json src/mcp/npm-shrinkwrap.json
+            git commit -m 'fix: repair audited package locks'
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Nix for reproducible package hashes
+        if: steps.locks.outputs.changed == 'true'
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Refresh package provenance and hashes
+        if: steps.locks.outputs.changed == 'true'
+        run: |
+          node .github/scripts/refresh-dependency-artifacts.cjs \
+            "$PWD" "$GITHUB_RUN_ID" "$(git rev-parse HEAD)" "$GITHUB_SHA" \
+            "$RUNNER_TEMP/npm-audit-artifacts.json"
+
+      - name: Repair release tooling and verify audits
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! npm audit --prefix .github/scripts --audit-level=moderate; then
+            npm audit fix --prefix .github/scripts --package-lock-only --ignore-scripts --no-fund
+          fi
+          for directory in . src/upstream/coding-agents src/mcp .github/scripts; do
+            npm audit --prefix "$directory" --audit-level=moderate
+          done
+          while IFS= read -r path; do
+            case "$path" in
+              .github/scripts/package-lock.json|integrations/coding-agents/LOCAL_CHANGES.json|PACKAGE_SHA256|PACKAGE_NIX_HASHES) ;;
+              *) echo "Unexpected generated change: $path" >&2; exit 1 ;;
+            esac
+          done < <(git diff --name-only)
+          git diff --check
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add -- .github/scripts/package-lock.json integrations/coding-agents/LOCAL_CHANGES.json PACKAGE_SHA256 PACKAGE_NIX_HASHES
+            git commit -m 'fix: record audited package artifacts'
+          fi
+          if [[ "$GITHUB_SHA" != "$(git rev-parse HEAD)" ]]; then echo 'changed=true' >> "$GITHUB_OUTPUT"; fi
+
+      - name: Create repository App token
+        if: steps.changes.outputs.changed == 'true'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Open gated security PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=security/npm-audit
+          if [[ "$(gh pr list --head "$branch" --state open --json number --jq 'length')" != 0 ]]; then
+            echo "An npm audit repair PR is already open."
+            exit 0
+          fi
+          gh auth setup-git
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title 'fix: repair audited npm dependencies' \
+            --body 'Updates fixable npm lockfile advisories and regenerates package provenance and hashes. Normal PR quality, security, and branch gates must pass before merging.'
