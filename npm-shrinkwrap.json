@@ -15,7 +15,7 @@
       "devDependencies": {
         "@biomejs/biome": "2.5.14",
         "@types/node": "22.20.4",
-        "@vectorize-io/hindsight-client": "0.10.0",
+        "@vectorize-io/hindsight-client": "0.10.1",
         "@vitest/coverage-v8": "5.0.1",
         "aislop": "^0.16.1",
         "typescript": "^7.0.2",
@@ -2081,9 +2081,9 @@
       "license": "MIT"
     },
     "node_modules/@vectorize-io/hindsight-client": {
-      "version": "0.10.0",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-0.10.0.tgz",
-      "integrity": "sha512-YKbFQF8RzjxrAufdzxNtKwQicNFaYJ9uzr4Q2phHEeFwa9022iI26sKfhuLMzu0vkGRjVbVjJiGFcxhEGLDGSA==",
+      "version": "0.10.1",
+      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-0.10.1.tgz",
+      "integrity": "sha512-83FsMz/FyFwKooN1KsBZq4cWLB4RJQcTTnmxpZ0n4bXZih1iySLCtR88OAuqhqSnT3ajw4Nx5Oa8OwrrBuI6Lw==",
       "dev": true,
       "license": "MIT"
     },
