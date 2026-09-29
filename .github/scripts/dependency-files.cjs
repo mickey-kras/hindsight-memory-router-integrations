@@ -23,7 +23,35 @@ function packagePath(manifest) {
 // Generated artifacts committed to Dependabot branches are text-only: package
 // tarballs are CI-built from source and pinned by their hashes, never committed.
 function generatedPaths() {
-  return [PROVENANCE, "PACKAGE_SHA256", "PACKAGE_NIX_HASHES"];
+  return [PROVENANCE, "PACKAGE_SHA256", "PACKAGE_NIX_HASHES", ...INPUTS];
+}
+
+function bumpPackageInputs(before, after) {
+  const result = { ...after };
+  for (let index = 0; index < PACKAGES.length; index++) {
+    const manifestPath = MANIFESTS[index];
+    const lockPath = INPUTS[index * 2 + 1];
+    if ([manifestPath, lockPath].every((path) => before[path] === after[path])) continue;
+    const manifest = JSON.parse(after[manifestPath]);
+    const lock = JSON.parse(after[lockPath]);
+    if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(manifest.version)) {
+      throw new Error("Dependency preparation requires a stable package version");
+    }
+    const parts = manifest.version.split(".").map(Number);
+    if (!parts.every(Number.isSafeInteger) || !Number.isSafeInteger(parts[2] + 1)) {
+      throw new Error("Package version exceeds the supported range");
+    }
+    if (lock.version !== manifest.version || lock.packages?.[""]?.version !== manifest.version) {
+      throw new Error("Package and shrinkwrap versions differ");
+    }
+    const next = `${parts[0]}.${parts[1]}.${parts[2] + 1}`;
+    manifest.version = next;
+    lock.version = next;
+    lock.packages[""].version = next;
+    result[manifestPath] = `${JSON.stringify(manifest, null, 2)}\n`;
+    result[lockPath] = `${JSON.stringify(lock, null, 2)}\n`;
+  }
+  return result;
 }
 
 function packagePaths(...manifests) {
@@ -85,6 +113,7 @@ module.exports = {
   packagePaths,
   validateChecksums,
   generatedPaths,
+  bumpPackageInputs,
   validateManifest,
   updateProvenance,
 };

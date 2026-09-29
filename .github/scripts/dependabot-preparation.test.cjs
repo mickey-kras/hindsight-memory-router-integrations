@@ -11,6 +11,7 @@ const {
   MANIFESTS,
   hash,
   generatedPaths,
+  bumpPackageInputs,
   packagePaths,
   validateChecksums,
   validateManifest,
@@ -98,7 +99,12 @@ function harness() {
     "package.json": JSON.stringify(manifest),
     "src/mcp/package.json": JSON.stringify(mcp),
     [`${CODING}/package.json`]: JSON.stringify(coding),
-    [`${CODING}/npm-shrinkwrap.json`]: "{}",
+    ...Object.fromEntries(
+      [manifest, coding, mcp].map((pkg, index) => [
+        INPUTS[index * 2 + 1],
+        JSON.stringify({ version: pkg.version, packages: { "": { version: pkg.version } } }),
+      ]),
+    ),
     [PROVENANCE]: JSON.stringify(provenance),
   };
   const github = {
@@ -153,7 +159,10 @@ function harness() {
   // Tarballs are CI-built and gitignored; prepared commits carry text-only
   // artifacts whose hash pins the PR's own CI run byte-verifies.
   const artifacts = {
-    [PROVENANCE]: JSON.stringify(updateProvenance(provenance, contents[`${CODING}/package.json`], "{}")),
+    ...Object.fromEntries(INPUTS.map((path) => [path, contents[path]])),
+    [PROVENANCE]: JSON.stringify(
+      updateProvenance(provenance, contents[`${CODING}/package.json`], contents[`${CODING}/npm-shrinkwrap.json`]),
+    ),
   };
   artifacts.PACKAGE_SHA256 = packagePaths(manifest, coding, mcp)
     .sort()
@@ -191,6 +200,121 @@ test("provenance refresh preserves every non-dependency hash", () => {
   assert.equal(updated["package.json"], hash("package"));
   assert.equal(updated["npm-shrinkwrap.json"], hash("lock"));
   assert.throws(() => updateProvenance({}, "package", "lock"));
+});
+
+test("dependency preparation bumps only changed packages and both shrinkwrap version fields", () => {
+  const { contents } = harness();
+  for (const index of [0, 1, 2]) {
+    const changed = { ...contents };
+    const lockPath = INPUTS[index * 2 + 1];
+    const lock = JSON.parse(changed[lockPath]);
+    lock.packages["node_modules/example"] = { version: "1.0.1" };
+    changed[lockPath] = JSON.stringify(lock);
+    const bumped = bumpPackageInputs(contents, changed);
+    for (const path of INPUTS) {
+      if (![MANIFESTS[index], lockPath].includes(path)) assert.equal(bumped[path], contents[path]);
+    }
+    assert.equal(JSON.parse(bumped[MANIFESTS[index]]).version, "1.0.1");
+    assert.equal(JSON.parse(bumped[lockPath]).version, "1.0.1");
+    assert.equal(JSON.parse(bumped[lockPath]).packages[""].version, "1.0.1");
+    assert.deepEqual(JSON.parse(bumped[lockPath]).packages["node_modules/example"], { version: "1.0.1" });
+    assert.deepEqual(bumpPackageInputs(contents, changed), bumped);
+  }
+  assert.deepEqual(bumpPackageInputs(contents, contents), contents);
+});
+
+test("dependency preparation rejects prereleases and mismatched shrinkwrap versions", () => {
+  const { contents } = harness();
+  for (const version of ["1.0.0-beta.1", "01.0.0", "1.0.9007199254740991"]) {
+    const changed = { ...contents, "package.json": JSON.stringify({ ...manifest, version }) };
+    assert.throws(() => bumpPackageInputs(contents, changed), /stable package version|supported range/);
+  }
+  const changed = { ...contents, "package.json": JSON.stringify({ ...manifest, devDependencies: {} }) };
+  changed["npm-shrinkwrap.json"] = JSON.stringify({ version: "0.9.0", packages: { "": { version: "1.0.0" } } });
+  assert.throws(() => bumpPackageInputs(contents, changed), /versions differ/);
+});
+
+test("publication rejects package scripts, dependencies, and extra shrinkwrap edits", async () => {
+  for (const [path, mutate] of [
+    [
+      "package.json",
+      (pkg) => {
+        pkg.scripts.build = "untrusted";
+      },
+    ],
+    [
+      "package.json",
+      (pkg) => {
+        pkg.version = "9.9.9";
+      },
+    ],
+    [
+      "package.json",
+      (pkg) => {
+        pkg.devDependencies.example = "9.9.9";
+      },
+    ],
+    [
+      "npm-shrinkwrap.json",
+      (lock) => {
+        lock.packages["node_modules/injected"] = { version: "9.9.9" };
+      },
+    ],
+  ]) {
+    const h = harness();
+    const file = h.payload.files.find((file) => file.path === path);
+    const value = JSON.parse(Buffer.from(file.contents, "base64"));
+    mutate(value);
+    file.contents = Buffer.from(JSON.stringify(value)).toString("base64");
+    await assert.rejects(publish(h.github, context, h.payload, "unused", h.metadata), /patch bump/);
+    assert.equal(h.state.published.length, 0);
+  }
+});
+
+test("publication accepts patch bumps and validates their signed generated commit", async () => {
+  for (const indexes of [[0], [1], [2], [0, 1, 2]]) {
+    const h = harness();
+    const original = { ...h.contents };
+    const changed = { ...original };
+    for (const index of indexes) {
+      const path = INPUTS[index * 2 + 1];
+      const lock = JSON.parse(changed[path]);
+      lock.packages["node_modules/example"] = { version: "1.0.1" };
+      changed[path] = JSON.stringify(lock);
+    }
+    const prepared = bumpPackageInputs(original, changed);
+    const encoded = (value) => ({
+      data: { type: "file", encoding: "base64", content: Buffer.from(value).toString("base64") },
+    });
+    h.github.rest.repos.getContent = async ({ path, ref }) =>
+      encoded(
+        path === PROVENANCE ? original[path] : (ref === base ? original : ref === head ? changed : prepared)[path],
+      );
+    const artifacts = {
+      ...prepared,
+      [PROVENANCE]: JSON.stringify(updateProvenance(provenance, prepared[MANIFESTS[1]], prepared[INPUTS[3]])),
+      PACKAGE_SHA256: packagePaths(...MANIFESTS.map((path) => JSON.parse(prepared[path])))
+        .sort()
+        .map((path) => `${"a".repeat(64)}  ${path}\n`)
+        .join(""),
+      PACKAGE_NIX_HASHES: Buffer.from(h.payload.files[2].contents, "base64").toString(),
+    };
+    h.payload.files = generatedPaths().map((path) => ({
+      path,
+      contents: Buffer.from(artifacts[path]).toString("base64"),
+    }));
+    h.state.files = indexes.map((index) => ({ filename: INPUTS[index * 2 + 1], status: "modified" }));
+    await publish(h.github, context, h.payload, "unused", h.metadata);
+    assert.deepEqual(await dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits), [commit]);
+    prepared[MANIFESTS[indexes[0]]] = JSON.stringify({
+      ...JSON.parse(prepared[MANIFESTS[indexes[0]]]),
+      scripts: { build: "untrusted" },
+    });
+    await assert.rejects(
+      dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits),
+      /more than the package patch version/,
+    );
+  }
 });
 
 test("preparation inspects only a current signed same-repository npm update", async () => {
@@ -247,7 +371,7 @@ test("a signed preparation commit may only follow signed Dependabot commits and 
     { ...prepared, commit: { ...prepared.commit, message: prepared.commit.message.replace(head, base) } },
   ])
     await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, invalid]));
-  h.state.generated.files = [{ filename: `${CODING}/package.json`, status: "modified" }];
+  h.state.generated.files = [{ filename: "src/plugin.ts", status: "modified" }];
   await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, prepared]), /outside/);
   h.state.generated.files = [{ filename: PROVENANCE, status: "removed" }];
   await assert.rejects(dependencyCommits(h.github, context.repo, updated, [commit, prepared]), /outside/);

@@ -492,12 +492,17 @@ test("integration preparation requires a published immutable router for exactly 
 test("unchanged integration artifacts can be reused but changed bytes need a new package version", async () => {
   const m = mock();
   m.state.releases = [{ id: 1, tag_name: "v0.1.0", draft: false }];
-  const pkg = { path: "packages/example-0.12.0.tgz", sha256: "c".repeat(64) };
+  const pkg = {
+    name: "@owner/example",
+    version: "0.12.0",
+    path: "packages/example-0.12.0.tgz",
+    sha256: "c".repeat(64),
+  };
   m.state.assets = [{ name: "example-0.12.0.tgz", digest }];
   await release.checkPackageReuse(m.github, m.context.repo, [pkg]);
   await assert.rejects(
     release.checkPackageReuse(m.github, m.context.repo, [{ ...pkg, sha256: "f".repeat(64) }]),
-    /different bytes/,
+    /@owner\/example@0\.12\.0.*v0\.1\.0/,
   );
   await release.checkPackageReuse(m.github, m.context.repo, [{ ...pkg, path: "packages/example-0.12.1.tgz" }]);
 });
