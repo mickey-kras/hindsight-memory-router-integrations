@@ -51,7 +51,8 @@ async function dependencyCommits(github, repo, pull, commits) {
     generated.sha !== pull.head.sha ||
     !(
       generated.author?.id === pull.base.repo.owner.id ||
-      (generated.author?.login === "github-actions[bot]" && generated.author.id === 41898282)
+      (generated.author?.login === "github-actions[bot]" && generated.author.id === 41898282) ||
+      (generated.author?.login === "hindsight-release-automation[bot]" && generated.author.id === 329687231)
     ) ||
     !generated.commit.verification?.verified ||
     ![COMMIT_TITLE, LEGACY_COMMIT_TITLE].some(
@@ -144,7 +145,7 @@ async function requestPreparation(github, context, pull, core) {
   return true;
 }
 
-async function publish(github, context, payload, metadataPath, metadata) {
+async function publish(github, context, payload, metadataPath, metadata, publisher = github) {
   const { pull, paths } = await inspect(github, context, payload.number, payload.head);
   const { fetchMetadata, preparationEligibility } = require("./dependabot-auto-merge.cjs");
   const reason = preparationEligibility(
@@ -184,7 +185,7 @@ async function publish(github, context, payload, metadataPath, metadata) {
   if (!/^source=sha256-[A-Za-z0-9+/]{43}=\nnpm_deps=sha256-[A-Za-z0-9+/]{43}=\n$/.test(nixHashes)) {
     throw new Error("Invalid package Nix hashes");
   }
-  const result = await github.graphql(
+  const result = await publisher.graphql(
     `mutation($input: CreateCommitOnBranchInput!) {
     createCommitOnBranch(input: $input) { commit { oid } }
   }`,
