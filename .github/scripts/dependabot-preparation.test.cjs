@@ -54,6 +54,7 @@ async function runPullRequestPolicy(github, event, core, trustedMainSha, policy)
 const bot = { login: "dependabot[bot]", id: 49699333 };
 const owner = { login: "owner", id: 100 };
 const actions = { login: "github-actions[bot]", id: 41898282 };
+const releaseApp = { login: "hindsight-release-automation[bot]", id: 329687231 };
 const head = "a".repeat(40);
 const base = "b".repeat(40);
 const generated = "c".repeat(40);
@@ -231,9 +232,14 @@ test("a signed preparation commit may only follow signed Dependabot commits and 
   assert.deepEqual(await dependencyCommits(h.github, context.repo, updated, [commit, { ...prepared, author: owner }]), [
     commit,
   ]);
+  assert.deepEqual(
+    await dependencyCommits(h.github, context.repo, updated, [commit, { ...prepared, author: releaseApp }]),
+    [commit],
+  );
   for (const invalid of [
     { ...prepared, author: { login: "stranger", id: 200 } },
     { ...prepared, author: { login: "github-actions[bot]", id: 200 } },
+    { ...prepared, author: { ...releaseApp, id: 200 } },
     { ...prepared, commit: { ...prepared.commit, verification: { verified: false } } },
     { ...prepared, commit: { ...prepared.commit, message: "unrelated commit" } },
     { ...prepared, commit: { ...prepared.commit, message: `Unrelated [dependabot skip]\n\nDependabot-Head: ${head}` } },
@@ -271,6 +277,52 @@ test("publication limits files and uses expectedHeadOid for an atomic update", a
   assert.equal(await publish(h.github, context, h.payload, "unused", h.metadata), generated);
   assert.equal(h.state.published[0].input.expectedHeadOid, head);
   assert.deepEqual(h.state.published[0].input.fileChanges.additions, h.payload.files);
+});
+
+test("preparation publishes only the commit with a scoped App client", async () => {
+  const h = harness();
+  h.github.graphql = async () => assert.fail("The default token must not publish the prepared commit");
+  const publisher = {
+    graphql: async (query, input) => {
+      assert.match(query, /^mutation/);
+      assert.equal(input.input.expectedHeadOid, head);
+      h.state.pull.head.sha = generated;
+      h.state.commits.push({ sha: generated });
+      return { createCommitOnBranch: { commit: { oid: generated } } };
+    },
+  };
+  assert.equal(await publish(h.github, context, h.payload, "unused", h.metadata, publisher), generated);
+});
+
+test("preparation App token is limited to this repository's contents", () => {
+  const job = JSON.parse(
+    execFileSync(
+      "python3",
+      [
+        "-c",
+        "import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1]))['jobs']['publish']))",
+        resolve(__dirname, "../workflows/dependabot-preparation.yml"),
+      ],
+      { encoding: "utf8" },
+    ),
+  );
+  assert.equal(job.environment, "release-automation");
+  assert.equal(job.if, "github.ref == 'refs/heads/main'");
+  assert.equal(job.permissions.contents, "read");
+  const token = job.steps.find((step) => step.name === "Scoped Release App token");
+  assert.match(token.uses, /^actions\/create-github-app-token@[0-9a-f]{40}$/);
+  assert.deepEqual(Object.keys(token.with).sort(), [
+    "client-id",
+    "owner",
+    "permission-contents",
+    "private-key",
+    "repositories",
+  ]);
+  assert.equal(token.with["permission-contents"], "write");
+  assert.equal(token.with.repositories, "${{ github.event.repository.name }}");
+  const publishStep = job.steps.find((step) => step.name === "Publish generated files");
+  assert.equal(publishStep.env.APP_TOKEN, "${{ steps.app.outputs.token }}");
+  assert.match(publishStep.with.script, /getOctokit\(process\.env\.APP_TOKEN\)/);
 });
 
 test("publication waits for lagging PR metadata and commit lists", async () => {
