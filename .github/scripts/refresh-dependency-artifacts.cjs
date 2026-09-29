@@ -9,6 +9,7 @@ const {
   INPUTS,
   hash,
   generatedPaths,
+  bumpPackageInputs,
   packagePaths,
   validateManifest,
   updateProvenance,
@@ -38,6 +39,10 @@ function refresh(directory, number, head, base, output) {
     validateManifest(JSON.parse(run("git", ["show", `${base}:${path}`])), JSON.parse(read(path)));
   }
   const paths = generatedPaths();
+  const original = Object.fromEntries(INPUTS.map((path) => [path, read(path).toString()]));
+  const baseline = Object.fromEntries(INPUTS.map((path) => [path, run("git", ["show", `${base}:${path}`])]));
+  const prepared = bumpPackageInputs(baseline, original);
+  for (const path of INPUTS) writeFileSync(join(root, path), prepared[path]);
   const tarballs = packagePaths(...MANIFESTS.map((path) => JSON.parse(read(path))));
   const provenance = updateProvenance(
     JSON.parse(read(PROVENANCE)),
@@ -69,14 +74,15 @@ function refresh(directory, number, head, base, output) {
     .toString()
     .match(/^npm_deps=(sha256-[A-Za-z0-9+/]{43}=)$/m)?.[1];
   if (!previous) throw new Error("Missing previous Nix dependency hash");
-  const deps = changed.includes("npm-shrinkwrap.json")
-    ? run("nix", [
-        "run",
-        "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3#prefetch-npm-deps",
-        "--",
-        "npm-shrinkwrap.json",
-      ]).trim()
-    : previous;
+  const deps =
+    changed.includes("npm-shrinkwrap.json") || prepared["npm-shrinkwrap.json"] !== original["npm-shrinkwrap.json"]
+      ? run("nix", [
+          "run",
+          "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3#prefetch-npm-deps",
+          "--",
+          "npm-shrinkwrap.json",
+        ]).trim()
+      : previous;
   if (!/^sha256-[A-Za-z0-9+/]{43}=$/.test(deps)) throw new Error("Invalid regenerated Nix dependency hash");
   writeFileSync(
     join(root, "PACKAGE_NIX_HASHES"),

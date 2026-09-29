@@ -6,6 +6,7 @@ const {
   PROVENANCE,
   INPUTS,
   generatedPaths,
+  bumpPackageInputs,
   packagePaths,
   validateChecksums,
   validateManifest,
@@ -32,11 +33,10 @@ async function pathsFor() {
   return generatedPaths();
 }
 
-async function tarballsFor(github, repo, ref) {
-  const manifests = await Promise.all(
-    MANIFESTS.map(async (path) => JSON.parse(await content(github, repo, path, ref))),
-  );
-  return packagePaths(...manifests);
+async function preparedInputs(github, repo, base, head) {
+  const read = async (ref) =>
+    Object.fromEntries(await Promise.all(INPUTS.map(async (path) => [path, await content(github, repo, path, ref)])));
+  return bumpPackageInputs(await read(base), await read(head));
 }
 
 async function dependencyCommits(github, repo, pull, commits) {
@@ -71,6 +71,14 @@ async function dependencyCommits(github, repo, pull, commits) {
     data.files.some((file) => file.status !== "modified" || !allowed.includes(file.filename))
   ) {
     throw new Error("Preparation commit changed files outside generated artifacts");
+  }
+  if (data.files.some((file) => INPUTS.includes(file.filename))) {
+    const expected = await preparedInputs(github, repo, pull.base.sha, parent);
+    for (const path of INPUTS) {
+      if ((await content(github, repo, path, generated.sha)) !== expected[path]) {
+        throw new Error(`Preparation commit changed more than the package patch version: ${path}`);
+      }
+    }
   }
   const signature = await github.graphql(
     `query($owner: String!, $repo: String!, $sha: GitObjectID!) {
@@ -167,10 +175,16 @@ async function publish(github, context, payload, metadataPath, metadata, publish
   const files = new Map(payload.files.map((file) => [file.path, Buffer.from(file.contents, "base64")]));
   if (payload.files.some((file) => files.get(file.path).toString("base64") !== file.contents))
     throw new Error("Invalid artifact encoding");
+  const expectedInputs = await preparedInputs(github, context.repo, payload.base, payload.head);
+  for (const path of INPUTS) {
+    if (files.get(path).toString() !== expectedInputs[path]) {
+      throw new Error(`Generated package input differs from its patch bump: ${path}`);
+    }
+  }
   const expectedProvenance = updateProvenance(
     JSON.parse(await content(github, context.repo, PROVENANCE, payload.head)),
-    await content(github, context.repo, `${CODING}/package.json`, payload.head),
-    await content(github, context.repo, `${CODING}/npm-shrinkwrap.json`, payload.head),
+    expectedInputs[`${CODING}/package.json`],
+    expectedInputs[`${CODING}/npm-shrinkwrap.json`],
   );
   if (!isDeepStrictEqual(JSON.parse(files.get(PROVENANCE).toString()), expectedProvenance)) {
     throw new Error("Generated provenance changes non-dependency entries");
@@ -180,7 +194,7 @@ async function publish(github, context, payload, metadataPath, metadata, publish
   // the PR's own ci.yml run rebuilds every package and byte-compares it
   // against these pins before auto-merge can proceed.
   const checksums = files.get("PACKAGE_SHA256").toString();
-  validateChecksums(checksums, await tarballsFor(github, context.repo, payload.head));
+  validateChecksums(checksums, packagePaths(...MANIFESTS.map((path) => JSON.parse(expectedInputs[path]))));
   const nixHashes = files.get("PACKAGE_NIX_HASHES").toString();
   if (!/^source=sha256-[A-Za-z0-9+/]{43}=\nnpm_deps=sha256-[A-Za-z0-9+/]{43}=\n$/.test(nixHashes)) {
     throw new Error("Invalid package Nix hashes");

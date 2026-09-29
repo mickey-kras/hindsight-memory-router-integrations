@@ -308,7 +308,7 @@ async function checkPackageReuse(github, repository, packages) {
       const asset = assets.find((item) => item.name === pkg.path.split("/").pop());
       requireValue(
         !asset || asset.digest === `sha256:${pkg.sha256}`,
-        "Package version already published with different bytes; bump that package version",
+        `${pkg.name}@${pkg.version} differs from its published asset in ${release.tag_name}; bump that package version`,
       );
     }
   }

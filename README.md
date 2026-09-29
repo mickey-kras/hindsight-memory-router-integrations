@@ -60,3 +60,4 @@ node scripts/verify-coding-upstream.mjs
 Packages are built from source by CI (`npm pack`) and attached to the GitHub release; their SHA-256 hashes are pinned in `PACKAGE_SHA256` and Nix hashes in `PACKAGE_NIX_HASHES`. Tarballs are never committed (`packages/` is gitignored).
 OpenClaw provenance: `UPSTREAM_VERSION`; coding-agents provenance: `integrations/coding-agents/UPSTREAM.json`.
 Local revisions are independent of upstream versions. Upgrade either integration separately.
+Dependabot preparation increments the patch version of each package whose dependency files change and regenerates its shrinkwrap, provenance, and package hash pins before the existing PR checks run.
