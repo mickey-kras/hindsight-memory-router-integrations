@@ -86,12 +86,12 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@vectorize-io/hindsight-all": "^0.10.1",
     "jsonc-parser": "^3.3.1",
-    "smol-toml": "^1.8.0",
+    "smol-toml": "^1.9.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.32",
-    "@opencode/plugin": "^2.0.12",
+    "@opencode/plugin": "^2.0.14",
     "@opencode-ai/sdk": "^1.18.9",
     "@types/node": "22.20.4",
     "tsup": "^8.3.0",
