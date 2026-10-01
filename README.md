@@ -19,7 +19,7 @@ Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-
   </picture>
 </a>
 
-[Explore the architecture and request flows](https://mickey-kras.github.io/hindsight-memory-router/) · [Memory Router repository](https://github.com/mickey-kras/hindsight-memory-router)
+[Explore the architecture and request flows](https://mickey-kras.github.io/hindsight-memory-router/) | [Memory Router repository](https://github.com/mickey-kras/hindsight-memory-router)
 
 ## Install
 
