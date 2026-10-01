@@ -83,6 +83,6 @@ hindsight-memory-router-mcp
 
 Or register it with any MCP host as a stdio server command
 (`npx @mickey-kras/hindsight-memory-router-mcp` also works). The process speaks JSON-RPC on
-stdio; logs go to stderr. A non-zero exit at startup means the configuration failed validation —
+stdio; logs go to stderr. A non-zero exit at startup means the configuration failed validation;
 recheck the table above.
 
