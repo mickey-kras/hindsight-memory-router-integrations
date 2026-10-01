@@ -9,11 +9,17 @@
 - PR events and the 30-minute refresh use the same implementation. A failed
   lookup clears an earlier bot auto-merge decision. Manually enabled
   auto-merge still gets branch refresh and validation recovery.
-- `GITHUB_TOKEN` handles merging and main-workflow dispatch. No App or PAT.
+- `GITHUB_TOKEN` handles merging and validation dispatch. A repository-scoped
+  Release App token publishes generated files in a separate job.
+- Node digest-only updates to the coding-agent E2E base image refresh only
+  that file's provenance checksum. Tag, instruction and mixed npm/Docker
+  changes require manual review. Preparation does not run Docker. Missing
+  semver metadata does not block this checksum repair; auto-merge still
+  requires the normal update metadata and compatibility score.
 - npm updates regenerate provenance and package hash pins in a read-only build;
   tarballs are rebuilt from source by CI and byte-compared against the pins,
   never committed.
-  A separate job commits only generated files with `GITHUB_TOKEN` and
+  A separate job commits only generated files and
   dispatches any missing PR validation, including guard. Each clean Dependabot update or
   rebase gets preparation for its exact head. Publication rejects stale head
   or base snapshots; regenerated package and Nix pins are committed on the same PR
@@ -22,7 +28,7 @@
   them during native rebasing. Preparation rebuilds the pins for the new bot head;
   the marker does not skip CI. Existing signed preparation commits remain valid.
 - Only signed Dependabot commits plus a GitHub-signed artifact commit from
-  Actions or the owner qualify. Source and workflow edits stay manual.
+  Actions, the Release App or the owner qualify. Source and workflow edits stay manual.
 - Guard runs inside PR validation on PR events and recovery dispatches,
   using policy code from main with read-only permissions. Existing validation
   is reused; failed checks remain blocking.
@@ -41,6 +47,7 @@ the policy reads `updated-dependencies-json` for grouped PRs. The pinned
 implementation fetches public badges without authentication, despite its
 README's PAT note.
 
-To re-evaluate open PRs, run **Actions → dependabot auto-merge refresh → Run
+To re-evaluate open PRs, run **Actions -> dependabot auto-merge refresh -> Run
 workflow** on the default branch. Change `MINIMUM_SCORE` in
 `.github/scripts/dependabot-auto-merge.cjs` to adjust the threshold.
+

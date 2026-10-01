@@ -989,3 +989,235 @@ test("generated artifact commits allow Dependabot rebasing and the new bot head 
     inputs: { number: "1", expected_head: generated },
   });
 });
+
+const { DOCKERFILE, dockerProvenance } = require("./docker-provenance.cjs");
+const dockerBefore = `FROM node:22-bookworm-slim@sha256:${"1".repeat(64)}\nRUN echo unchanged\n`;
+const dockerAfter = dockerBefore.replace("1".repeat(64), "2".repeat(64));
+const dockerBaseline = { ...provenance, "e2e/Dockerfile.base": hash(dockerBefore) };
+
+function dockerHarness() {
+  const h = harness();
+  h.state.files = [{ filename: DOCKERFILE, status: "modified" }];
+  h.payload.files = [
+    {
+      path: PROVENANCE,
+      contents: Buffer.from(JSON.stringify(dockerProvenance(dockerBefore, dockerAfter, dockerBaseline))).toString(
+        "base64",
+      ),
+    },
+  ];
+  h.github.rest.git.getTree = async () => ({
+    data: { truncated: false, tree: [DOCKERFILE, PROVENANCE].map((path) => ({ path, type: "blob", mode: "100644" })) },
+  });
+  const getContent = h.github.rest.repos.getContent;
+  h.github.rest.repos.getContent = async (args) => {
+    let value;
+    if (args.path === DOCKERFILE) value = args.ref === base ? dockerBefore : dockerAfter;
+    if (args.path === PROVENANCE)
+      value =
+        args.ref === generated
+          ? Buffer.from(h.payload.files[0].contents, "base64").toString()
+          : JSON.stringify(dockerBaseline);
+    return value === undefined
+      ? getContent(args)
+      : {
+          data: { type: "file", encoding: "base64", content: Buffer.from(value).toString("base64") },
+        };
+  };
+  return h;
+}
+
+test("Docker digest updates prepare only provenance and dispatch guarded validation", async () => {
+  const h = dockerHarness();
+  assert.equal(await requestPreparation(h.github, context, h.state.pull, { info() {} }), true);
+  assert.deepEqual((await inspect(h.github, context, 1, head)).paths, [PROVENANCE]);
+  assert.equal(await publish(h.github, context, h.payload, "unused", h.metadata), generated);
+  h.state.files.push({ filename: PROVENANCE, status: "modified" });
+  assert.deepEqual(await dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits), [commit]);
+  await requestValidation(h.github, context, h.state.pull, { info() {} });
+  assert.equal(h.state.dispatches.at(-1).workflow_id, "pr-validation.yml");
+});
+
+test("Docker preparation rejects source edits, tag changes, malformed and ambiguous pins", () => {
+  for (const after of [
+    dockerBefore,
+    dockerAfter.replace("22-bookworm", "26-bookworm"),
+    dockerAfter.replace("echo unchanged", "curl attacker"),
+    dockerAfter.replace("2".repeat(64), "2".repeat(63)),
+    dockerAfter.replace("2".repeat(64), "G".repeat(64)),
+    dockerAfter.replace("FROM node", "FROM attacker/node"),
+    dockerAfter.replace("FROM node", "FROM \\\nnode"),
+    `${dockerAfter}FROM node:22-bookworm-slim@sha256:${"3".repeat(64)}\n`,
+    dockerAfter.replace("@sha256:", "@sha512:"),
+  ])
+    assert.throws(() => dockerProvenance(dockerBefore, after, dockerBaseline));
+  assert.throws(() => dockerProvenance(dockerBefore, dockerAfter, provenance), /baseline provenance/);
+});
+
+test("Docker publication rejects unrelated provenance and artifacts, mixed inputs and stale identity", async () => {
+  for (const mutate of [
+    (h) => {
+      h.payload.files[0].contents = Buffer.from(
+        JSON.stringify({ ...dockerBaseline, "src/index.ts": "forged" }),
+      ).toString("base64");
+    },
+    (h) => {
+      h.payload.files.push({ path: "PACKAGE_SHA256", contents: "" });
+    },
+    (h) => {
+      h.state.files.push({ filename: INPUTS[0], status: "modified" });
+    },
+    (h) => {
+      h.state.files[0].status = "renamed";
+    },
+    (h) => {
+      h.github.rest.git.getTree = async () => ({
+        data: { tree: [{ path: DOCKERFILE, type: "blob", mode: "100755" }] },
+      });
+    },
+    (h) => {
+      h.github.rest.git.getTree = async () => ({ data: { truncated: true, tree: [] } });
+    },
+    (h) => {
+      h.state.pull.base.sha = generated;
+    },
+    (h) => {
+      h.state.pull.head.sha = generated;
+    },
+    (h) => {
+      h.state.commits[0].commit.verification.verified = false;
+    },
+  ]) {
+    const h = dockerHarness();
+    mutate(h);
+    await assert.rejects(publish(h.github, context, h.payload, "unused", h.metadata));
+    assert.equal(h.state.published.length, 0);
+  }
+});
+
+test("signed Docker preparation commits cannot rewrite unrelated provenance or package pins", async () => {
+  for (const mutate of [
+    (h) => {
+      h.payload.files[0].contents = Buffer.from(JSON.stringify(dockerBaseline)).toString("base64");
+    },
+    (h) => {
+      h.state.generated.files.push({ filename: "PACKAGE_SHA256", status: "modified" });
+    },
+  ]) {
+    const h = dockerHarness();
+    await publish(h.github, context, h.payload, "unused", h.metadata);
+    h.state.files.push({ filename: PROVENANCE, status: "modified" });
+    mutate(h);
+    await assert.rejects(dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits));
+  }
+});
+
+test("Docker refresh emits only the verified provenance without running package or Docker commands", () => {
+  const { readFileSync } = require("node:fs");
+  const { refresh } = require("./refresh-dependency-artifacts.cjs");
+  const directory = mkdtempSync(join(tmpdir(), "docker-preparation-"));
+  const output = join(tmpdir(), `docker-preparation-${process.pid}.json`);
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: directory, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  try {
+    mkdirSync(join(directory, "src/upstream/coding-agents/e2e"), { recursive: true });
+    mkdirSync(join(directory, "integrations/coding-agents"), { recursive: true });
+    writeFileSync(join(directory, DOCKERFILE), dockerBefore);
+    writeFileSync(join(directory, PROVENANCE), JSON.stringify(dockerBaseline));
+    git("init");
+    git("config", "user.email", "test@example.invalid");
+    git("config", "user.name", "Test");
+    git("add", ".");
+    git("commit", "-m", "baseline");
+    const baseline = git("rev-parse", "HEAD");
+    writeFileSync(join(directory, DOCKERFILE), dockerAfter);
+    git("commit", "-am", "digest update");
+    const revision = git("rev-parse", "HEAD");
+    refresh(directory, 193, revision, baseline, output);
+    const payload = JSON.parse(readFileSync(output));
+    assert.deepEqual(payload, {
+      number: 193,
+      head: revision,
+      base: baseline,
+      files: [
+        {
+          path: PROVENANCE,
+          contents: Buffer.from(
+            `${JSON.stringify(dockerProvenance(dockerBefore, dockerAfter, dockerBaseline), null, 2)}\n`,
+          ).toString("base64"),
+        },
+      ],
+    });
+    assert.equal(git("status", "--porcelain"), "");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(output, { force: true });
+  }
+});
+
+test("refresh prepares Docker digests without semver metadata but never queues unknown updates", async () => {
+  const { run } = require("./dependabot-auto-merge.cjs");
+  const h = dockerHarness();
+  h.github.rest.repos.getBranch = async () => ({ data: { commit: { sha: base } } });
+  h.github.rest.repos.listPullRequestsAssociatedWithCommit = "associated";
+  h.state.associated = [];
+  const options = {
+    github: h.github,
+    context: { ...context, eventName: "pull_request_target", payload: { pull_request: h.state.pull } },
+    core: { info() {}, warning: assert.fail, setFailed: assert.fail },
+    metadata: () => [{ dependencyName: "node", newVersion: "22-bookworm-slim" }],
+    isCurrent: async () => true,
+    merge: () => assert.fail("Unknown Docker metadata must never enable auto-merge"),
+  };
+  await run(options);
+  assert.equal(h.state.dispatches[0].workflow_id, "dependabot-preparation.yml");
+  await publish(h.github, context, h.payload, "unused", options.metadata);
+  h.state.files.push({ filename: PROVENANCE, status: "modified" });
+  await run(options);
+  assert.equal(h.state.dispatches.at(-1).workflow_id, "pr-validation.yml");
+});
+
+test("trusted policy accepts reviewed preparation files and rejects every mutated implementation", () => {
+  const { readFileSync } = require("node:fs");
+  const root = resolve(__dirname, "../..");
+  const files = [
+    ".github/scripts/dependabot-auto-merge.cjs",
+    ".github/scripts/dependabot-preparation.cjs",
+    ".github/scripts/dependabot-validation.cjs",
+    ".github/scripts/refresh-dependency-artifacts.cjs",
+    ".github/scripts/docker-provenance.cjs",
+    ".github/workflows/dependabot-preparation.yml",
+  ];
+  const directory = mkdtempSync(join(tmpdir(), "preparation-policy-"));
+  try {
+    for (const path of files) {
+      mkdirSync(join(directory, path, ".."), { recursive: true });
+      cpSync(join(root, path), join(directory, path));
+    }
+    for (const [name, value] of Object.entries({
+      head_sha: head,
+      author_association: "OWNER",
+      author_login: "owner",
+      "files.json": JSON.stringify(files.map((filename) => ({ filename, status: "modified" }))),
+    }))
+      writeFileSync(join(directory, name), value);
+    const check = () =>
+      execFileSync("python3", [join(root, ".github/scripts/verify-prepared-policy.py"), directory], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    assert.match(check(), /Policy guard passed/);
+    for (const path of files) {
+      const original = readFileSync(join(directory, path), "utf8");
+      const changed = path.endsWith(".cjs")
+        ? `${original}\n// unreviewed change\n`
+        : original.replace("core.setOutput('base',", "core.warning('base',");
+      assert.notEqual(changed, original);
+      writeFileSync(join(directory, path), changed);
+      assert.throws(check, /Command failed/);
+      writeFileSync(join(directory, path), original);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -3,6 +3,7 @@ const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, dirname } = require("node:path");
 const { dependencyCommits } = require("./dependabot-preparation.cjs");
+const { DOCKERFILE } = require("./docker-provenance.cjs");
 const { CODING, INPUTS, generatedPaths } = require("./dependency-files.cjs");
 
 async function readFile(github, repo, path, ref) {
@@ -57,7 +58,7 @@ async function preparedValidation(github, context, pull) {
       JSON.parse(await readFile(github, context.repo, path, current.head.sha)),
     ),
   );
-  const allowed = [...INPUTS, ...generatedPaths(...manifests)];
+  const allowed = [DOCKERFILE, ...INPUTS, ...generatedPaths(...manifests)];
   const files = await github.paginate(github.rest.pulls.listFiles, { ...params, per_page: 100 });
   if (!files.length || files.some((file) => file.status !== "modified" || !allowed.includes(file.filename))) {
     throw new Error("Prepared PR contains changes outside dependencies and generated artifacts");

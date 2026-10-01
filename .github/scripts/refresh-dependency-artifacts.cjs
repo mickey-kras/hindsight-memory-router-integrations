@@ -15,6 +15,8 @@ const {
   updateProvenance,
 } = require("./dependency-files.cjs");
 
+const { DOCKERFILE, dockerOnly, dockerProvenance } = require("./docker-provenance.cjs");
+
 function refresh(directory, number, head, base, output) {
   const root = resolve(directory);
   const run = (command, args, cwd = root) =>
@@ -33,6 +35,28 @@ function refresh(directory, number, head, base, output) {
   }
   run("git", ["merge-base", "--is-ancestor", base, head]);
   const changed = run("git", ["diff", "--name-only", base, head]).trim().split("\n");
+  if (dockerOnly(changed)) {
+    for (const ref of [base, head]) {
+      for (const path of [DOCKERFILE, PROVENANCE]) {
+        if (!run("git", ["ls-tree", ref, "--", path]).startsWith("100644 blob ")) {
+          throw new Error("Docker preparation requires regular non-executable tracked files");
+        }
+      }
+    }
+    if (!lstatSync(join(root, DOCKERFILE)).isFile() || !lstatSync(join(root, PROVENANCE)).isFile()) {
+      throw new Error("Docker preparation requires regular files");
+    }
+    const provenance = dockerProvenance(
+      run("git", ["show", `${base}:${DOCKERFILE}`]),
+      read(DOCKERFILE).toString(),
+      JSON.parse(run("git", ["show", `${base}:${PROVENANCE}`])),
+    );
+    const files = [
+      { path: PROVENANCE, contents: Buffer.from(`${JSON.stringify(provenance, null, 2)}\n`).toString("base64") },
+    ];
+    writeFileSync(output, JSON.stringify({ number, head, base, files }));
+    return;
+  }
   if (!changed.length || changed.some((path) => !INPUTS.includes(path)))
     throw new Error("Unexpected dependency input files");
   for (const path of MANIFESTS) {

@@ -2,7 +2,7 @@ const { mkdtempSync, writeFileSync, readFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { dependencyCommits, requestPreparation } = require("./dependabot-preparation.cjs");
+const { dependencyCommits, requestPreparation, requestDockerPreparation } = require("./dependabot-preparation.cjs");
 
 const MINIMUM_SCORE = 75;
 const BOT = { login: "dependabot[bot]", id: 49699333 };
@@ -168,6 +168,7 @@ async function run({
   merge = mergeCommand,
   verify = dependencyCommits,
   prepare = requestPreparation,
+  prepareDocker = requestDockerPreparation,
   isCurrent = currentWithMain,
   validate = require("./dependabot-validation.cjs").requestValidation,
 }) {
@@ -214,6 +215,8 @@ async function run({
       const dependencies = metadata(pull, repository, metadataPath);
       const preparationReason = preparationEligibility(dependencies);
       if (preparationReason) {
+        if (original.length === commits.length) await prepareDocker(github, context, pull, core);
+        else await validate(github, context, pull, core);
         core.info(`#${pull.number}: ${preparationReason}`);
         continue;
       }
