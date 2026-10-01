@@ -9,6 +9,12 @@
 
 Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-kras/hindsight-memory-router). Give each agent a credential, one optional write bank and additional read banks, so agents can share selected memories without sharing every bank. Memory Router enforces access; client routing does not grant it.
 
+## How it fits together
+
+[![Agents connect through Integrations to Memory Router and Hindsight. Integrations are highlighted; access rules and quarantine belong to the router.](https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture-overview.svg)](https://mickey-kras.github.io/hindsight-memory-router/)
+
+[Explore the architecture and request flows](https://mickey-kras.github.io/hindsight-memory-router/) · [Memory Router repository](https://github.com/mickey-kras/hindsight-memory-router)
+
 ## Install
 
 Requires Node.js 22 or later, an HTTPS Memory Router endpoint and server-side principal/bank/scope grants.
@@ -44,3 +50,4 @@ For Codex, export `HINDSIGHT_ROUTER_CONFIG` before running the installer so it c
 - [All documentation](docs/README.md), including builds, upgrades and releases
 
 [MIT license](LICENSE).
+
