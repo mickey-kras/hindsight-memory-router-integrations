@@ -160,6 +160,7 @@ function harness({
     },
     merge: (...args) => commands.push(args),
     prepare: async () => false,
+    prepareDocker: async () => false,
     isCurrent: async () => true,
   };
   return { options, commands, dispatches, warnings, failures };
@@ -237,7 +238,7 @@ test("a major update prepares artifacts but never queues auto-merge", async () =
   await run(h.options);
   assert.deepEqual(h.commands, []);
 });
-test("an unknown update type skips preparation entirely", async () => {
+test("an unknown npm update type skips preparation", async () => {
   const h = harness();
   h.options.metadata = () => [{ ...dependency, updateType: "version-update:semver-prerelease" }];
   h.options.prepare = async () => assert.fail("must not prepare an unknown update type");

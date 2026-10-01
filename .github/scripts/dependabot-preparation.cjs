@@ -13,6 +13,8 @@ const {
   updateProvenance,
 } = require("./dependency-files.cjs");
 
+const { DOCKERFILE, dockerProvenance, dockerOnly } = require("./docker-provenance.cjs");
+
 const WORKFLOW = "dependabot-preparation.yml";
 const LEGACY_COMMIT_TITLE = "Regenerate dependency artifacts";
 const COMMIT_TITLE = `${LEGACY_COMMIT_TITLE} [dependabot skip]`;
@@ -37,6 +39,26 @@ async function preparedInputs(github, repo, base, head) {
   const read = async (ref) =>
     Object.fromEntries(await Promise.all(INPUTS.map(async (path) => [path, await content(github, repo, path, ref)])));
   return bumpPackageInputs(await read(base), await read(head));
+}
+
+async function expectedDockerProvenance(github, repo, base, head) {
+  for (const tree_sha of [base, head]) {
+    const { data } = await github.rest.git.getTree({ ...repo, tree_sha, recursive: "1" });
+    if (
+      data.truncated ||
+      [DOCKERFILE, PROVENANCE].some(
+        (path) => !data.tree.some((entry) => entry.path === path && entry.type === "blob" && entry.mode === "100644"),
+      )
+    ) {
+      throw new Error("Docker preparation requires regular non-executable tracked files");
+    }
+  }
+  const [before, after, provenance] = await Promise.all([
+    content(github, repo, DOCKERFILE, base),
+    content(github, repo, DOCKERFILE, head),
+    content(github, repo, PROVENANCE, base),
+  ]);
+  return dockerProvenance(before, after, JSON.parse(provenance));
 }
 
 async function dependencyCommits(github, repo, pull, commits) {
@@ -80,6 +102,24 @@ async function dependencyCommits(github, repo, pull, commits) {
       }
     }
   }
+  const changed = await github.paginate(github.rest.pulls.listFiles, {
+    ...repo,
+    pull_number: pull.number,
+    per_page: 100,
+  });
+  if (changed.some((file) => file.filename === DOCKERFILE)) {
+    if (
+      data.files.length !== 1 ||
+      data.files[0].filename !== PROVENANCE ||
+      changed.some((file) => file.status !== "modified" || ![DOCKERFILE, PROVENANCE].includes(file.filename))
+    ) {
+      throw new Error("Docker preparation changed unrelated artifacts");
+    }
+    const expected = await expectedDockerProvenance(github, repo, pull.base.sha, parent);
+    if (!isDeepStrictEqual(JSON.parse(await content(github, repo, PROVENANCE, generated.sha)), expected)) {
+      throw new Error("Docker preparation changed unrelated provenance");
+    }
+  }
   const signature = await github.graphql(
     `query($owner: String!, $repo: String!, $sha: GitObjectID!) {
     repository(owner: $owner, name: $repo) { object(oid: $sha) { ... on Commit {
@@ -117,6 +157,10 @@ async function inspect(github, context, number, expectedHead) {
   if (!commits.length || !commits.every(signedDependabot))
     throw new Error("Preparation requires signed Dependabot commits");
   const files = await github.paginate(github.rest.pulls.listFiles, { ...params, per_page: 100 });
+  if (dockerOnly(files.map((file) => file.filename)) && files[0].status === "modified") {
+    await expectedDockerProvenance(github, context.repo, pull.base.sha, expectedHead);
+    return { pull, commits, paths: [PROVENANCE] };
+  }
   if (!files.length || files.some((file) => file.status !== "modified" || !INPUTS.includes(file.filename))) {
     throw new Error("Preparation only accepts npm dependency files");
   }
@@ -131,8 +175,10 @@ async function inspect(github, context, number, expectedHead) {
 async function requestPreparation(github, context, pull, core) {
   const params = { ...context.repo, pull_number: pull.number };
   const files = await github.paginate(github.rest.pulls.listFiles, { ...params, per_page: 100 });
-  if (!files.some((file) => INPUTS.includes(file.filename))) return false;
-  if (files.some((file) => !INPUTS.includes(file.filename))) throw new Error("Dependency PR has unexpected changes");
+  const docker = dockerOnly(files.map((file) => file.filename));
+  if (!docker && !files.some((file) => INPUTS.includes(file.filename))) return false;
+  if (!docker && files.some((file) => !INPUTS.includes(file.filename)))
+    throw new Error("Dependency PR has unexpected changes");
   const title = `Prepare dependencies #${pull.number} at ${pull.head.sha}`;
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
     ...context.repo,
@@ -153,12 +199,53 @@ async function requestPreparation(github, context, pull, core) {
   return true;
 }
 
+async function requestDockerPreparation(github, context, pull, core) {
+  const files = await github.paginate(github.rest.pulls.listFiles, {
+    ...context.repo,
+    pull_number: pull.number,
+    per_page: 100,
+  });
+  if (!dockerOnly(files.map((file) => file.filename))) return false;
+  await inspect(github, context, pull.number, pull.head.sha);
+  return requestPreparation(github, context, pull, core);
+}
+
+async function validateNpmArtifacts(github, repo, payload, files) {
+  const expectedInputs = await preparedInputs(github, repo, payload.base, payload.head);
+  for (const path of INPUTS) {
+    if (files.get(path).toString() !== expectedInputs[path]) {
+      throw new Error(`Generated package input differs from its patch bump: ${path}`);
+    }
+  }
+  const expectedProvenance = updateProvenance(
+    JSON.parse(await content(github, repo, PROVENANCE, payload.head)),
+    expectedInputs[`${CODING}/package.json`],
+    expectedInputs[`${CODING}/npm-shrinkwrap.json`],
+  );
+  if (!isDeepStrictEqual(JSON.parse(files.get(PROVENANCE).toString()), expectedProvenance)) {
+    throw new Error("Generated provenance changes non-dependency entries");
+  }
+  // Hash pins arrive without their tarballs (packages/*.tgz are gitignored
+  // CI-built outputs), so publication validates their shape and inventory;
+  // the PR's own ci.yml run rebuilds every package and byte-compares it
+  // against these pins before auto-merge can proceed.
+  const checksums = files.get("PACKAGE_SHA256").toString();
+  validateChecksums(checksums, packagePaths(...MANIFESTS.map((path) => JSON.parse(expectedInputs[path]))));
+  const nixHashes = files.get("PACKAGE_NIX_HASHES").toString();
+  if (!/^source=sha256-[A-Za-z0-9+/]{43}=\nnpm_deps=sha256-[A-Za-z0-9+/]{43}=\n$/.test(nixHashes)) {
+    throw new Error("Invalid package Nix hashes");
+  }
+}
+
 async function publish(github, context, payload, metadataPath, metadata, publisher = github) {
   const { pull, paths } = await inspect(github, context, payload.number, payload.head);
   const { fetchMetadata, preparationEligibility } = require("./dependabot-auto-merge.cjs");
-  const reason = preparationEligibility(
-    (metadata ?? fetchMetadata)(pull, `${context.repo.owner}/${context.repo.repo}`, metadataPath),
-  );
+  const reason =
+    paths.length === 1
+      ? null
+      : preparationEligibility(
+          (metadata ?? fetchMetadata)(pull, `${context.repo.owner}/${context.repo.repo}`, metadataPath),
+        );
   if (reason) throw new Error(reason);
   if (payload.base !== pull.base.sha) throw new Error("Base changed during preparation");
   if (
@@ -175,29 +262,13 @@ async function publish(github, context, payload, metadataPath, metadata, publish
   const files = new Map(payload.files.map((file) => [file.path, Buffer.from(file.contents, "base64")]));
   if (payload.files.some((file) => files.get(file.path).toString("base64") !== file.contents))
     throw new Error("Invalid artifact encoding");
-  const expectedInputs = await preparedInputs(github, context.repo, payload.base, payload.head);
-  for (const path of INPUTS) {
-    if (files.get(path).toString() !== expectedInputs[path]) {
-      throw new Error(`Generated package input differs from its patch bump: ${path}`);
+  if (paths.length === 1 && paths[0] === PROVENANCE) {
+    const expected = await expectedDockerProvenance(github, context.repo, payload.base, payload.head);
+    if (!isDeepStrictEqual(JSON.parse(files.get(PROVENANCE).toString()), expected)) {
+      throw new Error("Generated Docker provenance differs from its digest update");
     }
-  }
-  const expectedProvenance = updateProvenance(
-    JSON.parse(await content(github, context.repo, PROVENANCE, payload.head)),
-    expectedInputs[`${CODING}/package.json`],
-    expectedInputs[`${CODING}/npm-shrinkwrap.json`],
-  );
-  if (!isDeepStrictEqual(JSON.parse(files.get(PROVENANCE).toString()), expectedProvenance)) {
-    throw new Error("Generated provenance changes non-dependency entries");
-  }
-  // Hash pins arrive without their tarballs (packages/*.tgz are gitignored
-  // CI-built outputs), so publication validates their shape and inventory;
-  // the PR's own ci.yml run rebuilds every package and byte-compares it
-  // against these pins before auto-merge can proceed.
-  const checksums = files.get("PACKAGE_SHA256").toString();
-  validateChecksums(checksums, packagePaths(...MANIFESTS.map((path) => JSON.parse(expectedInputs[path]))));
-  const nixHashes = files.get("PACKAGE_NIX_HASHES").toString();
-  if (!/^source=sha256-[A-Za-z0-9+/]{43}=\nnpm_deps=sha256-[A-Za-z0-9+/]{43}=\n$/.test(nixHashes)) {
-    throw new Error("Invalid package Nix hashes");
+  } else {
+    await validateNpmArtifacts(github, context.repo, payload, files);
   }
   const result = await publisher.graphql(
     `mutation($input: CreateCommitOnBranchInput!) {
@@ -239,4 +310,11 @@ async function waitForPublishedHead(github, repo, pull, expectedHead, sleep = pa
   throw new Error("Published commit is not yet visible in PR metadata; validation will retry on refresh");
 }
 
-module.exports = { dependencyCommits, inspect, requestPreparation, publish, waitForPublishedHead };
+module.exports = {
+  requestDockerPreparation,
+  dependencyCommits,
+  inspect,
+  requestPreparation,
+  publish,
+  waitForPublishedHead,
+};

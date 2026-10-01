@@ -51,9 +51,9 @@ jobs:
           script: |
             const { inspect } = require('./.github/scripts/dependabot-preparation.cjs');
             const { fetchMetadata, preparationEligibility } = require('./.github/scripts/dependabot-auto-merge.cjs');
-            const { pull } = await inspect(github, context, Number(process.env.PR_NUMBER), process.env.EXPECTED_HEAD);
-            const deps = fetchMetadata(pull, `${context.repo.owner}/${context.repo.repo}`, require('node:path').resolve('metadata-action'));
-            const reason = preparationEligibility(deps);
+            const { pull, paths } = await inspect(github, context, Number(process.env.PR_NUMBER), process.env.EXPECTED_HEAD);
+            const deps = paths.length === 1 ? null : fetchMetadata(pull, `${context.repo.owner}/${context.repo.repo}`, require('node:path').resolve('metadata-action'));
+            const reason = paths.length === 1 ? null : preparationEligibility(deps);
             if (reason) throw new Error(reason);
             core.setOutput('base', pull.base.sha);
             core.setOutput('head', pull.head.sha);
@@ -157,9 +157,7 @@ jobs:
             if (pull.head.sha !== sha) throw new Error('PR changed after publication');
             const { requestValidation } = require('./.github/scripts/dependabot-validation.cjs');
             await requestValidation(github, context, pull, core);
-            // The published commit is created through the API as github-actions[bot] and does
-            // not trigger pull_request_target, and the scheduled refresh may be delayed for
-            // hours; re-run the auto-merge evaluation now so prepared PRs do not stall.
+            // Re-evaluate promptly after publication; the scheduled refresh may be delayed.
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -167,3 +165,4 @@ jobs:
               ref: pull.base.ref,
             });
             core.info(`#${pull.number}: requested auto-merge refresh after preparation`);
+
