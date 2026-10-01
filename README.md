@@ -9,6 +9,8 @@
 
 Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-kras/hindsight-memory-router). Give each agent a credential, one optional write bank and additional read banks, so agents can share selected memories without sharing every bank. Memory Router enforces access; client routing does not grant it.
 
+Install only the integration your client needs; each can be used separately. These integrations require Memory Router and its Hindsight backend, but not GPU Workload Supervisor.
+
 ## How it fits together
 
 <a href="https://mickey-kras.github.io/hindsight-memory-router/">
