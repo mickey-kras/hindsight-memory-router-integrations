@@ -5,7 +5,7 @@
 ## Release
 
 1. Merge the intended version changes into `main`.
-2. Open **Actions → release → Run workflow**, select **main**, and run.
+2. Open **Actions > release > Run workflow**, select **main**, and run.
 3. The same run validates main (including Sonar), prepares a frozen candidate, validates and publishes its packages, queues the next-version PR, and removes the completed candidate branch.
 
 Dispatch is accepted only from `main`, before credentials or release work begin.
@@ -110,7 +110,7 @@ basis instead:
    node .github/scripts/release-settings.cjs YOUR_NUMERIC_APP_ID /tmp/release-rulesets
    ```
 
-5. In **Settings → Rules → Rulesets**, import **Release branch creation**, **Release tag
+5. In **Settings > Rules > Rulesets**, import **Release branch creation**, **Release tag
    creation**, the deletion-only **Release branch deletion**, and **Protect release
    branches**. Only the creation rules and the deletion rule allow an App bypass.
    Branch protections have no bypass and require PRs, squash merges, resolved
