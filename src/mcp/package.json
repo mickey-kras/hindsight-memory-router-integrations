@@ -1,6 +1,6 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Optional MCP (stdio) server that exposes Memory Router retain and multi-bank recall with per-principal authorization",
   "license": "MIT",
   "type": "module",
@@ -23,7 +23,7 @@
     "prepack": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "@vectorize-io/hindsight-agent-sdk": "0.1.1",
     "fs-native-extensions": "^1.5.1",
     "zod": "^4.6.5"
