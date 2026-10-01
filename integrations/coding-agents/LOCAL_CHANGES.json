@@ -7,7 +7,7 @@
   "e2e/Dockerfile.base": "4cac50b9dd6c503856247ce7e57d5d61c1d1b12621c1a2b8c54306767082160c",
   "npm-shrinkwrap.json": "b056787cc9b797f2a991c3fa9175c9721d9dc6bbf06bd39a4807d74538f61c74",
   "package-lock.json": null,
-  "package.json": "f95556e29c787579b2282dc7893f7c56ac1b9497d41b1fa6fa30f06fffb55b87",
+  "package.json": "c0d04139d85c8966090b2681a4880f51c958064c15b2d20f685de9aa0a9ff7c3",
   "scripts/build-skill.mjs": "0d6ecfcd964baaadb1624da2174e54d67ee40bb9a56832b5053d97a0daab814d",
   "src/antigravity-statusline.test.ts": "aff18df7bf52fe059757faaec2169b908e9f73e13f494d94a5987a892660ba04",
   "src/cline.ts": "14769b297882446349a69ff0efb6b5e5dfa893ffa24144d1eef2dbfab5ff0810",
