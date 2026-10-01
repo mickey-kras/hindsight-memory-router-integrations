@@ -1,5 +1,7 @@
 # Upgrading vendored integrations
 
+[Documentation](README.md) | [Repository](../README.md)
+
 Use a local checkout of `vectorize-io/hindsight` and resolve the intended upstream ref to a commit:
 
 ```sh
