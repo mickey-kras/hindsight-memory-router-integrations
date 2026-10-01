@@ -11,7 +11,13 @@ Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-
 
 ## How it fits together
 
-[![Agents connect through Integrations to Memory Router and Hindsight. Integrations are highlighted; access rules and quarantine belong to the router.](https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture-overview.svg)](https://mickey-kras.github.io/hindsight-memory-router/)
+<a href="https://mickey-kras.github.io/hindsight-memory-router/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture/overview-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture/overview-light.svg">
+    <img alt="Agents use Integrations, Memory Router, and Hindsight; Integrations are highlighted; access rules and quarantine belong to the router." src="https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture/overview-light.svg">
+  </picture>
+</a>
 
 [Explore the architecture and request flows](https://mickey-kras.github.io/hindsight-memory-router/) · [Memory Router repository](https://github.com/mickey-kras/hindsight-memory-router)
 
