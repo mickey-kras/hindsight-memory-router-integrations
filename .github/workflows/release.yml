@@ -71,7 +71,7 @@ jobs:
       - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.20.0
+          node-version: 22.23.3
       - name: Build and verify packages
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
