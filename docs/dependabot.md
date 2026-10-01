@@ -1,5 +1,7 @@
 # Dependabot auto-merge
 
+[Documentation](README.md) | [Repository](../README.md)
+
 - Auto-merge requires minor/patch updates and a compatibility score of at
   least 75% for every dependency in the PR.
 - Missing scores, unknown versions and major updates require manual review.
@@ -50,4 +52,3 @@ README's PAT note.
 To re-evaluate open PRs, run **Actions -> dependabot auto-merge refresh -> Run
 workflow** on the default branch. Change `MINIMUM_SCORE` in
 `.github/scripts/dependabot-auto-merge.cjs` to adjust the threshold.
-

@@ -1,5 +1,7 @@
 # Upstream deviations
 
+[Documentation](README.md) | [Repository](../README.md)
+
 Base: `vectorize-io/hindsight` OpenClaw integration `v0.13.0`.
 
 | Area | Upstream | Router plugin |

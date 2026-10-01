@@ -1,8 +1,8 @@
 # @mickey-kras/hindsight-memory-router-mcp
 
-Optional MCP server (stdio transport) that lets any MCP-capable agent or harness retain and
-recall memories **through Memory Router** with per-principal authorization. The server speaks to
-the router only — never to Hindsight directly — so the router's principal grants stay authoritative.
+[Documentation](../../docs/README.md) | [Repository](../../README.md)
+
+Optional stdio MCP server for retaining and recalling memories through Memory Router with per-principal authorization. The router enforces grants; the server never calls Hindsight directly.
 
 - Retain (`memory_router_retain`) writes only to the principal's configured `writeBank`;
   transient router failures are queued locally and replayed.
@@ -21,7 +21,7 @@ the router only — never to Hindsight directly — so the router's principal gr
 
 ## Configuration
 
-Two environment variables start the server; credentials are never written into the config file.
+Set the config path, principal ID and the environment variable holding that principal's token. Keep credentials out of the config file.
 
 | Variable | Purpose |
 | --- | --- |
@@ -85,3 +85,4 @@ Or register it with any MCP host as a stdio server command
 (`npx @mickey-kras/hindsight-memory-router-mcp` also works). The process speaks JSON-RPC on
 stdio; logs go to stderr. A non-zero exit at startup means the configuration failed validation —
 recheck the table above.
+

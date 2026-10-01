@@ -1,5 +1,7 @@
 # Releases
 
+[Documentation](README.md) | [Repository](../README.md)
+
 ## Release
 
 1. Merge the intended version changes into `main`.

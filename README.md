@@ -7,57 +7,40 @@
 [![main + SonarQube](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/main.yml?query=branch%3Amain)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-OpenClaw and the current upstream `coding-agents` package share `src/shared/`.
+Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-kras/hindsight-memory-router). Give each agent a credential, one optional write bank and additional read banks, so agents can share selected memories without sharing every bank. Memory Router enforces access; client routing does not grant it.
 
-**client routing != authorization; Memory Router grants are authoritative**
+## Install
 
-| Integration | Identity | Version source |
-| --- | --- | --- |
-| OpenClaw | trusted `ctx.agentId` | `package.json` |
-| Coding agents | harness entrypoint (`codex`, `claude-code`, `opencode`, etc.) | `src/upstream/coding-agents/package.json` |
+Requires Node.js 22 or later, an HTTPS Memory Router endpoint and server-side principal/bank/scope grants.
 
-Each principal has one optional `writeBank` and `additionalReadBanks`.
-Readable banks are their deduplicated union. Mutations target only `writeBank`.
-Unassigned banks are rejected locally without contacting the server.
-No wildcard, dynamic bank, fallback identity, or credential fallback.
+Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases) and verify its SHA-256 against `PACKAGE_SHA256` from the same release source. Packages are built by CI; tarballs are not kept in this repository.
 
-- HTTPS only; redirects rejected; runtime-resolved secrets; sanitized errors.
-- Recall/reflect share a deadline and token budget; content dedupe and deterministic order.
-- Any 401/403 discards the entire read result. Network/408/429/5xx failures permit partial reads.
-- Bank/config/page reads are read operations. Scope checks still belong to Memory Router.
-- OpenClaw retain queues recheck the current write bank before replay.
-- `retainQueueMaxItems` (1,000) and `retainQueueMaxBytes` (16 MiB) cap all principal queues in one `queueDir`. Both must be positive integers. Byte accounting includes 128 bytes per record reserved for replay metadata. A full queue rejects new outage writes with `RetainQueueCapacityError`; existing entries stay in FIFO order.
-- Queue mutations use OS-owned file locks through `fs-native-extensions`; paused writers retain ownership and crashed writers release it automatically. Writers sharing `queueDir` must use the same limits and this package version on a local filesystem with OS file-lock support. Keep the two `.retain-*.lock` files in place while any writer is running. Replay is serialized per directory; enqueue uses a separate lock. Backlogs already above the byte limit remain on disk; increase the limit to replay them.
-- Every memory op emits a single-line JSON audit record (principal, op, bank, outcome, bounded error
-  class) to the host log; memory content is never logged.
+| Client | Setup |
+| --- | --- |
+| OpenClaw | Install the OpenClaw release artifact, then configure the [`hindsight-memory-router` plugin](docs/OPENCLAW.md). |
+| Codex, Claude Code, OpenCode and other coding agents | Install the coding-agents artifact and follow [coding-agent setup](integrations/coding-agents/README.md). |
 
-[OpenClaw configuration](docs/OPENCLAW.md) · [Coding agents](integrations/coding-agents/README.md)
+## Quick start: coding agents
 
-## Ingest document identity
-
-Coding-agent, OpenClaw and MCP ingest tools use `ingest--<SHA-256 of JSON-encoded title>`.
-The exact title, including case, whitespace and Unicode, identifies the document within its bank.
-Reusing that title replaces its content across these tools; changing the title creates a separate document.
-
-Legacy document IDs remain untouched. The first re-ingest after upgrading creates a new document;
-verify its contents before manually removing the old document. No automatic deletion or ID migration runs.
-
-## Verify
+1. Create the principal's grants in Memory Router. Keep each harness's token in your secret manager.
+2. Create an operator-managed JSON file using the [configuration example](integrations/coding-agents/README.md). Set its HTTPS router URL, principal, token environment variable and explicit project-to-bank mapping.
+3. Replace the paths below with your config and downloaded artifact:
 
 ```sh
-npm ci
-npm ci --prefix src/upstream/coding-agents
-npm ci --prefix src/mcp
-npm run test:coverage
-npm run build
-npm run build:coding-agents
-npm test --prefix src/upstream/coding-agents
-npm audit --audit-level=moderate
-npm audit --prefix src/upstream/coding-agents --audit-level=moderate
-node scripts/verify-coding-upstream.mjs
+export HINDSIGHT_ROUTER_CONFIG=/absolute/path/router.json
+npm install --global /absolute/path/downloaded-coding-agents.tgz
+hindsight-coding-agents install
 ```
 
-Packages are built from source by CI (`npm pack`) and attached to the GitHub release; their SHA-256 hashes are pinned in `PACKAGE_SHA256` and Nix hashes in `PACKAGE_NIX_HASHES`. Tarballs are never committed (`packages/` is gitignored).
-OpenClaw provenance: `UPSTREAM_VERSION`; coding-agents provenance: `integrations/coding-agents/UPSTREAM.json`.
-Local revisions are independent of upstream versions. Upgrade either integration separately.
-Dependabot preparation increments the patch version of each package whose dependency files change and regenerates its shrinkwrap, provenance, and package hash pins before the existing PR checks run.
+Export the principal's token from your secret manager when launching the harness.
+
+For Codex, export `HINDSIGHT_ROUTER_CONFIG` before running the installer so it can allowlist the required environment variables. Unmapped projects, unknown harnesses and missing secrets fail closed. Do not overwrite this installation with upstream's `npx` installer.
+
+## Documentation
+
+- [OpenClaw configuration and queue storage](docs/OPENCLAW.md)
+- [Coding-agent configuration](integrations/coding-agents/README.md)
+- [Routing, failure handling and ingest identity](docs/BEHAVIOR.md)
+- [All documentation](docs/README.md), including builds, upgrades and releases
+
+[MIT license](LICENSE).
