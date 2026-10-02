@@ -12,7 +12,7 @@ exclude:
 rules:
   security/hardcoded-secret: error
   # The required npm audit gate owns dependency findings and its narrow exception.
-  security/vulnerable-dependency: off
+  security/vulnerable-dependency: "off"
   ai-slop/hardcoded-url: off
 
 quality:
