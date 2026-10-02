@@ -986,8 +986,8 @@ jobs:
                   return
               ci = doc.get('ci')
               fail_below = ci.get('failbelow') if isinstance(ci, dict) else None
-              if not isinstance(fail_below, (int, float)) or fail_below < 95:
-                  fail('.aislop/config.yml: ci.failBelow must remain at least 95')
+              if not isinstance(fail_below, (int, float)) or fail_below < 100:
+                  fail('.aislop/config.yml: ci.failBelow must remain at least 100')
               exclude = doc.get('exclude')
               if not isinstance(exclude, list) or {str(item) for item in exclude} != AISLOP_REQUIRED_EXCLUDE:
                   fail(
