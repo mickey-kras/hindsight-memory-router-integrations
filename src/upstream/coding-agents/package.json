@@ -1,6 +1,6 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "repository": {
     "type": "git",
     "url": "https://github.com/mickey-kras/hindsight-memory-router-integrations.git",
@@ -91,7 +91,7 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.32",
-    "@opencode/plugin": "^2.0.15",
+    "@opencode/plugin": "^2.0.16",
     "@opencode-ai/sdk": "^1.18.9",
     "@types/node": "22.20.4",
     "tsup": "^8.3.0",
