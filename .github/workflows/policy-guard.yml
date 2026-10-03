@@ -399,8 +399,7 @@ jobs:
           # Required jobs and gate steps must not be skippable. Steps whose
           # conditions are legitimate (SARIF uploads running under always()
           # plus a fork guard) may keep an `if`, but the condition must stay
-          # an always(), hashFiles('...') or head.repo.full_name guard, and
-          # none may swallow failures with continue-on-error.
+          # an always(), hashFiles('...') or head.repo.full_name guard.
           def check_gate_job(path, job_label, job):
               if 'if' in job:
                   fail(f'{path}: job {job_label} must not have an if condition')
@@ -432,14 +431,6 @@ jobs:
                       "'...' or head.repo.full_name guard"
                   )
 
-          # Neutralization ban, applied to every signature-checked run body
-          # (ci.yml Semgrep/Verify package/Nix dependency hash/Trivy
-          # dependency gate, aislop.yml Aislop quality gate/Aislop SARIF).
-          # After normalization, the classic always-pass wrappers fail; an
-          # echo line also fails, because echoing the signature needles is
-          # the cheapest way to satisfy the substring checks without ever
-          # running the gate (raw lines are scanned, since normalization
-          # would fold an echo line into its neighbours).
           NEUTRALIZATION_BANS = ('|| true', '||true', '|| echo', '; true', 'exit 0')
 
           def check_run_not_neutralized(path, label, run):
@@ -459,8 +450,6 @@ jobs:
               'Gitleaks', 'Semgrep', 'Trivy dependency gate', 'Setup Trivy',
               'Sonar finding reporter tests',
           )
-          # Name-only pins are not enough: each required step must still carry
-          # the substance of its gate (checked on the normalized run text).
           CI_RUN_SIGNATURES = {
               'Release automation tests': ('node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs',),
               'Release policy tests': ('python3 .github/scripts/release-policy.test.py',),
@@ -481,6 +470,15 @@ jobs:
                   'python3 -m unittest tests/test_sonar_finding_sync.py',
               ),
           }
+          AUDIT_TOOL_HASHES = {
+              '.github/audit-tool/audit-ci.json': '5d31c2834a2cd56fa7c8e6a62ea015c8c07d4da5bacd1e4af779950a3842f9ec',
+              '.github/audit-tool/audit-fixture.json': 'a6a61d8770d6326fef11aa265f6eefd6ad38124c3c12eab9eb0cc9619e64b180',
+              '.github/audit-tool/audit.cjs': '70027ceb19d747c4c30c4ab59c8d3427aa9d2e07c7bb98129e7b8138c2c7e631',
+              '.github/audit-tool/audit.test.cjs': '14340edd755a3037abd323031c2fa8f4a69ecd00e91e0e908c402cf663c267f4',
+              '.github/audit-tool/package-lock.json': 'ac23769398329eb7cea03236037626c2197d20695c35c6f8af26ea7706b73660',
+              '.github/audit-tool/package.json': '10e831899e68131e3fa58f3c62c18aeba8fceb87199de65f9861f015b63fb709',
+          }
+
           CI_USES_PREFIXES = {
               'Gitleaks': 'gitleaks/gitleaks-action@',
               'Setup Trivy': 'aquasecurity/setup-trivy@',
@@ -567,7 +565,10 @@ jobs:
               audit_step = step_named(checks, 'Node tooling audit')
               expected_audit_run = (
                   'node --test .github/scripts/npm-audit.test.cjs\n'
-                  'node .github/scripts/npm-audit.cjs\n'
+                  'npm ci --prefix .github/audit-tool --ignore-scripts --no-audit --no-fund\n'
+                  'npm audit --prefix .github/audit-tool --include=dev --audit-level=moderate\n'
+                  'node --test .github/audit-tool/audit.test.cjs\n'
+                  'node .github/audit-tool/audit.cjs .\n'
                   'node .github/scripts/npm-audit.cjs src/upstream/coding-agents'
               )
               if audit_step is None or audit_step.get('run', '').strip() != expected_audit_run:
@@ -972,9 +973,7 @@ jobs:
               if not any('=~' in run and 'exit 1' in run for run in matches):
                   fail('branch-policy.yml: branch name validation must keep failing on invalid names')
 
-          # Keys are lowercased by the loader, so the camelCase failBelow
-          # arrives as 'failbelow'; values (including exclude entries) are
-          # untouched.
+          # Configuration keys are lowercased by the YAML loader.
           AISLOP_REQUIRED_EXCLUDE = {
               'coverage', 'dist', 'node_modules',
               'npm-shrinkwrap.json', 'packages', 'src/upstream',
@@ -1008,8 +1007,6 @@ jobs:
               doc = parse_yaml_file(path, content)
               if doc is None:
                   return
-              # A top-level paths block would silently exclude files from
-              # every rule; this repository has none and must never gain one.
               if 'paths' in doc:
                   fail('.semgrep.yml: top-level paths exclusions are not allowed')
               rules = doc.get('rules')
@@ -1111,8 +1108,7 @@ jobs:
               if hashlib.sha256(content.encode()).hexdigest() not in DEPENDENCY_PREPARATION_SCRIPTS[path]:
                   fail(f'{path}: dependency preparation must match the reviewed implementation')
 
-          # Only reviewed automation workflow shapes may write or use
-          # the privileged PR trigger. Action SHA updates remain allowed.
+          # Reviewed workflow shapes allow action SHA refreshes.
           AUTOMATION_SHAPES = {
               '.github/workflows/main.yml': ('656f5d9b3fefabf005d9729dac8d373bbe983f14550f3d4dd9e103df892225d8','8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e','4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd','75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746','11ebd1dbdd531ee9cd928002296cb0fce8e1e1e19204e5cc4f3e973672ad19da','39af26a5e2dd7f9fde43ffb1b0ca867d31433e1af2a00a0fdaba3016a164d2da','5cb2724f04882313fd92d84afcd5797c6ce62bbdf1183d3595f00e467c5e5c54','978986c5c4297bae695520a4ed1e17055c5fd41ade6e8afed8152a1003ec4259','f6e820ffb5bb391007a9b8e5ffc626a019233a8d9dacd2d6e173ed74faa19c16','11743111a6054b09a0f6b26014b8667565499ce2aa90c1252a17b1e84201760d','c14dd84414cd95fa0540f0e9a8d82d418bc7e3aa13366ed17443850ad0ee4a2d'),
               '.github/workflows/release.yml': ('e20163669d0d5dd2f9e6bce99bba5a1d7af68811d0307845f294a8f74bbf2f13','da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5','2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3','6f0608e02206116936a94d1d690682e1ed024c0bd748f28b3cc28d02708b106c','40b04e291989c5a6f2fb42d72d2006b4b9cb692a9ec0615fafad8b34d615cce2'),
@@ -1158,6 +1154,8 @@ jobs:
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
               '.github/scripts/release-follow-up.cjs': '2f3c5bf87be932cc949c19ad8dc3029dcdd7aad9fdf7256f3a4c78ff63fc3f3e',
           }
+
+          RELEASE_SOURCE_HASHES.update(AUDIT_TOOL_HASHES)
 
           def gate_release_source(path, content):
               expected = RELEASE_SOURCE_HASHES[path]
@@ -1208,8 +1206,6 @@ jobs:
                   files.append(entry)
               return files
 
-          # Author gate: only maintainers (or dependabot, whose updates are
-          # structurally pinned by the gates) may touch protected gate files.
           TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
           DEPENDABOT_LOGIN = 'dependabot[bot]'
 
@@ -1357,4 +1353,5 @@ jobs:
           set -euo pipefail
           export FILES_JSON="${RUNNER_TEMP}/files.json"
           python3 "$RUNNER_TEMP/policy_guard.py"
+
 
