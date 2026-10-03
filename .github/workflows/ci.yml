@@ -85,7 +85,10 @@ jobs:
       - name: Node tooling audit
         run: |
           node --test .github/scripts/npm-audit.test.cjs
-          node .github/scripts/npm-audit.cjs
+          npm ci --prefix .github/audit-tool --ignore-scripts --no-audit --no-fund
+          npm audit --prefix .github/audit-tool --include=dev --audit-level=moderate
+          node --test .github/audit-tool/audit.test.cjs
+          node .github/audit-tool/audit.cjs .
           node .github/scripts/npm-audit.cjs src/upstream/coding-agents
 
       - name: MCP tooling audit
@@ -258,3 +261,4 @@ jobs:
           ROUTER_TEST_VERSION: ${{ steps.pins.outputs.router_version }}
           HINDSIGHT_TEST_IMAGE: ${{ steps.pins.outputs.image }}
         run: bash .github/scripts/combination-smoke.sh
+

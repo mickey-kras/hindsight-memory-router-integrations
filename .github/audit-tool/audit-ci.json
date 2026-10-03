@@ -1,0 +1,19 @@
+{
+  "moderate": true,
+  "package-manager": "npm",
+  "skip-dev": false,
+  "pass-enoaudit": false,
+  "report-type": "full",
+  "show-found": true,
+  "show-not-found": true,
+  "retry-count": 0,
+  "allowlist": [
+    {
+      "GHSA-vfj7-8cjw-p6xm|aislop>micromatch>braces": {
+        "active": true,
+        "expiry": "2026-10-10T06:38:29Z",
+        "notes": "User-approved seven-day CI-only denial-of-service exception; remove when a patched upstream dependency is available."
+      }
+    }
+  ]
+}
