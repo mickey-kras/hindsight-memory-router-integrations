@@ -55,7 +55,7 @@
     "@types/node": "22.20.4",
     "@vectorize-io/hindsight-client": "0.10.1",
     "@vitest/coverage-v8": "5.0.1",
-    "aislop": "^0.16.1",
+    "aislop": "0.18.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   },
