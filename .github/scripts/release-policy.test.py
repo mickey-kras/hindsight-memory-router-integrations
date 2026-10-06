@@ -15,6 +15,7 @@ GUARD = ROOT / ".github/workflows/policy-guard.yml"
 ROUTER = (ROOT / ".github/workflows/publish.yml").exists()
 MAIN = ".github/workflows/publish.yml" if ROUTER else ".github/workflows/main.yml"
 PATHS = [
+    ".github/dependency-review-config.yml",
     ".github/workflows/policy-guard.yml",
     MAIN,
     ".github/workflows/release.yml",
@@ -265,6 +266,29 @@ class ReleasePolicyTests(unittest.TestCase):
         action = next(step["uses"] for job in doc["jobs"].values() for step in job.get("steps", []) if "uses" in step)
         changed = (ROOT / MAIN).read_text().replace(action, action.split("@")[0] + "@" + "f" * 40)
         self.assertEqual(policy({MAIN: changed}), [])
+
+
+class DependencyPolicyTests(unittest.TestCase):
+    def test_reviewed_dependency_policy_passes(self):
+        self.assertEqual(policy(), [])
+
+    def test_dependency_vulnerability_bypasses_fail_policy(self):
+        path = ".github/dependency-review-config.yml"
+        original = (ROOT / path).read_text()
+        for changed in [
+            original.replace("vulnerability-check: true", "vulnerability-check: false"),
+            original.replace("warn-only: false", "warn-only: true"),
+            original.replace("high", "critical"),
+            original.replace("  - development\n", ""),
+            original + "allow-ghsas: [GHSA-xxxx-xxxx-xxxx]\n",
+        ]:
+            self.assertTrue(policy({path: changed}))
+
+    def test_dependency_workflow_cannot_disable_scanning(self):
+        path = ".github/workflows/ci.yml"
+        doc = yaml.safe_load((ROOT / path).read_text())
+        next(step for step in doc["jobs"]["checks"]["steps"] if step.get("name") == "Dependency review")["with"]["vulnerability-check"] = False
+        self.assertTrue(policy({path: yaml.safe_dump(doc)}))
 
 
 if __name__ == "__main__":
