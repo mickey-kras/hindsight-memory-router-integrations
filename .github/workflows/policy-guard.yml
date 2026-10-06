@@ -1032,7 +1032,6 @@ jobs:
               missing = sorted(required - ids)
               if missing:
                   fail(f'.semgrep.yml: required rules missing: {", ".join(missing)}')
-
           def gate_dependabot(path, content):
               doc = parse_yaml_file(path, content)
               if doc is None:
@@ -1045,7 +1044,6 @@ jobs:
               missing = sorted({'npm', 'github-actions'} - ecosystems)
               if missing:
                   fail(f'.github/dependabot.yml: required ecosystems missing: {", ".join(missing)}')
-
           def gate_package_json(path, content):
               try:
                   doc = json.loads(content)
@@ -1058,18 +1056,13 @@ jobs:
                   fail('package.json: full-repository Aislop scan must stay configured')
               if scripts.get('test:coverage') != 'vitest run --coverage':
                   fail('package.json: coverage test command must stay configured')
-
           def gate_vitest(path, content):
               stripped = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
               stripped = '\n'.join(
                   line.split('//', 1)[0] for line in stripped.split('\n')
               )
-              # The threshold must live inside the thresholds block itself;
-              # a decoy 'lines: 90' string elsewhere in the file does not
-              # count.
               if not re.search(r'thresholds:\s*\{[^}]*?lines:\s*90\b', stripped, re.S):
                   fail('vitest.config.ts: 90% line threshold must stay configured')
-
           def gate_sonar(path, content):
               properties = {}
               for line in content.split('\n'):
@@ -1080,7 +1073,6 @@ jobs:
                   properties[key.strip()] = value.strip()
               if properties.get('sonar.javascript.lcov.reportPaths') != 'coverage/lcov.info':
                   fail('sonar-project.properties: coverage import must stay configured')
-
           def gate_sonar_reporter(path, content):
               required = (
                   'ISSUE_MARKER_PREFIX = "sonar-finding"',
@@ -1091,12 +1083,10 @@ jobs:
               missing = [contract for contract in required if contract not in content]
               if missing:
                   fail('sync-sonar-findings.py: required issue synchronization contract missing')
-
           def gate_checksum_file(path, content):
               lines = [line for line in content.splitlines() if line.strip()]
               if not lines:
                   fail(f'{path}: checksum file must not be empty')
-
           DEPENDENCY_PREPARATION_SCRIPTS = {
               '.github/scripts/docker-provenance.cjs': ('216e3cadee233f280a1c560ccb6995d522beb7ac98906139182573afc172bf67',),
               '.github/scripts/dependabot-auto-merge.cjs': ('5da076a4e27a1bb7e657d30e0e6f79a19c0bdb0dd11b389c383304bdb483ef32', 'a3b44baec133791a81e25b8257597f7c92173ea89a0727bd5ed37976a30d3b3c', '9e35e7b47d63714e5b9710f93455eb34180f78ddefaeac0e2a4e8bcf1fd6e14b', '5e7599b6f8ee7c35a696196be54fa6ffee868528c596b4eeb60623a2f38e4e5e', '7c179097b31faca35820986b2fe12ac39ee165ca9dbe2103ddeead8e87728535', '546fe0c758c17b5336c7767e3a8305dd3280c1c297e7246b3aa460c1e1ac1e85', '1eb897a75f744c9688d191a3b033fe7898da3f985236ce8e2883f227caa959ba'),
@@ -1106,14 +1096,13 @@ jobs:
               '.github/scripts/dependabot-validation.cjs': ('a6c1d925ac97e90f79129ad3fffcc2e6f4a9f59eaf74b92ef8f02c17bba58182', '199dbdcfda4e7589cdbcf21f3ec2178342af56ad1e658e01d4ce6924fd480ba5', '484157141f5e864b7cd1eecc6545a7077cf660bd683fabe67a773de5878443ad', 'b0775ac32cee8dca1c842e3c79a71a85c7f818f13806cd34067f3c7c2403bbb1', 'af5f1349fe209d2792c976022df09adb2735c2cc617baa7f2b17cd2bfd3497c0', '7f201a932c975f2a8e880c92b98cae87fd288782f08ca836e44917399c037d6d'),
               '.github/scripts/verify-prepared-policy.py': ('ad9395f21d84f47bec414a977fe80375f1ffd26ffdec5b72769d31e7bd99a77c',),
           }
-
           def gate_dependency_preparation(path, content):
               if hashlib.sha256(content.encode()).hexdigest() not in DEPENDENCY_PREPARATION_SCRIPTS[path]:
                   fail(f'{path}: dependency preparation must match the reviewed implementation')
-
           # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
+              '.github/workflows/ci.yml': ('94b99e1708f6e5fe3b78725113b4529a52768bd2972e455c5e01d69da6d53ce4',),
               '.github/workflows/main.yml': ('656f5d9b3fefabf005d9729dac8d373bbe983f14550f3d4dd9e103df892225d8','8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e','4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd','75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746','11ebd1dbdd531ee9cd928002296cb0fce8e1e1e19204e5cc4f3e973672ad19da','39af26a5e2dd7f9fde43ffb1b0ca867d31433e1af2a00a0fdaba3016a164d2da','5cb2724f04882313fd92d84afcd5797c6ce62bbdf1183d3595f00e467c5e5c54','978986c5c4297bae695520a4ed1e17055c5fd41ade6e8afed8152a1003ec4259','f6e820ffb5bb391007a9b8e5ffc626a019233a8d9dacd2d6e173ed74faa19c16','11743111a6054b09a0f6b26014b8667565499ce2aa90c1252a17b1e84201760d','c14dd84414cd95fa0540f0e9a8d82d418bc7e3aa13366ed17443850ad0ee4a2d'),
               '.github/workflows/release.yml': ('e20163669d0d5dd2f9e6bce99bba5a1d7af68811d0307845f294a8f74bbf2f13','da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5','2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3','6f0608e02206116936a94d1d690682e1ed024c0bd748f28b3cc28d02708b106c','40b04e291989c5a6f2fb42d72d2006b4b9cb692a9ec0615fafad8b34d615cce2'),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
@@ -1125,7 +1114,6 @@ jobs:
               '.github/workflows/pr-validation.yml': ('e771be1b2936354e13c4557f2f1c4702d17e44a84c492169d8c587ab741db4f3', '6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a', '306d0070aeb2a19b505b0dc05c2de9df2a0d3989cb19a414fb6fe8efc50af5ae', 'b451b158e10360d7ad8b80a0fa7ee14bbfd19555cd746fbc0b7a0e17acf5eead'),
               '.github/workflows/branch-policy.yml': ('ffaa08e4de5cb84378bae286f5329450981ec51f3451b142f36c5d1ae529941c', 'e08d429ddd7b64f5c01602987580adae94570d54e42623efc01f11846a44b68f'),
           }
-
           def gate_automation(path, content):
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
@@ -1140,11 +1128,11 @@ jobs:
               digest = hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
               if digest not in AUTOMATION_SHAPES[path]:
                   fail(f'{path}: automation must match its reviewed workflow shape')
-
           RELEASE_SOURCE_HASHES = {
+              '.github/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
               '.github/scripts/combination-identity.cjs': '28da02fbdd428f83a87973b3cccb963fb7bd2236ca7457957f792c98b31e0c12',
               '.github/scripts/package.json': ('9c5ae4358d83ef9a326dedb33bec455aed50f32107ba0f72b502059f92a95aa5', 'db0324a5389e1d9005519058dff2b4f17b2b8632c8392e87d2a0b0d1a5be3470'),
-              '.github/scripts/package-lock.json': ('a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e', '315d29db2dc593d1d8072be2a1fc05340a43740ce820858e81223a7cea003090'),
+              '.github/scripts/package-lock.json': ('a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e', 'f550ad0ec8aec53e0aadfe7d38ce0df154daf73ef6feefc333537c2a824ec600'),
               '.github/scripts/combination.cjs': ('dad2f629eca60a28c0979d286edc1954ac487911a70355f5d9c83692ed15af0c', '7866bdaf091681673f643b9e70221ff3d828e2198dfb5a41bd5bb3da6ee94850'),
               '.github/scripts/combination-smoke.sh': ('3074e9c0b6b8f4c3e8e36586478a93f37271694dff5b93511ac6946717f5d53f', '052e5e4155cff8f5c8b19eda4b908aa5b69441f4e6461ae8af8572cb183c49e1'),
               '.github/scripts/combination-smoke.mjs': ('7bdb7f4b189c8ab538eaa49ad16395da9d9fb9950f8d263cc68dafb9e6587622', '14c32c344feb9b026613f67e1dbfd465ef2ab3195b1b4cc0e05b2e8e337e3f51'),
@@ -1152,19 +1140,17 @@ jobs:
               '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77', 'f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36', 'e5c150df0b2cd53c7c552d2a6af9a340afaa1d94900f0f695363b978fc88bba8', '04cdad684a138433c2db8ab9c5086ee1d671523aeeea7a0b3ff807fde1c5fd69', '412d76a8d9c99e8a695a4e1e2d5b440c7367101c6af8e6a777c2b48565ea1af3', '4e3480ad9e385ba501ec1ea23d8fa943f0eb6e1107f9db2b8e1b416800582f7d'),
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5', 'f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23', 'f206b57c6feb37a573b3a8cd9f211dd6d7e9a216d5121e6459978ca6f4fdd31f', '5d2f482546b4ba0431717950c49f7533dd37381efa00017551995d2d39789540', '214c7178e1e2cc01e38e96a6b8cc29e9e2b1aab3c24e8c290e99d328054201a4', '5571e081f47f4568443728b74846cd54a18cf51eac205115e48da74bcdbd9f40'),
-              '.github/scripts/release-policy.test.py': ('55f3adf7fac689176e8d7c57a7a36297d5774302960a0d56a4e99653f020831c', '46afaf1bf072c752ca64958c494f811fc9beafd69b59d3b739bd1788ef305e8f', '867ceabf8ff06aa1a1a2e308b9506bb90ece36cc9fda009c6143f046ca45d56d', '61397a94ae5a946d6369a47631f0e623649e6144a8554fd59b9c326c6af6e182'),
+              '.github/scripts/release-policy.test.py': '174412c9929d2f32f7c75a84febdc66e288130dc7f9c1d0ba5744fd152e834fd',
               '.github/scripts/release-cleanup.cjs': ('f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533', '3ec27d21d0df5fad08222606bce4bb3eaa07226f72ae3bd37c3e70bf83ff87e9', 'bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8'),
               '.github/scripts/release-cleanup.test.cjs': ('99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd', '9495c6943363dfb0984573d0efce88e95e25cbb0c7691cb52bfc0a5820ada5be', '1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956'),
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
               '.github/scripts/release-follow-up.cjs': '2f3c5bf87be932cc949c19ad8dc3029dcdd7aad9fdf7256f3a4c78ff63fc3f3e',
           }
-
           def gate_release_source(path, content):
               expected = RELEASE_SOURCE_HASHES[path]
               if isinstance(expected, str): expected = (expected,)
               if hashlib.sha256(content.encode()).hexdigest() not in expected:
                   fail(f'{path}: release automation must match its reviewed policy')
-
           GATES = {
               '.github/workflows/ci.yml': gate_ci,
               '.github/workflows/aislop.yml': gate_aislop,
@@ -1184,12 +1170,10 @@ jobs:
               'PACKAGE_SHA256': gate_checksum_file,
               'PACKAGE_NIX_HASHES': gate_checksum_file,
           }
-
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
           GATES.update({path: gate_release_source for path in RELEASE_SOURCE_HASHES})
           GATES.update({path: gate_dependency_preparation for path in DEPENDENCY_PREPARATION_SCRIPTS})
           protected = set(GATES)
-
           def load_files():
               with open(os.environ['FILES_JSON'], encoding='utf-8') as handle:
                   data = json.load(handle)
@@ -1207,12 +1191,8 @@ jobs:
                       raise RuntimeError('files.json entries must be objects with a filename')
                   files.append(entry)
               return files
-
-          # Author gate: only maintainers (or dependabot, whose updates are
-          # structurally pinned by the gates) may touch protected gate files.
           TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
           DEPENDABOT_LOGIN = 'dependabot[bot]'
-
           def resolve_pr_context():
               fixture_dir = os.environ.get('GUARD_FIXTURE_DIR')
               if fixture_dir:
@@ -1251,7 +1231,6 @@ jobs:
               if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{40}', sha):
                   raise RuntimeError('unexpected pull request head sha')
               return sha, str(association or ''), str(login or '')
-
           def fetch_file(path, head_sha):
               fixture_dir = os.environ.get('GUARD_FIXTURE_DIR')
               if fixture_dir:
@@ -1276,7 +1255,6 @@ jobs:
               if not content.strip():
                   raise RuntimeError(f'{path}: empty content at head')
               return content
-
           def main():
               head_sha, author_association, author_login = resolve_pr_context()
               files = load_files()
@@ -1297,9 +1275,7 @@ jobs:
                       removed_or_renamed.add(filename)
                   if entry.get('status') == 'renamed' and isinstance(previous, str):
                       removed_or_renamed.add(previous)
-
               protected_package_change = any(path.startswith('packages/') for path in changed)
-
               if changed & protected or protected_package_change:
                   if (
                       author_association.upper() not in TRUSTED_ASSOCIATIONS
@@ -1311,10 +1287,8 @@ jobs:
                           f'login={author_login or "unknown"}); require OWNER, MEMBER or '
                           'COLLABORATOR, or dependabot[bot]'
                       )
-
               for path in sorted(protected & removed_or_renamed):
                   fail(f'{path}: protected gate file must not be removed or renamed')
-
               for entry in files:
                   path = entry['filename']
                   if entry.get('status') == 'removed':
@@ -1324,19 +1298,16 @@ jobs:
                   doc = parse_yaml_file(path, fetch_file(path, head_sha), 'workflow')
                   if doc is not None:
                       check_workflow(path, doc)
-
               for path in sorted(protected):
                   if path not in changed or path in removed_or_renamed:
                       continue
                   GATES[path](path, fetch_file(path, head_sha))
-
               if failures:
                   print('Policy guard failed:')
                   for message in failures:
                       print(f'- {message}')
                   sys.exit(1)
               print('Policy guard passed.')
-
           if __name__ == '__main__':
               try:
                   main()
@@ -1346,7 +1317,6 @@ jobs:
                   traceback.print_exc()
                   sys.exit(1)
           POLICY_SOURCE
-
       - name: policy guard
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1357,4 +1327,3 @@ jobs:
           set -euo pipefail
           export FILES_JSON="${RUNNER_TEMP}/files.json"
           python3 "$RUNNER_TEMP/policy_guard.py"
-
