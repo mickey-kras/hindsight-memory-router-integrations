@@ -5,7 +5,7 @@
   "UPSTREAM.json": "270b5748104433a94b6fbe31ef1e2ece92b53b2e029074a50b279a7b30f9aa12",
   "cordis.patch.yml": "9a32a0a6819c281fcb0f17c9c2e77ba6be8f78f7f369882edbe9170afd48cd25",
   "e2e/Dockerfile.base": "a8bf95ebcf9c0f15d5d90a2f150c545a36e4de302b4af5ef72a6d907fa0a6b87",
-  "npm-shrinkwrap.json": "22266e97b56df00472e6d440c376fadfbc46b4ed15618791a8398fe02113111e",
+  "npm-shrinkwrap.json": "50f30b26753623abc1a593ad4e5e9b21a2a790bb60f32e900f248fd75bb7e5f9",
   "package-lock.json": null,
   "package.json": "18fd88454fb12276f7390523a4922206e8b7f2933990350999a11f3d26183a0b",
   "scripts/build-skill.mjs": "0d6ecfcd964baaadb1624da2174e54d67ee40bb9a56832b5053d97a0daab814d",
