@@ -74,7 +74,7 @@ async function dependencyCommits(github, repo, pull, commits) {
     !(
       generated.author?.id === pull.base.repo.owner.id ||
       (generated.author?.login === "github-actions[bot]" && generated.author.id === 41898282) ||
-      (generated.author?.login === "hindsight-release-automation[bot]" && generated.author.id === 329687231)
+      (generated.author?.login === "mickey-kras-release-automation[bot]" && generated.author.id === 329687231)
     ) ||
     !generated.commit.verification?.verified ||
     ![COMMIT_TITLE, LEGACY_COMMIT_TITLE].some(
