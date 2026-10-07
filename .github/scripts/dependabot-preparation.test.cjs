@@ -55,7 +55,7 @@ async function runPullRequestPolicy(github, event, core, trustedMainSha, policy)
 const bot = { login: "dependabot[bot]", id: 49699333 };
 const owner = { login: "owner", id: 100 };
 const actions = { login: "github-actions[bot]", id: 41898282 };
-const releaseApp = { login: "hindsight-release-automation[bot]", id: 329687231 };
+const releaseApp = { login: "mickey-kras-release-automation[bot]", id: 329687231 };
 const head = "a".repeat(40);
 const base = "b".repeat(40);
 const generated = "c".repeat(40);
