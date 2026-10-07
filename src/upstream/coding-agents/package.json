@@ -84,14 +84,14 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "@vectorize-io/hindsight-all": "^0.10.1",
+    "@vectorize-io/hindsight-all": "^0.10.2",
     "jsonc-parser": "^3.3.1",
     "smol-toml": "^1.9.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.33",
-    "@opencode/plugin": "^2.0.19",
+    "@opencode/plugin": "^2.0.20",
     "@opencode-ai/sdk": "^1.18.9",
     "@types/node": "22.20.4",
     "tsup": "^8.3.0",
