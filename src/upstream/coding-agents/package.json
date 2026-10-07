@@ -1,6 +1,6 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "repository": {
     "type": "git",
     "url": "https://github.com/mickey-kras/hindsight-memory-router-integrations.git",
@@ -84,19 +84,19 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "@vectorize-io/hindsight-all": "^0.10.1",
+    "@vectorize-io/hindsight-all": "^0.10.2",
     "jsonc-parser": "^3.3.1",
     "smol-toml": "^1.9.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.33",
+    "@opencode-ai/plugin": "^1.18.34",
     "@opencode/plugin": "^2.0.19",
     "@opencode-ai/sdk": "^1.18.9",
     "@types/node": "22.20.4",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.3"
   },
   "overrides": {
     "@opencode/plugin": {
