@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -89,6 +90,14 @@ class GitHubTracker:
         repository_owner: str,
         run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
+        contexts = (_required_env("SONAR_HOST_URL"), _required_env("SONAR_ADVERTISED_HOST_URL"))
+        private_values: set[str] = set()
+        for value in contexts:
+            parsed = urllib.parse.urlsplit(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname or any(c.isspace() for c in value):
+                raise RuntimeError("invalid private SonarQube context")
+            private_values.update((value.rstrip("/"), parsed.hostname))
+        self.private_values = sorted(private_values, key=len, reverse=True)
         self.repository_owner = repository_owner
         self.run = run
         result = self._run(
@@ -110,13 +119,20 @@ class GitHubTracker:
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self.run(args, check=True, capture_output=True, text=True)
 
+    def redact(self, value: str) -> str:
+        for private in self.private_values:
+            value = re.sub(re.escape(private), "[private SonarQube endpoint]", value, flags=re.IGNORECASE)
+        return value
+
     def upsert(self, finding: TrackedFinding) -> str:
-        marker = f"<!-- {ISSUE_MARKER_PREFIX}:{finding.key} -->"
-        body = f"{marker}\n{finding.body.rstrip()}\n"
+        original_marker = f"<!-- {ISSUE_MARKER_PREFIX}:{finding.key} -->"
+        marker = self.redact(original_marker)
+        body = self.redact(f"{original_marker}\n{finding.body.rstrip()}\n")
+        title = self.redact(finding.title)[:240]
         matches = [
             issue
             for issue in self.issues
-            if marker in str(issue.get("body") or "") and isinstance(issue.get("number"), int)
+            if (marker in str(issue.get("body") or "") or original_marker in str(issue.get("body") or "")) and isinstance(issue.get("number"), int)
         ]
         existing = max(matches, key=lambda issue: int(issue["number"])) if matches else None
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as body_file:
@@ -128,7 +144,7 @@ class GitHubTracker:
                     "issue",
                     "create",
                     "--title",
-                    finding.title,
+                    title,
                     "--body-file",
                     body_file.name,
                     "--assignee",
@@ -145,7 +161,7 @@ class GitHubTracker:
                 "edit",
                 number,
                 "--title",
-                finding.title,
+                title,
                 "--body-file",
                 body_file.name,
             )
@@ -208,20 +224,20 @@ def _clean(value: object, fallback: str) -> str:
 
 def _title(prefix: str, path: str, line: object, message: str) -> str:
     location = f"{path}:{line}" if line is not None else path
-    return f"[sonar] {prefix}: {location} — {message}"[:240]
+    return f"[sonar] {prefix}: {location} — {message}"
 
 
-def _run_context() -> tuple[str, str, str]:
+def _run_context() -> tuple[str, str]:
     commit = _required_env("GITHUB_SHA")
     run_url = (
         f"{_required_env('GITHUB_SERVER_URL')}/{_required_env('GITHUB_REPOSITORY')}"
         f"/actions/runs/{_required_env('GITHUB_RUN_ID')}"
     )
-    return commit, run_url, _required_env("SONAR_HOST_URL").rstrip("/")
+    return commit, run_url
 
 
 def issue_finding(issue: dict[str, Any], project_key: str) -> TrackedFinding:
-    commit, run_url, sonar_url = _run_context()
+    commit, run_url = _run_context()
     key = _clean(issue.get("key"), "unknown")
     path = _clean(_component_path(issue.get("component"), project_key), "unknown")
     line = issue.get("line")
@@ -229,19 +245,18 @@ def issue_finding(issue: dict[str, Any], project_key: str) -> TrackedFinding:
     issue_type = _clean(issue.get("type"), "Issue").replace("_", " ").title()
     severity = _clean(issue.get("severity") or _first_impact(issue, "severity"), "UNKNOWN")
     quality = _clean(_first_impact(issue, "softwareQuality"), issue_type).title()
-    link = f"{sonar_url}/project/issues?id={urllib.parse.quote(project_key)}&issues={urllib.parse.quote(key)}&open={urllib.parse.quote(key)}"
     return TrackedFinding(
         key=f"issue-{key}",
         title=_title(issue_type, path, line, message),
         body=(
             "SonarQube finding requires remediation.\n\n"
+            f"- Finding ID: `{key}`\n"
             f"- Type: `{issue_type}`\n"
             f"- Quality: `{quality}`\n"
             f"- Severity: `{severity}`\n"
             f"- Rule: `{_clean(issue.get('rule'), 'unknown')}`\n"
             f"- Location: `{path}:{line if line is not None else '?'}`\n"
             f"- Message: {message}\n"
-            f"- SonarQube: {link}\n"
             f"- Detected at commit: `{commit}`\n"
             f"- Workflow: {run_url}\n"
         ),
@@ -256,23 +271,22 @@ def _first_impact(issue: dict[str, Any], field: str) -> object | None:
 
 
 def hotspot_finding(hotspot: dict[str, Any], project_key: str) -> TrackedFinding:
-    commit, run_url, sonar_url = _run_context()
+    commit, run_url = _run_context()
     key = _clean(hotspot.get("key"), "unknown")
     path = _clean(_component_path(hotspot.get("component"), project_key), "unknown")
     line = hotspot.get("line")
     message = _clean(hotspot.get("message") or hotspot.get("ruleName"), "Review security hotspot")
     probability = _clean(hotspot.get("vulnerabilityProbability"), "UNKNOWN")
-    link = f"{sonar_url}/security_hotspots?id={urllib.parse.quote(project_key)}&hotspots={urllib.parse.quote(key)}"
     return TrackedFinding(
         key=f"hotspot-{key}",
         title=_title("Security hotspot", path, line, message),
         body=(
             "SonarQube security hotspot requires review.\n\n"
+            f"- Finding ID: `{key}`\n"
             f"- Probability: `{probability}`\n"
             f"- Category: `{_clean(hotspot.get('securityCategory'), 'unknown')}`\n"
             f"- Location: `{path}:{line if line is not None else '?'}`\n"
             f"- Message: {message}\n"
-            f"- SonarQube: {link}\n"
             f"- Detected at commit: `{commit}`\n"
             f"- Workflow: {run_url}\n"
         ),
@@ -280,20 +294,19 @@ def hotspot_finding(hotspot: dict[str, Any], project_key: str) -> TrackedFinding
 
 
 def condition_finding(condition: dict[str, Any], project_key: str) -> TrackedFinding:
-    commit, run_url, sonar_url = _run_context()
+    commit, run_url = _run_context()
     metric = _clean(condition.get("metricKey"), "unknown")
     actual = _clean(condition.get("actualValue"), "n/a")
     comparator = _clean(condition.get("comparator"), "n/a")
     threshold = _clean(condition.get("errorThreshold"), "n/a")
     return TrackedFinding(
         key=f"condition-{metric}",
-        title=f"[sonar] Quality gate: {metric} failed ({actual}; threshold {threshold})"[:240],
+        title=f"[sonar] Quality gate: {metric} failed ({actual}; threshold {threshold})",
         body=(
             "SonarQube quality-gate metric requires improvement.\n\n"
             f"- Metric: `{metric}`\n"
             f"- Actual: `{actual}`\n"
             f"- Failure condition: actual `{comparator}` threshold `{threshold}`\n"
-            f"- SonarQube: {sonar_url}/dashboard?id={urllib.parse.quote(project_key)}\n"
             f"- Detected at commit: `{commit}`\n"
             f"- Workflow: {run_url}\n"
         ),
@@ -332,6 +345,7 @@ def tracked_findings(
 
 
 def main() -> int:
+    tracker = GitHubTracker(_required_env("GITHUB_REPOSITORY_OWNER"))
     report = Path(sys.argv[1] if len(sys.argv) > 1 else ".scannerwork/report-task.txt")
     client = SonarClient(_required_env("SONAR_HOST_URL"), _required_env("SONAR_TOKEN"))
     task = client.get("/api/ce/task", id=_report_value(report, "ceTaskId"))
@@ -367,7 +381,6 @@ def main() -> int:
     )
     if not findings:
         raise RuntimeError("quality gate failed but SonarQube returned no actionable findings")
-    tracker = GitHubTracker(_required_env("GITHUB_REPOSITORY_OWNER"))
     references = [tracker.upsert(finding) for finding in findings]
     print(f"Synchronized {len(findings)} SonarQube finding(s): {', '.join(references)}")
     return 0
@@ -379,4 +392,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"SonarQube finding sync failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
-
