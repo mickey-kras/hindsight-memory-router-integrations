@@ -27,6 +27,80 @@ sync = load_sync_module()
 
 
 class SonarFindingSyncTests(unittest.TestCase):
+    def test_public_finding_bodies_preserve_diagnostics_without_server_links(
+        self,
+    ) -> None:
+        for configured_server in ("https://sonar.example/private", None):
+            with (
+                self.subTest(configured_server=configured_server),
+                patch.dict(os.environ),
+            ):
+                if configured_server is None:
+                    os.environ.pop("SONAR_HOST_URL", None)
+                else:
+                    os.environ["SONAR_HOST_URL"] = configured_server
+                findings = [
+                    sync.issue_finding(
+                        {
+                            "key": "issue-1",
+                            "component": "project:src/app.py",
+                            "line": 7,
+                            "message": "Refactor this function",
+                            "rule": "python:S3776",
+                        },
+                        "project",
+                    ),
+                    sync.hotspot_finding(
+                        {
+                            "key": "hotspot-1",
+                            "component": "project:src/app.py",
+                            "line": 8,
+                            "message": "Review this expression",
+                            "securityCategory": "dos",
+                            "vulnerabilityProbability": "HIGH",
+                        },
+                        "project",
+                    ),
+                    sync.condition_finding(
+                        {
+                            "metricKey": "new_coverage",
+                            "actualValue": "79",
+                            "comparator": "LT",
+                            "errorThreshold": "80",
+                        },
+                        "project",
+                    ),
+                ]
+                for finding in findings:
+                    self.assertNotIn("sonar.example", finding.body)
+                    self.assertNotIn("- SonarQube:", finding.body)
+                    self.assertIn("Detected at commit: `abc123`", finding.body)
+                    self.assertIn(
+                        "Workflow: https://github.com/owner/repo/actions/runs/42",
+                        finding.body,
+                    )
+                for text in (
+                    "Finding ID: `issue-1`",
+                    "Rule: `python:S3776`",
+                    "Location: `src/app.py:7`",
+                    "Refactor this function",
+                ):
+                    self.assertIn(text, findings[0].body)
+                for text in (
+                    "Finding ID: `hotspot-1`",
+                    "Location: `src/app.py:8`",
+                    "Review this expression",
+                    "Category: `dos`",
+                    "Probability: `HIGH`",
+                ):
+                    self.assertIn(text, findings[1].body)
+                for text in (
+                    "Metric: `new_coverage`",
+                    "Actual: `79`",
+                    "actual `LT` threshold `80`",
+                ):
+                    self.assertIn(text, findings[2].body)
+
     def setUp(self) -> None:
         self.environment = patch.dict(
             os.environ,
@@ -36,6 +110,7 @@ class SonarFindingSyncTests(unittest.TestCase):
                 "GITHUB_REPOSITORY": "owner/repo",
                 "GITHUB_RUN_ID": "42",
                 "SONAR_HOST_URL": "https://sonar.example",
+                "SONAR_ADVERTISED_HOST_URL": "https://advertised.example",
             },
         )
         self.environment.start()
@@ -118,7 +193,9 @@ class SonarFindingSyncTests(unittest.TestCase):
     def test_forbidden_issue_api_preserves_failed_category(self) -> None:
         gate = {
             "projectStatus": {
-                "conditions": [{"status": "ERROR", "metricKey": "new_reliability_rating"}]
+                "conditions": [
+                    {"status": "ERROR", "metricKey": "new_reliability_rating"}
+                ]
             }
         }
 
@@ -130,13 +207,17 @@ class SonarFindingSyncTests(unittest.TestCase):
             issues_forbidden=True,
         )
 
-        self.assertEqual([finding.key for finding in findings], ["condition-new_reliability_rating"])
+        self.assertEqual(
+            [finding.key for finding in findings], ["condition-new_reliability_rating"]
+        )
 
     def test_optional_page_falls_back_only_for_forbidden(self) -> None:
         class Client:
             @staticmethod
             def paged(*_: object, **__: object) -> list[dict[str, object]]:
-                raise urllib.error.HTTPError("https://sonar.example", 403, "Forbidden", {}, None)
+                raise urllib.error.HTTPError(
+                    "https://sonar.example", 403, "Forbidden", {}, None
+                )
 
         result = sync.optional_paged(Client(), "/api/issues/search", "issues")
 
@@ -147,7 +228,9 @@ class SonarFindingSyncTests(unittest.TestCase):
         class Client:
             @staticmethod
             def paged(*_: object, **__: object) -> list[dict[str, object]]:
-                raise urllib.error.HTTPError("https://sonar.example", 500, "Failure", {}, None)
+                raise urllib.error.HTTPError(
+                    "https://sonar.example", 500, "Failure", {}, None
+                )
 
         with self.assertRaises(urllib.error.HTTPError):
             sync.optional_paged(Client(), "/api/issues/search", "issues")
@@ -177,7 +260,9 @@ class SonarFindingSyncTests(unittest.TestCase):
 
         self.assertEqual(reference, "#180")
         self.assertIn(("gh", "issue", "reopen", "180"), calls)
-        self.assertTrue(any(call[:4] == ("gh", "issue", "edit", "180") for call in calls))
+        self.assertTrue(
+            any(call[:4] == ("gh", "issue", "edit", "180") for call in calls)
+        )
         self.assertFalse(any(call[:3] == ("gh", "issue", "create") for call in calls))
 
 
