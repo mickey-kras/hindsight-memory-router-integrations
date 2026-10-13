@@ -1,12 +1,12 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-mcp",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@mickey-kras/hindsight-memory-router-mcp",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "license": "MIT",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.32.1",
