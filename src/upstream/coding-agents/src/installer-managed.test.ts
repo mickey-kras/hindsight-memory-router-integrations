@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { InstallTransaction } from "./install-transaction";
@@ -164,6 +164,34 @@ describe("operator-managed installation", () => {
     expect(failAdapter).not.toHaveBeenCalled();
     expect(existsSync(join(ctx.home, ".cursor/hooks.json"))).toBe(false);
     expect(messages).toHaveLength(1);
+  });
+  it.each([
+    ".hindsight/coding-agents/package.json",
+    ".cursor/skills/hindsight-coding-agent/SKILL.md",
+  ])("refuses hardlinked destination files at %s before mutation", (relativePath) => {
+    provision(["cursor-cli", "claude-code"]);
+    const external = join(root, "external-hardlink-target"); put(external, "external original");
+    const destination = join(ctx.home, relativePath);
+    mkdirSync(dirname(destination), { recursive: true }); linkSync(external, destination);
+    const runtime = join(ctx.home, ".hindsight/coding-agents/dist/installer.js");
+    put(runtime, "previous runtime");
+    const failAdapter = vi.spyOn(INSTALLERS.find((installer) => installer.name === "claude-code")!, "install")
+      .mockImplementation(() => false);
+    expect(run(["install", "cursor-cli", "claude-code"], ctx)).toBe(1);
+    expect(readFileSync(external, "utf8")).toBe("external original");
+    expect(readFileSync(runtime, "utf8")).toBe("previous runtime");
+    expect(failAdapter).not.toHaveBeenCalled();
+    expect(existsSync(join(ctx.home, ".cursor/hooks.json"))).toBe(false);
+    expect(messages).toHaveLength(1);
+  });
+  it.each(["package.json", "skill/SKILL.md"])("copies hardlinked source %s into independent destination files", (relativePath) => {
+    provision(["cursor-cli"]);
+    const source = join(ctx.pkgRoot, relativePath);
+    const original = readFileSync(source, "utf8");
+    const external = join(root, "external-source-hardlink"); put(external, original);
+    rmSync(source); linkSync(external, source);
+    expect(run(["install", "cursor-cli"], ctx)).toBe(0);
+    expect(readFileSync(external, "utf8")).toBe(original);
   });
   it("rejects packaged skill links before copying them into writable destinations", () => {
     provision(["cursor-cli"]);

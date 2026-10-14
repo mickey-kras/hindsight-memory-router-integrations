@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 
 /** Copy/write operations must not follow links outside their snapshotted tree. */
-export function assertUnlinkedTree(path: string): void {
+export function assertUnlinkedTree(path: string, rejectHardLinks = false): void {
   const pending = [path];
   while (pending.length) {
     const entry = pending.pop()!;
@@ -13,6 +13,9 @@ export function assertUnlinkedTree(path: string): void {
       throw error;
     }
     if (stat.isSymbolicLink()) throw new Error("linked install path");
+    // A write to one hard-link alias also changes every other alias, outside rollback's scope.
+    // Source files are read/copied into fresh inodes, so only destination scans need this check.
+    if (rejectHardLinks && stat.isFile() && stat.nlink > 1) throw new Error("shared install file");
     if (stat.isDirectory()) {
       for (const child of readdirSync(entry)) pending.push(join(entry, child));
     }
@@ -38,7 +41,7 @@ export class InstallTransaction {
           if (next === ancestor) break;
           ancestor = next;
         }
-        assertUnlinkedTree(path);
+        assertUnlinkedTree(path, true);
         let parent = dirname(path);
         while (!existsSync(parent)) {
           this.missingParents.add(parent);

@@ -2,7 +2,7 @@ export class ToolPrefixError extends Error {}
 
 export const DEFAULT_TOOL_PREFIX = "hindsight_";
 const PREFIX_PATTERN = /^[a-z][a-z0-9_]*_$/;
-const TOOL_SUFFIXES = [
+export const TOOL_SUFFIXES = [
   "retain",
   "recall",
   "list_pages",

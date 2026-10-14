@@ -221,6 +221,8 @@ describe("managed tool namespace usage", () => {
   it.each([
     ["search_", "search_knowledge_pages"],
     ["read_", "read_knowledge_page"],
+    ["hindsight_search_", "search_knowledge_pages"],
+    ["hindsight_read_", "read_knowledge_page"],
   ])("preserves historical names when %s overlaps a tool suffix", (prefix, suffix) => {
     const canonical = `hindsight_${suffix}`;
     const turns = [
@@ -246,6 +248,19 @@ describe("managed tool namespace usage", () => {
     });
   });
 
+  it.each([
+    ["hindsight_ingest_", "ingest_document"],
+    ["hindsight_read_", "read_bank_config"],
+    ["hindsight_capture_", "capture_initiative"],
+  ])("resolves known write and context suffixes for %s", (prefix, suffix) => {
+    const canonical = `hindsight_${suffix}`;
+    expect(summarizeTurns([
+      t("user", "check"),
+      t("action", `${canonical} {}`),
+      t("action", `mcp__hindsight__${prefix}${suffix} {}`),
+      t("action", `${prefix}unsupported_tool {}`),
+    ], prefix)).toEqual([{ turn: 1, calls: [canonical, canonical], credited: false }]);
+  });
   it("normalizes bare, host-prefixed and historical retrieval names", () => {
     expect(summarizeTurns([
       t("user", "question"),

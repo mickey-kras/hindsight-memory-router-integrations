@@ -19,7 +19,7 @@
  * Local only — nothing here is sent anywhere. Fail-open throughout.
  */
 import { readFileSync } from "node:fs";
-import { DEFAULT_TOOL_PREFIX, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
+import { DEFAULT_TOOL_PREFIX, TOOL_SUFFIXES, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
 import { join } from "node:path";
 import type { TransportTurn } from "./chat";
 import { appendLogLine, logsDir } from "./log";
@@ -28,11 +28,13 @@ export function usageFilePath(): string {
   return process.env.HINDSIGHT_USAGE_FILE || join(logsDir(), "usage.jsonl");
 }
 
+const KNOWN_TOOL_SUFFIXES = new Set(TOOL_SUFFIXES);
+
 // Store canonical names so historical default records and custom namespaces aggregate together.
 function canonicalToolName(hostName: string, prefix: string): string | undefined {
   for (const namespace of new Set([validatedToolPrefix(prefix), DEFAULT_TOOL_PREFIX])) {
     const match = hostName.match(new RegExp("(?:^|__|\\.)" + namespace + "((?:[a-z]+_)*[a-z]+)$"));
-    if (match) return DEFAULT_TOOL_PREFIX + match[1];
+    if (match && KNOWN_TOOL_SUFFIXES.has(match[1])) return DEFAULT_TOOL_PREFIX + match[1];
   }
   return undefined;
 }

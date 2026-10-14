@@ -8439,10 +8439,10 @@ index a871d70..9d4c9b2 100644
    for (const line of body.split("\n")) {
      const trimmed = line.trim();
 diff --git a/src/core/usage.test.ts b/src/core/usage.test.ts
-index da0d378..575b6fb 100644
+index da0d378..ce3b6b6 100644
 --- a/src/core/usage.test.ts
 +++ b/src/core/usage.test.ts
-@@ -215,3 +215,58 @@ describe("readUsage", () => {
+@@ -215,3 +215,73 @@ describe("readUsage", () => {
      );
    });
  });
@@ -8452,6 +8452,8 @@ index da0d378..575b6fb 100644
 +  it.each([
 +    ["search_", "search_knowledge_pages"],
 +    ["read_", "read_knowledge_page"],
++    ["hindsight_search_", "search_knowledge_pages"],
++    ["hindsight_read_", "read_knowledge_page"],
 +  ])("preserves historical names when %s overlaps a tool suffix", (prefix, suffix) => {
 +    const canonical = `hindsight_${suffix}`;
 +    const turns = [
@@ -8477,6 +8479,19 @@ index da0d378..575b6fb 100644
 +    });
 +  });
 +
++  it.each([
++    ["hindsight_ingest_", "ingest_document"],
++    ["hindsight_read_", "read_bank_config"],
++    ["hindsight_capture_", "capture_initiative"],
++  ])("resolves known write and context suffixes for %s", (prefix, suffix) => {
++    const canonical = `hindsight_${suffix}`;
++    expect(summarizeTurns([
++      t("user", "check"),
++      t("action", `${canonical} {}`),
++      t("action", `mcp__hindsight__${prefix}${suffix} {}`),
++      t("action", `${prefix}unsupported_tool {}`),
++    ], prefix)).toEqual([{ turn: 1, calls: [canonical, canonical], credited: false }]);
++  });
 +  it("normalizes bare, host-prefixed and historical retrieval names", () => {
 +    expect(summarizeTurns([
 +      t("user", "question"),
@@ -8502,18 +8517,18 @@ index da0d378..575b6fb 100644
 +  });
 +});
 diff --git a/src/core/usage.ts b/src/core/usage.ts
-index b8d33d1..be840f9 100644
+index b8d33d1..695472f 100644
 --- a/src/core/usage.ts
 +++ b/src/core/usage.ts
 @@ -19,6 +19,7 @@
   * Local only — nothing here is sent anywhere. Fail-open throughout.
   */
  import { readFileSync } from "node:fs";
-+import { DEFAULT_TOOL_PREFIX, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
++import { DEFAULT_TOOL_PREFIX, TOOL_SUFFIXES, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
  import { join } from "node:path";
  import type { TransportTurn } from "./chat";
  import { appendLogLine, logsDir } from "./log";
-@@ -27,10 +28,14 @@ export function usageFilePath(): string {
+@@ -27,10 +28,16 @@ export function usageFilePath(): string {
    return process.env.HINDSIGHT_USAGE_FILE || join(logsDir(), "usage.jsonl");
  }
  
@@ -8521,18 +8536,20 @@ index b8d33d1..be840f9 100644
 - *  (`mcp__hindsight__hindsight_reflect`, `hindsight.hindsight_reflect`, bare `hindsight_reflect`).
 - *  Each segment needs a letter, so `hindsight__hindsight_reflect` cannot match from the first one. */
 -const HINDSIGHT_TOOL_RE = /hindsight_(?:[a-z]+_)*[a-z]+$/;
++const KNOWN_TOOL_SUFFIXES = new Set(TOOL_SUFFIXES);
++
 +// Store canonical names so historical default records and custom namespaces aggregate together.
 +function canonicalToolName(hostName: string, prefix: string): string | undefined {
 +  for (const namespace of new Set([validatedToolPrefix(prefix), DEFAULT_TOOL_PREFIX])) {
 +    const match = hostName.match(new RegExp("(?:^|__|\\.)" + namespace + "((?:[a-z]+_)*[a-z]+)$"));
-+    if (match) return DEFAULT_TOOL_PREFIX + match[1];
++    if (match && KNOWN_TOOL_SUFFIXES.has(match[1])) return DEFAULT_TOOL_PREFIX + match[1];
 +  }
 +  return undefined;
 +}
  
  /** The credit line the injected tool guide prescribes (core/knowledge-injection.ts). */
  const CREDIT_RE = /from hindsight memory/i;
-@@ -60,7 +65,7 @@ export interface TurnUsage {
+@@ -60,7 +67,7 @@ export interface TurnUsage {
  
  /** Split a transcript into user turns: each `user` turn opens one, and everything up to the next
   *  belongs to it. Anything before the first user turn (a system preamble) belongs to none. */
@@ -8541,7 +8558,7 @@ index b8d33d1..be840f9 100644
    const out: TurnUsage[] = [];
    for (const t of turns) {
      if (t.role === "user") {
-@@ -70,7 +75,7 @@ export function summarizeTurns(turns: TransportTurn[]): TurnUsage[] {
+@@ -70,7 +77,7 @@ export function summarizeTurns(turns: TransportTurn[]): TurnUsage[] {
      const current = out.at(-1);
      if (!current) continue;
      if (t.role === "action") {
@@ -8550,7 +8567,7 @@ index b8d33d1..be840f9 100644
        if (tool) current.calls.push(tool);
      } else if (ASSISTANT_ROLES.has(t.role) && CREDIT_RE.test(t.content)) {
        current.credited = true;
-@@ -105,6 +110,7 @@ export function recordUsage(args: {
+@@ -105,6 +112,7 @@ export function recordUsage(args: {
    harness: string;
    sessionId: string;
    bankId: string;
@@ -8558,7 +8575,7 @@ index b8d33d1..be840f9 100644
    turns: TransportTurn[];
    cursors: UsageCursorStore;
    lastTurnComplete: boolean;
-@@ -127,7 +133,7 @@ export function recordUsage(args: {
+@@ -127,7 +135,7 @@ export function recordUsage(args: {
     */
    reviseLastTurn?: boolean;
  }): void {
@@ -9027,16 +9044,16 @@ index d3e9f9c..0fc4996 100644
  process.exit(result.ok ? 0 : 1);
 diff --git a/src/install-transaction.ts b/src/install-transaction.ts
 new file mode 100644
-index 0000000..e470933
+index 0000000..6bbbbdc
 --- /dev/null
 +++ b/src/install-transaction.ts
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,89 @@
 +import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { dirname, join, resolve, sep } from "node:path";
 +
 +/** Copy/write operations must not follow links outside their snapshotted tree. */
-+export function assertUnlinkedTree(path: string): void {
++export function assertUnlinkedTree(path: string, rejectHardLinks = false): void {
 +  const pending = [path];
 +  while (pending.length) {
 +    const entry = pending.pop()!;
@@ -9046,6 +9063,9 @@ index 0000000..e470933
 +      throw error;
 +    }
 +    if (stat.isSymbolicLink()) throw new Error("linked install path");
++    // A write to one hard-link alias also changes every other alias, outside rollback's scope.
++    // Source files are read/copied into fresh inodes, so only destination scans need this check.
++    if (rejectHardLinks && stat.isFile() && stat.nlink > 1) throw new Error("shared install file");
 +    if (stat.isDirectory()) {
 +      for (const child of readdirSync(entry)) pending.push(join(entry, child));
 +    }
@@ -9071,7 +9091,7 @@ index 0000000..e470933
 +          if (next === ancestor) break;
 +          ancestor = next;
 +        }
-+        assertUnlinkedTree(path);
++        assertUnlinkedTree(path, true);
 +        let parent = dirname(path);
 +        while (!existsSync(parent)) {
 +          this.missingParents.add(parent);
@@ -9141,12 +9161,12 @@ index 8f2445d..c114505 100644
        // A message that begins indented is detail for the previous one (e.g. the re-run command a
 diff --git a/src/installer-managed.test.ts b/src/installer-managed.test.ts
 new file mode 100644
-index 0000000..7aebdbb
+index 0000000..887b6ae
 --- /dev/null
 +++ b/src/installer-managed.test.ts
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,225 @@
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
++import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { dirname, join } from "node:path";
 +import { InstallTransaction } from "./install-transaction";
@@ -9311,6 +9331,34 @@ index 0000000..7aebdbb
 +    expect(failAdapter).not.toHaveBeenCalled();
 +    expect(existsSync(join(ctx.home, ".cursor/hooks.json"))).toBe(false);
 +    expect(messages).toHaveLength(1);
++  });
++  it.each([
++    ".hindsight/coding-agents/package.json",
++    ".cursor/skills/hindsight-coding-agent/SKILL.md",
++  ])("refuses hardlinked destination files at %s before mutation", (relativePath) => {
++    provision(["cursor-cli", "claude-code"]);
++    const external = join(root, "external-hardlink-target"); put(external, "external original");
++    const destination = join(ctx.home, relativePath);
++    mkdirSync(dirname(destination), { recursive: true }); linkSync(external, destination);
++    const runtime = join(ctx.home, ".hindsight/coding-agents/dist/installer.js");
++    put(runtime, "previous runtime");
++    const failAdapter = vi.spyOn(INSTALLERS.find((installer) => installer.name === "claude-code")!, "install")
++      .mockImplementation(() => false);
++    expect(run(["install", "cursor-cli", "claude-code"], ctx)).toBe(1);
++    expect(readFileSync(external, "utf8")).toBe("external original");
++    expect(readFileSync(runtime, "utf8")).toBe("previous runtime");
++    expect(failAdapter).not.toHaveBeenCalled();
++    expect(existsSync(join(ctx.home, ".cursor/hooks.json"))).toBe(false);
++    expect(messages).toHaveLength(1);
++  });
++  it.each(["package.json", "skill/SKILL.md"])("copies hardlinked source %s into independent destination files", (relativePath) => {
++    provision(["cursor-cli"]);
++    const source = join(ctx.pkgRoot, relativePath);
++    const original = readFileSync(source, "utf8");
++    const external = join(root, "external-source-hardlink"); put(external, original);
++    rmSync(source); linkSync(external, source);
++    expect(run(["install", "cursor-cli"], ctx)).toBe(0);
++    expect(readFileSync(external, "utf8")).toBe(original);
 +  });
 +  it("rejects packaged skill links before copying them into writable destinations", () => {
 +    provision(["cursor-cli"]);
