@@ -1219,3 +1219,134 @@ it.each([undefined, "abc_"])("brands MCP startup failure after configuration ini
   expect(result.stderr).toContain(`${prefix ? "abc" : "hindsight"} mcp-server failed:`);
   expect(result.stderr).toContain("startup test failure");
 });
+
+function packagedGrok() {
+  const dir = setup();
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+  const configPath = join(dir, "grok-managed.json");
+  const normalPath = join(dir, "grok-normal.json");
+  const principal = {
+    tokenEnv: "UPSTREAM_TEST_TOKEN",
+    writeBank: "A",
+    additionalReadBanks: ["B"],
+    mapPathToBank: { [dir]: "A" },
+  };
+  const config = { routerUrl: "https://router.example.test", principals: { "grok-build": principal } };
+  writeFileSync(configPath, JSON.stringify(config));
+  writeFileSync(normalPath, JSON.stringify({ autoInject: "reflect", autoSeed: false, retainSessions: false }));
+  const requestsPath = join(dir, "grok-requests.json");
+  const entry = join(dir, "package/dist/grok-hook.js");
+  const launch = `
+    const fs = require('node:fs');
+    const Module = require('node:module');
+    const nativeLoad = Module._load;
+    Module._load = function(request, ...args) {
+      if (request === '@napi-rs/keyring') return { Entry: class {
+        getPassword() { return JSON.stringify({
+          token: 'mrh_' + 'a'.repeat(32) + '_' + 'b'.repeat(64),
+          principal_id: process.env.GROK_TEST_PRINCIPAL || 'human-first',
+          expires_at: Math.floor(Date.now()/1000) + 300,
+          routerUrl: 'https://router.example.test'
+        }); }
+      }};
+      return Reflect.apply(nativeLoad, this, [request, ...args]);
+    };
+    const requests = [];
+    globalThis.fetch = async (url) => {
+      requests.push(String(url));
+      if (String(url).includes('/banks/B/documents') && process.env.GROK_TEST_DENY_STATUS)
+        return new Response('SECRET_ERROR_BODY', { status: Number(process.env.GROK_TEST_DENY_STATUS) });
+      if (String(url).endsWith('/reflect'))
+        return Response.json({ text: String(url).includes('/banks/B/') ? 'SECRET_READ_BANK_MARKER' : 'PUBLIC_MARKER' });
+      return Response.json({ items: [], roots: [] });
+    };
+    process.on('exit', () => fs.writeFileSync(${JSON.stringify(requestsPath)}, JSON.stringify(requests)));
+    import(process.env.GROK_TEST_SESSION_START ? ${JSON.stringify(join(dir, "package/dist/grok-sessionstart-hook.js"))} : ${JSON.stringify(entry)});
+  `;
+  const invoke = (tool: boolean, overrides: NodeJS.ProcessEnv = {}) => {
+    const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", launch], {
+      cwd: dir,
+      input: JSON.stringify({
+        cwd: dir,
+        sessionId: "packaged-grok-session",
+        ...(tool ? { hookEventName: "post_tool_use" } : { prompt: "Explain the recorded decisions" }),
+      }),
+      env: {
+        ...process.env,
+        HINDSIGHT_ROUTER_CONFIG: configPath,
+        HINDSIGHT_CONFIG: normalPath,
+        UPSTREAM_TEST_TOKEN: token,
+        TMPDIR: dir,
+        ...overrides,
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    return { ...result, requests: JSON.parse(readFileSync(requestsPath, "utf8")) as string[] };
+  };
+  return { dir, configPath, config, invoke };
+}
+
+it("the packaged Grok hook consumes aggregated context once after authorizing every contributing bank", () => {
+  const { invoke } = packagedGrok();
+  expect(invoke(false, { GROK_TEST_SESSION_START: "1" }).status).toBe(0);
+  expect(invoke(false).status).toBe(0);
+  const delivered = invoke(true);
+  expect(delivered.status, delivered.stderr).toBe(0);
+  expect(JSON.parse(delivered.stdout).hookSpecificOutput.additionalContext).toContain("SECRET_READ_BANK_MARKER");
+  expect(delivered.requests).toEqual([
+    "https://router.example.test/v1/default/banks/A/documents?limit=1",
+    "https://router.example.test/v1/default/banks/B/documents?limit=1",
+  ]);
+  const next = invoke(true);
+  expect(next.stdout).toBe("");
+  expect(next.requests).toEqual([]);
+}, 15_000);
+it.each(["missing-token", "bank-remap", "read-bank-removal"])(
+  "the packaged Grok hook refuses a %s handoff",
+  (change) => {
+    const { configPath, config, invoke } = packagedGrok();
+    expect(invoke(false).status).toBe(0);
+    if (change === "bank-remap")
+      config.principals["grok-build"].mapPathToBank = Object.fromEntries(
+        Object.keys(config.principals["grok-build"].mapPathToBank).map((path) => [path, "B"]),
+      );
+    if (change === "read-bank-removal") config.principals["grok-build"].additionalReadBanks = [];
+    writeFileSync(configPath, JSON.stringify(config));
+    const result = invoke(true, change === "missing-token" ? { UPSTREAM_TEST_TOKEN: "" } : {});
+    expect(result.stdout).toBe("");
+    expect(result.stdout + result.stderr).not.toContain("SECRET_READ_BANK_MARKER");
+    expect(result.requests).toEqual([]);
+    expect(result.status).toBe(change === "missing-token" ? 1 : 0);
+  },
+  15_000,
+);
+it.each([401, 403])(
+  "the packaged Grok hook rejects additional-bank HTTP %s and discards the pending context",
+  (status) => {
+    const { invoke } = packagedGrok();
+    expect(invoke(false).status).toBe(0);
+    const denied = invoke(true, { GROK_TEST_DENY_STATUS: String(status) });
+    expect(denied.status).toBe(1);
+    expect(denied.stdout + denied.stderr).not.toContain("SECRET_READ_BANK_MARKER");
+    expect(denied.stdout + denied.stderr).not.toContain("SECRET_ERROR_BODY");
+    expect(denied.requests).toHaveLength(2);
+    const next = invoke(true);
+    expect(next.stdout).toBe("");
+    expect(next.requests).toEqual([]);
+  },
+  15_000,
+);
+it("the packaged Grok hook rejects a changed effective human principal with the same credential reference", () => {
+  const { configPath, config, invoke } = packagedGrok();
+  const principal = config.principals["grok-build"] as Record<string, unknown>;
+  delete principal.tokenEnv;
+  principal.human = { credentialRef: "person" };
+  writeFileSync(configPath, JSON.stringify(config));
+  const seeded = invoke(false, { GROK_TEST_PRINCIPAL: "human-first" });
+  expect(seeded.status, seeded.stderr).toBe(0);
+  const changed = invoke(true, { GROK_TEST_PRINCIPAL: "human-second" });
+  expect(changed.status, changed.stderr).toBe(0);
+  expect(changed.stdout).toBe("");
+  expect(changed.requests).toEqual([]);
+}, 15_000);

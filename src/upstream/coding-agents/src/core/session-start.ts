@@ -1,3 +1,5 @@
+import { AccessDeniedError } from "@memory-router/shared/bank-access";
+import { managedReadScope } from "@memory-router/coding-agents/runtime";
 import { renderBrandText, toolBrand } from "@memory-router/shared/tool-prefix";
 /**
  * Shared `SessionStart` lifecycle: deterministically auto-seeds a cold repo's bank from its git
@@ -49,6 +51,7 @@ import {
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
+  readScope?(): { identity: string; banks: string[]; endpoint: string; bankId: string };
   listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
   // Optional: lets the git note see a git-log document written at a commit HEAD is behind
   // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
@@ -104,7 +107,7 @@ async function gitSyncNote(args: {
   if (mode === "none" || cold) return undefined;
   const head = gitHeadSha(cwd);
   if (!head) return undefined;
-  const gitlogCurrent = await gitLogIsCurrent(client, cwd, head).catch(() => undefined);
+  const gitlogCurrent = await gitLogIsCurrent(client, cwd, head).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
   if (gitlogCurrent === undefined) return undefined; // server hiccup: say nothing rather than guess
   if (mode === "message") return gitlogCurrent ? "git in sync" : "catching up on new commits";
   // full: deepening progress = per-commit docs vs the recent-history target
@@ -239,7 +242,8 @@ export async function buildSessionStartContext(args: {
         let docIds: Set<string> | undefined;
         try {
           docIds = await client.listDocumentIds("source:git", "all_strict");
-        } catch {
+        } catch (error) {
+          if (error instanceof AccessDeniedError) throw error;
           docIds = undefined; // server unreachable: transient — do nothing, try again next session
         }
 
@@ -252,7 +256,7 @@ export async function buildSessionStartContext(args: {
         if (docIds?.size === 0) {
           baselines = await client
             .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
-            .catch(() => undefined);
+            .catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
         }
         cold = docIds !== undefined ? docIds.size === 0 && !baselines?.size : undefined;
         gitDocIds = docIds;
@@ -263,7 +267,7 @@ export async function buildSessionStartContext(args: {
         if (cold === true && client.hasDocuments) {
           bankEmpty = await client.hasDocuments().then(
             (has) => !has,
-            () => false
+            (error) => { if (error instanceof AccessDeniedError) throw error; return false; }
           );
         }
         if (docIds !== undefined) {
@@ -303,7 +307,7 @@ export async function buildSessionStartContext(args: {
                 baselines ??
                 (await client
                   .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
-                  .catch(() => new Set<string>()));
+                  .catch((error) => { if (error instanceof AccessDeniedError) throw error; return new Set<string>(); }));
               const counts: number[] = [];
               for (const id of markers) {
                 if (!id.startsWith(SURVEY_BASELINE_PREFIX)) continue;
@@ -315,7 +319,7 @@ export async function buildSessionStartContext(args: {
               // CLI on PATH, budget kill) — the marker alone must not suppress retries forever.
               const uploads = await client
                 .listDocumentIds("source:upload", "all_strict")
-                .catch(() => new Set<string>());
+                .catch((error) => { if (error instanceof AccessDeniedError) throw error; return new Set<string>(); });
               const findingsAbsent =
                 counts.length > 0 && !SURVEY_DOC_IDS.some((id) => uploads.has(id));
               if ((sinceLast !== null && sinceLast >= cfg.surveyRefreshCommits) || findingsAbsent) {
@@ -345,7 +349,8 @@ export async function buildSessionStartContext(args: {
   let pages: PageRef[] = [];
   try {
     pages = parsePageList(await client.listPages());
-  } catch {
+  } catch (error) {
+    if (error instanceof AccessDeniedError) throw error;
     if (client.knowledgePagesSupported === false) {
       diag(harness, "knowledge_pages_unavailable", { bank: bankId });
     }
@@ -371,7 +376,7 @@ export async function buildSessionStartContext(args: {
       gitIds: gitDocIds,
       mode: cfg.gitIngest,
       cold: cold === true,
-    }).catch(() => undefined);
+    }).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
   }
   systemMessage = buildSeedBanner(bankId, cold === true, gitNote, cfg.toolPrefix);
 
@@ -447,6 +452,7 @@ export async function runSessionStartHook(
       observationScopes: cfg.observationScopes,
     });
 
+    const handoffScope = spec.deferContextToToolHook && sessionId ? (client.readScope?.() ?? managedReadScope(cfg.routerHarness, cwd)) : undefined;
     const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
     // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
     // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
@@ -455,8 +461,13 @@ export async function runSessionStartHook(
     if (out.deferInitialReflect && sessionId) {
       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
     }
-    if (spec.deferContextToToolHook && out.additionalContext && sessionId) {
-      stashPendingContext(harness, pendingContextKey(cfg.apiUrl, bankId, cwd, sessionId), out.additionalContext);
+    if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
+      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, cwd, sessionId, handoffScope);
+      const current = managedReadScope(cfg.routerHarness, cwd);
+      const clientScope = client.readScope?.() ?? current;
+      if (pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key ||
+          pendingContextKey(clientScope.endpoint, clientScope.bankId, cwd, sessionId, clientScope) !== key) return;
+      stashPendingContext(harness, key, out.additionalContext);
       out.additionalContext = undefined;
     }
     // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.

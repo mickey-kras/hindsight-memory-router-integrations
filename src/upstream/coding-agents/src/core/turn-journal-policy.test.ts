@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { runSessionStartHook } from "./session-start";
+import * as humanSession from "@memory-router/coding-agents/human-session";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -221,6 +223,114 @@ describe("one-time tool-hook handoff authorization", () => {
     input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
     await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
     expect(out).not.toHaveBeenCalled();
+  });
+
+  it("refuses a handoff when an additional read bank is removed from managed scope", async () => {
+    await runHook(hook, clients().makePrompt);
+    const config = JSON.parse(readFileSync(managedPath, "utf8"));
+    config.principals.zcode.additionalReadBanks = ["A"];
+    writeFileSync(managedPath, JSON.stringify(config));
+    const out = vi.mocked(process.stdout.write); out.mockClear();
+    const fetch = vi.spyOn(globalThis, "fetch");
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await runHook(hook, clients().makePrompt);
+    expect(out).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each([401, 403, 404])("reauthorizes additional banks and refuses server revocation HTTP %s", async (status) => {
+    await runHook(hook, clients().makePrompt);
+    const out = vi.mocked(process.stdout.write); out.mockClear();
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async url =>
+      String(url).includes("/banks/B/") ? new Response("SECRET_BODY", { status }) : Response.json({ items: [] }));
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://router.example.test/v1/default/banks/A/documents?limit=1",
+      "https://router.example.test/v1/default/banks/B/documents?limit=1",
+    ]);
+    expect(out).not.toHaveBeenCalled();
+    fetch.mockClear();
+    await runHook(hook, clients().makePrompt);
+    expect(fetch).not.toHaveBeenCalled(); // failure consumed the handoff
+  });
+  it("binds the handoff to the actual human principal without storing its identifier or token", async () => {
+    const config = JSON.parse(readFileSync(managedPath, "utf8"));
+    delete config.principals.zcode.tokenEnv;
+    config.principals.zcode.human = { credentialRef: "person" };
+    writeFileSync(managedPath, JSON.stringify(config));
+    let principal = "human-first";
+    const token = `mrh_${"a".repeat(32)}_${"b".repeat(64)}`;
+    vi.spyOn(humanSession, "readHumanSession").mockImplementation(() => ({ token, principal_id: principal,
+      expires_at: Math.floor(Date.now() / 1000) + 300, routerUrl: config.routerUrl }));
+    await runHook(hook, clients().makePrompt);
+    principal = "human-second";
+    const out = vi.mocked(process.stdout.write); out.mockClear();
+    const fetch = vi.spyOn(globalThis, "fetch");
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await runHook(hook, clients().makePrompt);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(out).not.toHaveBeenCalled();
+    const state = readdirSync(root, { recursive: true }).join();
+    expect(state).not.toContain("human-first");
+    expect(state).not.toContain(token);
+  });
+  it("rejects a human principal that changes while bank grants are being checked", async () => {
+    const config = JSON.parse(readFileSync(managedPath, "utf8"));
+    delete config.principals.zcode.tokenEnv;
+    config.principals.zcode.human = { credentialRef: "person" };
+    writeFileSync(managedPath, JSON.stringify(config));
+    let principal = "human-first";
+    vi.spyOn(humanSession, "readHumanSession").mockImplementation(() => ({
+      token: `mrh_${"a".repeat(32)}_${"b".repeat(64)}`, principal_id: principal,
+      expires_at: Math.floor(Date.now() / 1000) + 300, routerUrl: config.routerUrl,
+    }));
+    await runHook(hook, clients().makePrompt);
+    const out = vi.mocked(process.stdout.write); out.mockClear();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      principal = "human-second";
+      return Response.json({ items: [] });
+    });
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
+    expect(out).not.toHaveBeenCalled();
+  });
+  it.each(["endpoint", "mapping"])("rejects a changed %s during awaited bank grant probes", async (change) => {
+    await runHook(hook, clients().makePrompt);
+    const out = vi.mocked(process.stdout.write); out.mockClear();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const config = JSON.parse(readFileSync(managedPath, "utf8"));
+      if (change === "endpoint") config.routerUrl = "https://router.moved.test";
+      else config.principals.zcode.mapPathToBank[approved] = "B";
+      writeFileSync(managedPath, JSON.stringify(config));
+      return Response.json({ items: [] });
+    });
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
+    expect(out).not.toHaveBeenCalled();
+  });
+  it.each(["endpoint", "mapping"])("refuses to stash context when its %s changes during the producing read", async (change) => {
+    const makeClient = () => ({ ...clients().makePrompt(), listPages: async () => {
+      const config = JSON.parse(readFileSync(managedPath, "utf8"));
+      if (change === "endpoint") config.routerUrl = "https://router.moved.test";
+      else config.principals.zcode.mapPathToBank[approved] = "B";
+      writeFileSync(managedPath, JSON.stringify(config));
+      return [];
+    } });
+    await expect(runHook(hook, makeClient)).rejects.toThrow();
+    expect(readdirSync(root, { recursive: true }).some(name => String(name).endsWith(".pending"))).toBe(false);
+  });
+  it.each(["endpoint", "mapping"])("does not stash SessionStart context after an awaited %s switch", async (change) => {
+    configure({ codebaseSurvey: false });
+    const makeClient = () => ({ listDocumentIds: async () => new Set<string>(), listPages: async () => {
+      const config = JSON.parse(readFileSync(managedPath, "utf8"));
+      if (change === "endpoint") config.routerUrl = "https://router.moved.test";
+      else config.principals.zcode.mapPathToBank[approved] = "B";
+      writeFileSync(managedPath, JSON.stringify(config));
+      return [];
+    } });
+    await runSessionStartHook({ ...HOOK_HARNESSES.zcode.sessionStart, deferContextToToolHook: true }, makeClient);
+    expect(readdirSync(root, { recursive: true }).some(name => String(name).endsWith(".pending"))).toBe(false);
+    expect(vi.mocked(process.stdout.write)).not.toHaveBeenCalled();
   });
   it("cannot hand old bank memory to a newly mapped bank", async () => {
     await runHook(hook, clients().makePrompt);

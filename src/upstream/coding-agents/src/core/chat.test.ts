@@ -721,3 +721,25 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(retain.mock.calls[0][5].updateMode).toBeUndefined();
   });
 });
+
+
+describe("bank-specific append capabilities", () => {
+  it.each([false, true])("reprobes a remapped bank whose append support is %s without settling old-bank operations", async (supported) => {
+    const cursors = memoryCursorStore();
+    const a = { bank: "A", retain: vi.fn().mockResolvedValue(undefined), supportsAppendRetain: vi.fn().mockResolvedValue(true) };
+    const b = { bank: "B", retain: vi.fn().mockResolvedValue(undefined), supportsAppendRetain: vi.fn().mockResolvedValue(supported),
+      req: vi.fn().mockImplementation(async () => Response.json({ status: "completed" })), bankUrl: (suffix: string) => `https://router.test/v1/default/banks/B${suffix}` };
+    const first: TransportTurn[] = [{ role: "user", content: "one" }];
+    await retainLiveSession(a as unknown as HindsightClient, "remapped", first, "2026-01-01T00:00:00Z", undefined, { cursors });
+    const oldOps = cursors.read("remapped")?.ops ?? [];
+    await retainLiveSession(b as unknown as HindsightClient, "remapped", first, "2026-01-01T00:00:00Z", undefined, { cursors });
+    expect(b.supportsAppendRetain).toHaveBeenCalledOnce();
+    expect(b.req).not.toHaveBeenCalled();
+    expect(b.retain.mock.calls[0][5].updateMode).toBeUndefined();
+    await retainLiveSession(b as unknown as HindsightClient, "remapped", [...first, { role: "assistant", content: "two" }],
+      "2026-01-01T00:00:00Z", undefined, { cursors });
+    expect(b.retain.mock.calls[1][5].updateMode).toBe(supported ? "append" : undefined);
+    expect(b.req.mock.calls.every(([, url]) => oldOps.every(id => !String(url).endsWith(id)))).toBe(true);
+    expect(cursors.read("remapped")?.bank).toBe("B");
+  });
+});

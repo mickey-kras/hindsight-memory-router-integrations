@@ -44,9 +44,9 @@ export function writeSessionCache(cacheFile: string, cache: SessionCache): void 
 
 /** Context a prompt hook could not deliver itself, waiting for the session's next tool hook (see
  *  HookSpec.toolHook). Its own file: `buildHookOutput` rewrites the session cache every turn. */
-/** Separate the handoff from every other endpoint, mapped bank and workspace. */
-export function pendingContextKey(endpoint: string, bank: string, cwd: string, sessionId: string): string {
-  return createHash("sha256").update(JSON.stringify([endpoint, bank, cwd, sessionId])).digest("hex");
+// Keep handoffs isolated across routing and authorization changes.
+export function pendingContextKey(endpoint: string, bank: string, cwd: string, sessionId: string, scope: { identity: string; banks: string[] }): string {
+  return createHash("sha256").update(JSON.stringify([endpoint, bank, cwd, sessionId, scope.identity, [...scope.banks].sort()])).digest("hex");
 }
 
 function pendingContextFile(harness: string, sessionId: string): string {

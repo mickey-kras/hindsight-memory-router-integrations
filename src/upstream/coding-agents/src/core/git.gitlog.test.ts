@@ -82,7 +82,7 @@ describe("gitLogText", () => {
       execFileSync("git", ["-C", dir, "config", k, v]);
     commit(dir, "feat: signed");
 
-    expect(gitLogNewestAuthorDate(dir)).toMatch(/^\d{4}-\d\d-\d\dT[\d:]+[+-Z][\d:]*$/);
+    expect(gitLogNewestAuthorDate(dir)).toMatch(/^\d{4}-\d\d-\d\dT[\d:]+[+Z-][\d:]*$/);
     expect(gitLogText(dir, 10)).toMatch(/^[0-9a-f]+ \d{4}-\d\d-\d\d Test User\nfeat: signed$/);
   }, 30_000);
 

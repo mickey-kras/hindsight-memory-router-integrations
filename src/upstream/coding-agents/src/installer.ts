@@ -2389,7 +2389,7 @@ function mutationPaths(ctx: InstallCtx, names: string[], includeDesiredSkill = t
     "devin-cli": [".config/devin/config.json", ".config/devin/mcp_config.json"],
     "cursor-cli": [".cursor/hooks.json", ".cursor/mcp.json"],
     "copilot-cli": [".copilot/hooks/hindsight-coding-agents.json", ".copilot/mcp-config.json"],
-    "grok-build": [".grok/config.toml"], "qwen-code": [".qwen/settings.json"],
+    "grok-build": [".grok/config.toml", ".grok/hooks/hindsight.json"], "qwen-code": [".qwen/settings.json"],
     "cline-cli": [".cline/data/settings/cline_mcp_settings.json", ".cline/plugins", ...CLINE_OLD_HOOK_EVENTS.map((event) => `Documents/Cline/Hooks/${event}`)],
     dcode: [ ".hindsight/.agents/plugins/marketplace.json", ".hindsight/hindsight-coding-agents-marketplace.json"],
     workbuddy: [".workbuddy/settings.json", ".workbuddy/mcp.json"],
@@ -2414,7 +2414,8 @@ function mutationPaths(ctx: InstallCtx, names: string[], includeDesiredSkill = t
     }
     if (name === "traecode") {
       const { principal } = loadManagedConfig(process.env, "traecode");
-      paths.push(join(ctx.home, traecodeDotDirName(ctx.home), "hooks.json"), join(ctx.home, traecodeDotDirName(ctx.home), "sandbox.json"), traecodeMcpPath(ctx));
+      for (const path of [join(ctx.home, traecodeDotDirName(ctx.home), "hooks.json"), join(ctx.home, traecodeDotDirName(ctx.home), "sandbox.json"), traecodeMcpPath(ctx)])
+        paths.push(path, `${path}.hindsight-backup`);
       for (const repo of Object.keys(principal.mapPathToBank ?? {})) paths.push(join(repo, ".trae/mcp.json"), join(repo, ".gitignore"));
     }
     if (name === "dsh") {

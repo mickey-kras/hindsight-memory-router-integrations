@@ -325,35 +325,6 @@ function shapePage(page: unknown): unknown {
   };
 }
 
-/** Undici's cross-version handle on the dispatcher Node's global `fetch` uses. */
-const GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
-
-/**
- * The global dispatcher with undici's own header/body timeouts switched off, for a request that
- * already carries an AbortSignal deadline — or undefined where there is nothing to wrap.
- *
- * Node's fetch applies a 300s `headersTimeout` below our signal, so a reflect configured above
- * 300s (`reflectToolTimeoutMs` defaults to 330s, past the server's own reflect wall) died with
- * UND_ERR_HEADERS_TIMEOUT before the server could answer (#5504). Composing over the CURRENT
- * global dispatcher, instead of building a new undici `Agent`, needs no `undici` dependency (the
- * bundled one is not importable) and keeps any proxy dispatcher the host installed. Hosts whose
- * fetch is not undici's (Bun, DSH's own) have no such dispatcher and ignore the option.
- */
-function signalOnlyDispatcher(): unknown {
-  // Node loads undici — which installs the global dispatcher — lazily. Touching the `Headers`
-  // global loads it; touching `fetch` does not (it is a wrapper until first called).
-  void globalThis.Headers;
-  const d = (globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] as
-    | { compose?: (interceptor: unknown) => unknown }
-    | undefined;
-  if (typeof d?.compose !== "function") return undefined; // Node 18's undici predates compose()
-  type Dispatch = (opts: Record<string, unknown>, handler: unknown) => boolean;
-  return d.compose(
-    (dispatch: Dispatch) => (opts: Record<string, unknown>, handler: unknown) =>
-      dispatch({ ...opts, headersTimeout: 0, bodyTimeout: 0 }, handler)
-  );
-}
-
 export class HindsightClient {
   private readonly transport: RouterTransport;
   private readonly routerHarness: string | undefined;
@@ -394,6 +365,10 @@ export class HindsightClient {
   assertAuthorized(): void { this.transport.assertAuthorized(); }
 
   visibleBanks(): string[] { return visibleBanks(this.transport.access); }
+
+  readScope(): { identity: string; banks: string[]; endpoint: string; bankId: string } {
+    return { identity: this.transport.authorizationIdentity(), banks: this.visibleBanks().sort(), endpoint: this.apiUrl, bankId: this.bank };
+  }
 
   forBank(bank: string): HindsightClient {
     this.assertAuthorized();
@@ -699,8 +674,16 @@ export class HindsightClient {
           }
         } catch (error) {
           if (error instanceof AccessDeniedError) throw error;
-          if (error instanceof RouterRequestError && error.statusCode === 429) {
-            backoffMs = Math.min(RETRY_AFTER_CEILING_MS, Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, error.retryAfterMs));
+          if (error instanceof RouterRequestError) {
+            if (error.statusCode === 429) {
+              backoffMs = Math.min(RETRY_AFTER_CEILING_MS, Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, error.retryAfterMs));
+            } else if (error.statusCode >= 500) {
+              const n = (serverErrors.get(id) ?? 0) + 1;
+              serverErrors.set(id, n);
+              if (n >= POLL_MAX_SERVER_ERRORS) giveUp(id, error.statusCode);
+            } else {
+              giveUp(id, error.statusCode);
+            }
           }
         }
       }, (_index, error) => {

@@ -1,3 +1,4 @@
+import { AccessDeniedError } from "@memory-router/shared/bank-access";
 /**
  * Harness-agnostic chat memory: the JSON user/assistant transcript schema shared by BOTH the
  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
@@ -122,7 +123,8 @@ export async function ingestChats(
 async function supportsAppend(client: HindsightClient): Promise<boolean> {
   try {
     return await client.supportsAppendRetain();
-  } catch {
+  } catch (error) {
+    if (error instanceof AccessDeniedError) throw error;
     return false;
   }
 }
@@ -154,7 +156,8 @@ async function settleOps(
         );
         if (r.status === 404) return "not_found"; // pruned: nothing left to learn
         return String(((await r.json()) as { status?: unknown }).status ?? "").toLowerCase();
-      } catch {
+      } catch (error) {
+        if (error instanceof AccessDeniedError) throw error;
         return "";
       }
     })
@@ -325,6 +328,8 @@ async function writeSession(
   if (!turns.length) return;
   const refId = `conversation:${sessionId}`;
   let cursor = cursors?.read(sessionId);
+  // Capability and accepted operations belong to the former bank, not the newly mapped bank.
+  if (cursor && cursor.bank !== client.bank) cursor = undefined;
   // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
   // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
   // (#4560). A "no" is not remembered — the server can be upgraded mid-session.

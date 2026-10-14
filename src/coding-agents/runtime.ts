@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
-import { AccessDeniedError, requireBank } from "../shared/bank-access.js";
+import { AccessDeniedError, requireBank, visibleBanks } from "../shared/bank-access.js";
 import { loadManagedConfig } from "../shared/managed-config.js";
 import { RouterTransport } from "../shared/router-transport.js";
 import { HUMAN_TOKEN_PATTERN, HumanLoginRequiredError, humanRouterUrl, readHumanSession } from "./human-session.js";
@@ -31,6 +31,18 @@ export function harnessTransport(harness: string | undefined): RouterTransport {
     principalId: harness,
     token: () => process.env[tokenEnv],
   });
+}
+
+// Aggregated context may contain memory from any readable bank.
+export function managedReadScope(harness: string | undefined, directory: string) {
+  const transport = harnessTransport(harness);
+  return {
+    transport,
+    endpoint: transport.baseUrl,
+    bankId: managedBank(harness, directory),
+    identity: transport.authorizationIdentity(),
+    banks: visibleBanks(transport.access).sort(),
+  };
 }
 
 // The supplied harness is the entrypoint identity, never a normal-config override.

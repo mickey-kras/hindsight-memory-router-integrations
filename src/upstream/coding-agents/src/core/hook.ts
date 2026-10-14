@@ -1,6 +1,6 @@
 import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
 import { AccessDeniedError } from "@memory-router/shared/bank-access";
-import { harnessTransport } from "@memory-router/coding-agents/runtime";
+import { harnessTransport, managedReadScope } from "@memory-router/coding-agents/runtime";
 /**
  * Shared runtime for HOOK-based harnesses (Claude Code, Codex, Cursor CLI, ...).
  *
@@ -91,6 +91,7 @@ export interface HookSpec {
 
 /** Minimal client shape `buildHookOutput` needs — `HindsightClient` satisfies it structurally. */
 interface HookClient {
+  readScope?(): { identity: string; banks: string[]; endpoint: string; bankId: string };
   reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
   listPages(): Promise<unknown>;
   searchKnowledgePages(
@@ -471,11 +472,22 @@ export async function runHook(
     return;
   }
   if (spec.toolHook?.accept(ev)) {
-    // Runs on every tool call, so it does nothing but hand over what a prompt hook stashed.
-    const transport = harnessTransport(cfg.routerHarness);
-    await transport.request(transport.bankUrl(bankId, "/documents?limit=1"));
-    const pending = sessionId ? takePendingContext(spec.harness, pendingContextKey(cfg.apiUrl, bankId, cwd, sessionId)) : undefined;
-    if (pending) process.stdout.write(JSON.stringify(spec.toolHook.emit(pending)));
+    if (!sessionId) return;
+    const scope = managedReadScope(cfg.routerHarness, cwd);
+    const key = pendingContextKey(scope.endpoint, scope.bankId, cwd, sessionId, scope);
+    // Claim before probing: an authorization failure discards this one-time handoff permanently.
+    const pending = takePendingContext(spec.harness, key);
+    if (!pending) return;
+    // Aggregated memory can contain any readable bank. Reauthorize the entire bound scope,
+    // including additional banks, and reject principal/scope changes during these probes.
+    for (const bank of scope.banks) {
+      const response = await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"));
+      if (!response.ok) throw new AccessDeniedError();
+    }
+    const current = managedReadScope(cfg.routerHarness, cwd);
+    if (scope.transport.authorizationIdentity() !== scope.identity ||
+        pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key) throw new AccessDeniedError();
+    process.stdout.write(JSON.stringify(spec.toolHook.emit(pending)));
     return;
   }
   if (
@@ -505,6 +517,7 @@ export async function runHook(
     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
 
+  const handoffScope = spec.toolHook && sessionId ? (client.readScope?.() ?? managedReadScope(cfg.routerHarness, cwd)) : undefined;
   const output = await buildHookOutput({ harness: spec.harness, prompt, cfg, client, cacheFile });
   // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
   // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
@@ -517,8 +530,13 @@ export async function runHook(
     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
   let context = output.context;
-  if (context && spec.toolHook && sessionId) {
-    stashPendingContext(spec.harness, pendingContextKey(cfg.apiUrl, bankId, cwd, sessionId), context);
+  if (context && spec.toolHook && sessionId && handoffScope) {
+    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, cwd, sessionId, handoffScope);
+    const current = managedReadScope(cfg.routerHarness, cwd);
+    const clientScope = client.readScope?.() ?? current;
+    if (pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key ||
+        pendingContextKey(clientScope.endpoint, clientScope.bankId, cwd, sessionId, clientScope) !== key) throw new AccessDeniedError();
+    stashPendingContext(spec.harness, key, context);
     context = undefined;
   }
   if (context || output.notice) out(context, output.notice);

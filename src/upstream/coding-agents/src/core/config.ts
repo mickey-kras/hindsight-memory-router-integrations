@@ -901,7 +901,7 @@ export function applyBankConfig(
   // adding a second thing eight call sites must remember — and that gate is known to stop the run
   // before anything creates a bank.
   if (directory !== undefined && !isOptedIn(cfg, directory))
-    return { cfg: { ...cfg, disabled: true }, bankId: resolvedId };
+    return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness), disabled: true }, bankId: resolvedId };
   const byPath = directory === undefined ? undefined : pathSection(cfg, cfg.paths, directory);
   if (byPath) {
     // A path entry never renames the bank: only `banks.<id>` may, below.
@@ -909,7 +909,7 @@ export function applyBankConfig(
     cfg = { ...cfg, ...resolvePartial(cfg, rest as RawConfig) };
   }
   const section = cfg.banks[resolvedId];
-  if (!section) return { cfg, bankId: resolvedId };
+  if (!section) return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness) }, bankId: resolvedId };
   const safe = overrideFields(section);
   // `bank` renames the destination — single hop, selected by the ORIGINAL resolved id (the
   // target's own banks section, if any, is deliberately NOT consulted: no chaining).

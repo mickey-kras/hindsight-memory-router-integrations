@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AccessDeniedError, type BankAccess, classifyOperation, requireBank, visibleBanks } from "./bank-access.js";
 import { TOKEN_FORMAT_PATTERN } from "./patterns.js";
 import { validateRouterUrl } from "./router-url.js";
@@ -71,6 +72,23 @@ function assertSafeRequest(url: string, body: RequestInit["body"]): URL {
   return parsed;
 }
 
+const GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
+
+// Preserve the host's proxy dispatcher while letting AbortSignal own deadlines beyond 300s.
+function signalOnlyDispatcher(): unknown {
+  // Headers initializes Node's otherwise lazy global dispatcher.
+  void globalThis.Headers;
+  const d = (globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] as
+    | { compose?: (interceptor: unknown) => unknown }
+    | undefined;
+  if (typeof d?.compose !== "function") return undefined; // Node 18's undici predates compose()
+  type Dispatch = (opts: Record<string, unknown>, handler: unknown) => boolean;
+  return d.compose(
+    (dispatch: Dispatch) => (opts: Record<string, unknown>, handler: unknown) =>
+      dispatch({ ...opts, headersTimeout: 0, bodyTimeout: 0 }, handler),
+  );
+}
+
 export class RouterTransport {
   readonly baseUrl: string;
   readonly access: BankAccess;
@@ -126,6 +144,14 @@ export class RouterTransport {
     }
   }
 
+  authorizationIdentity(): string {
+    // Refresh human-session identity before binding a private context handoff.
+    this.credential();
+    const principal = typeof this.#principalId === "function" ? this.#principalId() : this.#principalId;
+    if (!principal) throw new AccessDeniedError();
+    return createHash("sha256").update(principal).digest("hex");
+  }
+
   private credential(): string {
     this.assertAuthorized();
     const token = this.#token();
@@ -165,8 +191,12 @@ export class RouterTransport {
 
   private async send(url: string, init: RequestInit, token: string): Promise<Response> {
     try {
+      const signal = init.signal ?? AbortSignal.timeout(15_000);
+      const dispatcher = signalOnlyDispatcher();
+      // dispatcher is a Node fetch extension, absent from the DOM RequestInit used by harness builds.
       return await this.#send(url, {
         ...init,
+        ...(dispatcher ? { dispatcher } : {}),
         redirect: "error",
         headers: {
           "Content-Type": "application/json",
@@ -179,8 +209,8 @@ export class RouterTransport {
               }
             : {}),
         },
-        signal: init.signal ?? AbortSignal.timeout(15_000),
-      });
+        signal,
+      } as RequestInit);
     } catch (error) {
       // Log only the error class (TypeError/TimeoutError/AbortError/...), never the message:
       // fetch messages can embed the URL or token. Undifferentiated 503s otherwise hide

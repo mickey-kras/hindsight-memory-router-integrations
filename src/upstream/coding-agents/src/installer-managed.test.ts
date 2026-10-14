@@ -427,3 +427,54 @@ it("installs Trae workspace MCP only in explicitly managed projects using the br
   expect(run(["uninstall", "traecode"], ctx)).toBe(0);
   expect(JSON.parse(readFileSync(file, "utf8")).mcpServers).not.toHaveProperty("abc");
 });
+
+
+it.each(["symlink", "hardlink"].flatMap(kind => [".grok/hooks/hindsight.json", ".grok/hooks/hindsight.json.hindsight-backup"].map(path => ({ kind, path }))))(
+  "rejects $kind Grok destination $path before any mutation", ({ kind, path }) => {
+    provision(["grok-build"]);
+    const external = join(root, "external-grok.json");
+    const original = '{"hooks":{"SessionStart":[{"hooks":[{"command":"foreign"}]}]}}';
+    put(external, original);
+    const destination = join(ctx.home, path);
+    mkdirSync(dirname(destination), { recursive: true });
+    if (kind === "symlink") symlinkSync(external, destination); else linkSync(external, destination);
+    expect(run(["install", "grok-build"], ctx)).toBe(1);
+    expect(readFileSync(external, "utf8")).toBe(original);
+    expect(existsSync(join(ctx.home, ".hindsight"))).toBe(false);
+    expect(existsSync(join(ctx.home, ".grok/config.toml"))).toBe(false);
+  },
+);
+it("rejects malformed Grok hooks JSON before staging or adapters", () => {
+  provision(["grok-build"]);
+  const path = join(ctx.home, ".grok/hooks/hindsight.json"); put(path, "{bad-private-content");
+  const before = snapshot(ctx.home);
+  const install = vi.spyOn(INSTALLERS.find(adapter => adapter.name === "grok-build")!, "install");
+  expect(run(["install", "grok-build"], ctx)).toBe(1);
+  expect(install).not.toHaveBeenCalled();
+  expect(snapshot(ctx.home)).toEqual(before);
+  expect(messages.join()).not.toContain("private-content");
+});
+it("rolls back Grok hooks and newly generated backups after a later adapter fails", () => {
+  provision(["grok-build", "claude-code"]);
+  const path = join(ctx.home, ".grok/hooks/hindsight.json");
+  put(path, '{"hooks":{"SessionStart":[{"hooks":[{"command":"foreign"}]}]}}');
+  put(join(ctx.home, ".grok/config.toml"), '[foreign]\nvalue = true\n');
+  const before = snapshot(ctx.home);
+  const failing = vi.spyOn(INSTALLERS.find(adapter => adapter.name === "claude-code")!, "install").mockImplementation(() => {
+    expect(readFileSync(path, "utf8")).toContain("grok-hook.js");
+    expect(existsSync(`${path}.hindsight-backup`)).toBe(true);
+    throw new Error("forced later adapter failure");
+  });
+  expect(run(["install", "grok-build", "claude-code"], ctx)).toBe(1);
+  expect(failing).toHaveBeenCalledOnce();
+  expect(snapshot(ctx.home)).toEqual(before);
+});
+it("preserves foreign Grok hooks while installing the native tool hook", () => {
+  provision(["grok-build"]);
+  const path = join(ctx.home, ".grok/hooks/hindsight.json");
+  put(path, '{"hooks":{"SessionStart":[{"hooks":[{"command":"foreign-hook"}]}]}}');
+  expect(run(["install", "grok-build"], ctx)).toBe(0);
+  const hooks = JSON.parse(readFileSync(path, "utf8")).hooks;
+  expect(JSON.stringify(hooks.SessionStart)).toContain("foreign-hook");
+  expect(JSON.stringify(hooks.PostToolUse)).toContain("grok-hook.js");
+});

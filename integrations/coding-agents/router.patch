@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..693ef72
+index 0000000..ab8ea3a
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,39 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -36,9 +36,13 @@ index 0000000..693ef72
 +
 +New upstream append capability, retry budgets, query bounds, page scoping and document freshness reads use the existing guarded client. Version probing accepts GET /v1/version and falls back to /version; authorization failures remain terminal. Router error bodies are redacted, so a 404 cannot latch page support off based on its upstream body.
 +
-+Grok tool-hook context is stored privately and delivered only after managed credentials and the current project mapping are validated. Its handoff key includes endpoint, bank, workspace and session; memory is consumed once. Session caches retain attempt counters and lifecycle flags, never memory content.
++Grok tool-hook context is stored privately and delivered only after managed credentials and the current project mapping are validated. Its handoff key includes endpoint, primary bank, workspace, session, a hash of the actual effective principal and the complete managed read-bank scope. Every bank that could contribute to aggregated memory is freshly authorized before delivery; scope/principal changes and server revocations reject the handoff. The effective endpoint and project mapping are resolved again after awaited reads and grant probes. Authorization failures discard it permanently. Tokens never enter identity keys; memory is consumed once. Session caches retain attempt counters and lifecycle flags, never memory content.
 +
 +New Kimi, WorkBuddy, CodeBuddy and TraeCode entries use managed identity and branded registration names. Trae workspace MCP files are written only by explicit transactional installation for operator-mapped projects; hooks only report the workspace-MCP gate. Global settings and workspace SQLite enable switches remain user-managed.
++
++Managed settings are reapplied after every path/bank override, including paths without a bank section. Project prompt tuning stays available; read-only principals cannot restore ingestion, surveys or bank management. The shared transport composes over the current host dispatcher to disable Undici's header/body timeout caps while preserving the request's AbortSignal deadline and proxy setup.
++
++SessionStart readiness probes propagate terminal authorization failures before launching further background work; transient failures retain their fallback behavior. Append capabilities and accepted-operation cursors belong to one bank, so a managed bank switch re-probes the destination and starts from a replacement transcript. Grok's native hooks file and generated backup, and Trae's generated JSON backups, are covered by installer transactions.
 diff --git a/LICENSE b/LICENSE
 new file mode 100644
 index 0000000..f572d61
@@ -6709,8 +6713,76 @@ index 0000000..23f282e
 +  expect(current).toContain("<!-- hindsight-tool-prefix: hindsight_ -->");
 +  expect(current).toContain("Managed setup and updates");
 +});
+diff --git a/src/core/chat.test.ts b/src/core/chat.test.ts
+index 8fe5792..29e6d4c 100644
+--- a/src/core/chat.test.ts
++++ b/src/core/chat.test.ts
+@@ -721,3 +721,25 @@ describe("retainLiveSession — incremental write-back", () => {
+     expect(retain.mock.calls[0][5].updateMode).toBeUndefined();
+   });
+ });
++
++
++describe("bank-specific append capabilities", () => {
++  it.each([false, true])("reprobes a remapped bank whose append support is %s without settling old-bank operations", async (supported) => {
++    const cursors = memoryCursorStore();
++    const a = { bank: "A", retain: vi.fn().mockResolvedValue(undefined), supportsAppendRetain: vi.fn().mockResolvedValue(true) };
++    const b = { bank: "B", retain: vi.fn().mockResolvedValue(undefined), supportsAppendRetain: vi.fn().mockResolvedValue(supported),
++      req: vi.fn().mockImplementation(async () => Response.json({ status: "completed" })), bankUrl: (suffix: string) => `https://router.test/v1/default/banks/B${suffix}` };
++    const first: TransportTurn[] = [{ role: "user", content: "one" }];
++    await retainLiveSession(a as unknown as HindsightClient, "remapped", first, "2026-01-01T00:00:00Z", undefined, { cursors });
++    const oldOps = cursors.read("remapped")?.ops ?? [];
++    await retainLiveSession(b as unknown as HindsightClient, "remapped", first, "2026-01-01T00:00:00Z", undefined, { cursors });
++    expect(b.supportsAppendRetain).toHaveBeenCalledOnce();
++    expect(b.req).not.toHaveBeenCalled();
++    expect(b.retain.mock.calls[0][5].updateMode).toBeUndefined();
++    await retainLiveSession(b as unknown as HindsightClient, "remapped", [...first, { role: "assistant", content: "two" }],
++      "2026-01-01T00:00:00Z", undefined, { cursors });
++    expect(b.retain.mock.calls[1][5].updateMode).toBe(supported ? "append" : undefined);
++    expect(b.req.mock.calls.every(([, url]) => oldOps.every(id => !String(url).endsWith(id)))).toBe(true);
++    expect(cursors.read("remapped")?.bank).toBe("B");
++  });
++});
+diff --git a/src/core/chat.ts b/src/core/chat.ts
+index 8d60c72..6679eb9 100644
+--- a/src/core/chat.ts
++++ b/src/core/chat.ts
+@@ -1,3 +1,4 @@
++import { AccessDeniedError } from "@memory-router/shared/bank-access";
+ /**
+  * Harness-agnostic chat memory: the JSON user/assistant transcript schema shared by BOTH the
+  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
+@@ -122,7 +123,8 @@ export async function ingestChats(
+ async function supportsAppend(client: HindsightClient): Promise<boolean> {
+   try {
+     return await client.supportsAppendRetain();
+-  } catch {
++  } catch (error) {
++    if (error instanceof AccessDeniedError) throw error;
+     return false;
+   }
+ }
+@@ -154,7 +156,8 @@ async function settleOps(
+         );
+         if (r.status === 404) return "not_found"; // pruned: nothing left to learn
+         return String(((await r.json()) as { status?: unknown }).status ?? "").toLowerCase();
+-      } catch {
++      } catch (error) {
++        if (error instanceof AccessDeniedError) throw error;
+         return "";
+       }
+     })
+@@ -325,6 +328,8 @@ async function writeSession(
+   if (!turns.length) return;
+   const refId = `conversation:${sessionId}`;
+   let cursor = cursors?.read(sessionId);
++  // Capability and accepted operations belong to the former bank, not the newly mapped bank.
++  if (cursor && cursor.bank !== client.bank) cursor = undefined;
+   // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
+   // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
+   // (#4560). A "no" is not remembered — the server can be upgraded mid-session.
 diff --git a/src/core/config.ts b/src/core/config.ts
-index fe2f5b4..48e160d 100644
+index fe2f5b4..c60adc5 100644
 --- a/src/core/config.ts
 +++ b/src/core/config.ts
 @@ -1,3 +1,5 @@
@@ -6803,7 +6875,21 @@ index fe2f5b4..48e160d 100644
  ] as const;
  
  /**
-@@ -917,9 +913,9 @@ export function applyBankConfig(
+@@ -905,7 +901,7 @@ export function applyBankConfig(
+   // adding a second thing eight call sites must remember — and that gate is known to stop the run
+   // before anything creates a bank.
+   if (directory !== undefined && !isOptedIn(cfg, directory))
+-    return { cfg: { ...cfg, disabled: true }, bankId: resolvedId };
++    return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness), disabled: true }, bankId: resolvedId };
+   const byPath = directory === undefined ? undefined : pathSection(cfg, cfg.paths, directory);
+   if (byPath) {
+     // A path entry never renames the bank: only `banks.<id>` may, below.
+@@ -913,13 +909,13 @@ export function applyBankConfig(
+     cfg = { ...cfg, ...resolvePartial(cfg, rest as RawConfig) };
+   }
+   const section = cfg.banks[resolvedId];
+-  if (!section) return { cfg, bankId: resolvedId };
++  if (!section) return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness) }, bankId: resolvedId };
    const safe = overrideFields(section);
    // `bank` renames the destination — single hop, selected by the ORIGINAL resolved id (the
    // target's own banks section, if any, is deliberately NOT consulted: no chaining).
@@ -8198,6 +8284,19 @@ index 0000000..da2f474
 +diag file for whether `session_start` and `deepen_started` ever fired for that bank. A session that
 +was already running when the plugin was installed has no SessionStart behind it; its first prompt
 +after the install self-heals.
+diff --git a/src/core/git.gitlog.test.ts b/src/core/git.gitlog.test.ts
+index 5bb1a1f..1217425 100644
+--- a/src/core/git.gitlog.test.ts
++++ b/src/core/git.gitlog.test.ts
+@@ -82,7 +82,7 @@ describe("gitLogText", () => {
+       execFileSync("git", ["-C", dir, "config", k, v]);
+     commit(dir, "feat: signed");
+ 
+-    expect(gitLogNewestAuthorDate(dir)).toMatch(/^\d{4}-\d\d-\d\dT[\d:]+[+-Z][\d:]*$/);
++    expect(gitLogNewestAuthorDate(dir)).toMatch(/^\d{4}-\d\d-\d\dT[\d:]+[+Z-][\d:]*$/);
+     expect(gitLogText(dir, 10)).toMatch(/^[0-9a-f]+ \d{4}-\d\d-\d\d Test User\nfeat: signed$/);
+   }, 30_000);
+ 
 diff --git a/src/core/git.ts b/src/core/git.ts
 index 5012d6e..2793c9d 100644
 --- a/src/core/git.ts
@@ -8239,7 +8338,7 @@ index 823d7d6..c061b5e 100644
        expect(post.body.tags).toHaveLength(1);
        expect(post.body.tags[0]).toMatch(
 diff --git a/src/core/hindsight.ts b/src/core/hindsight.ts
-index f6ac73b..c5ed67f 100644
+index f6ac73b..33deb70 100644
 --- a/src/core/hindsight.ts
 +++ b/src/core/hindsight.ts
 @@ -1,3 +1,7 @@
@@ -8303,9 +8402,39 @@ index f6ac73b..c5ed67f 100644
  }
  
  /** Raised when the target server predates the knowledge-pages API surface. */
-@@ -360,11 +355,9 @@ function signalOnlyDispatcher(): unknown {
+@@ -330,41 +325,10 @@ function shapePage(page: unknown): unknown {
+   };
  }
  
+-/** Undici's cross-version handle on the dispatcher Node's global `fetch` uses. */
+-const GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
+-
+-/**
+- * The global dispatcher with undici's own header/body timeouts switched off, for a request that
+- * already carries an AbortSignal deadline — or undefined where there is nothing to wrap.
+- *
+- * Node's fetch applies a 300s `headersTimeout` below our signal, so a reflect configured above
+- * 300s (`reflectToolTimeoutMs` defaults to 330s, past the server's own reflect wall) died with
+- * UND_ERR_HEADERS_TIMEOUT before the server could answer (#5504). Composing over the CURRENT
+- * global dispatcher, instead of building a new undici `Agent`, needs no `undici` dependency (the
+- * bundled one is not importable) and keeps any proxy dispatcher the host installed. Hosts whose
+- * fetch is not undici's (Bun, DSH's own) have no such dispatcher and ignore the option.
+- */
+-function signalOnlyDispatcher(): unknown {
+-  // Node loads undici — which installs the global dispatcher — lazily. Touching the `Headers`
+-  // global loads it; touching `fetch` does not (it is a wrapper until first called).
+-  void globalThis.Headers;
+-  const d = (globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] as
+-    | { compose?: (interceptor: unknown) => unknown }
+-    | undefined;
+-  if (typeof d?.compose !== "function") return undefined; // Node 18's undici predates compose()
+-  type Dispatch = (opts: Record<string, unknown>, handler: unknown) => boolean;
+-  return d.compose(
+-    (dispatch: Dispatch) => (opts: Record<string, unknown>, handler: unknown) =>
+-      dispatch({ ...opts, headersTimeout: 0, bodyTimeout: 0 }, handler)
+-  );
+-}
+-
  export class HindsightClient {
 +  private readonly transport: RouterTransport;
 +  private readonly routerHarness: string | undefined;
@@ -8317,7 +8446,7 @@ index f6ac73b..c5ed67f 100644
    readonly bank: string;
    readonly project?: string;
    readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
-@@ -379,10 +372,12 @@ export class HindsightClient {
+@@ -379,10 +343,12 @@ export class HindsightClient {
    readonly recallOptions: Record<string, unknown>;
    private readonly rateLimitPatienceMs: number;
  
@@ -8334,7 +8463,7 @@ index f6ac73b..c5ed67f 100644
      this.bank = o.bank;
      this.project = o.project;
      this.log = o.log ?? (() => {});
-@@ -396,67 +391,30 @@ export class HindsightClient {
+@@ -396,67 +362,34 @@ export class HindsightClient {
      this.rateLimitPatienceMs = o.rateLimitPatienceMs ?? 0;
    }
  
@@ -8371,12 +8500,8 @@ index f6ac73b..c5ed67f 100644
 -    if (next === this.token) return false;
 -    this.token = next;
 -    return true;
-+  forBank(bank: string): HindsightClient {
-+    this.assertAuthorized();
-+    this.transport.bankUrl(bank);
-+    return new HindsightClient({ routerHarness: this.routerHarness, apiUrl: this.apiUrl, bank,
-+      project: this.project, maxParallelRetains: this.maxParallelRetains, observationScopes: this.observationScopes,
-+      pageSearchLimit: this.pageSearchLimit, recallOptions: this.recallOptions, log: this.log }, this);
++  readScope(): { identity: string; banks: string[]; endpoint: string; bankId: string } {
++    return { identity: this.transport.authorizationIdentity(), banks: this.visibleBanks().sort(), endpoint: this.apiUrl, bankId: this.bank };
    }
  
 -  /**
@@ -8398,8 +8523,13 @@ index f6ac73b..c5ed67f 100644
 -    const r = await send();
 -    if (r.status !== 401 || !this.refreshToken()) return r;
 -    return send();
--  }
-+  get apiToken(): undefined { return undefined; }
++  forBank(bank: string): HindsightClient {
++    this.assertAuthorized();
++    this.transport.bankUrl(bank);
++    return new HindsightClient({ routerHarness: this.routerHarness, apiUrl: this.apiUrl, bank,
++      project: this.project, maxParallelRetains: this.maxParallelRetains, observationScopes: this.observationScopes,
++      pageSearchLimit: this.pageSearchLimit, recallOptions: this.recallOptions, log: this.log }, this);
+   }
  
 -  /** A 401 with no `Authorization` header is a different failure from a rejected key, and the
 -   *  server answers identically for both — only the client knows which it sent. */
@@ -8408,6 +8538,8 @@ index f6ac73b..c5ed67f 100644
 -    return this.token
 -      ? " (the configured apiToken was rejected — check ~/.hindsight/coding-agent.json)"
 -      : " (no apiToken is configured, so no Authorization header was sent)";
++  get apiToken(): undefined { return undefined; }
++
 +  hasCredentials(): boolean { return this.transport.hasCredentials(); }
 +
 +  private async fetchWithAuth(url: string, init: RequestInit, timeoutMs = 15_000): Promise<Response> {
@@ -8421,7 +8553,7 @@ index f6ac73b..c5ed67f 100644
    }
  
    bankUrl(suffix = ""): string {
-@@ -476,11 +434,17 @@ export class HindsightClient {
+@@ -476,11 +409,17 @@ export class HindsightClient {
      const payload = body ? JSON.stringify(body) : undefined;
      let r: Response;
      for (let attempt = 0, waited = 0; ; attempt++) {
@@ -8440,7 +8572,7 @@ index f6ac73b..c5ed67f 100644
        if (r.status !== 429 || tolerate.includes(429)) break;
        const asked = retryAfterMs(r.headers.get("retry-after"));
        const backoff = Math.min(RETRY_AFTER_CEILING_MS, RATE_LIMIT_BACKOFF_MS * 2 ** attempt);
-@@ -492,7 +456,7 @@ export class HindsightClient {
+@@ -492,7 +431,7 @@ export class HindsightClient {
      }
      if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
        throw new Error(
@@ -8449,7 +8581,7 @@ index f6ac73b..c5ed67f 100644
        );
      return r;
    }
-@@ -556,7 +520,8 @@ export class HindsightClient {
+@@ -556,7 +495,8 @@ export class HindsightClient {
          if (!r.ok) continue;
          const j = (await r.json()) as { api_version?: string };
          return semverGte(j.api_version, MIN_IDEMPOTENT_RETAIN_VERSION);
@@ -8459,7 +8591,7 @@ index f6ac73b..c5ed67f 100644
          /* unreachable or not our API's JSON — try the next path */
        }
      }
-@@ -576,7 +541,8 @@ export class HindsightClient {
+@@ -576,7 +516,8 @@ export class HindsightClient {
        if (!r.ok) return true;
        const j = (await r.json()) as { config?: { store_document_text?: boolean } };
        return j.config?.store_document_text !== false;
@@ -8469,7 +8601,7 @@ index f6ac73b..c5ed67f 100644
        return true;
      }
    }
-@@ -638,17 +604,8 @@ export class HindsightClient {
+@@ -638,17 +579,8 @@ export class HindsightClient {
      return (j.total ?? j.items?.length ?? 0) > 0;
    }
  
@@ -8489,7 +8621,7 @@ index f6ac73b..c5ed67f 100644
    async configureBank(
      opts: {
        reset?: boolean;
-@@ -664,51 +621,10 @@ export class HindsightClient {
+@@ -664,51 +596,10 @@ export class HindsightClient {
        defaults?: Record<string, unknown>;
      } = {}
    ): Promise<void> {
@@ -8542,7 +8674,7 @@ index f6ac73b..c5ed67f 100644
    /** Explicitly delete one document (and its cascaded memory units/links). Background sync must
     *  never use this as a cleanup primitive: a document id alone does not prove repository ownership. */
    async deleteDocument(documentId: string): Promise<void> {
-@@ -757,7 +673,7 @@ export class HindsightClient {
+@@ -757,7 +648,7 @@ export class HindsightClient {
        let backoffMs = POLL_CYCLE_MS;
        await pool([...pending], this.maxParallelRetains, async (id) => {
          try {
@@ -8551,7 +8683,7 @@ index f6ac73b..c5ed67f 100644
            if (r.status === 429) {
              backoffMs = Math.min(
                RETRY_AFTER_CEILING_MS,
-@@ -781,9 +697,14 @@ export class HindsightClient {
+@@ -781,9 +672,22 @@ export class HindsightClient {
              pending.delete(id);
              if (st !== "completed") failed++;
            }
@@ -8559,8 +8691,16 @@ index f6ac73b..c5ed67f 100644
 -          /* transient — retry next cycle */
 +        } catch (error) {
 +          if (error instanceof AccessDeniedError) throw error;
-+          if (error instanceof RouterRequestError && error.statusCode === 429) {
-+            backoffMs = Math.min(RETRY_AFTER_CEILING_MS, Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, error.retryAfterMs));
++          if (error instanceof RouterRequestError) {
++            if (error.statusCode === 429) {
++              backoffMs = Math.min(RETRY_AFTER_CEILING_MS, Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, error.retryAfterMs));
++            } else if (error.statusCode >= 500) {
++              const n = (serverErrors.get(id) ?? 0) + 1;
++              serverErrors.set(id, n);
++              if (n >= POLL_MAX_SERVER_ERRORS) giveUp(id, error.statusCode);
++            } else {
++              giveUp(id, error.statusCode);
++            }
 +          }
          }
 +      }, (_index, error) => {
@@ -8568,7 +8708,7 @@ index f6ac73b..c5ed67f 100644
        });
        if (pending.size) {
          this.log(`  … ${pending.size}/${ids.length} ${label} ops pending`);
-@@ -804,33 +725,12 @@ export class HindsightClient {
+@@ -804,33 +708,12 @@ export class HindsightClient {
     * tool's configured window and aborted every high-budget synthesis mid-flight (#3590).
     */
    async reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string> {
@@ -8607,7 +8747,7 @@ index f6ac73b..c5ed67f 100644
    }
  
    /**
-@@ -1156,8 +1056,8 @@ export class HindsightClient {
+@@ -1156,8 +1039,8 @@ export class HindsightClient {
      return (
        s
          .toLowerCase()
@@ -8618,7 +8758,7 @@ index f6ac73b..c5ed67f 100644
          .slice(0, 60) || "initiative"
      );
    }
-@@ -1244,13 +1144,15 @@ export class HindsightClient {
+@@ -1244,13 +1127,15 @@ export class HindsightClient {
          (n) => n.kind === "folder" && (n.name || "").toLowerCase() === name.toLowerCase()
        );
        if (hit?.id) return hit.id;
@@ -8659,13 +8799,13 @@ index 1382140..ea01e67 100644
  
  /** Is `dir` the repo itself or somewhere inside it? */
 diff --git a/src/core/hook.ts b/src/core/hook.ts
-index 57ea089..8dcde1e 100644
+index 57ea089..2e014c8 100644
 --- a/src/core/hook.ts
 +++ b/src/core/hook.ts
 @@ -1,3 +1,6 @@
 +import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
 +import { AccessDeniedError } from "@memory-router/shared/bank-access";
-+import { harnessTransport } from "@memory-router/coding-agents/runtime";
++import { harnessTransport, managedReadScope } from "@memory-router/coding-agents/runtime";
  /**
   * Shared runtime for HOOK-based harnesses (Claude Code, Codex, Cursor CLI, ...).
   *
@@ -8677,7 +8817,15 @@ index 57ea089..8dcde1e 100644
    takePendingContext,
    writeSessionCache,
    type SessionCache,
-@@ -159,8 +163,9 @@ async function injectPages(
+@@ -87,6 +91,7 @@ export interface HookSpec {
+ 
+ /** Minimal client shape `buildHookOutput` needs — `HindsightClient` satisfies it structurally. */
+ interface HookClient {
++  readScope?(): { identity: string; banks: string[]; endpoint: string; bankId: string };
+   reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
+   listPages(): Promise<unknown>;
+   searchKnowledgePages(
+@@ -159,8 +164,9 @@ async function injectPages(
      // How MANY pages come back is the client's `pageSearchLimit`, shared with the MCP tool.
      const hits = await client.searchKnowledgePages(prompt.slice(0, 500), { timeoutMs });
      diag(harness, event, { ms: Date.now() - t0, count: hits.length });
@@ -8688,7 +8836,7 @@ index 57ea089..8dcde1e 100644
      diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
      return undefined;
    }
-@@ -181,8 +186,9 @@ async function injectRecall(
+@@ -181,8 +187,9 @@ async function injectRecall(
      // What is asked for — types, token budget, everything — is the client's `recallOptions`.
      const observations = await client.recallObservations(boundRecallQuery(prompt), { timeoutMs });
      diag(harness, event, { ms: Date.now() - t0, count: observations.length });
@@ -8699,7 +8847,7 @@ index 57ea089..8dcde1e 100644
      diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
      return undefined;
    }
-@@ -315,6 +321,7 @@ export async function buildHookOutput(args: {
+@@ -315,6 +322,7 @@ export async function buildHookOutput(args: {
          answer: reflectAnswer.slice(0, 8000),
        });
      } catch (e) {
@@ -8707,7 +8855,7 @@ index 57ea089..8dcde1e 100644
        // A failure is RETRYABLE, not an answer — `resolveInjection` leaves it unresolved until the
        // budget is spent. Caching "" here meant one timeout on the session's first prompt disabled
        // synthesis for the ENTIRE session, and against a real server a reflect near the timeout is a
-@@ -355,6 +362,7 @@ export async function buildHookOutput(args: {
+@@ -355,6 +363,7 @@ export async function buildHookOutput(args: {
        pages = parsePageList(await client.listPages());
        diag(harness, "pages_ok", { ms: Date.now() - t0, count: pages.length });
      } catch (e) {
@@ -8715,7 +8863,7 @@ index 57ea089..8dcde1e 100644
        diag(
          harness,
          client.knowledgePagesSupported === false ? "knowledge_pages_unavailable" : "pages_failed",
-@@ -379,7 +387,7 @@ export async function buildHookOutput(args: {
+@@ -379,7 +388,7 @@ export async function buildHookOutput(args: {
    // ran. No cadence re-injection: replaying the turn-1 synthesis at arbitrary later turns reads
    // as random noise once the session drifts, and the agent holds hindsight_reflect for a FRESH
    // pass if compaction or drift makes it need memory again.
@@ -8724,7 +8872,7 @@ index 57ea089..8dcde1e 100644
    // Knowledge pages are NOT auto-injected: the agent pulls them through
    // hindsight_search_knowledge_pages when a question warrants it — an unprompted injection on
    // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
-@@ -388,6 +396,7 @@ export async function buildHookOutput(args: {
+@@ -388,6 +397,7 @@ export async function buildHookOutput(args: {
      blocks.push(
        buildRosterRefresh(pages, {
          reflectOnNewGoals: cfg.autoInject !== "reflect",
@@ -8732,7 +8880,7 @@ index 57ea089..8dcde1e 100644
          extra: cfg.toolGuideExtra,
        })
      );
-@@ -403,14 +412,14 @@ export async function buildHookOutput(args: {
+@@ -403,14 +413,14 @@ export async function buildHookOutput(args: {
      // source answered and point at the diag file, but that read as an error on a turn that
      // worked; reflect_failed + reflect_fallback_* in the diag trail carry the details.
    } else if (reflectRanThisTurn && reflectAnswer) {
@@ -8750,7 +8898,7 @@ index 57ea089..8dcde1e 100644
        `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;
    } else if (reflectFailed) {
      // The failure is already in the diag trail and plugin.log, but both are files nobody is
-@@ -418,7 +427,7 @@ export async function buildHookOutput(args: {
+@@ -418,7 +428,7 @@ export async function buildHookOutput(args: {
      // One terse line pointing at the trail — not an explanation, and not advice to the agent:
      // this fires only on a turn that actually attempted a source, so at most
      // HOOK_INJECT_ATTEMPTS times per session.
@@ -8759,7 +8907,7 @@ index 57ea089..8dcde1e 100644
    }
  
    return { context: kept.length ? kept.join("\n\n") : undefined, notice, pages };
-@@ -436,16 +445,10 @@ export async function runHook(
+@@ -436,16 +446,10 @@ export async function runHook(
    if (!ev) return;
    if (spec.accept && !spec.accept(ev)) return;
    const { prompt: rawPrompt, cwd: rawCwd, sessionId } = spec.parse(ev);
@@ -8777,7 +8925,7 @@ index 57ea089..8dcde1e 100644
  
    let cfg = loadConfig({ harness: spec.harness });
    setLogLevel(cfg.logLevel);
-@@ -454,14 +457,6 @@ export async function runHook(
+@@ -454,14 +458,6 @@ export async function runHook(
      return;
    }
  
@@ -8792,16 +8940,27 @@ index 57ea089..8dcde1e 100644
    const out = (context: string | undefined, notice?: string) =>
      process.stdout.write(JSON.stringify(spec.emit(context ?? "", notice, ev)));
  
-@@ -475,8 +470,24 @@ export async function runHook(
+@@ -475,8 +471,35 @@ export async function runHook(
      log.debug(spec.harness, "hook skipped: bank disabled via banks override", { bank: bankId });
      return;
    }
 +  if (spec.toolHook?.accept(ev)) {
-+    // Runs on every tool call, so it does nothing but hand over what a prompt hook stashed.
-+    const transport = harnessTransport(cfg.routerHarness);
-+    await transport.request(transport.bankUrl(bankId, "/documents?limit=1"));
-+    const pending = sessionId ? takePendingContext(spec.harness, pendingContextKey(cfg.apiUrl, bankId, cwd, sessionId)) : undefined;
-+    if (pending) process.stdout.write(JSON.stringify(spec.toolHook.emit(pending)));
++    if (!sessionId) return;
++    const scope = managedReadScope(cfg.routerHarness, cwd);
++    const key = pendingContextKey(scope.endpoint, scope.bankId, cwd, sessionId, scope);
++    // Claim before probing: an authorization failure discards this one-time handoff permanently.
++    const pending = takePendingContext(spec.harness, key);
++    if (!pending) return;
++    // Aggregated memory can contain any readable bank. Reauthorize the entire bound scope,
++    // including additional banks, and reject principal/scope changes during these probes.
++    for (const bank of scope.banks) {
++      const response = await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"));
++      if (!response.ok) throw new AccessDeniedError();
++    }
++    const current = managedReadScope(cfg.routerHarness, cwd);
++    if (scope.transport.authorizationIdentity() !== scope.identity ||
++        pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key) throw new AccessDeniedError();
++    process.stdout.write(JSON.stringify(spec.toolHook.emit(pending)));
 +    return;
 +  }
 +  if (
@@ -8818,12 +8977,27 @@ index 57ea089..8dcde1e 100644
      apiToken: cfg.apiToken,
      bank: bankId,
      maxParallelRetains: cfg.maxParallelRetains,
-@@ -507,7 +518,7 @@ export async function runHook(
+@@ -494,6 +517,7 @@ export async function runHook(
+     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
+   }
+ 
++  const handoffScope = spec.toolHook && sessionId ? (client.readScope?.() ?? managedReadScope(cfg.routerHarness, cwd)) : undefined;
+   const output = await buildHookOutput({ harness: spec.harness, prompt, cfg, client, cacheFile });
+   // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
+   // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
+@@ -506,8 +530,13 @@ export async function runHook(
+     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
    }
    let context = output.context;
-   if (context && spec.toolHook && sessionId) {
+-  if (context && spec.toolHook && sessionId) {
 -    stashPendingContext(spec.harness, sessionId, context);
-+    stashPendingContext(spec.harness, pendingContextKey(cfg.apiUrl, bankId, cwd, sessionId), context);
++  if (context && spec.toolHook && sessionId && handoffScope) {
++    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, cwd, sessionId, handoffScope);
++    const current = managedReadScope(cfg.routerHarness, cwd);
++    const clientScope = client.readScope?.() ?? current;
++    if (pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key ||
++        pendingContextKey(clientScope.endpoint, clientScope.bankId, cwd, sessionId, clientScope) !== key) throw new AccessDeniedError();
++    stashPendingContext(spec.harness, key, context);
      context = undefined;
    }
    if (context || output.notice) out(context, output.notice);
@@ -9711,10 +9885,11 @@ index 0507e5e..d91223c 100644
        sessionRoot,
 diff --git a/src/core/router-client.test.ts b/src/core/router-client.test.ts
 new file mode 100644
-index 0000000..64f6c92
+index 0000000..ec9d24c
 --- /dev/null
 +++ b/src/core/router-client.test.ts
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,400 @@
++import { buildSessionStartContext } from "./session-start";
 +import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
@@ -9722,7 +9897,7 @@ index 0000000..64f6c92
 +import { AccessDeniedError } from "@memory-router/shared/bank-access";
 +import { managedBank } from "@memory-router/coding-agents/runtime";
 +import { ensureDaemon } from "./daemon";
-+import { loadConfig, resolveConfig } from "./config";
++import { applyBankConfig, loadConfig, resolveConfig } from "./config";
 +import { HindsightClient } from "./hindsight";
 +
 +let directory: string;
@@ -9976,6 +10151,144 @@ index 0000000..64f6c92
 +  await expect(c.captureInitiative({ title: "change", summary: "plan" })).rejects.toThrow(AccessDeniedError);
 +  expect(send.mock.calls.every(([url, init]) => String(url).includes("/banks/B/") && init?.method === "GET")).toBe(true);
 +});
++
++it.each([[400, 1], [500, 12]])("bounds guarded HTTP %s operation polling to %s calls", async (status, calls) => {
++  vi.useFakeTimers();
++  try {
++    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("SECRET_BODY", { status }));
++    const log = vi.fn();
++    const c = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A", log });
++    const drained = c.drain(["op"], "test", 120_000);
++    await vi.advanceTimersByTimeAsync(120_000);
++    await drained;
++    expect(send).toHaveBeenCalledTimes(calls);
++    expect(log.mock.calls.flat().join()).toContain("1 done, 1 failed");
++    expect(log.mock.calls.flat().join()).not.toContain("SECRET_BODY");
++    expect(vi.getTimerCount()).toBe(0);
++  } finally { vi.useRealTimers(); }
++});
++it("resets the guarded operation 5xx budget after a successful pending status", async () => {
++  vi.useFakeTimers();
++  try {
++    let calls = 0;
++    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
++      calls++;
++      return calls === 12 ? Response.json({ status: "pending" }) : new Response(null, { status: 500 });
++    });
++    const log = vi.fn();
++    const c = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A", log });
++    const drained = c.drain(["op"], "test", 180_000);
++    await vi.advanceTimersByTimeAsync(180_000);
++    await drained;
++    expect(send).toHaveBeenCalledTimes(24);
++    expect(log.mock.calls.flat().join()).toContain("1 done, 1 failed");
++  } finally { vi.useRealTimers(); }
++});
++
++it.each([false, true])("reapplies read-only managed policy after path tuning with banks section %s", async (withBank) => {
++  const normalPath = join(directory, "normal.json");
++  const unsafe = { manageBankConfig: true, retainSessions: true, autoSeed: true, codebaseSurvey: true, gitIngest: "full", autoUpdate: true,
++    apiUrl: "http://localhost:8888", apiToken: "unmanaged", reflectTimeoutMs: 345_000, toolGuideExtra: "project-specific guidance" };
++  writeFileSync(normalPath, JSON.stringify({ paths: { [directory]: unsafe }, ...(withBank ? { banks: { A: unsafe } } : {}) }));
++  const loaded = loadConfig({ harness: "reader", path: normalPath });
++  const applied = applyBankConfig(loaded, "A", directory).cfg;
++  expect(applied).toMatchObject({ routerHarness: "reader", apiUrl: "https://router.test", apiToken: undefined,
++    manageBankConfig: false, retainSessions: false, autoSeed: false, codebaseSurvey: false, gitIngest: "none", autoUpdate: false,
++    reflectTimeoutMs: 345_000, toolGuideExtra: "project-specific guidance" });
++  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ roots: [] }));
++  const startSeed = vi.fn();
++  const startSurvey = vi.fn();
++  await buildSessionStartContext({ cwd: directory, bankId: "A", cfg: applied, client: client("reader"), harness: "reader",
++    hasGit: () => true, startSeed, startSurvey });
++  expect(startSeed).not.toHaveBeenCalled();
++  expect(startSurvey).not.toHaveBeenCalled();
++  expect(send).toHaveBeenCalledOnce();
++  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
++});
++
++it.each([310_000, 350_000])("lets the 330s managed reflect deadline govern a response after %sms through Node fetch", async (delay) => {
++  vi.useFakeTimers();
++  void globalThis.Headers;
++  const symbol = Symbol.for("undici.globalDispatcher.1");
++  const previous = Object.getOwnPropertyDescriptor(globalThis, symbol);
++  type Handler = {
++    onConnect(abort: (reason: Error) => void): void;
++    onHeaders(status: number, headers: string[], resume: () => void, text: string): void;
++    onData(body: Buffer): void;
++    onComplete(trailers: string[]): void;
++    onError(error: Error): void;
++  };
++  type Dispatch = (options: Record<string, unknown>, handler: Handler) => boolean;
++  const options: Record<string, unknown>[] = [];
++  const aborted: boolean[] = [];
++  const dispatch: Dispatch = (opts, handler) => {
++    const index = options.push(opts) - 1;
++    const timer = setTimeout(() => {
++      handler.onHeaders(200, ["content-type", "application/json"], () => {}, "OK");
++      handler.onData(Buffer.from(JSON.stringify({ text: "late managed answer" })));
++      handler.onComplete([]);
++    }, delay);
++    handler.onConnect((error) => {
++      aborted[index] = true;
++      clearTimeout(timer);
++      handler.onError(error);
++    });
++    return true;
++  };
++  // Exercise Node's actual fetch dispatcher path, retaining the host dispatcher instead of
++  // creating an Agent or replacing its proxy settings. No network or real multi-minute wait.
++  const hostDispatcher = { compose: (intercept: (next: Dispatch) => Dispatch) => ({ dispatch: intercept(dispatch) }) };
++  Object.defineProperty(globalThis, symbol, previous ? { value: hostDispatcher } : { configurable: true, writable: true, value: hostDispatcher });
++  try {
++    const pending = client().reflect("query", { timeoutMs: 330_000 });
++    let settled = false;
++    const observed = pending.then(() => { settled = true; }, () => { settled = true; });
++    const outcome = delay < 330_000
++      ? expect(pending).resolves.toBe("late managed answer")
++      : expect(pending).rejects.toThrow("reflection unavailable for all assigned banks");
++    await vi.advanceTimersByTimeAsync(300_000);
++    expect(settled).toBe(false);
++    expect(options).toHaveLength(2);
++    expect(options.every(opts => opts.headersTimeout === 0 && opts.bodyTimeout === 0)).toBe(true);
++    await vi.advanceTimersByTimeAsync(delay < 330_000 ? 10_000 : 30_000);
++    await outcome;
++    await observed;
++    if (delay > 330_000) expect(aborted).toEqual([true, true]);
++    expect((globalThis as Record<symbol, unknown>)[symbol]).toBe(hostDispatcher);
++    expect(vi.getTimerCount()).toBe(0);
++  } finally {
++    if (previous) Object.defineProperty(globalThis, symbol, previous);
++    else Reflect.deleteProperty(globalThis, symbol);
++    vi.useRealTimers();
++  }
++});
++
++it.each(["initial", "baseline", "documents"])("stops SessionStart background work on terminal %s probe denial", async (point) => {
++  const startSeed = vi.fn(); const startSurvey = vi.fn().mockResolvedValue(false);
++  const denied = new AccessDeniedError();
++  const probe = {
++    listDocumentIds: vi.fn(async (tag: string) => {
++      if (point === "initial" || (point === "baseline" && tag !== "source:git")) throw denied;
++      return new Set<string>();
++    }),
++    hasDocuments: vi.fn(async () => { if (point === "documents") throw denied; return false; }),
++    listPages: vi.fn().mockResolvedValue([]),
++  };
++  await expect(buildSessionStartContext({ cwd: directory, bankId: "A", cfg: resolveConfig({ codebaseSurvey: true }),
++    client: probe, harness: "codex", hasGit: () => true, startSeed, startSurvey, headSha: () => null })).rejects.toBe(denied);
++  expect(startSeed).not.toHaveBeenCalled(); expect(startSurvey).not.toHaveBeenCalled();
++  expect(probe.listPages).not.toHaveBeenCalled();
++});
++it("preserves transient baseline/document probe fallback in SessionStart", async () => {
++  const startSeed = vi.fn(); const startSurvey = vi.fn().mockResolvedValue(false);
++  const probe = { listDocumentIds: vi.fn(async (tag: string) => {
++    if (tag !== "source:git") throw new Error("transient server outage"); return new Set<string>();
++  }), hasDocuments: vi.fn().mockRejectedValue(new Error("transient server outage")), listPages: vi.fn().mockResolvedValue([]) };
++  const output = await buildSessionStartContext({ cwd: directory, bankId: "A", cfg: resolveConfig({ codebaseSurvey: true }),
++    client: probe, harness: "codex", hasGit: () => true, startSeed, startSurvey, headSha: () => null });
++  expect(startSeed).toHaveBeenCalledOnce(); expect(startSurvey).toHaveBeenCalledOnce();
++  expect(output.deferInitialReflect).toBe(false);
++});
 diff --git a/src/core/router-survey.test.ts b/src/core/router-survey.test.ts
 new file mode 100644
 index 0000000..53f119e
@@ -10160,7 +10473,7 @@ index 96380ee..ca307d5 100644
    }
    return { ok: false, message: "usage: hindsight-seed seed --repo <dir>" };
 diff --git a/src/core/session-cache.ts b/src/core/session-cache.ts
-index efe1ce8..59a4b50 100644
+index efe1ce8..d8f2912 100644
 --- a/src/core/session-cache.ts
 +++ b/src/core/session-cache.ts
 @@ -1,6 +1,6 @@
@@ -10227,9 +10540,9 @@ index efe1ce8..59a4b50 100644
  
  /** Context a prompt hook could not deliver itself, waiting for the session's next tool hook (see
   *  HookSpec.toolHook). Its own file: `buildHookOutput` rewrites the session cache every turn. */
-+/** Separate the handoff from every other endpoint, mapped bank and workspace. */
-+export function pendingContextKey(endpoint: string, bank: string, cwd: string, sessionId: string): string {
-+  return createHash("sha256").update(JSON.stringify([endpoint, bank, cwd, sessionId])).digest("hex");
++// Keep handoffs isolated across routing and authorization changes.
++export function pendingContextKey(endpoint: string, bank: string, cwd: string, sessionId: string, scope: { identity: string; banks: string[] }): string {
++  return createHash("sha256").update(JSON.stringify([endpoint, bank, cwd, sessionId, scope.identity, [...scope.banks].sort()])).digest("hex");
 +}
 +
  function pendingContextFile(harness: string, sessionId: string): string {
@@ -10343,15 +10656,17 @@ index efe1ce8..59a4b50 100644
          /* best-effort: a cursor that cannot be written costs a replace, never data */
        }
 diff --git a/src/core/session-start.ts b/src/core/session-start.ts
-index 5cc323b..ec33104 100644
+index 5cc323b..ef5e3fc 100644
 --- a/src/core/session-start.ts
 +++ b/src/core/session-start.ts
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,6 @@
++import { AccessDeniedError } from "@memory-router/shared/bank-access";
++import { managedReadScope } from "@memory-router/coding-agents/runtime";
 +import { renderBrandText, toolBrand } from "@memory-router/shared/tool-prefix";
  /**
   * Shared `SessionStart` lifecycle: deterministically auto-seeds a cold repo's bank from its git
   * history (in the background, non-blocking), keeps warm banks deepening on every start, and
-@@ -42,6 +43,7 @@ import {
+@@ -42,11 +45,13 @@ import {
    sessionCacheFile,
    sessionRootDir,
    stashPendingContext,
@@ -10359,7 +10674,13 @@ index 5cc323b..ec33104 100644
    writeSessionCache,
  } from "./session-cache";
  
-@@ -73,12 +75,12 @@ interface SeedContextClient {
+ /** Minimal client shape `buildSessionStartContext` needs. */
+ interface SeedContextClient {
++  readScope?(): { identity: string; banks: string[]; endpoint: string; bankId: string };
+   listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
+   // Optional: lets the git note see a git-log document written at a commit HEAD is behind
+   // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
+@@ -73,12 +78,12 @@ interface SeedContextClient {
   * server's banner) plus the repo's bank. Shown on EVERY session start; "learning" on a cold
   * repo (first ingest running), "remembering" once the bank is warm.
   */
@@ -10375,7 +10696,16 @@ index 5cc323b..ec33104 100644
    const details = `  ↳ memory bank “${bankId}”` + (gitNote ? ` · ${gitNote}` : "");
    return `${headline}\n${details}`;
  }
-@@ -204,7 +206,7 @@ export async function buildSessionStartContext(args: {
+@@ -102,7 +107,7 @@ async function gitSyncNote(args: {
+   if (mode === "none" || cold) return undefined;
+   const head = gitHeadSha(cwd);
+   if (!head) return undefined;
+-  const gitlogCurrent = await gitLogIsCurrent(client, cwd, head).catch(() => undefined);
++  const gitlogCurrent = await gitLogIsCurrent(client, cwd, head).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
+   if (gitlogCurrent === undefined) return undefined; // server hiccup: say nothing rather than guess
+   if (mode === "message") return gitlogCurrent ? "git in sync" : "catching up on new commits";
+   // full: deepening progress = per-commit docs vs the recent-history target
+@@ -204,7 +209,7 @@ export async function buildSessionStartContext(args: {
      try {
        const stamp = retainStamp();
        const content =
@@ -10384,7 +10714,62 @@ index 5cc323b..ec33104 100644
          `(Internal marker: no memories are extracted from this document.)`;
        const tags = [...new Set([...stamp.tags, SURVEY_BASELINE_TAG])];
        // Fire-and-forget; Promise.resolve tolerates a non-Promise return (e.g. a test spy).
-@@ -350,6 +352,7 @@ export async function buildSessionStartContext(args: {
+@@ -237,7 +242,8 @@ export async function buildSessionStartContext(args: {
+         let docIds: Set<string> | undefined;
+         try {
+           docIds = await client.listDocumentIds("source:git", "all_strict");
+-        } catch {
++        } catch (error) {
++          if (error instanceof AccessDeniedError) throw error;
+           docIds = undefined; // server unreachable: transient — do nothing, try again next session
+         }
+ 
+@@ -250,7 +256,7 @@ export async function buildSessionStartContext(args: {
+         if (docIds?.size === 0) {
+           baselines = await client
+             .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
+-            .catch(() => undefined);
++            .catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
+         }
+         cold = docIds !== undefined ? docIds.size === 0 && !baselines?.size : undefined;
+         gitDocIds = docIds;
+@@ -261,7 +267,7 @@ export async function buildSessionStartContext(args: {
+         if (cold === true && client.hasDocuments) {
+           bankEmpty = await client.hasDocuments().then(
+             (has) => !has,
+-            () => false
++            (error) => { if (error instanceof AccessDeniedError) throw error; return false; }
+           );
+         }
+         if (docIds !== undefined) {
+@@ -301,7 +307,7 @@ export async function buildSessionStartContext(args: {
+                 baselines ??
+                 (await client
+                   .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
+-                  .catch(() => new Set<string>()));
++                  .catch((error) => { if (error instanceof AccessDeniedError) throw error; return new Set<string>(); }));
+               const counts: number[] = [];
+               for (const id of markers) {
+                 if (!id.startsWith(SURVEY_BASELINE_PREFIX)) continue;
+@@ -313,7 +319,7 @@ export async function buildSessionStartContext(args: {
+               // CLI on PATH, budget kill) — the marker alone must not suppress retries forever.
+               const uploads = await client
+                 .listDocumentIds("source:upload", "all_strict")
+-                .catch(() => new Set<string>());
++                .catch((error) => { if (error instanceof AccessDeniedError) throw error; return new Set<string>(); });
+               const findingsAbsent =
+                 counts.length > 0 && !SURVEY_DOC_IDS.some((id) => uploads.has(id));
+               if ((sinceLast !== null && sinceLast >= cfg.surveyRefreshCommits) || findingsAbsent) {
+@@ -343,13 +349,15 @@ export async function buildSessionStartContext(args: {
+   let pages: PageRef[] = [];
+   try {
+     pages = parsePageList(await client.listPages());
+-  } catch {
++  } catch (error) {
++    if (error instanceof AccessDeniedError) throw error;
+     if (client.knowledgePagesSupported === false) {
+       diag(harness, "knowledge_pages_unavailable", { bank: bankId });
+     }
      /* fail-open preamble */
    }
    const additionalContext = buildKnowledgePreamble(pages, {
@@ -10392,16 +10777,19 @@ index 5cc323b..ec33104 100644
      reflectOnNewGoals: cfg.autoInject !== "reflect",
      extra: cfg.toolGuideExtra,
    });
-@@ -370,7 +373,7 @@ export async function buildSessionStartContext(args: {
+@@ -368,9 +376,9 @@ export async function buildSessionStartContext(args: {
+       gitIds: gitDocIds,
+       mode: cfg.gitIngest,
        cold: cold === true,
-     }).catch(() => undefined);
+-    }).catch(() => undefined);
++    }).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
    }
 -  systemMessage = buildSeedBanner(bankId, cold === true, gitNote);
 +  systemMessage = buildSeedBanner(bankId, cold === true, gitNote, cfg.toolPrefix);
  
    // The old per-agent plugin keeps running next to this one until the user removes it — say so
    // where they will see it. Only Claude Code had that plugin.
-@@ -436,6 +439,7 @@ export async function runSessionStartHook(
+@@ -436,6 +444,7 @@ export async function runSessionStartHook(
      // cold one keeps coming up in the background and is picked up by a later turn.
      await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
      const client = makeClient({
@@ -10409,7 +10797,12 @@ index 5cc323b..ec33104 100644
        apiUrl: cfg.apiUrl,
        apiToken: cfg.apiToken,
        bank: bankId,
-@@ -447,12 +451,12 @@ export async function runSessionStartHook(
+@@ -443,16 +452,22 @@ export async function runSessionStartHook(
+       observationScopes: cfg.observationScopes,
+     });
+ 
++    const handoffScope = spec.deferContextToToolHook && sessionId ? (client.readScope?.() ?? managedReadScope(cfg.routerHarness, cwd)) : undefined;
+     const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
      // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
      // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
      if (mcpHint)
@@ -10418,9 +10811,15 @@ index 5cc323b..ec33104 100644
      if (out.deferInitialReflect && sessionId) {
        writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
      }
-     if (spec.deferContextToToolHook && out.additionalContext && sessionId) {
+-    if (spec.deferContextToToolHook && out.additionalContext && sessionId) {
 -      stashPendingContext(harness, sessionId, out.additionalContext);
-+      stashPendingContext(harness, pendingContextKey(cfg.apiUrl, bankId, cwd, sessionId), out.additionalContext);
++    if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
++      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, cwd, sessionId, handoffScope);
++      const current = managedReadScope(cfg.routerHarness, cwd);
++      const clientScope = client.readScope?.() ?? current;
++      if (pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key ||
++          pendingContextKey(clientScope.endpoint, clientScope.bankId, cwd, sessionId, clientScope) !== key) return;
++      stashPendingContext(harness, key, out.additionalContext);
        out.additionalContext = undefined;
      }
      // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
@@ -10896,11 +11295,13 @@ index 107e827..d91d83c 100644
  export function truncate(s: string, max = TOOL_TEXT_CAP): string {
 diff --git a/src/core/turn-journal-policy.test.ts b/src/core/turn-journal-policy.test.ts
 new file mode 100644
-index 0000000..93091a6
+index 0000000..4941eed
 --- /dev/null
 +++ b/src/core/turn-journal-policy.test.ts
-@@ -0,0 +1,235 @@
-+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+@@ -0,0 +1,345 @@
++import { runSessionStartHook } from "./session-start";
++import * as humanSession from "@memory-router/coding-agents/human-session";
++import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11123,6 +11524,114 @@ index 0000000..93091a6
 +    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
 +    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
 +    expect(out).not.toHaveBeenCalled();
++  });
++
++  it("refuses a handoff when an additional read bank is removed from managed scope", async () => {
++    await runHook(hook, clients().makePrompt);
++    const config = JSON.parse(readFileSync(managedPath, "utf8"));
++    config.principals.zcode.additionalReadBanks = ["A"];
++    writeFileSync(managedPath, JSON.stringify(config));
++    const out = vi.mocked(process.stdout.write); out.mockClear();
++    const fetch = vi.spyOn(globalThis, "fetch");
++    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
++    await runHook(hook, clients().makePrompt);
++    expect(out).not.toHaveBeenCalled();
++    expect(fetch).not.toHaveBeenCalled();
++  });
++  it.each([401, 403, 404])("reauthorizes additional banks and refuses server revocation HTTP %s", async (status) => {
++    await runHook(hook, clients().makePrompt);
++    const out = vi.mocked(process.stdout.write); out.mockClear();
++    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async url =>
++      String(url).includes("/banks/B/") ? new Response("SECRET_BODY", { status }) : Response.json({ items: [] }));
++    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
++    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
++    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
++      "https://router.example.test/v1/default/banks/A/documents?limit=1",
++      "https://router.example.test/v1/default/banks/B/documents?limit=1",
++    ]);
++    expect(out).not.toHaveBeenCalled();
++    fetch.mockClear();
++    await runHook(hook, clients().makePrompt);
++    expect(fetch).not.toHaveBeenCalled(); // failure consumed the handoff
++  });
++  it("binds the handoff to the actual human principal without storing its identifier or token", async () => {
++    const config = JSON.parse(readFileSync(managedPath, "utf8"));
++    delete config.principals.zcode.tokenEnv;
++    config.principals.zcode.human = { credentialRef: "person" };
++    writeFileSync(managedPath, JSON.stringify(config));
++    let principal = "human-first";
++    const token = `mrh_${"a".repeat(32)}_${"b".repeat(64)}`;
++    vi.spyOn(humanSession, "readHumanSession").mockImplementation(() => ({ token, principal_id: principal,
++      expires_at: Math.floor(Date.now() / 1000) + 300, routerUrl: config.routerUrl }));
++    await runHook(hook, clients().makePrompt);
++    principal = "human-second";
++    const out = vi.mocked(process.stdout.write); out.mockClear();
++    const fetch = vi.spyOn(globalThis, "fetch");
++    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
++    await runHook(hook, clients().makePrompt);
++    expect(fetch).not.toHaveBeenCalled();
++    expect(out).not.toHaveBeenCalled();
++    const state = readdirSync(root, { recursive: true }).join();
++    expect(state).not.toContain("human-first");
++    expect(state).not.toContain(token);
++  });
++  it("rejects a human principal that changes while bank grants are being checked", async () => {
++    const config = JSON.parse(readFileSync(managedPath, "utf8"));
++    delete config.principals.zcode.tokenEnv;
++    config.principals.zcode.human = { credentialRef: "person" };
++    writeFileSync(managedPath, JSON.stringify(config));
++    let principal = "human-first";
++    vi.spyOn(humanSession, "readHumanSession").mockImplementation(() => ({
++      token: `mrh_${"a".repeat(32)}_${"b".repeat(64)}`, principal_id: principal,
++      expires_at: Math.floor(Date.now() / 1000) + 300, routerUrl: config.routerUrl,
++    }));
++    await runHook(hook, clients().makePrompt);
++    const out = vi.mocked(process.stdout.write); out.mockClear();
++    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
++      principal = "human-second";
++      return Response.json({ items: [] });
++    });
++    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
++    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
++    expect(out).not.toHaveBeenCalled();
++  });
++  it.each(["endpoint", "mapping"])("rejects a changed %s during awaited bank grant probes", async (change) => {
++    await runHook(hook, clients().makePrompt);
++    const out = vi.mocked(process.stdout.write); out.mockClear();
++    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
++      const config = JSON.parse(readFileSync(managedPath, "utf8"));
++      if (change === "endpoint") config.routerUrl = "https://router.moved.test";
++      else config.principals.zcode.mapPathToBank[approved] = "B";
++      writeFileSync(managedPath, JSON.stringify(config));
++      return Response.json({ items: [] });
++    });
++    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
++    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
++    expect(out).not.toHaveBeenCalled();
++  });
++  it.each(["endpoint", "mapping"])("refuses to stash context when its %s changes during the producing read", async (change) => {
++    const makeClient = () => ({ ...clients().makePrompt(), listPages: async () => {
++      const config = JSON.parse(readFileSync(managedPath, "utf8"));
++      if (change === "endpoint") config.routerUrl = "https://router.moved.test";
++      else config.principals.zcode.mapPathToBank[approved] = "B";
++      writeFileSync(managedPath, JSON.stringify(config));
++      return [];
++    } });
++    await expect(runHook(hook, makeClient)).rejects.toThrow();
++    expect(readdirSync(root, { recursive: true }).some(name => String(name).endsWith(".pending"))).toBe(false);
++  });
++  it.each(["endpoint", "mapping"])("does not stash SessionStart context after an awaited %s switch", async (change) => {
++    configure({ codebaseSurvey: false });
++    const makeClient = () => ({ listDocumentIds: async () => new Set<string>(), listPages: async () => {
++      const config = JSON.parse(readFileSync(managedPath, "utf8"));
++      if (change === "endpoint") config.routerUrl = "https://router.moved.test";
++      else config.principals.zcode.mapPathToBank[approved] = "B";
++      writeFileSync(managedPath, JSON.stringify(config));
++      return [];
++    } });
++    await runSessionStartHook({ ...HOOK_HARNESSES.zcode.sessionStart, deferContextToToolHook: true }, makeClient);
++    expect(readdirSync(root, { recursive: true }).some(name => String(name).endsWith(".pending"))).toBe(false);
++    expect(vi.mocked(process.stdout.write)).not.toHaveBeenCalled();
 +  });
 +  it("cannot hand old bank memory to a newly mapped bank", async () => {
 +    await runHook(hook, clients().makePrompt);
@@ -12380,10 +12889,10 @@ index 0000000..3a8ff9c
 +});
 diff --git a/src/installer-managed.test.ts b/src/installer-managed.test.ts
 new file mode 100644
-index 0000000..7007163
+index 0000000..f67b490
 --- /dev/null
 +++ b/src/installer-managed.test.ts
-@@ -0,0 +1,429 @@
+@@ -0,0 +1,480 @@
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 +import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
@@ -12813,6 +13322,57 @@ index 0000000..7007163
 +  expect(run(["uninstall", "traecode"], ctx)).toBe(0);
 +  expect(JSON.parse(readFileSync(file, "utf8")).mcpServers).not.toHaveProperty("abc");
 +});
++
++
++it.each(["symlink", "hardlink"].flatMap(kind => [".grok/hooks/hindsight.json", ".grok/hooks/hindsight.json.hindsight-backup"].map(path => ({ kind, path }))))(
++  "rejects $kind Grok destination $path before any mutation", ({ kind, path }) => {
++    provision(["grok-build"]);
++    const external = join(root, "external-grok.json");
++    const original = '{"hooks":{"SessionStart":[{"hooks":[{"command":"foreign"}]}]}}';
++    put(external, original);
++    const destination = join(ctx.home, path);
++    mkdirSync(dirname(destination), { recursive: true });
++    if (kind === "symlink") symlinkSync(external, destination); else linkSync(external, destination);
++    expect(run(["install", "grok-build"], ctx)).toBe(1);
++    expect(readFileSync(external, "utf8")).toBe(original);
++    expect(existsSync(join(ctx.home, ".hindsight"))).toBe(false);
++    expect(existsSync(join(ctx.home, ".grok/config.toml"))).toBe(false);
++  },
++);
++it("rejects malformed Grok hooks JSON before staging or adapters", () => {
++  provision(["grok-build"]);
++  const path = join(ctx.home, ".grok/hooks/hindsight.json"); put(path, "{bad-private-content");
++  const before = snapshot(ctx.home);
++  const install = vi.spyOn(INSTALLERS.find(adapter => adapter.name === "grok-build")!, "install");
++  expect(run(["install", "grok-build"], ctx)).toBe(1);
++  expect(install).not.toHaveBeenCalled();
++  expect(snapshot(ctx.home)).toEqual(before);
++  expect(messages.join()).not.toContain("private-content");
++});
++it("rolls back Grok hooks and newly generated backups after a later adapter fails", () => {
++  provision(["grok-build", "claude-code"]);
++  const path = join(ctx.home, ".grok/hooks/hindsight.json");
++  put(path, '{"hooks":{"SessionStart":[{"hooks":[{"command":"foreign"}]}]}}');
++  put(join(ctx.home, ".grok/config.toml"), '[foreign]\nvalue = true\n');
++  const before = snapshot(ctx.home);
++  const failing = vi.spyOn(INSTALLERS.find(adapter => adapter.name === "claude-code")!, "install").mockImplementation(() => {
++    expect(readFileSync(path, "utf8")).toContain("grok-hook.js");
++    expect(existsSync(`${path}.hindsight-backup`)).toBe(true);
++    throw new Error("forced later adapter failure");
++  });
++  expect(run(["install", "grok-build", "claude-code"], ctx)).toBe(1);
++  expect(failing).toHaveBeenCalledOnce();
++  expect(snapshot(ctx.home)).toEqual(before);
++});
++it("preserves foreign Grok hooks while installing the native tool hook", () => {
++  provision(["grok-build"]);
++  const path = join(ctx.home, ".grok/hooks/hindsight.json");
++  put(path, '{"hooks":{"SessionStart":[{"hooks":[{"command":"foreign-hook"}]}]}}');
++  expect(run(["install", "grok-build"], ctx)).toBe(0);
++  const hooks = JSON.parse(readFileSync(path, "utf8")).hooks;
++  expect(JSON.stringify(hooks.SessionStart)).toContain("foreign-hook");
++  expect(JSON.stringify(hooks.PostToolUse)).toContain("grok-hook.js");
++});
 diff --git a/src/installer.test.ts b/src/installer.test.ts
 index d7c757b..ffa8243 100644
 --- a/src/installer.test.ts
@@ -12844,7 +13404,7 @@ index d7c757b..ffa8243 100644
    });
  });
 diff --git a/src/installer.ts b/src/installer.ts
-index d42fce2..227c3fe 100644
+index d42fce2..83eb2a3 100644
 --- a/src/installer.ts
 +++ b/src/installer.ts
 @@ -1,10 +1,10 @@
@@ -14089,7 +14649,7 @@ index d42fce2..227c3fe 100644
    if (!found.supported) {
      ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
      return;
-@@ -2399,142 +2365,210 @@ function importConversations(harness: string, ctx: InstallCtx): void {
+@@ -2399,142 +2365,211 @@ function importConversations(harness: string, ctx: InstallCtx): void {
        `this runs extraction and may take a while`
    );
    try {
@@ -14119,7 +14679,7 @@ index d42fce2..227c3fe 100644
 +    "devin-cli": [".config/devin/config.json", ".config/devin/mcp_config.json"],
 +    "cursor-cli": [".cursor/hooks.json", ".cursor/mcp.json"],
 +    "copilot-cli": [".copilot/hooks/hindsight-coding-agents.json", ".copilot/mcp-config.json"],
-+    "grok-build": [".grok/config.toml"], "qwen-code": [".qwen/settings.json"],
++    "grok-build": [".grok/config.toml", ".grok/hooks/hindsight.json"], "qwen-code": [".qwen/settings.json"],
 +    "cline-cli": [".cline/data/settings/cline_mcp_settings.json", ".cline/plugins", ...CLINE_OLD_HOOK_EVENTS.map((event) => `Documents/Cline/Hooks/${event}`)],
 +    dcode: [ ".hindsight/.agents/plugins/marketplace.json", ".hindsight/hindsight-coding-agents-marketplace.json"],
 +    workbuddy: [".workbuddy/settings.json", ".workbuddy/mcp.json"],
@@ -14144,7 +14704,8 @@ index d42fce2..227c3fe 100644
 +    }
 +    if (name === "traecode") {
 +      const { principal } = loadManagedConfig(process.env, "traecode");
-+      paths.push(join(ctx.home, traecodeDotDirName(ctx.home), "hooks.json"), join(ctx.home, traecodeDotDirName(ctx.home), "sandbox.json"), traecodeMcpPath(ctx));
++      for (const path of [join(ctx.home, traecodeDotDirName(ctx.home), "hooks.json"), join(ctx.home, traecodeDotDirName(ctx.home), "sandbox.json"), traecodeMcpPath(ctx)])
++        paths.push(path, `${path}.hindsight-backup`);
 +      for (const repo of Object.keys(principal.mapPathToBank ?? {})) paths.push(join(repo, ".trae/mcp.json"), join(repo, ".gitignore"));
 +    }
 +    if (name === "dsh") {
@@ -14416,7 +14977,7 @@ index d42fce2..227c3fe 100644
    return 0;
  }
  
-@@ -2566,12 +2600,19 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2566,12 +2601,19 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      command: process.argv[2],
      version,
      harnessNames: INSTALLERS.map((i) => i.name),
@@ -14438,7 +14999,7 @@ index d42fce2..227c3fe 100644
      home: homedir(),
      pkgRoot,
      dist,
-@@ -2579,11 +2620,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2579,11 +2621,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      // tty.isatty, NOT process.stdin.isTTY: the process.stdin getter initializes the stdin TTY
      // stream, which puts fd 0 in non-blocking mode and breaks readLineSync (see there).
      interactive: Boolean(isatty(0) && isatty(1)),
@@ -14645,7 +15206,7 @@ index 9b72278..f954d3a 100644
 +  ]
  }
 diff --git a/vitest.config.ts b/vitest.config.ts
-index 68a1104..32b0b66 100644
+index 68a1104..82b6fe7 100644
 --- a/vitest.config.ts
 +++ b/vitest.config.ts
 @@ -1,21 +1,5 @@
@@ -14670,5 +15231,5 @@ index 68a1104..32b0b66 100644
 -    },
 -  },
 +  resolve: { alias: { "@memory-router": new URL("../../../src", import.meta.url).pathname } },
-+  test: { include: ["src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
++  test: { include: ["src/core/chat.test.ts", "src/core/retain-cursor.test.ts", "src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
  });
