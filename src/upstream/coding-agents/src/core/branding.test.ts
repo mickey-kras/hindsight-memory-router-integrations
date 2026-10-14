@@ -12,7 +12,7 @@ import { buildKnowledgeTools } from "./knowledge-tools";
 import { buildKnowledgePreamble, buildRosterRefresh } from "./knowledge-injection";
 import { buildSystemInjection } from "./inject";
 import { buildSeedBanner } from "./session-start";
-import { assertCompanionSkillPrefix, readPackagedSkill } from "./skill-sync";
+import { assertCompanionSkillPrefix, readPackagedSkill, syncCompanionSkill } from "./skill-sync";
 import { buildMcpServer } from "../mcp-server";
 import { createPluginEntry } from "../harness/plugin-entry";
 import { summarizeTurns } from "./usage";
@@ -68,4 +68,15 @@ it("rejects MCP identity mismatches and duplicates", () => {
   const tools = buildKnowledgeTools(client, "bank", { harness: "kilo" });
   expect(() => buildMcpServer(tools, "abc_")).toThrow("inconsistent");
   expect(() => buildMcpServer([tools[0], tools[0]])).toThrow("collision");
+});
+
+it("refreshes the exact baseline-generated default skill in a runtime session", () => {
+  const home = setup(); const dir = join(home, ".agents/skills/hindsight-coding-agent"); mkdirSync(dir, { recursive: true });
+  const previous = readFileSync(new URL("./fixtures/baseline-companion-skill.md", import.meta.url), "utf8");
+  writeFileSync(join(dir, "SKILL.md"), previous);
+  expect(() => assertCompanionSkillPrefix("codex", "hindsight_", home)).not.toThrow();
+  expect(() => syncCompanionSkill("codex", { home })).not.toThrow();
+  const current = readFileSync(join(dir, "SKILL.md"), "utf8"); expect(current).not.toBe(previous);
+  expect(current).toContain("<!-- hindsight-tool-prefix: hindsight_ -->");
+  expect(current).toContain("Managed setup and updates");
 });

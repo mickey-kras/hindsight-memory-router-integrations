@@ -103,9 +103,14 @@ export function ownedCompanionSkills(base: string): string[] {
     const raw = readFileSync(path, "utf8");
     const prefix = skillPrefix(raw);
     if (prefix !== undefined && (toolBrand(prefix).skillName === entry.name || entry.name === "hindsight-coding-agent")) return [join(base, entry.name)];
-    // The original generated default skill can be migrated without claiming a user's namesake.
-    if (entry.name === "hindsight-coding-agent" && /^name: hindsight-coding-agent$/m.test(raw) &&
-      raw.includes("<!-- GENERATED from skill-src/preamble.md + skill-src/managed-router.md.")) return [join(base, entry.name)];
+    const normalized = raw.replace(/\r\n/g, "\n");
+    const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(normalized)?.[1] ?? "";
+    const generators = [
+      "<!-- GENERATED from README.md (its skill:begin regions) + skill-src/preamble.md.\n     Edit those, then run: npm run skill:build -->",
+      "<!-- GENERATED from skill-src/preamble.md + skill-src/managed-router.md.\n     Edit those, then run: node scripts/build-skill.mjs -->",
+    ];
+    if (entry.name === "hindsight-coding-agent" && /^name: hindsight-coding-agent$/m.test(frontmatter) &&
+      generators.some(marker => normalized.includes(marker))) return [join(base, entry.name)];
     return [];
   });
 }

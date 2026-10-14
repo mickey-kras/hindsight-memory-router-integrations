@@ -1,3 +1,4 @@
+import { assertCompanionSkillPrefix } from "./core/skill-sync";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -127,4 +128,32 @@ it.each([undefined, "abc_"])("migrates owned Codex array tables while preserving
   expect(run(["uninstall", "codex"], ctx)).toBe(0);
   const remaining = readFileSync(path, "utf8"); expect(remaining).toContain(foreign);
   expect(Object.keys(parseToml(remaining).mcp_servers as object)).toEqual(["foreign"]);
+});
+
+const baselineSkill = readFileSync(new URL("./core/fixtures/baseline-companion-skill.md", import.meta.url), "utf8");
+it.each([undefined, "abc_"])("upgrades the exact baseline-generated companion skill for %s", prefix => {
+  provision(prefix); const base = join(ctx.home, ".agents/skills"); const previous = join(base, "hindsight-coding-agent");
+  put(join(previous, "SKILL.md"), baselineSkill);
+  if (prefix) expect(() => assertCompanionSkillPrefix("codex", prefix, ctx.home)).toThrow("reinstall");
+  else expect(() => assertCompanionSkillPrefix("codex", "hindsight_", ctx.home)).not.toThrow();
+  expect(run(["update", "codex"], ctx)).toBe(0);
+  const selected = join(base, `${prefix?.slice(0, -1) ?? "hindsight"}-coding-agent`);
+  const upgraded = readFileSync(join(selected, "SKILL.md"), "utf8");
+  expect(upgraded).toContain(`name: ${prefix?.slice(0, -1) ?? "hindsight"}-coding-agent`);
+  expect(upgraded).toContain(`<!-- hindsight-tool-prefix: ${prefix ?? "hindsight_"} -->`);
+  expect(() => assertCompanionSkillPrefix("codex", prefix ?? "hindsight_", ctx.home)).not.toThrow();
+  if (prefix) expect(existsSync(previous)).toBe(false);
+  expect(run(["uninstall", "codex"], ctx)).toBe(0); expect(existsSync(selected)).toBe(false);
+});
+it("rolls a baseline skill migration back exactly if the next native adapter fails", () => {
+  provision("abc_"); const path = join(ctx.home, ".agents/skills/hindsight-coding-agent/SKILL.md"); put(path, baselineSkill);
+  ctx.claudeMcp = () => false; expect(run(["install", "codex", "claude-code"], ctx)).toBe(1);
+  expect(readFileSync(path, "utf8")).toBe(baselineSkill); expect(existsSync(join(ctx.home, ".agents/skills/abc-coding-agent"))).toBe(false);
+});
+it("preserves an unrelated default namesake through custom install and uninstall", () => {
+  provision("abc_"); const path = join(ctx.home, ".agents/skills/hindsight-coding-agent/SKILL.md");
+  const userSkill = '---\nname: hindsight-coding-agent\n---\nUser-owned instructions without generated provenance.';
+  put(path, userSkill); expect(run(["install", "codex"], ctx)).toBe(0); expect(run(["uninstall", "codex"], ctx)).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(userSkill);
+  provision(); expect(run(["install", "codex"], ctx)).toBe(1); expect(readFileSync(path, "utf8")).toBe(userSkill);
 });

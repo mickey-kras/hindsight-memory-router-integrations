@@ -66,6 +66,14 @@ it("routes every document, page, seed and operation request through the configur
   }
 });
 
+it.each(["src/foo.ts", "coverage100%", "C:\\project"])("preserves coding-agent search text %s", async (query) => {
+  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ results: [] }));
+  await client().searchKnowledgePages(query);
+  expect(send).toHaveBeenCalledOnce();
+  const url = new URL(String(send.mock.calls[0][0]));
+  expect(url.pathname).toBe("/v1/default/banks/A/knowledge-base/search");
+  expect(url.searchParams.get("q")).toBe(query);
+});
 it.each([undefined, "", "http://localhost:8888", "invalid", "https://api.hindsight.vectorize.io", "https://user:secret@router.test", "https://router.test?secret=1"])("rejects invalid managed endpoints %s before any request", (endpoint) => {
   managed(endpoint);
   const send = vi.spyOn(globalThis, "fetch");

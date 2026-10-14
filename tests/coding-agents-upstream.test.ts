@@ -376,10 +376,7 @@ it.each(["", "\n"])("Codex uninstall preserves adjacent tables with EOF suffix %
   mkdirSync(join(dir, ".codex"));
   const path = join(dir, ".codex", "config.toml");
   const kept = '[mcp_servers.other]\ncommand = "other"\n\n[features]\nhooks = true\n';
-  writeFileSync(
-    path,
-    `${ownedCodexRegistration(dir)}\n${kept}[mcp_servers.hindsight.env]\nTOKEN = "old"${ending}`,
-  );
+  writeFileSync(path, `${ownedCodexRegistration(dir)}\n${kept}[mcp_servers.hindsight.env]\nTOKEN = "old"${ending}`);
   expect(
     install(["uninstall", "codex"], {
       home: dir,

@@ -193,6 +193,34 @@ describe("hosted router facade contract", () => {
     expect(fetcher.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${token}`);
     expect(fetcher.mock.calls[1][1].headers.Authorization).toBe(`Bearer ${betaToken}`);
   });
+  it.each(["src/foo.ts", "coverage100%", "C:\\project", "../src/foo.ts", "bankId=hidden#fragment"])(
+    "preserves ordinary hosted search text %s",
+    async (q) => {
+      const fetcher = vi.fn().mockResolvedValue(Response.json({ results: [] }));
+      vi.stubGlobal("fetch", fetcher);
+      await new HostedRouterClient(config).searchKnowledgePages("read", { q });
+      expect(fetcher).toHaveBeenCalledOnce();
+      const url = new URL(fetcher.mock.calls[0][0]);
+      expect(url.pathname).toBe("/router/v1/default/banks/read/knowledge-base/search");
+      expect(url.searchParams.get("q")).toBe(q);
+    },
+  );
+  it.each(["bankId", "bank_id", "bank_ids"])("rejects hosted search routing override %s", async (key) => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      new HostedRouterClient(config).searchKnowledgePages("read", { q: "ordinary", [key]: "hidden" }),
+    ).rejects.toThrow(AccessDeniedError);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it.each(["../hidden", "%2e%2e", "src/other", "C:\\project"])("rejects hosted search bank path %s", async (bank) => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    await expect(new HostedRouterClient(config).searchKnowledgePages(bank, { q: "ordinary" })).rejects.toThrow(
+      AccessDeniedError,
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("rejects insecure URLs, malformed credentials and traversal", async () => {
     expect(() => new HostedRouterClient({ ...config, routerUrl: "http://alpha.example" })).toThrow();
     expect(() => new HostedRouterClient({ ...config, token: "invalid" })).toThrow();
