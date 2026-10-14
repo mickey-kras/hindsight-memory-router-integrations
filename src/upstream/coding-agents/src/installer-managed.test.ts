@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { InstallTransaction } from "./install-transaction";
 import { INSTALLERS, parseJsonc, run, type InstallCtx } from "./installer";
+import * as humanSession from "@memory-router/coding-agents/human-session";
 
 let root: string;
 let ctx: InstallCtx;
@@ -37,6 +38,111 @@ beforeEach(() => {
   vi.stubEnv("TEST_MEMORY_TOKEN", `mr_test_${"a".repeat(64)}`);
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }); });
+
+describe("unattended runtime update", () => {
+  function packagedPlugin(): void {
+    put(join(ctx.pkgRoot, "plugin.json"), JSON.stringify({
+      skills: "./skill",
+      mcpServers: { hindsight: {
+        command: "node", args: ["${PLUGIN_ROOT}/dist/mcp-server.js"],
+        env: { HINDSIGHT_MCP_HARNESS: "dcode" },
+      } },
+    }));
+  }
+
+  it.each(["unset", "missing", "invalid"])("stages without %s managed configuration or harness detection", (state) => {
+    if (state !== "unset") vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", join(root, "missing.json"));
+    if (state === "invalid") put(join(root, "missing.json"), "{invalid config");
+    vi.stubEnv("HINDSIGHT_MCP_HARNESS", "unavailable-harness");
+    vi.stubEnv("TEST_MEMORY_TOKEN", "");
+    const probes = INSTALLERS.map((installer) => vi.spyOn(installer, "detect"));
+    packagedPlugin();
+    expect(run(["update"], ctx)).toBe(0);
+    expect(readFileSync(join(ctx.home, ".hindsight/coding-agents/dist/installer.js"), "utf8")).toBe("runtime");
+    expect(readdirSync(ctx.home)).toEqual([".hindsight"]);
+    for (const probe of probes) expect(probe).not.toHaveBeenCalled();
+  });
+
+  it.each(["unset", "changed"])("preserves installed branding, metadata and every host file with %s configuration", (state) => {
+    packagedPlugin();
+    provision(["codex", "cursor-cli"]);
+    const configPath = join(root, "router.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    put(configPath, JSON.stringify({ ...config, toolPrefix: "abc_" }));
+    expect(run(["install", "codex", "cursor-cli"], ctx)).toBe(0);
+    const staged = join(ctx.home, ".hindsight/coding-agents");
+    put(join(staged, ".update-check.json"), '{"lastCheck":123,"latest":"2.0.0"}');
+    put(join(staged, "dist/stale.js"), "stale runtime");
+    const hostBefore = snapshot(ctx.home);
+    const hostFiles = (files: Record<string, string>): Record<string, string> =>
+      Object.fromEntries(Object.entries(files).filter(([path]) => !path.startsWith(staged)));
+    if (state === "unset") vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", "");
+    else put(configPath, JSON.stringify({ ...config, toolPrefix: "memory_" }));
+    vi.stubEnv("TEST_MEMORY_TOKEN", "");
+    put(join(ctx.dist, "installer.js"), "updated runtime");
+    put(join(ctx.pkgRoot, "package.json"), '{"version":"2.0.0"}');
+    const adapters = INSTALLERS.map((installer) => vi.spyOn(installer, "install"));
+    expect(run(["update"], ctx)).toBe(0);
+    expect(hostFiles(snapshot(ctx.home))).toEqual(hostFiles(hostBefore));
+    for (const adapter of adapters) expect(adapter).not.toHaveBeenCalled();
+    expect(readFileSync(join(staged, "dist/installer.js"), "utf8")).toBe("updated runtime");
+    expect(existsSync(join(staged, "dist/stale.js"))).toBe(false);
+    expect(readFileSync(join(staged, "package.json"), "utf8")).toBe('{"version":"2.0.0"}');
+    expect(readFileSync(join(staged, ".update-check.json"), "utf8")).toBe('{"lastCheck":123,"latest":"2.0.0"}');
+    const manifest = JSON.parse(readFileSync(join(staged, "plugin.json"), "utf8")) as { skills: string; mcpServers: Record<string, unknown> };
+    expect(manifest.skills).toBe("./abc-coding-agent");
+    expect(Object.keys(manifest.mcpServers)).toEqual(["abc"]);
+    expect(readFileSync(join(staged, "abc-coding-agent/SKILL.md"), "utf8")).toContain("abc_recall");
+    expect(existsSync(join(staged, "memory-coding-agent"))).toBe(false);
+    const origin = JSON.parse(readFileSync(join(staged, ".install-origin.json"), "utf8")) as { source: string; stagedAt: string };
+    expect(origin.source).toBe(ctx.pkgRoot);
+    expect(Number.isNaN(Date.parse(origin.stagedAt))).toBe(false);
+  });
+
+  it.each(["ambiguous", "malformed"])("rejects %s staged branding before writes", (state) => {
+    const staged = join(ctx.home, ".hindsight/coding-agents");
+    put(join(staged, "dist/installer.js"), "previous runtime");
+    put(join(staged, "abc-coding-agent/SKILL.md"), "<!-- hindsight-tool-prefix: abc_ -->");
+    const prefix = state === "ambiguous" ? "memory_" : "INVALID";
+    put(join(staged, "memory-coding-agent/SKILL.md"), "<!-- hindsight-tool-prefix: " + prefix + " -->");
+    const before = snapshot(ctx.home);
+    expect(run(["update"], ctx)).toBe(1);
+    expect(snapshot(ctx.home)).toEqual(before);
+  });
+
+  it.each(["unavailable", "expired"])("updates without reading %s human credentials", (state) => {
+    provision(["codex"], { tokenEnv: undefined, human: { credentialRef: "synthetic" } });
+    const read = vi.spyOn(humanSession, "readHumanSession").mockImplementation(() => {
+      if (state === "unavailable") throw new humanSession.HumanLoginRequiredError();
+      return humanSession.validateHumanSession({
+        token: "mrh_" + "a".repeat(32) + "_" + "b".repeat(64),
+        principal_id: "synthetic", expires_at: 1, routerUrl: "https://router.example",
+      }, "https://router.example");
+    });
+    expect(run(["install", "codex"], ctx)).toBe(1);
+    expect(read).toHaveBeenCalled();
+    read.mockClear();
+    expect(run(["update"], ctx)).toBe(0);
+    expect(read).not.toHaveBeenCalled();
+    expect(readdirSync(ctx.home)).toEqual([".hindsight"]);
+  });
+
+  it("restores runtime and metadata when staging fails", () => {
+    const staged = join(ctx.home, ".hindsight/coding-agents");
+    put(join(staged, "dist/installer.js"), "previous runtime");
+    put(join(staged, ".install-origin.json"), '{"source":"previous"}');
+    put(join(staged, "skill"), "obstruct copy");
+    const before = snapshot(ctx.home);
+    expect(run(["update"], ctx)).toBe(1);
+    expect(snapshot(ctx.home)).toEqual(before);
+    expect(messages).toHaveLength(1);
+  });
+
+  it("rejects history import without an explicit install", () => {
+    expect(run(["update", "--import-conversations"], ctx)).toBe(1);
+    expect(readdirSync(ctx.home)).toEqual([]);
+  });
+});
 
 describe("operator-managed installation", () => {
   it.each(["--api-token", "--api-token=secret-do-not-print", "--api-url", "--api-url=https://secret", "--server", "--server=daemon"])("rejects %s before mutation", (flag) => {

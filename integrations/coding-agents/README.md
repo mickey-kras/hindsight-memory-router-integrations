@@ -110,7 +110,12 @@ prefix. Custom standalone `memory_router_*` / `agent_knowledge_*` tools are reti
 callers and allowlists to these upstream operations and schemas rather than assuming aliases or
 argument compatibility.
 
-After changing `toolPrefix`, run the pinned installer again (or `update` for the selected harness)
+Bare `update` refreshes only the staged runtime. It needs no managed configuration, harness selection,
+or live credentials, preserves the installed namespace and available native dependencies, and leaves
+host registrations and skills unchanged. With no prior staged namespace it uses the default brand.
+It does not import conversations.
+
+After changing `toolPrefix`, run the pinned installer again (or explicit `update <harness>` for the selected harness)
 and restart existing sessions. The installer migrates only registrations whose command proves
 managed ownership and companion skills with the integration's prefix/provenance marker. It
 snapshots both old and new paths and rolls back the migration if any adapter fails. Unrelated
