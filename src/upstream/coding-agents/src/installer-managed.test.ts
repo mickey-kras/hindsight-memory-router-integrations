@@ -3,6 +3,7 @@ import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { InstallTransaction } from "./install-transaction";
+import { traecodeUserDataDir } from "./core/traecode-mcp";
 import { INSTALLERS, parseJsonc, run, type InstallCtx } from "./installer";
 import * as humanSession from "@memory-router/coding-agents/human-session";
 
@@ -32,6 +33,8 @@ beforeEach(() => {
     interactive: false, log: (message) => messages.push(message), claudeMcp: () => true,
     qwenMcp: () => true, clinePlugin: () => true, dcodePlugin: () => true, nodeSqlite: () => true };
   mkdirSync(ctx.home); put(join(ctx.dist, "installer.js"), "runtime");
+  vi.stubEnv("XDG_CONFIG_HOME", join(ctx.home, ".config"));
+  vi.stubEnv("APPDATA", join(ctx.home, ".config"));
   put(join(ctx.pkgRoot, "package.json"), '{"version":"1.0.0"}');
   put(join(ctx.pkgRoot, "skill/SKILL.md"), "Use hindsight_recall");
   vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", ""); vi.stubEnv("HINDSIGHT_MCP_HARNESS", "");
@@ -434,7 +437,7 @@ it.each(["install", "uninstall"].flatMap(action => ["inputs", "foreign", "empty"
     provision(["traecode"], { mapPathToBank: { [root]: "A" } });
     vi.spyOn(process, "cwd").mockReturnValue(root);
     put(join(ctx.dist, "mcp-server.js"), "runtime");
-    const path = join(ctx.home, ".config/Trae CN/User/mcp.json");
+    const path = join(traecodeUserDataDir(ctx.home), "User/mcp.json");
     const foreign = { command: "foreign", args: ["serve"] };
     const inputs = [{ id: "api-key", type: "promptString" }];
     put(path, JSON.stringify({

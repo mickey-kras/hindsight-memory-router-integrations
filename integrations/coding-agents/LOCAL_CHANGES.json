@@ -81,7 +81,7 @@
   "src/install-transaction.ts": "c811163074fd2c2753e54161fa7aca9d630ce7e6426a99921a22ccd08b02690b",
   "src/install-ui.ts": "14f70e442a96b89e13f7740ab5edf6d59b4a5ba6d71986f2d0c6250cd51b6c89",
   "src/installer-branding.test.ts": "3a1018ef2f467a9cbdf9e99d799d9c40a6ed8d615bae3c36ced29d0e5ad99af8",
-  "src/installer-managed.test.ts": "e56d7e8e846891baed2bcebd26c48d1073f15d62bd9d2052a91ad49fe9b9543a",
+  "src/installer-managed.test.ts": "2216f6e2f6efcb52573755e32c33149487fc0c99d122703bdbe4ba6c5c4df7e6",
   "src/installer.test.ts": "142d3082bdda916aad220d141d6290602a47ce3a83a8bb3cd37818e75204b252",
   "src/installer.ts": "95a1e1b525c66e56302f71959f1ba0cd58fc32843c3905aa108239ccd9666572",
   "src/mcp-server.test.ts": "e5e3807a5169660f7d409d072d55bfcf07d29862652db255714c8967ec0b505e",
