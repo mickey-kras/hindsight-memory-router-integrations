@@ -129,6 +129,7 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
     } catch {
       continue; // a truncated record contributes nothing rather than failing the hook
     }
+    if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
 
     const role = typeof inner.role === "string" ? inner.role : file?.role;
     const isUser = role === "user";

@@ -108,9 +108,9 @@ function parseArgs(raw: string | undefined): unknown {
 
 /** WorkBuddy stamps epoch milliseconds; absent only on malformed input. */
 function stampOf(line: WorkbuddyLine): { timestamp?: string } {
-  return typeof line.timestamp === "number"
-    ? { timestamp: new Date(line.timestamp).toISOString() }
-    : {};
+  if (typeof line.timestamp !== "number") return {};
+  const date = new Date(line.timestamp);
+  return Number.isFinite(date.getTime()) ? { timestamp: date.toISOString() } : {};
 }
 
 /**

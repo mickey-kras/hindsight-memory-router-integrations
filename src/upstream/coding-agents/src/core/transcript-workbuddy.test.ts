@@ -33,6 +33,20 @@ const asstMsg = (text: string, ts: number) => ({
 });
 
 describe("readWorkbuddyTranscript", () => {
+  it.each(["1e100", "-1e100", "1e400", "-1e400"])("preserves text and actions with invalid timestamp %s", (timestamp) => {
+    expect(read([
+      userMsg("before", 0),
+      `{"type":"message","role":"assistant","timestamp":${timestamp},"content":[{"type":"output_text","text":"reply"}]}`,
+      `{"type":"function_call","name":"Edit","arguments":"{\\"file_path\\":\\"src/app.ts\\"}","timestamp":${timestamp}}`,
+      asstMsg("after", 1000),
+    ])).toEqual([
+      { role: "user", content: "before", timestamp: "1970-01-01T00:00:00.000Z" },
+      { role: "assistant", content: "reply" },
+      { role: "action", content: "Edit src/app.ts" },
+      { role: "assistant", content: "after", timestamp: "1970-01-01T00:00:01.000Z" },
+    ]);
+  });
+
   it("renders a prompt, its tool call and the reply in log order", () => {
     const prompt =
       '<system-reminder data-role="user-context">\n<user_info>…</user_info>\n</system-reminder>\n' +

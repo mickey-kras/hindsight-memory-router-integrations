@@ -11208,6 +11208,50 @@ index 7526361..f2c5273 100644
        opts.stateFile ?? gateStateFile(),
        JSON.stringify({ ...state, lastEnableHint: now }, null, 2) + "\n"
      );
+diff --git a/src/core/transcript-codebuddy-ide.test.ts b/src/core/transcript-codebuddy-ide.test.ts
+index 5d1cbf2..edece35 100644
+--- a/src/core/transcript-codebuddy-ide.test.ts
++++ b/src/core/transcript-codebuddy-ide.test.ts
+@@ -1,6 +1,6 @@
+ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+ import { tmpdir } from "node:os";
+-import { join } from "node:path";
++import { dirname, join } from "node:path";
+ import { describe, expect, it } from "vitest";
+ import { readCodebuddyIdeTranscript, readCodebuddyTranscript } from "./transcript-codebuddy-ide";
+ 
+@@ -52,6 +52,19 @@ const FIRST_PROMPT =
+   "<user_query>\nfix the flake\n</user_query>";
+ 
+ describe("readCodebuddyIdeTranscript", () => {
++  it.each(["null", "[]", "42", '"text"', "true"])("skips encoded %s between valid turns", (encoded) => {
++    const path = session([
++      { role: "user", content: [{ type: "text", text: "before" }] },
++      { role: "assistant", content: [] },
++      { role: "assistant", content: [{ type: "text", text: "after" }] },
++    ]);
++    writeFileSync(join(dirname(path), "messages/msg-1.json"), JSON.stringify({ role: "assistant", message: encoded }));
++    expect(readCodebuddyIdeTranscript(path)).toEqual([
++      { role: "user", content: "before" },
++      { role: "assistant", content: "after" },
++    ]);
++  });
++
+   it("renders a prompt, its tool call and the reply in index order", () => {
+     const path = session([
+       {
+diff --git a/src/core/transcript-codebuddy-ide.ts b/src/core/transcript-codebuddy-ide.ts
+index 879c22a..7d3d450 100644
+--- a/src/core/transcript-codebuddy-ide.ts
++++ b/src/core/transcript-codebuddy-ide.ts
+@@ -129,6 +129,7 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
+     } catch {
+       continue; // a truncated record contributes nothing rather than failing the hook
+     }
++    if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
+ 
+     const role = typeof inner.role === "string" ? inner.role : file?.role;
+     const isUser = role === "user";
 diff --git a/src/core/transcript-dcode.test.ts b/src/core/transcript-dcode.test.ts
 index ab90a8e..3237cfc 100644
 --- a/src/core/transcript-dcode.test.ts
@@ -11293,6 +11337,48 @@ index 107e827..d91d83c 100644
  }
  
  export function truncate(s: string, max = TOOL_TEXT_CAP): string {
+diff --git a/src/core/transcript-workbuddy.test.ts b/src/core/transcript-workbuddy.test.ts
+index 07f75ef..cbe6dce 100644
+--- a/src/core/transcript-workbuddy.test.ts
++++ b/src/core/transcript-workbuddy.test.ts
+@@ -33,6 +33,20 @@ const asstMsg = (text: string, ts: number) => ({
+ });
+ 
+ describe("readWorkbuddyTranscript", () => {
++  it.each(["1e100", "-1e100", "1e400", "-1e400"])("preserves text and actions with invalid timestamp %s", (timestamp) => {
++    expect(read([
++      userMsg("before", 0),
++      `{"type":"message","role":"assistant","timestamp":${timestamp},"content":[{"type":"output_text","text":"reply"}]}`,
++      `{"type":"function_call","name":"Edit","arguments":"{\\"file_path\\":\\"src/app.ts\\"}","timestamp":${timestamp}}`,
++      asstMsg("after", 1000),
++    ])).toEqual([
++      { role: "user", content: "before", timestamp: "1970-01-01T00:00:00.000Z" },
++      { role: "assistant", content: "reply" },
++      { role: "action", content: "Edit src/app.ts" },
++      { role: "assistant", content: "after", timestamp: "1970-01-01T00:00:01.000Z" },
++    ]);
++  });
++
+   it("renders a prompt, its tool call and the reply in log order", () => {
+     const prompt =
+       '<system-reminder data-role="user-context">\n<user_info>…</user_info>\n</system-reminder>\n' +
+diff --git a/src/core/transcript-workbuddy.ts b/src/core/transcript-workbuddy.ts
+index dbc9254..e07ac87 100644
+--- a/src/core/transcript-workbuddy.ts
++++ b/src/core/transcript-workbuddy.ts
+@@ -108,9 +108,9 @@ function parseArgs(raw: string | undefined): unknown {
+ 
+ /** WorkBuddy stamps epoch milliseconds; absent only on malformed input. */
+ function stampOf(line: WorkbuddyLine): { timestamp?: string } {
+-  return typeof line.timestamp === "number"
+-    ? { timestamp: new Date(line.timestamp).toISOString() }
+-    : {};
++  if (typeof line.timestamp !== "number") return {};
++  const date = new Date(line.timestamp);
++  return Number.isFinite(date.getTime()) ? { timestamp: date.toISOString() } : {};
+ }
+ 
+ /**
 diff --git a/src/core/turn-journal-policy.test.ts b/src/core/turn-journal-policy.test.ts
 new file mode 100644
 index 0000000..4941eed

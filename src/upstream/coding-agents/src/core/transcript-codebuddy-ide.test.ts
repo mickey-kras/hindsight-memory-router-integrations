@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readCodebuddyIdeTranscript, readCodebuddyTranscript } from "./transcript-codebuddy-ide";
 
@@ -52,6 +52,19 @@ const FIRST_PROMPT =
   "<user_query>\nfix the flake\n</user_query>";
 
 describe("readCodebuddyIdeTranscript", () => {
+  it.each(["null", "[]", "42", '"text"', "true"])("skips encoded %s between valid turns", (encoded) => {
+    const path = session([
+      { role: "user", content: [{ type: "text", text: "before" }] },
+      { role: "assistant", content: [] },
+      { role: "assistant", content: [{ type: "text", text: "after" }] },
+    ]);
+    writeFileSync(join(dirname(path), "messages/msg-1.json"), JSON.stringify({ role: "assistant", message: encoded }));
+    expect(readCodebuddyIdeTranscript(path)).toEqual([
+      { role: "user", content: "before" },
+      { role: "assistant", content: "after" },
+    ]);
+  });
+
   it("renders a prompt, its tool call and the reply in index order", () => {
     const path = session([
       {
