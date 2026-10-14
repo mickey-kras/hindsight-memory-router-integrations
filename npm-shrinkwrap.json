@@ -1,12 +1,12 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-openclaw",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@mickey-kras/hindsight-memory-router-openclaw",
-      "version": "0.14.0",
+      "version": "0.14.1",
       "license": "MIT",
       "dependencies": {
         "@vectorize-io/hindsight-agent-sdk": "0.1.1",
@@ -17,7 +17,7 @@
         "@types/node": "22.20.5",
         "@vectorize-io/hindsight-client": "0.10.2",
         "@vitest/coverage-v8": "5.0.3",
-        "aislop": "0.18.0",
+        "aislop": "0.18.1",
         "typescript": "^7.0.2",
         "vitest": "^5.0.0"
       },
@@ -2202,9 +2202,9 @@
       }
     },
     "node_modules/aislop": {
-      "version": "0.18.0",
-      "resolved": "https://registry.npmjs.org/aislop/-/aislop-0.18.0.tgz",
-      "integrity": "sha512-NyNSH2IoZjS9MbXRF7SBuNOhgrV5e8WVYQ/5uCdrPcqbvB1vuUywUWRsq8+CfMTp/NbmOnrJ3GnJ4L3dnYRy1w==",
+      "version": "0.18.1",
+      "resolved": "https://registry.npmjs.org/aislop/-/aislop-0.18.1.tgz",
+      "integrity": "sha512-VHkYEr5muOkvApVmZNdcWMNRaTSwMApdi2S34evhC/NIESl4KIQ1XGdcSLddg37ZqZj3TP3v0f78d6dphYmsIw==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
@@ -2221,7 +2221,7 @@
         "picocolors": "^1.1.1",
         "picomatch": "^4.0.7",
         "react": "^19.2.8",
-        "smol-toml": "^1.8.0",
+        "smol-toml": "^1.9.0",
         "tar": "^7.5.22",
         "typescript": "^6.0.3",
         "wcwidth": "^1.0.1",
