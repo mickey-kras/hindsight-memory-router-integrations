@@ -35,6 +35,8 @@ describe("managed router companion skill", () => {
     expect(skill).toContain("Read-only principals skip ingestion and write-back");
     expect(skill).toContain("Session-start and prompt hooks");
     expect(skill).toContain("Correction:");
+    expect(skill).not.toContain(`${prefix}list_banks`);
+    expect(skill).toContain("Ask the operator to verify assigned bank");
     expect(skill).not.toMatch(
       /npx|apiToken|apiUrl|HINDSIGHT_API|hindsight\.vectorize\.io|localhost:8888|cloud|daemon|--api-url|--api-token|--server/i,
     );

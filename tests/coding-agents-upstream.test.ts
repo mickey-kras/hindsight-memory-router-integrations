@@ -481,7 +481,7 @@ it("forwards the optional project directory to the staged Codex MCP server", () 
   expect(denied.stdout).toBe("");
 });
 
-it("preserves Codex overrides and manual allowlist entries when reinstalling with a different managed config", () => {
+it("rejects conflicting Codex launch config and preserves overrides after explicit operator migration", () => {
   const dir = setup();
   mkdirSync(join(dir, ".codex"));
   const path = join(dir, ".codex", "config.toml");
@@ -494,6 +494,16 @@ it("preserves Codex overrides and manual allowlist entries when reinstalling wit
     path,
     `[mcp_servers.other]\ncommand = "untouched"\n\n${ownedCodexRegistration(dir)}env_vars = ["USER_APPROVED_ENV", "HINDSIGHT_CONFIG"]\nstartup_timeout_sec = 45\ntool_timeout_sec = 180\nenabled = true\n\n[mcp_servers.hindsight.env]\nHINDSIGHT_ROUTER_CONFIG = ${JSON.stringify(override)}\nHINDSIGHT_MCP_HARNESS = "codex"\nHINDSIGHT_LOG_LEVEL = "error"\n`,
   );
+  const original = readFileSync(path, "utf8");
+  const rejected = installPackagedCodex(dir);
+  expect(rejected.status).toBe(1);
+  expect(rejected.stdout).toBe("");
+  expect(rejected.stderr).not.toContain(token);
+  expect(readFileSync(path, "utf8")).toBe(original);
+  for (const newPath of [".hindsight", ".agents", ".codex/hooks.json", ".codex/config.toml.hindsight-backup"]) {
+    expect(existsSync(join(dir, newPath))).toBe(false);
+  }
+  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", override);
   expect(installPackagedCodex(dir).status).toBe(0);
   const installed = readFileSync(path, "utf8");
   const registration = parseToml(installed).mcp_servers.hindsight;

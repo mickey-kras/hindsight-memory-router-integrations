@@ -2,7 +2,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmS
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 
-/** Copy/write operations must not follow links outside their snapshotted tree. */
+// Copy/write operations must not follow links outside their snapshotted tree.
 export function assertUnlinkedTree(path: string, rejectHardLinks = false): void {
   const pending = [path];
   while (pending.length) {
@@ -22,7 +22,7 @@ export function assertUnlinkedTree(path: string, rejectHardLinks = false): void 
   }
 }
 
-/** Snapshot only adapter-owned files/runtime/plugin registries; never harness session history. */
+// Snapshot only adapter-owned files/runtime/plugin registries; never harness session history.
 export class InstallTransaction {
   private readonly scratch = mkdtempSync(join(tmpdir(), "memory-install-"));
   private readonly snapshots: { path: string; backup?: string }[] = [];
@@ -63,7 +63,7 @@ export class InstallTransaction {
 
   commit(): void { rmSync(this.scratch, { recursive: true, force: true }); }
 
-  /** Kept available for manual recovery if a filesystem failure prevents rollback. */
+  // Kept available for manual recovery if a filesystem failure prevents rollback.
   get recoveryDirectory(): string { return this.scratch; }
 
   rollback(): void {

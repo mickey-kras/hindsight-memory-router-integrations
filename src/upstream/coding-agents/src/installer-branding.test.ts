@@ -1,9 +1,9 @@
 import { assertCompanionSkillPrefix } from "./core/skill-sync";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { run, type InstallCtx } from "./installer";
 
 let root: string;
@@ -156,4 +156,38 @@ it("preserves an unrelated default namesake through custom install and uninstall
   put(path, userSkill); expect(run(["install", "codex"], ctx)).toBe(0); expect(run(["uninstall", "codex"], ctx)).toBe(0);
   expect(readFileSync(path, "utf8")).toBe(userSkill);
   provision(); expect(run(["install", "codex"], ctx)).toBe(1); expect(readFileSync(path, "utf8")).toBe(userSkill);
+});
+
+it.each(["install", "update"])("rejects conflicting retained Codex launch provisioning before any %s writes", command => {
+  provision("abc_"); const alternate = join(root, "alternate-router.json");
+  put(alternate, JSON.stringify({ routerUrl: "https://router.example", toolPrefix: "xyz_", principals: {
+    codex: { tokenEnv: "TEST_MEMORY_TOKEN", writeBank: "B", mapPathToBank: { [process.cwd()]: "B" } },
+  } }));
+  const path = join(ctx.home, ".codex/config.toml");
+  const original = stringifyToml({ mcp_servers: { xyz: {
+    command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")],
+    env: { HINDSIGHT_ROUTER_CONFIG: alternate, HINDSIGHT_MCP_HARNESS: "codex", EXTRA_OPTION: "preserved" },
+  } } });
+  put(path, original);
+  expect(run([command, "cursor-cli", "codex"], ctx)).toBe(1);
+  expect(readFileSync(path, "utf8")).toBe(original);
+  for (const newPath of [".hindsight", ".agents", ".cursor", ".codex/hooks.json", ".codex/config.toml.hindsight-backup"])
+    expect(existsSync(join(ctx.home, newPath))).toBe(false);
+});
+it.each([false, true])("preserves retained same-file Codex launch configuration and unrelated overrides (alias=%s)", alias => {
+  provision("abc_"); const canonical = process.env.HINDSIGHT_ROUTER_CONFIG ?? "";
+  const launchPath = alias ? join(root, "same-config-alias.json") : canonical;
+  if (alias) symlinkSync(canonical, launchPath);
+  const path = join(ctx.home, ".codex/config.toml");
+  put(path, stringifyToml({ mcp_servers: { hindsight: {
+    command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")],
+    env_vars: [{ name: "EXTRA_ENV", source: "local" }],
+    env: { HINDSIGHT_ROUTER_CONFIG: launchPath, EXTRA_OPTION: "preserved" },
+  } } }));
+  expect(run(["install", "codex"], ctx)).toBe(0);
+  const registration = (parseToml(readFileSync(path, "utf8")).mcp_servers as Record<string, { env: Record<string, string>; env_vars: unknown[] }>).abc;
+  expect(registration.env.HINDSIGHT_ROUTER_CONFIG).toBe(launchPath);
+  expect(registration.env.EXTRA_OPTION).toBe("preserved");
+  expect(registration.env_vars).toContainEqual({ name: "EXTRA_ENV", source: "local" });
+  expect(readFileSync(join(ctx.home, ".agents/skills/abc-coding-agent/SKILL.md"), "utf8")).toContain("abc_reflect");
 });

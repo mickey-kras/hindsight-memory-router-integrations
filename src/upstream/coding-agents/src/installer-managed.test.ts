@@ -53,6 +53,55 @@ describe("operator-managed installation", () => {
     expect(run(["install"], ctx)).toBe(1); expect(readdirSync(ctx.home)).toEqual([]);
     expect(messages).toHaveLength(1); expect(messages[0]).not.toContain("secret-do-not-print");
   });
+  it.each(["cursor-cli", "claude-code", "qwen-code"])("uninstalls owned old namespace for %s while preserving foreign desired namespace", (harness) => {
+    provision([harness]);
+    const routerPath = join(root, "router.json");
+    const router = JSON.parse(readFileSync(routerPath, "utf8"));
+    put(routerPath, JSON.stringify({ ...router, toolPrefix: "abc_" }));
+    const native = vi.fn<(args: string[]) => boolean>(() => true);
+    ctx.claudeMcp = native;
+    ctx.qwenMcp = native;
+    expect(run(["install", harness], ctx)).toBe(0);
+    const path = join(ctx.home, harness === "cursor-cli" ? ".cursor/mcp.json" : harness === "claude-code" ? ".claude.json" : ".qwen/settings.json");
+    const config = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+    const foreign = { command: "foreign", args: ["foreign-server.js"] };
+    config.mcpServers = {
+      ...config.mcpServers,
+      abc: { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: harness } },
+      memory: foreign,
+    };
+    put(path, JSON.stringify(config));
+    put(routerPath, JSON.stringify({ ...router, toolPrefix: "memory_" }));
+    native.mockClear();
+    expect(run(["uninstall", harness], ctx)).toBe(0);
+    const after = JSON.parse(readFileSync(path, "utf8"));
+    expect(after.mcpServers.memory).toEqual(foreign);
+    expect(after.mcpServers.abc).toBeUndefined();
+    expect(native.mock.calls.some(([args]) => args.includes("memory"))).toBe(false);
+    if (harness !== "cursor-cli") expect(native.mock.calls.some(([args]) => args.includes("abc"))).toBe(true);
+  });
+  it.each([
+    ["antigravity-cli", ".gemini/config/mcp_config.json"],
+    ["devin-cli", ".config/devin/mcp_config.json"],
+    ["cursor-cli", ".cursor/mcp.json"],
+    ["copilot-cli", ".copilot/mcp-config.json"],
+    ["cline-cli", ".cline/data/settings/cline_mcp_settings.json"],
+    ["factory-droid", ".factory/mcp.json"],
+    ["zcode", ".zcode/cli/config.json"],
+  ])("preserves foreign current namespace when uninstalling %s", (harness, relativePath) => {
+    provision([harness]);
+    const routerPath = join(root, "router.json");
+    put(routerPath, JSON.stringify({ ...JSON.parse(readFileSync(routerPath, "utf8")), toolPrefix: "memory_" }));
+    const path = join(ctx.home, relativePath);
+    const servers = {
+      abc: { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: harness } },
+      memory: { command: "foreign", args: ["foreign-server.js"] },
+    };
+    put(path, JSON.stringify(harness === "zcode" ? { mcp: { servers } } : { mcpServers: servers }));
+    expect(run(["uninstall", harness], ctx)).toBe(0);
+    const after = JSON.parse(readFileSync(path, "utf8"));
+    expect(harness === "zcode" ? after.mcp.servers : after.mcpServers).toEqual({ memory: servers.memory });
+  });
   it("rejects ambiguous detection", () => {
     provision(["codex", "cursor-cli"]); mkdirSync(join(ctx.home, ".codex")); mkdirSync(join(ctx.home, ".cursor"));
     expect(run(["install"], ctx)).toBe(1); expect(existsSync(join(ctx.home, ".hindsight"))).toBe(false);

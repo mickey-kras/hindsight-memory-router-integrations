@@ -103,8 +103,8 @@ per-bank settings cannot override it.
 Check the session banner and available memory tools first. Use `hindsight_sync_status` for ingestion
 progress and `hindsight_diagnose` for sanitized diagnostic information when these tools are available.
 If memory seems stale, inspect progress before repeating ingestion or inventing another bank.
-`hindsight_list_banks` shows only the principal's assigned visible banks; use an explicit assigned
-bank for bank configuration and knowledge-page reads.
+Use the diagnostics to confirm the current project bank. Ask the operator to verify assigned bank
+grants and project mappings in the managed configuration when access or bank selection is unclear.
 
 Missing hooks or tools usually require reinstalling the selected harness from the verified artifact
 with its managed environment. Review the harness's plugin/hook registration and sanitized logs;
