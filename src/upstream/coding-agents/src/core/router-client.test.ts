@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -172,4 +172,62 @@ it("tolerates page-creation conflicts without leaking router response bodies", a
   expect(response.status).toBe(409);
   expect(await response.text()).toBe("");
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+it("cancels every assigned-bank recall at the caller's remaining deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    const signals: AbortSignal[] = [];
+    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("missing recall cancellation signal");
+      signals.push(signal);
+      return new Promise<Response>(() => {});
+    });
+    const pending = client().recallObservations("query", { timeoutMs: 7_000 });
+    expect(send).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(6_999);
+    expect(signals.every(signal => !signal.aborted)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toEqual([]);
+    expect(signals.every(signal => signal.aborted)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it.each([401, 403])("shares explicit-bank %s denial across root and sibling views until token rotation", async status => {
+  const send = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("denied", { status }))
+    .mockImplementation(async () => Response.json({ results: [] }));
+  const readerToken = `mr_reader_${"d".repeat(64)}`;
+  const managedConfig = JSON.parse(readFileSync(configPath, "utf8"));
+  managedConfig.principals.reader.tokenEnv = "ROUTER_READER_TEST_TOKEN";
+  writeFileSync(configPath, JSON.stringify(managedConfig));
+  vi.stubEnv("ROUTER_READER_TEST_TOKEN", readerToken);
+  const unrelated = client("reader");
+  const root = client();
+  const selected = root.forBank("B");
+  const sibling = root.forBank("A");
+  await expect(selected.searchKnowledgePages("query")).rejects.toThrow(AccessDeniedError);
+  await expect(root.searchKnowledgePages("query")).rejects.toThrow(AccessDeniedError);
+  await expect(sibling.searchKnowledgePages("query")).rejects.toThrow(AccessDeniedError);
+  expect(() => root.forBank("B")).toThrow(AccessDeniedError);
+  expect(send).toHaveBeenCalledTimes(1);
+  await unrelated.searchKnowledgePages("query");
+  expect(new Headers(send.mock.calls[1][1]?.headers).get("Authorization")).toBe(`Bearer ${readerToken}`);
+  expect(new Headers(send.mock.calls[1][1]?.headers).get("x-memory-router-agent")).toBe("reader");
+  const rotated = `mr_codex_${"c".repeat(64)}`;
+  vi.stubEnv("ROUTER_CLIENT_TEST_TOKEN", rotated);
+  await selected.searchKnowledgePages("query");
+  await root.searchKnowledgePages("query");
+  await sibling.searchKnowledgePages("query");
+  await root.forBank("B").searchKnowledgePages("query");
+  expect(send.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+    "/v1/default/banks/B/knowledge-base/search", "/v1/default/banks/A/knowledge-base/search",
+    "/v1/default/banks/B/knowledge-base/search",
+    "/v1/default/banks/A/knowledge-base/search", "/v1/default/banks/A/knowledge-base/search",
+    "/v1/default/banks/B/knowledge-base/search",
+  ]);
+  for (const [, init] of send.mock.calls.slice(2)) {
+    expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${rotated}`);
+    expect(new Headers(init?.headers).get("x-memory-router-agent")).toBe("codex");
+  }
 });

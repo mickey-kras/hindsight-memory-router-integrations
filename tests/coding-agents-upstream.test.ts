@@ -406,7 +406,8 @@ it.each([undefined, "abc_"].flatMap((prefix) => ["missing", "malformed"].map((pr
   "packaged CLI uninstalls $prefix with $problem managed configuration",
   ({ prefix, problem }) => {
     const dir = setup();
-    const configPath = process.env.HINDSIGHT_ROUTER_CONFIG!;
+    const configPath = process.env.HINDSIGHT_ROUTER_CONFIG;
+    if (!configPath) throw new Error("managed test configuration missing");
     const config = JSON.parse(readFileSync(configPath, "utf8"));
     writeFileSync(configPath, JSON.stringify({ ...config, toolPrefix: prefix }));
     const installed = installPackagedCodex(dir);
@@ -414,7 +415,7 @@ it.each([undefined, "abc_"].flatMap((prefix) => ["missing", "malformed"].map((pr
     const id = prefix?.slice(0, -1) ?? "hindsight";
     const tomlPath = join(dir, ".codex/config.toml");
     const foreign = '[mcp_servers.foreign]\ncommand = "foreign"\n';
-    writeFileSync(tomlPath, readFileSync(tomlPath, "utf8") + "\n" + foreign);
+    writeFileSync(tomlPath, `${readFileSync(tomlPath, "utf8")}\n${foreign}`);
     if (problem === "missing") rmSync(configPath);
     else writeFileSync(configPath, "{malformed");
     const removed = spawnSync(process.execPath, [join(dir, "package/dist/installer.js"), "uninstall", "codex"], {

@@ -257,9 +257,9 @@ export class HindsightClient {
   readonly pageSearchLimit: number;
   readonly recallOptions: Record<string, unknown>;
 
-  constructor(o: ClientOpts) {
-    this.routerHarness = o.routerHarness;
-    this.transport = harnessTransport(o.routerHarness);
+  constructor(o: ClientOpts, parent?: HindsightClient) {
+    this.routerHarness = parent?.routerHarness ?? o.routerHarness;
+    this.transport = parent?.transport ?? harnessTransport(o.routerHarness);
     this.apiUrl = this.transport.baseUrl;
     if (o.apiUrl.replace(/\/+$/, "") !== this.apiUrl) throw new AccessDeniedError();
     this.transport.bankUrl(o.bank);
@@ -284,17 +284,17 @@ export class HindsightClient {
     this.transport.bankUrl(bank);
     return new HindsightClient({ routerHarness: this.routerHarness, apiUrl: this.apiUrl, bank,
       project: this.project, maxParallelRetains: this.maxParallelRetains, observationScopes: this.observationScopes,
-      pageSearchLimit: this.pageSearchLimit, recallOptions: this.recallOptions, log: this.log });
+      pageSearchLimit: this.pageSearchLimit, recallOptions: this.recallOptions, log: this.log }, this);
   }
 
   get apiToken(): undefined { return undefined; }
 
   hasCredentials(): boolean { return this.transport.hasCredentials(); }
 
-  private async fetchWithAuth(url: string, init: RequestInit): Promise<Response> {
+  private async fetchWithAuth(url: string, init: RequestInit, timeoutMs = 15_000): Promise<Response> {
     if (url === this.bankUrl("/memories/recall")) {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-      const result = await readAcrossBanks(this.transport, "recall", body, { timeoutMs: 15000, maxTokens: 4096 });
+      const result = await readAcrossBanks(this.transport, "recall", body, { timeoutMs, maxTokens: 4096, signal: init.signal ?? undefined });
       if (result.partial) this.log("partial memory read: assigned bank unavailable");
       return Response.json({ results: result.results });
     }
@@ -321,7 +321,7 @@ export class HindsightClient {
         method,
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(timeoutMs),
-      });
+      }, timeoutMs);
     } catch (error) {
       if (!(error instanceof RouterRequestError)) throw error;
       if (error.statusCode === 429 && !tolerate.includes(429)) throw new RateLimitedError(error.retryAfterMs);

@@ -6,7 +6,7 @@ export async function readAcrossBanks(
   transport: RouterTransport,
   operation: "recall" | "reflect",
   body: Record<string, unknown>,
-  options: { timeoutMs: number; maxTokens: number },
+  options: { timeoutMs: number; maxTokens: number; signal?: AbortSignal },
 ) {
   const suffix = operation === "recall" ? "/memories/recall" : "/reflect";
   const query = typeof body.query === "string" ? body.query : "";
@@ -18,7 +18,10 @@ export async function readAcrossBanks(
       async recall(bank, _query, request) {
         const response = await transport.request(transport.bankUrl(bank, suffix), {
           method: "POST",
-          signal: request?.signal,
+          signal:
+            options.signal && request?.signal
+              ? AbortSignal.any([options.signal, request.signal])
+              : (options.signal ?? request?.signal),
           body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
         });
         const data = (await response.json()) as {
