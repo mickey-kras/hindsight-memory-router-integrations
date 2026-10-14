@@ -126,6 +126,9 @@ jobs:
           node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
 
+      - name: Verify packed coding-agent installer
+        run: node --test .github/scripts/coding-installer-smoke.mjs
+
       - name: Install Nix
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
 

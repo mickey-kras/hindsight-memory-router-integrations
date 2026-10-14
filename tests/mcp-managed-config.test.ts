@@ -2,10 +2,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadMcpStack, MCP_DEFAULTS, scheduleQueueFlush, startupErrorMessage } from "../src/mcp/managed-config.js";
 import { AccessDeniedError } from "../src/shared/bank-access.js";
 import { CredentialResolutionError, UnknownPrincipalError } from "../src/shared/principal-credential-resolver.js";
 import { RouterUrlError } from "../src/shared/router-url.js";
-import { loadMcpStack, MCP_DEFAULTS, scheduleQueueFlush, startupErrorMessage } from "../src/mcp/managed-config.js";
 
 const TOKEN = `mr_agent-key_${"a".repeat(64)}`;
 const logger = { warn: vi.fn(), error: vi.fn() };
@@ -75,13 +75,13 @@ describe("loadMcpStack", () => {
   it("forwards structured audit records to the host logger as single-line JSON", () => {
     configure(validPrincipal);
     const stack = loadMcpStack(process.env, logger);
-    stack.audit({ principal: "agent", op: "memory_router_recall", outcome: "success", bankId: "agent-bank" });
+    stack.audit({ principal: "agent", op: "hindsight_recall", outcome: "success", bankId: "agent-bank" });
     const line = logger.warn.mock.calls.map(([message]) => message as string).find((m) => m.includes('"op"'));
     expect(line).toBeDefined();
     expect(line).not.toContain("\n");
     expect(JSON.parse(line as string)).toMatchObject({
       principal: "agent",
-      op: "memory_router_recall",
+      op: "hindsight_recall",
       outcome: "success",
       bankId: "agent-bank",
     });
@@ -92,12 +92,12 @@ describe("loadMcpStack", () => {
     const infoLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const stack = loadMcpStack(process.env, infoLogger);
     infoLogger.warn.mockClear();
-    stack.audit({ principal: "agent", op: "memory_router_retain", outcome: "success", bankId: "agent-bank" });
+    stack.audit({ principal: "agent", op: "hindsight_retain", outcome: "success", bankId: "agent-bank" });
     expect(infoLogger.info).toHaveBeenCalledOnce();
     expect(infoLogger.warn).not.toHaveBeenCalled();
     expect(JSON.parse(infoLogger.info.mock.calls[0][0] as string)).toMatchObject({
       principal: "agent",
-      op: "memory_router_retain",
+      op: "hindsight_retain",
       outcome: "success",
     });
   });
@@ -112,7 +112,7 @@ describe("loadMcpStack", () => {
       error: vi.fn(),
     };
     const stack = loadMcpStack(process.env, infoLogger);
-    expect(() => stack.audit({ principal: "agent", op: "memory_router_retain", outcome: "success" })).not.toThrow();
+    expect(() => stack.audit({ principal: "agent", op: "hindsight_retain", outcome: "success" })).not.toThrow();
   });
 
   it.each([

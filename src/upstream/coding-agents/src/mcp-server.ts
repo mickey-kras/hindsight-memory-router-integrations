@@ -38,6 +38,7 @@ export function selectTools(
     ? []
     : buildKnowledgeTools(client, bankId, {
         repoDir: cwd,
+        toolPrefix: cfg.toolPrefix,
         harness,
         pageTrigger: buildPageTrigger(cfg),
         reflectTimeoutMs: cfg.reflectToolTimeoutMs,

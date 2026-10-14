@@ -287,19 +287,19 @@ if (process.argv[2] === "prepare") {
     try {
       await mcpClient.connect(mcpTransport);
       const { tools } = await mcpClient.listTools();
-      for (const name of ["memory_router_retain", "memory_router_recall"]) {
+      for (const name of ["hindsight_retain", "hindsight_recall"]) {
         assert.ok(
           tools.some((tool) => tool.name === name),
           `Packaged MCP server must expose ${name}`,
         );
       }
       const mcpRetained = await mcpClient.callTool({
-        name: "memory_router_retain",
+        name: "hindsight_retain",
         arguments: { content: "The release smoke project deploys with Docker Compose." },
       });
       assert.equal(mcpRetained.isError, undefined, JSON.stringify(mcpRetained.content));
       const mcpRecalled = await mcpClient.callTool({
-        name: "memory_router_recall",
+        name: "hindsight_recall",
         arguments: { query: "How is the project deployed?" },
       });
       assert.equal(mcpRecalled.isError, undefined, JSON.stringify(mcpRecalled.content));

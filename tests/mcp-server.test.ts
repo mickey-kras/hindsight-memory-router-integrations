@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadMcpStack } from "../src/mcp/managed-config.js";
 import { buildMcpServer, SERVER_NAME } from "../src/mcp/server.js";
@@ -60,20 +60,20 @@ describe("MCP wire protocol", () => {
       const annotations = Object.fromEntries(listed.tools.map((entry) => [entry.name, entry.annotations]));
       expect(Object.keys(annotations).sort()).toEqual(
         [
-          "memory_router_retain",
-          "memory_router_recall",
-          "agent_knowledge_list_pages",
-          "agent_knowledge_get_page",
-          "agent_knowledge_create_page",
-          "agent_knowledge_update_page",
-          "agent_knowledge_delete_page",
-          "agent_knowledge_ingest",
+          "hindsight_retain",
+          "hindsight_recall",
+          "hindsight_list_pages",
+          "hindsight_get_page",
+          "hindsight_create_page",
+          "hindsight_update_page",
+          "hindsight_delete_page",
+          "hindsight_ingest",
         ].sort(),
       );
-      expect(annotations.memory_router_recall).toMatchObject({ readOnlyHint: true });
-      expect(annotations.memory_router_retain).toMatchObject({ readOnlyHint: false, destructiveHint: false });
-      expect(annotations.agent_knowledge_delete_page).toMatchObject({ destructiveHint: true });
-      const createPage = listed.tools.find((entry) => entry.name === "agent_knowledge_create_page");
+      expect(annotations.hindsight_recall).toMatchObject({ readOnlyHint: true });
+      expect(annotations.hindsight_retain).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+      expect(annotations.hindsight_delete_page).toMatchObject({ destructiveHint: true });
+      const createPage = listed.tools.find((entry) => entry.name === "hindsight_create_page");
       const properties = createPage?.inputSchema.properties as Record<string, { enum?: string[] }> | undefined;
       expect(properties?.bankId.enum?.slice().sort()).toEqual(["agent-bank", "shared-bank"]);
     } finally {
@@ -87,11 +87,9 @@ describe("MCP wire protocol", () => {
     try {
       const listed = await client.listTools();
       const names = listed.tools.map((entry) => entry.name);
-      expect(names).toEqual(
-        expect.arrayContaining(["memory_router_recall", "agent_knowledge_list_pages", "agent_knowledge_get_page"]),
-      );
-      expect(names).not.toContain("memory_router_retain");
-      expect(names).not.toContain("agent_knowledge_ingest");
+      expect(names).toEqual(expect.arrayContaining(["hindsight_recall", "hindsight_list_pages", "hindsight_get_page"]));
+      expect(names).not.toContain("hindsight_retain");
+      expect(names).not.toContain("hindsight_ingest");
     } finally {
       await close();
     }
@@ -103,7 +101,7 @@ describe("MCP wire protocol", () => {
     const { client, close } = await wiredClient();
     try {
       const result = await client.callTool({
-        name: "memory_router_retain",
+        name: "hindsight_retain",
         arguments: { content: "remember this", tags: ["ops"] },
       });
       expect(result.isError).toBeUndefined();
@@ -125,7 +123,7 @@ describe("MCP wire protocol", () => {
     });
     const { client, close } = await wiredClient();
     try {
-      const result = await client.callTool({ name: "memory_router_recall", arguments: { query: "facts" } });
+      const result = await client.callTool({ name: "hindsight_recall", arguments: { query: "facts" } });
       expect(result.isError).toBeUndefined();
       const text = (result.content as Array<{ type: string; text: string }>)[0].text;
       const payload = JSON.parse(text);
@@ -143,10 +141,10 @@ describe("MCP wire protocol", () => {
     configure({ tokenEnv: "TEST_AGENT_TOKEN", writeBank: "agent-bank" });
     const { client, close } = await wiredClient();
     try {
-      const result = await client.callTool({ name: "memory_router_admin", arguments: {} });
+      const result = await client.callTool({ name: "hindsight_admin", arguments: {} });
       expect(result.isError).toBe(true);
       expect((result.content as Array<{ text: string }>)[0].text).toBe(
-        "MCP error -32602: Tool memory_router_admin not found",
+        "MCP error -32602: Tool hindsight_admin not found",
       );
     } finally {
       await close();
@@ -160,7 +158,7 @@ describe("MCP wire protocol", () => {
     );
     const { client, close } = await wiredClient();
     try {
-      const denied = await client.callTool({ name: "memory_router_recall", arguments: { query: "q" } });
+      const denied = await client.callTool({ name: "hindsight_recall", arguments: { query: "q" } });
       expect(denied.isError).toBe(true);
       const text = JSON.stringify(denied.content);
       expect(text).toContain("memory access denied");
@@ -168,7 +166,7 @@ describe("MCP wire protocol", () => {
       expect(text).not.toContain("agent-bank");
       expect(text).not.toContain("shared-bank");
       expect(text).not.toContain("grants");
-      const again = await client.callTool({ name: "memory_router_retain", arguments: { content: "x" } });
+      const again = await client.callTool({ name: "hindsight_retain", arguments: { content: "x" } });
       expect(again.isError).toBe(true);
       expect(JSON.stringify(again.content)).toContain("memory access denied");
     } finally {
@@ -189,8 +187,8 @@ describe("MCP wire protocol", () => {
     try {
       const calls = Array.from({ length: 12 }, (_, index) =>
         index % 2 === 0
-          ? client.callTool({ name: "memory_router_recall", arguments: { query: `q${index}` } })
-          : client.callTool({ name: "memory_router_retain", arguments: { content: `c${index}` } }),
+          ? client.callTool({ name: "hindsight_recall", arguments: { query: `q${index}` } })
+          : client.callTool({ name: "hindsight_retain", arguments: { content: `c${index}` } }),
       );
       const results = await Promise.all(calls);
       for (const result of results) {
@@ -210,14 +208,14 @@ it.each(["   ", 123, undefined])("audits malformed retain content %j through rea
   const send = vi.spyOn(globalThis, "fetch");
   const { client, close } = await wiredClient();
   try {
-    const result = await client.callTool({ name: "memory_router_retain", arguments: { content } });
+    const result = await client.callTool({ name: "hindsight_retain", arguments: { content } });
     expect(result.isError).toBe(true);
     expect(send).not.toHaveBeenCalled();
     const records = logger.info.mock.calls.map(([line]) => JSON.parse(line));
     expect(records).toEqual([
       expect.objectContaining({
         principal: "agent",
-        op: "memory_router_retain",
+        op: "hindsight_retain",
         outcome: "failure",
         errorClass: "invalid_arguments",
       }),
@@ -239,7 +237,7 @@ it.each([123, [], null, "PRIVATE INPUT"])(
         client.request(
           {
             method: "tools/call",
-            params: { name: "memory_router_retain", arguments: args },
+            params: { name: "hindsight_retain", arguments: args },
           },
           CallToolResultSchema,
         ),
@@ -249,7 +247,7 @@ it.each([123, [], null, "PRIVATE INPUT"])(
       expect(records).toEqual([
         expect.objectContaining({
           principal: "agent",
-          op: "memory_router_retain",
+          op: "hindsight_retain",
           outcome: "failure",
           errorClass: "invalid_arguments",
         }),

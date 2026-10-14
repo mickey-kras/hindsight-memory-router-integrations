@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { AccessDeniedError, type BankAccess, visibleBanks } from "./bank-access.js";
+import { validatedToolPrefix } from "./tool-prefix.js";
 
 export interface ManagedPrincipal extends BankAccess {
   tokenEnv: string;
@@ -10,6 +11,7 @@ export interface ManagedPrincipal extends BankAccess {
 
 export interface ManagedRouterConfig {
   routerUrl: string;
+  toolPrefix?: string;
   recallTimeoutMs?: number;
   recallMaxTokens?: number;
   retainQueueFlushIntervalMs?: number;
@@ -65,18 +67,26 @@ function validateQueueOptions(config: ManagedRouterConfig): void {
   }
 }
 
+export function loadValidatedManagedConfig(env: NodeJS.ProcessEnv): ManagedRouterConfig & { toolPrefix: string } {
+  const path = env.HINDSIGHT_ROUTER_CONFIG;
+  if (!path || !isAbsolute(path)) throw new AccessDeniedError();
+  const config = JSON.parse(readFileSync(path, "utf8")) as ManagedRouterConfig;
+  const toolPrefix = validatedToolPrefix(config.toolPrefix);
+  validateQueueOptions(config);
+  return { ...config, toolPrefix };
+}
+
 export function loadManagedConfig(
   env: NodeJS.ProcessEnv,
   principalId: string | undefined,
 ): {
-  config: ManagedRouterConfig;
+  config: ManagedRouterConfig & { toolPrefix: string };
   principalId: string;
   principal: ManagedPrincipal;
 } {
   try {
-    const path = env.HINDSIGHT_ROUTER_CONFIG;
-    if (!path || !isAbsolute(path) || !principalId) throw new AccessDeniedError();
-    const config = JSON.parse(readFileSync(path, "utf8")) as ManagedRouterConfig;
+    if (!principalId) throw new AccessDeniedError();
+    const config = loadValidatedManagedConfig(env);
     if (!Object.hasOwn(config.principals ?? {}, principalId)) throw new AccessDeniedError();
     const principal = validatedPrincipal(config.principals[principalId]);
     validateQueueOptions(config);

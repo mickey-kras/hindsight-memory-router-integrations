@@ -1,15 +1,14 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-  "version": "0.7.11",
+  "version": "0.8.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-      "version": "0.7.11",
+      "version": "0.8.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.32.1",
-        "@vectorize-io/hindsight-all": "^0.10.2",
         "jsonc-parser": "^3.3.1",
         "smol-toml": "^1.9.0",
         "zod": "^4.6.5"
@@ -2835,15 +2834,6 @@
       "license": "MIT",
       "dependencies": {
         "@types/node": "*"
-      }
-    },
-    "node_modules/@vectorize-io/hindsight-all": {
-      "version": "0.10.2",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-all/-/hindsight-all-0.10.2.tgz",
-      "integrity": "sha512-zkcZFApz8GJSedyvYqX7adE7MeYGQIyrfDP2XXWjGvrF3BIn4xc5VzC2oDpevQdB2kc84xCMcbvgYPWbNHCUqA==",
-      "license": "MIT",
-      "engines": {
-        "node": ">=22"
       }
     },
     "node_modules/@vitest/mocker": {

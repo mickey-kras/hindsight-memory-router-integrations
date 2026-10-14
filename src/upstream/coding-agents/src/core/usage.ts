@@ -19,6 +19,7 @@
  * Local only — nothing here is sent anywhere. Fail-open throughout.
  */
 import { readFileSync } from "node:fs";
+import { DEFAULT_TOOL_PREFIX, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
 import { join } from "node:path";
 import type { TransportTurn } from "./chat";
 import { appendLogLine, logsDir } from "./log";
@@ -27,10 +28,14 @@ export function usageFilePath(): string {
   return process.env.HINDSIGHT_USAGE_FILE || join(logsDir(), "usage.jsonl");
 }
 
-/** A Hindsight tool name at the END of a host's tool name: hosts prefix MCP tools differently
- *  (`mcp__hindsight__hindsight_reflect`, `hindsight.hindsight_reflect`, bare `hindsight_reflect`).
- *  Each segment needs a letter, so `hindsight__hindsight_reflect` cannot match from the first one. */
-const HINDSIGHT_TOOL_RE = /hindsight_(?:[a-z]+_)*[a-z]+$/;
+// Store canonical names so historical default records and custom namespaces aggregate together.
+function canonicalToolName(hostName: string, prefix: string): string | undefined {
+  for (const namespace of new Set([validatedToolPrefix(prefix), DEFAULT_TOOL_PREFIX])) {
+    const match = hostName.match(new RegExp(namespace + "((?:[a-z]+_)*[a-z]+)$"));
+    if (match) return DEFAULT_TOOL_PREFIX + match[1];
+  }
+  return undefined;
+}
 
 /** The credit line the injected tool guide prescribes (core/knowledge-injection.ts). */
 const CREDIT_RE = /from hindsight memory/i;
@@ -60,7 +65,7 @@ export interface TurnUsage {
 
 /** Split a transcript into user turns: each `user` turn opens one, and everything up to the next
  *  belongs to it. Anything before the first user turn (a system preamble) belongs to none. */
-export function summarizeTurns(turns: TransportTurn[]): TurnUsage[] {
+export function summarizeTurns(turns: TransportTurn[], toolPrefix = DEFAULT_TOOL_PREFIX): TurnUsage[] {
   const out: TurnUsage[] = [];
   for (const t of turns) {
     if (t.role === "user") {
@@ -70,7 +75,7 @@ export function summarizeTurns(turns: TransportTurn[]): TurnUsage[] {
     const current = out.at(-1);
     if (!current) continue;
     if (t.role === "action") {
-      const tool = t.content.split(" ", 1)[0].match(HINDSIGHT_TOOL_RE)?.[0];
+      const tool = canonicalToolName(t.content.split(" ", 1)[0], toolPrefix);
       if (tool) current.calls.push(tool);
     } else if (ASSISTANT_ROLES.has(t.role) && CREDIT_RE.test(t.content)) {
       current.credited = true;
@@ -105,6 +110,7 @@ export function recordUsage(args: {
   harness: string;
   sessionId: string;
   bankId: string;
+  toolPrefix?: string;
   turns: TransportTurn[];
   cursors: UsageCursorStore;
   lastTurnComplete: boolean;
@@ -127,7 +133,7 @@ export function recordUsage(args: {
    */
   reviseLastTurn?: boolean;
 }): void {
-  const summary = summarizeTurns(args.turns);
+  const summary = summarizeTurns(args.turns, args.toolPrefix);
   const finished = args.lastTurnComplete ? summary : summary.slice(0, -1);
   const recorded = args.cursors.read(args.sessionId) ?? 0;
   const from = args.reviseLastTurn ? Math.max(0, recorded - 1) : recorded;

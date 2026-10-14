@@ -1,3 +1,4 @@
+import { DEFAULT_TOOL_PREFIX, prefixTools, toolName } from "@memory-router/shared/tool-prefix";
 /**
  * Knowledge-page MCP tool specs — runtime SDK-free so this stays unit-testable without a real MCP
  * host.
@@ -22,6 +23,7 @@ import { join } from "node:path";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
+import { assertCompanionSkillPrefix } from "./skill-sync";
 import { syncStatus } from "./status";
 import { applyBankConfig, DEFAULT_REFLECT_TOOL_TIMEOUT_MS, loadConfig } from "./config";
 import { diagFilePath } from "./diag";
@@ -121,6 +123,7 @@ export function buildKnowledgeTools(
   client: HindsightClient,
   bankId: string,
   opts: {
+    toolPrefix?: string;
     repoDir?: string;
     harness?: string;
     stampFor?: () => RetainStamp;
@@ -134,6 +137,7 @@ export function buildKnowledgeTools(
     reflectBudget?: "low" | "mid" | "high";
   } = {}
 ): ToolSpec[] {
+  if (opts.harness) assertCompanionSkillPrefix(opts.harness, opts.toolPrefix ?? DEFAULT_TOOL_PREFIX);
   const tools: ToolSpec[] = [
     {
       name: "hindsight_list_banks",
@@ -371,7 +375,7 @@ export function buildKnowledgeTools(
       }),
     },
   ];
-  return tools.map(tool => ({
+  return prefixTools(tools.map(tool => ({
     ...tool,
     inputSchema: tool.annotations.readOnlyHint && tool.name !== "hindsight_reflect"
       ? { ...tool.inputSchema, bankId: z.string().optional().describe("Explicit assigned read bank") }
@@ -382,11 +386,11 @@ export function buildKnowledgeTools(
         if (args.bankId !== undefined) {
           if (typeof args.bankId !== "string" || !tool.annotations.readOnlyHint || tool.name === "hindsight_reflect") throw new Error("memory access denied");
           const selected = client.forBank(args.bankId);
-          const routed = buildKnowledgeTools(selected, args.bankId, opts).find(item => item.name === tool.name)!;
+          const routed = buildKnowledgeTools(selected, args.bankId, opts).find(item => item.name === toolName(tool.name, opts.toolPrefix ?? DEFAULT_TOOL_PREFIX))!;
           return routed.handler({ ...args, bankId: undefined });
         }
         return tool.handler(args);
       } catch (error) { return err(error); }
     },
-  }));
+  })), opts.toolPrefix ?? DEFAULT_TOOL_PREFIX);
 }

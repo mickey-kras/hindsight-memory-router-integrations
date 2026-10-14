@@ -1,3 +1,4 @@
+import { AccessDeniedError } from "@memory-router/shared/bank-access";
 import { managedSettings } from "@memory-router/coding-agents/runtime";
 /**
  * ONE config file: ~/.hindsight/coding-agent.json.
@@ -46,15 +47,10 @@ export const DEFAULT_DAEMON_PROFILE = "coding-agent";
 /** Incremental git-sync settings (see core/sync.ts). */
 /** The config file's shape — every field optional; omitted fields take the documented default. */
 export interface RawConfig {
-  /** Where memory lives. All three modes speak the same HTTP API; they differ only in who runs it:
-   *   "cloud"       — Hindsight Cloud (the default `apiUrl`)
-   *   "self-hosted" — a Hindsight server you run; set `apiUrl` to it
-   *   "daemon"      — a local `hindsight-embed` daemon this plugin starts on demand, at
-   *                   127.0.0.1:{apiPort}. `apiUrl` is ignored in this mode.
-   * Omitted, it is inferred: "daemon" is never assumed, so an existing config keeps talking to
-   * whatever `apiUrl` it already names. */
+  /** Legacy mode field. Managed integrations accept only self-hosted router operation. */
   serverMode?: "cloud" | "self-hosted" | "daemon";
-  apiUrl?: string; // Hindsight API base URL (default https://api.hindsight.vectorize.io — Cloud; set to http://localhost:8888 for a local server)
+  /** If supplied, must match the operator-managed HTTPS router URL. */
+  apiUrl?: string;
   apiToken?: string; // bearer token (optional)
   /** Daemon mode: port the local daemon listens on (default 9077).
    *  NOT 8888 — that is the conventional port for a server you run yourself, and a daemon must
@@ -256,9 +252,9 @@ export interface RawConfig {
 /** Fully-resolved config: every field present. */
 export interface Config {
   routerHarness?: string;
+  toolPrefix?: string;
   serverMode: "cloud" | "self-hosted" | "daemon";
-  /** The EFFECTIVE base URL. In daemon mode this is already 127.0.0.1:{apiPort}, so every caller
-   *  that builds a client keeps working without knowing which mode is active. */
+  /** The operator-managed router base URL after loadConfig. */
   apiUrl: string;
   apiToken?: string;
   apiPort: number;
@@ -509,18 +505,13 @@ function resolveAutoInject(raw: RawConfig): AutoInject {
 export function resolveConfig(raw: RawConfig = {}): Config {
   const serverMode = ["cloud", "self-hosted", "daemon"].includes(raw.serverMode as string)
     ? (raw.serverMode as "cloud" | "self-hosted" | "daemon")
-    : "cloud";
+    : "self-hosted";
   const apiPort = raw.apiPort || DEFAULT_DAEMON_PORT;
   const pageTrigger = resolvePageTrigger(raw);
   return {
     serverMode,
-    // Daemon mode resolves the URL HERE rather than at each call site: every entry point already
-    // builds its client from cfg.apiUrl, so collapsing the mode into that one field means the
-    // daemon needs no plumbing through eight separate constructors.
-    apiUrl:
-      serverMode === "daemon"
-        ? `http://127.0.0.1:${apiPort}`
-        : (raw.apiUrl ?? "https://api.hindsight.vectorize.io"),
+    // Only loadConfig can supply the operator-managed router endpoint.
+    apiUrl: raw.apiUrl ?? "",
     apiToken: raw.apiToken || undefined,
     apiPort,
     daemonIdleTimeout: raw.daemonIdleTimeout,
@@ -765,7 +756,10 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
   // "opencode", whose silent default misfiled every other harness's background seed into an
   // `opencode::<project>` bank (#3247). An explicit `harness:` in the config file still wins.
   if (!raw.harness && o.harness) raw.harness = o.harness;
-  return { ...resolveConfig(raw), ...managedSettings(o.harness) };
+  const managed = managedSettings(o.harness);
+  if ((raw.apiUrl !== undefined && raw.apiUrl.replace(/\/+$/, "") !== managed.apiUrl) ||
+      (raw.serverMode !== undefined && raw.serverMode !== "self-hosted")) throw new AccessDeniedError();
+  return { ...resolveConfig(raw), ...managed };
 }
 
 /** Bank-resolution fields are meaningless inside a `banks.<id>` section (they can't change the id
@@ -780,7 +774,7 @@ const BANK_OVERRIDE_EXCLUDED = [
   // only ever arrive too late to matter — strip them rather than let them read as effective.
   "optInOnly",
   "optInPaths",
-  "harness", "routerHarness", "apiUrl", "apiToken", "serverMode", "autoUpdate",
+  "harness", "routerHarness", "toolPrefix", "apiUrl", "apiToken", "serverMode", "autoUpdate",
 ] as const;
 
 /**

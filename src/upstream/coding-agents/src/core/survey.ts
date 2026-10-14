@@ -1,3 +1,4 @@
+import { renderToolText, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
 /**
  * Codebase survey (Option C): on a cold repo, `session-start.ts` (hook harnesses) or
  * `runtime.ts`'s `seedIfCold` (opencode) spawns a DETACHED headless coding agent alongside the
@@ -185,8 +186,10 @@ function buildSurveyPlan(
   harness: SurveyHarness,
   bin: string,
   repoDir: string,
-  opts: { model?: string; budgetUsd?: number; mcpServerPath: string }
+  opts: { model?: string; budgetUsd?: number; mcpServerPath: string; toolPrefix?: string }
 ): SpawnPlan {
+  const prefix = validatedToolPrefix(opts.toolPrefix);
+  const prompt = renderToolText(SURVEY_PROMPT, prefix);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     // Anti-recursion: the survey's own agent session must not fire our hooks (session-start,
@@ -216,7 +219,7 @@ function buildSurveyPlan(
         bin,
         args: [
           "-p",
-          SURVEY_PROMPT,
+          prompt,
           "--model",
           opts.model ?? "haiku",
           "--mcp-config",
@@ -226,7 +229,7 @@ function buildSurveyPlan(
           "Read",
           "Glob",
           "Grep",
-          "mcp__hindsight__hindsight_ingest_document",
+          `mcp__hindsight__${prefix}ingest_document`,
           "--disallowedTools",
           ...SURVEY_DISALLOWED_TOOLS,
           "--max-budget-usd",
@@ -255,7 +258,7 @@ function buildSurveyPlan(
           `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
           "-c",
           `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
-          SURVEY_PROMPT,
+          prompt,
         ],
         env,
       };
@@ -266,7 +269,7 @@ function buildSurveyPlan(
       // ~/.gemini/config/mcp_config.json compatibility location.
       return {
         bin,
-        args: ["-p", SURVEY_PROMPT, "--mode=plan"],
+        args: ["-p", prompt, "--mode=plan"],
         env,
       };
     }
@@ -280,7 +283,7 @@ function buildSurveyPlan(
       // configured default (its `provider/model` format differs per setup).
       return {
         bin,
-        args: ["run", "--agent", SURVEY_AGENT, SURVEY_PROMPT],
+        args: ["run", "--agent", SURVEY_AGENT, prompt],
         env,
       };
     }
@@ -333,16 +336,16 @@ export async function startCodebaseSurvey(
       const bin = resolveAgentBin(harness, opts.claudeBin);
       if (!exists(bin)) continue;
 
+      // Resolve the actual managed destination, including fallback harnesses and bank overrides.
+      // Credential rotation must not start a second survey for the same destination.
+      const { cfg, bankId } = resolveHostConfig(harness, repoDir);
+      if (cfg.disabled) return false;
       const plan = buildSurveyPlan(harness, bin, repoDir, {
         model: opts.model,
         budgetUsd: opts.budgetUsd,
         mcpServerPath,
+        toolPrefix: cfg.toolPrefix,
       });
-      // Resolve the actual managed destination, including fallback harnesses and bank overrides.
-      // Router identity is the principal, not cfg.apiToken (cleared by managedSettings).
-      // Credential rotation must not start a second survey for the same destination.
-      const { cfg, bankId } = resolveHostConfig(harness, repoDir);
-      if (cfg.disabled) return false;
       const leaseIdentity = JSON.stringify([
         cfg.apiUrl.replace(/\/+$/, ""),
         cfg.routerHarness ?? harness,

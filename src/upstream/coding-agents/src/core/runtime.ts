@@ -83,6 +83,7 @@ export class RuntimeCore {
   toolSpecs(): ToolSpec[] {
     return buildKnowledgeTools(this.client, this.bankId, {
       repoDir: this.projectDir,
+      toolPrefix: this.cfg.toolPrefix,
       harness: this.harness,
       pageTrigger: buildPageTrigger(this.cfg),
       reflectTimeoutMs: this.cfg.reflectToolTimeoutMs,
@@ -278,6 +279,7 @@ export class RuntimeCore {
       harness: this.harness,
       sessionId,
       bankId: this.bankId,
+      toolPrefix: this.cfg.toolPrefix,
       turns,
       cursors: this.usageCursors,
       lastTurnComplete,

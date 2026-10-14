@@ -1,3 +1,4 @@
+import { DEFAULT_TOOL_PREFIX, renderToolText } from "@memory-router/shared/tool-prefix";
 export interface PageRef {
   id: string;
   title: string;
@@ -97,15 +98,16 @@ export interface ToolGuideOpts {
    *  the agent straight to hindsight_reflect; it now goes to the knowledge pages first and keeps
    *  reflect for what they don't cover. The field name is unchanged so call sites stay stable. */
   reflectOnNewGoals?: boolean;
+  toolPrefix?: string;
 }
 
 function toolGuide(opts?: ToolGuideOpts): string {
-  return (opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE;
+  return renderToolText((opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE, opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
 }
 
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */
 export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): string {
-  const body = pages.length ? indexLine(pages) : EMPTY_STATE;
+  const body = pages.length ? renderToolText(indexLine(pages), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX) : EMPTY_STATE;
   return (
     "<hindsight_knowledge>\n" +
     "This repository has a Hindsight memory + knowledge base (curated, continuously-updated pages plus the raw " +
@@ -127,7 +129,7 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): 
  * which tools exist and WHEN to call each is unconditional.
  */
 export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): string {
-  const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
+  const rosterBlock = pages.length ? `${renderToolText(indexLine(pages), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX)}\n` : "";
   return (
     "<hindsight_knowledge_refresh>\n" +
     rosterBlock +

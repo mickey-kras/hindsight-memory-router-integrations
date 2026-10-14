@@ -4,11 +4,11 @@
 
 Optional stdio MCP server for retaining and recalling memories through Memory Router with per-principal authorization. The router enforces grants; the server never calls Hindsight directly.
 
-- Retain (`memory_router_retain`) writes only to the principal's configured `writeBank`;
+- Retain (`hindsight_retain`) writes only to the principal's configured `writeBank`;
   transient router failures are queued locally and replayed.
-- Recall (`memory_router_recall`) fans out to `writeBank` + `additionalReadBanks` under one
+- Recall (`hindsight_recall`) fans out to `writeBank` + `additionalReadBanks` under one
   shared deadline and token budget.
-- `agent_knowledge_*` page/ingest tools route through the same guarded transport with the bank
+- `hindsight_*` page/ingest tools route through the same guarded transport with the bank
   constrained to the principal's visible banks.
 - Router 401/403 latches the credential for the rest of the session and fails closed; tool
   errors are bounded and never echo tokens, banks, or grants.
@@ -86,3 +86,22 @@ Or register it with any MCP host as a stdio server command
 stdio; logs go to stderr. A non-zero exit at startup means the configuration failed validation;
 recheck the table above.
 
+
+### Tool namespace and migration
+
+Set `toolPrefix` once at the top level of the JSON file named by `HINDSIGHT_ROUTER_CONFIG`.
+When omitted, tool names use `hindsight_`. A custom prefix must contain 2–32 lowercase ASCII
+letters, digits or underscores, start with a letter, and end with an underscore (for example
+`"toolPrefix": "team_"`). The same value controls registered MCP/native tools, installed companion
+skills, hook guidance and survey tool permissions. Normal coding-agent configuration, per-bank
+settings and environment overrides cannot select another tool namespace. Invalid prefixes,
+duplicate tool names and inconsistent skill namespaces fail closed.
+
+To migrate existing `memory_router_*` retain/recall names and `agent_knowledge_*` page/ingest names,
+update client tool calls and allowlists to the selected prefix, reinstall each coding-agent harness
+to regenerate its companion skill, and restart existing MCP/native sessions. Both old namespaces
+converge on the single selected prefix; no aliases are silently registered. A consumer that needs
+its existing namespace may explicitly select `memory_router_` or `agent_knowledge_`, then update
+its other tool calls to that same prefix. A runtime session rejects a stale skill with another
+prefix; explicit reinstall is the migration action. Bank assignments, router grants, token sources,
+read/write authorization and each operation's arguments and behavior are unchanged.

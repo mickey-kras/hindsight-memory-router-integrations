@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { McpStack } from "../src/mcp/managed-config.js";
+import { buildTools, type McpTool } from "../src/mcp/tools.js";
 import { AuthenticatedClientFactory } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RecallCoordinator } from "../src/shared/recall-coordinator.js";
 import { RetainCoordinator } from "../src/shared/retain-coordinator.js";
-import type { McpStack } from "../src/mcp/managed-config.js";
-import { buildTools, type McpTool } from "../src/mcp/tools.js";
 
 // Knowledge tool definitions are supplied by the upstream SDK; swap them to
 // exercise schema-shim branches the pinned upstream definitions never hit.
@@ -90,12 +90,12 @@ describe("argument validation branches", () => {
   it("rejects non-object arguments with the root issue message", async () => {
     const stack = makeStack({});
     const args = "not-an-object" as unknown as Record<string, unknown>;
-    const result = await tool(buildTools(stack), "memory_router_retain").handler(args);
+    const result = await tool(buildTools(stack), "hindsight_retain").handler(args);
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("invalid arguments for memory_router_retain: ");
+    expect(result.content[0].text).toContain("invalid arguments for hindsight_retain: ");
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "memory_router_retain",
+      op: "hindsight_retain",
       outcome: "failure",
       errorClass: "invalid_arguments",
     });
@@ -106,7 +106,7 @@ describe("retain option normalization branches", () => {
   it("strips blank documentId and context instead of forwarding them", async () => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "memory_router_retain").handler({
+    const result = await tool(buildTools(stack), "hindsight_retain").handler({
       content: "remember this",
       documentId: "   ",
       context: "\t",
@@ -120,12 +120,12 @@ describe("retain option normalization branches", () => {
     const stack = makeStack({});
     const tools = buildTools(stack);
     vi.spyOn(stack.credentials, "resolveOptionalWriteBank").mockReturnValue(null);
-    const result = await tool(tools, "memory_router_retain").handler({ content: "x" });
+    const result = await tool(tools, "hindsight_retain").handler({ content: "x" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe("memory operation failed");
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "memory_router_retain",
+      op: "hindsight_retain",
       outcome: "failure",
       bankId: undefined,
       errorClass: "identity_resolution_failed",
@@ -152,19 +152,19 @@ describe("knowledge schema shim branches", () => {
   it("builds input schemas for properties without descriptions", async () => {
     const send = stubFetch(() => Response.json({ pages: [] }));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "agent_knowledge_get_page").handler({ page_id: "p 1" });
+    const result = await tool(buildTools(stack), "hindsight_get_page").handler({ page_id: "p 1" });
     expect(result.isError).toBeUndefined();
     expect(String(send.mock.calls[0][0])).toBe(`${ROUTER}/v1/default/banks/agent-bank/mental-models/p%201`);
   });
 
   it("audits an undefined bankId for a read-only principal when no explicit bank is given", async () => {
     const stack = makeStack({ writeBank: null });
-    const result = await tool(buildTools(stack), "agent_knowledge_list_pages").handler({});
+    const result = await tool(buildTools(stack), "hindsight_list_pages").handler({});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe("memory access denied");
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "agent_knowledge_list_pages",
+      op: "hindsight_list_pages",
       outcome: "failure",
       errorClass: "access_denied",
     });

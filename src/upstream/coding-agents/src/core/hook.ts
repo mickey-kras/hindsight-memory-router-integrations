@@ -1,3 +1,4 @@
+import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
 import { AccessDeniedError } from "@memory-router/shared/bank-access";
 import { harnessTransport } from "@memory-router/coding-agents/runtime";
 /**
@@ -108,7 +109,7 @@ async function injectPages(
     // How MANY pages come back is the client's `pageSearchLimit`, shared with the MCP tool.
     const hits = await client.searchKnowledgePages(prompt.slice(0, 500), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: hits.length });
-    if (hits.length) return formatPageFallback(hits, lead);
+    if (hits.length) return formatPageFallback(hits, lead, managedToolPrefix(harness));
   } catch (e) {
     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
   }
@@ -303,13 +304,13 @@ export async function buildHookOutput(args: {
   // ran. No cadence re-injection: replaying the turn-1 synthesis at arbitrary later turns reads
   // as random noise once the session drifts, and the agent holds hindsight_reflect for a FRESH
   // pass if compaction or drift makes it need memory again.
-  if (reflectAnswer && reflectRanThisTurn) blocks.push(buildSystemInjection(reflectAnswer));
+  if (reflectAnswer && reflectRanThisTurn) blocks.push(buildSystemInjection(reflectAnswer, cfg.toolPrefix));
   // Knowledge pages are NOT auto-injected: the agent pulls them through
   // hindsight_search_knowledge_pages when a question warrants it — an unprompted injection on
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
   if (cadence > 0 && turns % cadence === 0) {
-    blocks.push(buildRosterRefresh(pages, { reflectOnNewGoals: cfg.autoInject !== "reflect" }));
+    blocks.push(buildRosterRefresh(pages, { reflectOnNewGoals: cfg.autoInject !== "reflect", toolPrefix: cfg.toolPrefix }));
   }
   const kept = blocks.filter(Boolean);
 

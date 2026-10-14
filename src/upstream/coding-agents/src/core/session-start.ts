@@ -307,6 +307,7 @@ export async function buildSessionStartContext(args: {
     /* fail-open preamble; preserve first-prompt reflect eligibility on a transient outage */
   }
   const additionalContext = buildKnowledgePreamble(pages, {
+    toolPrefix: cfg.toolPrefix,
     reflectOnNewGoals: cfg.autoInject !== "reflect",
   });
   const deferInitialReflect = cold === true || (pageListKnown && pages.length === 0);

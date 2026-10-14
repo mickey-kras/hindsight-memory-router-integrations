@@ -16,6 +16,7 @@ import { RouterUrlError } from "../shared/router-url.js";
 
 export interface McpStack {
   principalId: string;
+  toolPrefix?: string;
   source?: string;
   recallTimeoutMs: number;
   recallMaxTokens: number;
@@ -56,6 +57,7 @@ export function loadMcpStack(env: NodeJS.ProcessEnv, logger: McpLogger): McpStac
   const queueDir = config.queueDir ?? join(homedir(), ".hindsight-memory-router", "retain-queue");
   return {
     principalId,
+    toolPrefix: config.toolPrefix,
     source: principal.source,
     recallTimeoutMs: config.recallTimeoutMs ?? MCP_DEFAULTS.recallTimeoutMs,
     recallMaxTokens: config.recallMaxTokens ?? MCP_DEFAULTS.recallMaxTokens,

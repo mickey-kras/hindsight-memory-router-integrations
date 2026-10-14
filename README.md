@@ -31,6 +31,7 @@ Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras
 
 | Client | Setup |
 | --- | --- |
+| Hosted agents/apps | Use the [typed router HTTP client](docs/hosted-client.md). |
 | OpenClaw | Install the OpenClaw release artifact, then configure the [`hindsight-memory-router` plugin](docs/OPENCLAW.md). |
 | Codex, Claude Code, OpenCode and other coding agents | Install the coding-agents artifact and follow [coding-agent setup](integrations/coding-agents/README.md). |
 
@@ -38,15 +39,14 @@ Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras
 
 1. Create the principal's grants in Memory Router. Keep each harness's token in your secret manager.
 2. Create an operator-managed JSON file using the [configuration example](integrations/coding-agents/README.md). Set its HTTPS router URL, principal, token environment variable and explicit project-to-bank mapping.
-3. Replace the paths below with your config and downloaded artifact:
+3. Export the named token and harness identity from your operator-managed environment, then run from the mapped project:
 
 ```sh
 export HINDSIGHT_ROUTER_CONFIG=/absolute/path/router.json
-npm install --global /absolute/path/downloaded-coding-agents.tgz
-hindsight-coding-agents install
+npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-coding-agents install
 ```
 
-Export the principal's token from your secret manager when launching the harness.
+Keep the same managed environment when launching the harness. [Coding-agent setup](integrations/coding-agents/README.md) includes the pinned release URL command and agent prompt.
 
 For Codex, export `HINDSIGHT_ROUTER_CONFIG` before running the installer so it can allowlist the required environment variables. Unmapped projects, unknown harnesses and missing secrets fail closed. Do not overwrite this installation with upstream's `npx` installer.
 
@@ -54,6 +54,7 @@ For Codex, export `HINDSIGHT_ROUTER_CONFIG` before running the installer so it c
 
 - [OpenClaw configuration and queue storage](docs/OPENCLAW.md)
 - [Coding-agent configuration](integrations/coding-agents/README.md)
+- [Hosted router HTTP client](docs/hosted-client.md)
 - [Routing, failure handling and ingest identity](docs/BEHAVIOR.md)
 - [All documentation](docs/README.md), including builds, upgrades and releases
 

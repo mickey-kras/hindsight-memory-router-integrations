@@ -2,12 +2,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { McpStack } from "../src/mcp/managed-config.js";
+import { buildTools, type McpTool } from "../src/mcp/tools.js";
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver, UnknownPrincipalError } from "../src/shared/principal-credential-resolver.js";
 import { RecallCoordinator } from "../src/shared/recall-coordinator.js";
-import { RetainCoordinator, RetainQueueCapacityError, RetainQueueBusyError } from "../src/shared/retain-coordinator.js";
-import type { McpStack } from "../src/mcp/managed-config.js";
-import { buildTools, type McpTool } from "../src/mcp/tools.js";
+import { RetainCoordinator, RetainQueueBusyError, RetainQueueCapacityError } from "../src/shared/retain-coordinator.js";
 
 const TOKEN = `mr_agent-key_${"a".repeat(64)}`;
 const ROUTER = "https://router.example.test";
@@ -68,13 +68,13 @@ function stubFetch(handler: (url: string, init: RequestInit) => Response | Promi
     .mockImplementation((input, init) => Promise.resolve(handler(String(input), init ?? {})));
 }
 
-describe("memory_router_retain", () => {
+describe("hindsight_retain", () => {
   it.each([new RetainQueueCapacityError("bytes"), new RetainQueueBusyError({})])(
     "returns an explicit failure when outage queueing fails: %s",
     async (error) => {
       const stack = makeStack({});
       vi.spyOn(stack.retain, "retain").mockRejectedValue(error);
-      const result = await tool(buildTools(stack), "memory_router_retain").handler({ content: "never stored" });
+      const result = await tool(buildTools(stack), "hindsight_retain").handler({ content: "never stored" });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("retain was not queued");
     },
@@ -89,7 +89,7 @@ describe("memory_router_retain", () => {
         recall: async () => ({ results: [] }),
       }),
     });
-    const result = await tool(buildTools(stack), "memory_router_retain").handler({ content: "remember this" });
+    const result = await tool(buildTools(stack), "hindsight_retain").handler({ content: "remember this" });
     expect(result.isError).toBeUndefined();
     expect(retained).toHaveLength(1);
     expect(retained[0].bank).toBe("agent-bank");
@@ -99,7 +99,7 @@ describe("memory_router_retain", () => {
   it("POSTs /memories to the write bank URL with the principal bearer token", async () => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    await tool(buildTools(stack), "memory_router_retain").handler({
+    await tool(buildTools(stack), "hindsight_retain").handler({
       content: "remember this",
       documentId: "doc-1",
       tags: ["ops"],
@@ -124,7 +124,7 @@ describe("memory_router_retain", () => {
         recall: async () => ({ results: [] }),
       }),
     });
-    await tool(buildTools(stack), "memory_router_retain").handler({ content: "x" });
+    await tool(buildTools(stack), "hindsight_retain").handler({ content: "x" });
     expect(metadata[0]).toMatchObject({ agent: "agent", source: "my-product" });
     expect(JSON.stringify(metadata[0])).not.toContain("openclaw");
   });
@@ -139,7 +139,7 @@ describe("memory_router_retain", () => {
         recall: async () => ({ results: [] }),
       }),
     });
-    await tool(buildTools(stack), "memory_router_retain").handler({ content: "x" });
+    await tool(buildTools(stack), "hindsight_retain").handler({ content: "x" });
     expect(metadata[0]).toEqual({ agent: "agent" });
   });
 
@@ -150,7 +150,7 @@ describe("memory_router_retain", () => {
       return calls === 1 ? Response.json({}, { status: 503 }) : Response.json({});
     });
     const stack = makeStack({});
-    const retainCall = tool(buildTools(stack), "memory_router_retain").handler({ content: "buffer me" });
+    const retainCall = tool(buildTools(stack), "hindsight_retain").handler({ content: "buffer me" });
     const result = await retainCall;
     expect(JSON.parse(result.content[0].text)).toEqual({ retained: true, queued: true });
     const queueDir = dirs[0];
@@ -165,7 +165,7 @@ describe("memory_router_retain", () => {
   it("answers a bounded denial on router 401 and latches the credential for the session", async () => {
     const send = stubFetch(() => Response.json({}, { status: 401 }));
     const stack = makeStack({});
-    const retainTool = tool(buildTools(stack), "memory_router_retain");
+    const retainTool = tool(buildTools(stack), "hindsight_retain");
     const first = await retainTool.handler({ content: "x" });
     expect(first.isError).toBe(true);
     expect(first.content[0].text).toBe("memory access denied");
@@ -187,7 +187,7 @@ describe("memory_router_retain", () => {
         recall: async () => ({ results: [] }),
       }),
     });
-    const result = await tool(buildTools(stack), "memory_router_retain").handler({ content: "x" });
+    const result = await tool(buildTools(stack), "hindsight_retain").handler({ content: "x" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe("memory operation failed");
     expect(result.content[0].text).not.toContain(TOKEN);
@@ -202,10 +202,10 @@ describe("memory_router_retain", () => {
   ])("rejects malformed tags (%s) without touching the router", async (_label, args, path) => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "memory_router_retain").handler(args);
+    const result = await tool(buildTools(stack), "hindsight_retain").handler(args);
     expect(result).toMatchObject({ isError: true });
     expect(result.content[0].text).toBe(
-      `invalid arguments for memory_router_retain: ${path}: tags must be a non-empty string array`,
+      `invalid arguments for hindsight_retain: ${path}: tags must be a non-empty string array`,
     );
     expect(send).not.toHaveBeenCalled();
   });
@@ -213,21 +213,21 @@ describe("memory_router_retain", () => {
   it("rejects an empty content without touching the router", async () => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "memory_router_retain").handler({ content: "   " });
+    const result = await tool(buildTools(stack), "hindsight_retain").handler({ content: "   " });
     expect(result).toMatchObject({ isError: true });
-    expect(result.content[0].text).toBe("invalid arguments for memory_router_retain: content: content is required");
+    expect(result.content[0].text).toBe("invalid arguments for hindsight_retain: content: content is required");
     expect(send).not.toHaveBeenCalled();
   });
 
   it("is not exposed for a read-only principal", () => {
     const stack = makeStack({ writeBank: null });
     const names = buildTools(stack).map((candidate) => candidate.name);
-    expect(names).not.toContain("memory_router_retain");
-    expect(names).toContain("memory_router_recall");
+    expect(names).not.toContain("hindsight_retain");
+    expect(names).toContain("hindsight_recall");
   });
 });
 
-describe("memory_router_recall", () => {
+describe("hindsight_recall", () => {
   function recallStub(results: Record<string, unknown[]>) {
     const calls: string[] = [];
     return {
@@ -253,7 +253,7 @@ describe("memory_router_recall", () => {
       ],
     });
     const stack = makeStack({ construct: stub.construct });
-    const result = await tool(buildTools(stack), "memory_router_recall").handler({ query: "deploy" });
+    const result = await tool(buildTools(stack), "hindsight_recall").handler({ query: "deploy" });
     expect(result.isError).toBeUndefined();
     expect(stub.calls.sort()).toEqual(["agent-bank", "shared-bank"]);
     const payload = JSON.parse(result.content[0].text);
@@ -268,7 +268,7 @@ describe("memory_router_recall", () => {
         : Response.json({ results: [{ text: "alpha" }] }),
     );
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "memory_router_recall").handler({ query: "deploy" });
+    const result = await tool(buildTools(stack), "hindsight_recall").handler({ query: "deploy" });
     const payload = JSON.parse(result.content[0].text);
     expect(payload.partial).toBe(true);
     expect(payload.results).toEqual([{ text: "alpha" }]);
@@ -279,7 +279,7 @@ describe("memory_router_recall", () => {
   it("drops the effective read set for the session after a router 403", async () => {
     const send = stubFetch(() => Response.json({}, { status: 403 }));
     const stack = makeStack({});
-    const recall = tool(buildTools(stack), "memory_router_recall");
+    const recall = tool(buildTools(stack), "hindsight_recall");
     const first = await recall.handler({ query: "deploy" });
     expect(first.isError).toBe(true);
     expect(first.content[0].text).toBe("memory access denied");
@@ -308,16 +308,16 @@ describe("memory_router_recall", () => {
   ])("rejects %s with a bounded message", async (_label, args, detail) => {
     const send = stubFetch(() => Response.json({ results: [] }));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "memory_router_recall").handler(args);
+    const result = await tool(buildTools(stack), "hindsight_recall").handler(args);
     expect(result).toMatchObject({ isError: true });
-    expect(result.content[0].text).toBe(`invalid arguments for memory_router_recall: ${detail}`);
+    expect(result.content[0].text).toBe(`invalid arguments for hindsight_recall: ${detail}`);
     expect(send).not.toHaveBeenCalled();
   });
 
   it("reports all-transient failures as partial without leaking response bodies", async () => {
     stubFetch(() => Response.json({ secret: "grants" }, { status: 502 }));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "memory_router_recall").handler({ query: "q" });
+    const result = await tool(buildTools(stack), "hindsight_recall").handler({ query: "q" });
     expect(result.isError).toBeUndefined();
     const payload = JSON.parse(result.content[0].text);
     expect(payload).toEqual({ results: [], partial: true });
@@ -328,7 +328,7 @@ describe("memory_router_recall", () => {
 describe("agent_knowledge tools", () => {
   it("constrains bankId to the principal's visible banks in the advertised schema", () => {
     const stack = makeStack({});
-    const createPage = tool(buildTools(stack), "agent_knowledge_create_page");
+    const createPage = tool(buildTools(stack), "hindsight_create_page");
     const bankId = createPage.inputSchema.bankId;
     expect(bankId.safeParse("agent-bank").success).toBe(true);
     expect(bankId.safeParse("shared-bank").success).toBe(true);
@@ -339,16 +339,16 @@ describe("agent_knowledge tools", () => {
   it("denies knowledge operations against banks outside the visible set", async () => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "agent_knowledge_list_pages").handler({ bankId: "other-bank" });
+    const result = await tool(buildTools(stack), "hindsight_list_pages").handler({ bankId: "other-bank" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("invalid arguments for agent_knowledge_list_pages: bankId:");
+    expect(result.content[0].text).toContain("invalid arguments for hindsight_list_pages: bankId:");
     expect(send).not.toHaveBeenCalled();
   });
 
   it("denies write operations against an additional read bank", async () => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "agent_knowledge_ingest").handler({
+    const result = await tool(buildTools(stack), "hindsight_ingest").handler({
       bankId: "shared-bank",
       title: "Runbook",
       content: "steps",
@@ -361,7 +361,7 @@ describe("agent_knowledge tools", () => {
   it("routes ingest to the write bank only", async () => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "agent_knowledge_ingest").handler({
+    const result = await tool(buildTools(stack), "hindsight_ingest").handler({
       title: "Runbook",
       content: "steps",
     });
@@ -373,39 +373,39 @@ describe("agent_knowledge tools", () => {
     const stack = makeStack({ writeBank: null });
     const names = buildTools(stack).map((candidate) => candidate.name);
     for (const write of [
-      "agent_knowledge_create_page",
-      "agent_knowledge_update_page",
-      "agent_knowledge_delete_page",
-      "agent_knowledge_ingest",
+      "hindsight_create_page",
+      "hindsight_update_page",
+      "hindsight_delete_page",
+      "hindsight_ingest",
     ]) {
       expect(names).not.toContain(write);
     }
-    expect(names).toContain("agent_knowledge_list_pages");
-    expect(names).toContain("agent_knowledge_get_page");
+    expect(names).toContain("hindsight_list_pages");
+    expect(names).toContain("hindsight_get_page");
   });
 
   it("advertises the destructive delete annotation only for delete_page", () => {
     const stack = makeStack({});
     const tools = buildTools(stack);
     const annotations = Object.fromEntries(tools.map((candidate) => [candidate.name, candidate.annotations]));
-    expect(annotations.agent_knowledge_delete_page).toMatchObject({ destructiveHint: true, readOnlyHint: false });
-    expect(annotations.agent_knowledge_ingest).toMatchObject({ destructiveHint: false, readOnlyHint: false });
-    expect(annotations.agent_knowledge_list_pages).toMatchObject({ readOnlyHint: true });
-    expect(annotations.memory_router_recall).toMatchObject({ readOnlyHint: true });
-    expect(annotations.memory_router_retain).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(annotations.hindsight_delete_page).toMatchObject({ destructiveHint: true, readOnlyHint: false });
+    expect(annotations.hindsight_ingest).toMatchObject({ destructiveHint: false, readOnlyHint: false });
+    expect(annotations.hindsight_list_pages).toMatchObject({ readOnlyHint: true });
+    expect(annotations.hindsight_recall).toMatchObject({ readOnlyHint: true });
+    expect(annotations.hindsight_retain).toMatchObject({ readOnlyHint: false, destructiveHint: false });
   });
 
-  it("never advertises the denied agent_knowledge_recall or reflect passthroughs", () => {
+  it("never advertises upstream recall or reflect passthroughs", () => {
     const stack = makeStack({});
     const names = buildTools(stack).map((candidate) => candidate.name);
-    expect(names).not.toContain("agent_knowledge_recall");
-    expect(names).not.toContain("agent_knowledge_reflect");
+    expect(names.filter((name) => name === "hindsight_recall")).toHaveLength(1);
+    expect(names).not.toContain("hindsight_reflect");
   });
 
   it("maps a knowledge read router failure to a bounded error", async () => {
     stubFetch(() => Response.json({}, { status: 500 }));
     const stack = makeStack({});
-    const result = await tool(buildTools(stack), "agent_knowledge_list_pages").handler({});
+    const result = await tool(buildTools(stack), "hindsight_list_pages").handler({});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe("memory request failed (500)");
   });
@@ -423,10 +423,10 @@ describe("tool audit logging", () => {
         recall: async () => ({ results: [] }),
       }),
     });
-    await tool(buildTools(stack), "memory_router_retain").handler({ content: "remember this" });
+    await tool(buildTools(stack), "hindsight_retain").handler({ content: "remember this" });
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "memory_router_retain",
+      op: "hindsight_retain",
       outcome: "success",
       bankId: "agent-bank",
     });
@@ -436,10 +436,10 @@ describe("tool audit logging", () => {
   it("records a bounded error class for a denied retain", async () => {
     stubFetch(() => Response.json({}, { status: 401 }));
     const stack = makeStack({});
-    await tool(buildTools(stack), "memory_router_retain").handler({ content: "x" });
+    await tool(buildTools(stack), "hindsight_retain").handler({ content: "x" });
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "memory_router_retain",
+      op: "hindsight_retain",
       outcome: "failure",
       bankId: "agent-bank",
       errorClass: "access_denied",
@@ -449,10 +449,10 @@ describe("tool audit logging", () => {
   it("records malformed arguments as a failure before any router call", async () => {
     const send = stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    await tool(buildTools(stack), "memory_router_retain").handler({ content: "   " });
+    await tool(buildTools(stack), "hindsight_retain").handler({ content: "   " });
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "memory_router_retain",
+      op: "hindsight_retain",
       outcome: "failure",
       errorClass: "invalid_arguments",
     });
@@ -468,10 +468,10 @@ describe("tool audit logging", () => {
         recall: async () => ({ results: [] }),
       }),
     });
-    await tool(buildTools(stack), "memory_router_recall").handler({ query: "deploy" });
+    await tool(buildTools(stack), "hindsight_recall").handler({ query: "deploy" });
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "memory_router_recall",
+      op: "hindsight_recall",
       outcome: "success",
       bankId: "agent-bank,shared-bank",
     });
@@ -480,10 +480,10 @@ describe("tool audit logging", () => {
   it("records a router failure class for a failed knowledge read", async () => {
     stubFetch(() => Response.json({}, { status: 500 }));
     const stack = makeStack({});
-    await tool(buildTools(stack), "agent_knowledge_list_pages").handler({});
+    await tool(buildTools(stack), "hindsight_list_pages").handler({});
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "agent_knowledge_list_pages",
+      op: "hindsight_list_pages",
       outcome: "failure",
       bankId: "agent-bank",
       errorClass: "router_request_failed",
@@ -493,14 +493,14 @@ describe("tool audit logging", () => {
   it("records a successful knowledge write with the explicit bankId", async () => {
     stubFetch(() => Response.json({}));
     const stack = makeStack({});
-    await tool(buildTools(stack), "agent_knowledge_ingest").handler({
+    await tool(buildTools(stack), "hindsight_ingest").handler({
       bankId: "agent-bank",
       title: "Runbook",
       content: "steps",
     });
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "agent_knowledge_ingest",
+      op: "hindsight_ingest",
       outcome: "success",
       bankId: "agent-bank",
     });
@@ -519,7 +519,7 @@ describe("tool audit logging", () => {
     (stack.audit as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error("sink down");
     });
-    const result = await tool(buildTools(stack), "memory_router_retain").handler({ content: "x" });
+    const result = await tool(buildTools(stack), "hindsight_retain").handler({ content: "x" });
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(result.content[0].text)).toEqual({ retained: true, queued: false });
     expect(retained).toHaveLength(1);
@@ -532,9 +532,9 @@ describe("tool audit logging", () => {
     (stack.audit as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error("sink down");
     });
-    const retain = tool(buildTools(stack), "memory_router_retain");
+    const retain = tool(buildTools(stack), "hindsight_retain");
     const invalid = await retain.handler({ content: "   " });
-    expect(invalid.content[0].text).toContain("invalid arguments for memory_router_retain");
+    expect(invalid.content[0].text).toContain("invalid arguments for hindsight_retain");
     const denied = await retain.handler({ content: "x" });
     expect(denied.isError).toBe(true);
     expect(denied.content[0].text).toBe("memory access denied");
@@ -546,12 +546,12 @@ describe("tool audit logging", () => {
     vi.spyOn(stack.credentials, "resolveReadBanks").mockImplementation(() => {
       throw new UnknownPrincipalError("agent");
     });
-    const result = await tool(tools, "memory_router_recall").handler({ query: "deploy" });
+    const result = await tool(tools, "hindsight_recall").handler({ query: "deploy" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe("memory operation failed");
     expect(stack.audit).toHaveBeenCalledWith({
       principal: "agent",
-      op: "memory_router_recall",
+      op: "hindsight_recall",
       outcome: "failure",
       errorClass: "identity_resolution_failed",
     });

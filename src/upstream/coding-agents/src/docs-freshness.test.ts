@@ -1,13 +1,4 @@
-/**
- * The README is the single source of truth for configuration (scripts/build-skill.mjs copies its
- * marked regions into the companion skill; hindsight-docs/scripts/sync-coding-agents-doc.mjs copies
- * the whole thing into the docs site). These tests keep it honest in both directions:
- *
- *   - the generated skill matches what the README currently says, and
- *   - no config field is readable but undocumented — the drift issue #3735 was filed about, where
- *     `bankIdTemplate`, `optInOnly`, `banks.<id>.bank` and nine others were reachable in code while
- *     the docs a user actually reads never named them.
- */
+/** Managed skill freshness and upstream reference parsing checks. */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,7 +11,7 @@ const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readme = () => readFileSync(join(pkgRoot, "README.md"), "utf8");
 
 describe("companion skill", () => {
-  it("is up to date with the README", () => {
+  it("is up to date with the managed skill sources", () => {
     // Throws with the regeneration command in its message when the skill is stale.
     execFileSync("node", [join(pkgRoot, "scripts", "build-skill.mjs"), "--check"], {
       cwd: pkgRoot,
@@ -28,12 +19,12 @@ describe("companion skill", () => {
     });
   });
 
-  it("carries the configuration reference, not a subset of it", () => {
+  it("carries managed routing and harness guidance", () => {
     const skill = readFileSync(join(pkgRoot, "skill", "SKILL.md"), "utf8");
-    // The keys that fix the failure mode #3735 reported: a bank shared across unrelated projects.
-    for (const key of ["bankIdTemplate", "dynamicBankId", "mapPathToBank", "disabled", "bank"]) {
-      expect(skill).toContain(`\`${key}\``);
+    for (const key of ["HINDSIGHT_ROUTER_CONFIG", "HINDSIGHT_MCP_HARNESS", "PACKAGE_SHA256", "autoInject", "retainSessions"]) {
+      expect(skill).toContain(key);
     }
+    expect(skill).not.toMatch(/npx|apiToken|hindsight\.vectorize\.io|daemon|cloud/i);
   });
 });
 

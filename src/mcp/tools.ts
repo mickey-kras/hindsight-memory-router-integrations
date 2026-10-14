@@ -3,12 +3,13 @@ import { type MemoryAuditLogger, memoryOperationErrorClass, safeAuditLogger } fr
 import { AccessDeniedError } from "../shared/bank-access.js";
 import { routedKnowledgeTools } from "../shared/knowledge-tools.js";
 import { RecallAuthorizationError } from "../shared/recall-coordinator.js";
-import { RouterRequestError } from "../shared/router-transport.js";
 import {
   RetainAuthorizationError,
   RetainQueueBusyError,
   RetainQueueCapacityError,
 } from "../shared/retain-coordinator.js";
+import { RouterRequestError } from "../shared/router-transport.js";
+import { assertUniqueToolNames, DEFAULT_TOOL_PREFIX, toolName } from "../shared/tool-prefix.js";
 import type { McpStack } from "./managed-config.js";
 
 export interface ToolResult {
@@ -177,22 +178,27 @@ function retainTool(stack: McpStack): McpTool {
     bankId: () => stack.credentials.resolveOptionalWriteBank(stack.principalId) ?? undefined,
   };
   return {
-    name: "memory_router_retain",
+    name: toolName("memory_router_retain", stack.toolPrefix ?? DEFAULT_TOOL_PREFIX),
     description:
       "Retain a memory through Memory Router into this principal's assigned write bank. " +
       "Mutations are restricted to that bank; transient router failures are queued for later delivery.",
     inputSchema,
     annotations: NON_DESTRUCTIVE_WRITE,
-    handler: validated("memory_router_retain", inputSchema, audit, async (args) => {
-      const outcome = await stack.retain.retain(stack.principalId, {
-        content: args.content,
-        documentId: absentWhenBlank(args.documentId),
-        context: absentWhenBlank(args.context),
-        tags: args.tags,
-        metadata: { agent: stack.principalId, ...(stack.source ? { source: stack.source } : {}) },
-      });
-      return ok({ retained: true, queued: outcome.queued });
-    }),
+    handler: validated(
+      toolName("memory_router_retain", stack.toolPrefix ?? DEFAULT_TOOL_PREFIX),
+      inputSchema,
+      audit,
+      async (args) => {
+        const outcome = await stack.retain.retain(stack.principalId, {
+          content: args.content,
+          documentId: absentWhenBlank(args.documentId),
+          context: absentWhenBlank(args.context),
+          tags: args.tags,
+          metadata: { agent: stack.principalId, ...(stack.source ? { source: stack.source } : {}) },
+        });
+        return ok({ retained: true, queued: outcome.queued });
+      },
+    ),
   };
 }
 
@@ -216,14 +222,14 @@ function recallTool(stack: McpStack): McpTool {
       .describe("Prefer observation-type memories."),
   };
   return {
-    name: "memory_router_recall",
+    name: toolName("memory_router_recall", stack.toolPrefix ?? DEFAULT_TOOL_PREFIX),
     description:
       "Recall memories through Memory Router across this principal's write bank and additional read banks, " +
       "merged under one shared deadline and token budget.",
     inputSchema,
     annotations: READ_ONLY,
     handler: validated(
-      "memory_router_recall",
+      toolName("memory_router_recall", stack.toolPrefix ?? DEFAULT_TOOL_PREFIX),
       inputSchema,
       {
         logger: stack.audit,
@@ -282,11 +288,13 @@ function knowledgeTools(stack: McpStack): McpTool[] {
         bankId: (args) => (typeof args.bankId === "string" ? args.bankId : (writeBank ?? undefined)),
       };
       return {
-        name: tool.name,
+        name: toolName(tool.name, stack.toolPrefix ?? DEFAULT_TOOL_PREFIX),
         description: tool.description,
         inputSchema,
         annotations: KNOWLEDGE_TOOL_ANNOTATIONS[tool.name],
-        handler: validated(tool.name, inputSchema, audit, (args) => tool.execute(args)),
+        handler: validated(toolName(tool.name, stack.toolPrefix ?? DEFAULT_TOOL_PREFIX), inputSchema, audit, (args) =>
+          tool.execute(args),
+        ),
       };
     });
 }
@@ -297,6 +305,7 @@ export function buildTools(stack: McpStack): McpTool[] {
     tools.unshift(retainTool(stack));
   }
   const audit = safeAuditLogger(stack.audit);
+  assertUniqueToolNames(tools);
   return tools.map((tool) => ({
     ...tool,
     auditInvalidArguments: () =>

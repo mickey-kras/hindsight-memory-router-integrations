@@ -66,11 +66,13 @@ function setup() {
       routerUrl: "https://router.test",
       queueDir: join(dir, "queue"),
       principals: {
+        "claude-code": { writeBank: "A", tokenEnv: "UPSTREAM_TEST_TOKEN", mapPathToBank: { [process.cwd()]: "A" } },
+        opencode: { writeBank: "A", tokenEnv: "UPSTREAM_TEST_TOKEN", mapPathToBank: { [process.cwd()]: "A" } },
         codex: {
           writeBank: "A",
           additionalReadBanks: ["B"],
           tokenEnv: "UPSTREAM_TEST_TOKEN",
-          mapPathToBank: { [dir]: "A" },
+          mapPathToBank: { [dir]: "A", [process.cwd()]: "A" },
         },
       },
     }),
@@ -93,6 +95,10 @@ it("upstream config cannot override harness, credentials, endpoint or bank assig
       banks: { A: { bank: "hidden", apiToken: "plaintext" } },
     }),
   );
+  expect(() => loadConfig({ harness: "codex", path })).toThrow("memory access denied");
+  const settings = JSON.parse(readFileSync(path, "utf8"));
+  delete settings.apiUrl;
+  writeFileSync(path, JSON.stringify(settings));
   const cfg = loadConfig({ harness: "codex", path });
   expect(cfg).toMatchObject({
     harness: "codex",
@@ -118,7 +124,7 @@ it("upstream client uses managed authentication, fans out reflect, and guards ar
     );
   const client = new HindsightClient({
     routerHarness: "codex",
-    apiUrl: "https://evil.test",
+    apiUrl: "https://router.test",
     apiToken: "plaintext",
     bank: "A",
   });
@@ -222,7 +228,7 @@ it("installs harness-specific MCP identities without migrating or storing tokens
   expect(context.readLegacy).not.toHaveBeenCalled();
   expect(readFileSync(join(dir, ".codex", "config.toml"), "utf8")).toContain("codex");
   expect(cli.mock.calls.flat(2).join(" ")).toContain("HINDSIGHT_MCP_HARNESS=claude-code");
-  expect(() => install(["install", "codex", "--api-token", "plaintext"], context)).toThrow("tokenEnv");
+  expect(install(["install", "codex", "--api-token", "plaintext"], context)).toBe(1);
 });
 
 it.each([
@@ -254,7 +260,7 @@ it.each([
     const client = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A" });
     const coding = buildKnowledgeTools(client, "A").find((tool) => tool.name === "hindsight_ingest_document");
     const mcp = buildTools(loadMcpStack({ ...process.env, HINDSIGHT_ROUTER_PRINCIPAL: "codex" }, logger)).find(
-      (tool) => tool.name === "agent_knowledge_ingest",
+      (tool) => tool.name === "hindsight_ingest",
     );
     let openclawTools: Array<{ name: string; execute(id: string, params: Record<string, unknown>): Promise<unknown> }> =
       [];
@@ -558,7 +564,9 @@ it.each([
   writeFileSync(path, existing);
   const installed = installPackagedCodex(dir);
   expect(installed.status).toBe(1);
-  expect(installed.stderr).toContain("env_vars must contain names or { name, source } entries");
+  expect(installed.stderr).toContain(
+    "installation unavailable: verify operator provisioning, harness identity, project mapping and credentials",
+  );
   expect(installed.stderr).not.toContain(token);
   expect(readFileSync(path, "utf8")).toBe(existing);
   expect(existsSync(join(dir, ".codex", "hooks.json"))).toBe(false);
@@ -593,7 +601,9 @@ it.each(["missing", "invalid", "unknown-principal"])(
     if (kind === "unknown-principal") writeFileSync(process.env.HINDSIGHT_ROUTER_CONFIG!, '{"principals":{}}');
     const installed = installPackagedCodex(dir);
     expect(installed.status).toBe(1);
-    expect(installed.stderr).toContain("HINDSIGHT_ROUTER_CONFIG");
+    expect(installed.stderr).toContain(
+      "installation unavailable: verify operator provisioning, harness identity, project mapping and credentials",
+    );
     expect(installed.stderr).not.toContain(token);
     expect(existsSync(join(dir, ".codex", "config.toml"))).toBe(false);
     expect(existsSync(join(dir, ".codex", "hooks.json"))).toBe(false);
@@ -608,7 +618,9 @@ it("refuses to copy a literal managed token when repairing an existing Codex reg
   writeFileSync(path, existing);
   const installed = installPackagedCodex(dir);
   expect(installed.status).toBe(1);
-  expect(installed.stderr).toContain("remove its literal MCP env value");
+  expect(installed.stderr).toContain(
+    "installation unavailable: verify operator provisioning, harness identity, project mapping and credentials",
+  );
   expect(installed.stderr).not.toContain(token);
   expect(readFileSync(path, "utf8")).toBe(existing);
   expect(existsSync(`${path}.hindsight-backup`)).toBe(false);
@@ -622,7 +634,9 @@ it("leaves malformed Codex TOML untouched without reporting its contents", () =>
   writeFileSync(path, existing);
   const installed = installPackagedCodex(dir);
   expect(installed.status).toBe(1);
-  expect(installed.stderr).toContain("invalid config.toml");
+  expect(installed.stderr).toContain(
+    "installation unavailable: verify operator provisioning, harness identity, project mapping and credentials",
+  );
   expect(installed.stderr).not.toContain(token);
   expect(readFileSync(path, "utf8")).toBe(existing);
   expect(existsSync(join(dir, ".codex", "hooks.json"))).toBe(false);
@@ -638,6 +652,8 @@ it("parses JSONC without editing literal plugin paths and rejects malformed root
   mkdirSync(directory, { recursive: true });
   const path = join(directory, "opencode.jsonc");
   writeFileSync(path, '// kept comment\n{"plugin":["/opt/plugins/parser,].js"],}');
+  mkdirSync(join(home, "dist"));
+  writeFileSync(join(home, "dist", "installer.js"), "runtime");
   expect(install(["install", "opencode"], { home, pkgRoot: home, dist: join(home, "dist"), interactive: false })).toBe(
     0,
   );
@@ -759,6 +775,7 @@ it("passes the selected harness to conversation import and its retry command", (
       .join("\n"),
   );
   const trace = join(dir, "import-args.json");
+  writeFileSync(join(dist, "installer.js"), "runtime");
   writeFileSync(
     join(dist, "deepen.js"),
     `require('node:fs').writeFileSync(${JSON.stringify(trace)}, JSON.stringify(process.argv.slice(2))); process.exit(1);`,

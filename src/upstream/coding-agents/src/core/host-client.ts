@@ -59,11 +59,6 @@ export function resolveHostMemory(harness: string, directory: string): HostMemor
       observationScopes: cfg.observationScopes,
       pageSearchLimit: cfg.pageSearchLimit,
       recallOptions: cfg.recallOptions,
-      // The credential a host STARTED with is not the one it must keep using: enable auth or
-      // rotate the key mid-session and the snapshot 401s every call until restart (#3600). Read
-      // through the same pipeline the constructor used, so a per-bank `banks.<id>.apiToken` is
-      // honoured on re-resolution exactly as it was on the first one.
-      tokenProvider: () => resolveHostConfig(harness, directory).cfg.apiToken,
     }),
   };
 }
