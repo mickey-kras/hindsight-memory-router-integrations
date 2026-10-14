@@ -1,6 +1,6 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..ab8ea3a
+index 0000000..6c96529
 --- /dev/null
 +++ b/DEVIATIONS.md
 @@ -0,0 +1,39 @@
@@ -21,7 +21,7 @@ index 0000000..ab8ea3a
 +The regression suite covers unchanged transcript/provenance code; root tests cover the changed security contracts.
 +Live harness and deployed Memory Router compatibility must be verified before rollout.
 +
-+Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back.
++Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back. Local usage can read existing host transcripts, but journal-only hosts capture prompts and replies only when session retention is enabled and the principal can write the resolved bank.
 +Session state uses per-user private directories (0700 on POSIX), regular files (0600), and exclusive atomic temporary files. Owned legacy directories are secured and migrated; symlinks, hard links, and foreign-owned paths are rejected.
 +Memory content is not reused from session caches; lifecycle flags remain cached. Authorization failures disable that client until restart.
 +
@@ -9789,7 +9789,7 @@ index 0000000..c5a05ab
 +  }
 +}
 diff --git a/src/core/retain-hook.ts b/src/core/retain-hook.ts
-index 0507e5e..d91223c 100644
+index 0507e5e..042acd0 100644
 --- a/src/core/retain-hook.ts
 +++ b/src/core/retain-hook.ts
 @@ -13,6 +13,7 @@
@@ -9839,9 +9839,15 @@ index 0507e5e..d91223c 100644
  
    const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
    const derived = deriveBankIdOrSkip(cfg, cwd, spec.harness, sessionRoot);
-@@ -231,9 +220,18 @@ export async function runRetainHook(
-   // daemon start below: a session that writes nothing has no reason to bring a server up. It still
-   // reads the transcript, because usage is recorded either way — it is a local file (#5391).
+@@ -228,12 +217,22 @@ export async function runRetainHook(
+   if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+   // Checked only HERE, after the bank is resolved, so a `banks.<id>` section can turn write-back
+   // back on for one repo under a global `retainSessions: false` (and vice versa). Before the
+-  // daemon start below: a session that writes nothing has no reason to bring a server up. It still
+-  // reads the transcript, because usage is recorded either way — it is a local file (#5391).
++  // daemon start below: a session that writes nothing has no reason to bring a server up. Usage
++  // can still read an existing host transcript; journal-only capture requires retention and write
++  // authorization, so an opt-out never creates a local conversation just to measure usage.
    let client: RetainClient | undefined;
 -  if (!cfg.retainSessions) {
 +  if (!cfg.retainSessions || harnessTransport(cfg.routerHarness).access.writeBank !== bankId) {
@@ -9859,7 +9865,7 @@ index 0507e5e..d91223c 100644
      // Last chance to get the daemon up: this is the write path, and a session whose daemon never
      // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
      // any hook and nothing is waiting on its result, so it can afford the longer wait.
-@@ -241,6 +239,7 @@ export async function runRetainHook(
+@@ -241,6 +240,7 @@ export async function runRetainHook(
      // produces the same `retain_failed` diagnostic as an unreachable Cloud/self-hosted server.
      await ensureDaemon(cfg, spec.harness, { waitMs: DAEMON_WAIT_RETAIN_MS });
      client = makeClient({
@@ -9867,7 +9873,7 @@ index 0507e5e..d91223c 100644
        apiUrl: cfg.apiUrl,
        apiToken: cfg.apiToken,
        bank: bankId,
-@@ -249,6 +248,7 @@ export async function runRetainHook(
+@@ -249,6 +249,7 @@ export async function runRetainHook(
      });
    }
  
@@ -9875,7 +9881,7 @@ index 0507e5e..d91223c 100644
    await buildRetain({
      harness: spec.harness,
      sessionId: sessionId || "no-session",
-@@ -259,6 +259,7 @@ export async function runRetainHook(
+@@ -259,6 +260,7 @@ export async function runRetainHook(
      readLastMessage: spec.readLastMessage,
      retryUntil: hostDeadline,
      bankId,
@@ -11209,18 +11215,24 @@ index 7526361..f2c5273 100644
        JSON.stringify({ ...state, lastEnableHint: now }, null, 2) + "\n"
      );
 diff --git a/src/core/transcript-codebuddy-ide.test.ts b/src/core/transcript-codebuddy-ide.test.ts
-index 5d1cbf2..edece35 100644
+index 5d1cbf2..ebd234d 100644
 --- a/src/core/transcript-codebuddy-ide.test.ts
 +++ b/src/core/transcript-codebuddy-ide.test.ts
-@@ -1,6 +1,6 @@
+@@ -1,7 +1,11 @@
  import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
  import { tmpdir } from "node:os";
 -import { join } from "node:path";
+-import { describe, expect, it } from "vitest";
 +import { dirname, join } from "node:path";
- import { describe, expect, it } from "vitest";
++import { describe, expect, it, vi } from "vitest";
++import type { HindsightClient } from "./hindsight";
++import { buildRetain } from "./retain-hook";
++import { memoryCursorStore } from "./retain-cursor";
++import { memoryUsageCursorStore } from "./usage";
  import { readCodebuddyIdeTranscript, readCodebuddyTranscript } from "./transcript-codebuddy-ide";
  
-@@ -52,6 +52,19 @@ const FIRST_PROMPT =
+ interface Rec {
+@@ -52,6 +56,76 @@ const FIRST_PROMPT =
    "<user_query>\nfix the flake\n</user_query>";
  
  describe("readCodebuddyIdeTranscript", () => {
@@ -11237,14 +11249,71 @@ index 5d1cbf2..edece35 100644
 +    ]);
 +  });
 +
++  it.each(["not-a-date", "", "2026-99-99T00:00:00Z"])("omits invalid timestamp %j while preserving text, actions and valid neighbors", (createdAt) => {
++    const timestamp = "2026-09-15T07:32:20.000Z";
++    const path = session([
++      { role: "user", createdAt, content: [{ type: "text", text: "fix this" }] },
++      {
++        role: "assistant",
++        createdAt,
++        content: [
++          { type: "text", text: "checking" },
++          { type: "tool-call", toolName: "execute_command", args: { command: "ls" } },
++        ],
++      },
++      { role: "assistant", createdAt: timestamp, content: [{ type: "text", text: "done" }] },
++    ]);
++    expect(readCodebuddyTranscript(path)).toEqual([
++      { role: "user", content: "fix this" },
++      { role: "assistant", content: "checking" },
++      { role: "action", content: expect.stringContaining("execute_command") },
++      { role: "assistant", content: "done", timestamp },
++    ]);
++  });
++
++  it("retains a conversation whose first record has an invalid date", async () => {
++    const path = session([
++      { role: "user", createdAt: "not-a-date", content: [{ type: "text", text: "fix this" }] },
++      {
++        role: "assistant",
++        createdAt: "2026-09-15T07:32:20.000Z",
++        content: [{ type: "text", text: "done" }],
++      },
++    ]);
++    const retain = vi.fn<HindsightClient["retain"]>(async (_content, _context, _ref, _tags, _type, options) => {
++      if (!Number.isFinite(Date.parse(options?.timestamp ?? ""))) {
++        throw new Error("invalid document timestamp");
++      }
++    });
++    vi.stubEnv("HINDSIGHT_USAGE_FILE", join(dirname(path), "usage.jsonl"));
++    try {
++      await buildRetain({
++        harness: "codebuddy",
++        sessionId: "invalid-date",
++        bankId: "A",
++        transcriptPath: path,
++        readTranscript: readCodebuddyTranscript,
++        client: { retain, supportsAppendRetain: async () => false },
++        cursors: memoryCursorStore(),
++        usageCursors: memoryUsageCursorStore(),
++      });
++      expect(retain).toHaveBeenCalledOnce();
++      expect(Number.isFinite(Date.parse(retain.mock.calls[0][5]?.timestamp ?? ""))).toBe(true);
++      expect(retain.mock.calls[0][0]).toContain("fix this");
++      expect(retain.mock.calls[0][0]).toContain("done");
++    } finally {
++      vi.unstubAllEnvs();
++    }
++  });
++
    it("renders a prompt, its tool call and the reply in index order", () => {
      const path = session([
        {
 diff --git a/src/core/transcript-codebuddy-ide.ts b/src/core/transcript-codebuddy-ide.ts
-index 879c22a..7d3d450 100644
+index 879c22a..1d86f9f 100644
 --- a/src/core/transcript-codebuddy-ide.ts
 +++ b/src/core/transcript-codebuddy-ide.ts
-@@ -129,6 +129,7 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
+@@ -129,11 +129,15 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
      } catch {
        continue; // a truncated record contributes nothing rather than failing the hook
      }
@@ -11252,6 +11321,15 @@ index 879c22a..7d3d450 100644
  
      const role = typeof inner.role === "string" ? inner.role : file?.role;
      const isUser = role === "user";
+     const isAssistant = role === "assistant";
+-    const stamp = typeof file?.createdAt === "string" ? { timestamp: file.createdAt } : {};
++    const stamp =
++      typeof file?.createdAt === "string" && Number.isFinite(Date.parse(file.createdAt))
++        ? { timestamp: file.createdAt }
++        : {};
+ 
+     const blocks = Array.isArray(inner.content) ? inner.content : [];
+     const texts: string[] = [];
 diff --git a/src/core/transcript-dcode.test.ts b/src/core/transcript-dcode.test.ts
 index ab90a8e..3237cfc 100644
 --- a/src/core/transcript-dcode.test.ts
@@ -12975,10 +13053,10 @@ index 0000000..3a8ff9c
 +});
 diff --git a/src/installer-managed.test.ts b/src/installer-managed.test.ts
 new file mode 100644
-index 0000000..35cfebf
+index 0000000..8d8fa58
 --- /dev/null
 +++ b/src/installer-managed.test.ts
-@@ -0,0 +1,504 @@
+@@ -0,0 +1,529 @@
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 +import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
@@ -13412,6 +13490,31 @@ index 0000000..35cfebf
 +  expect(JSON.parse(readFileSync(file, "utf8")).mcpServers).not.toHaveProperty("abc");
 +});
 +
++it("rejects the unsupported Trae global-setting flag without writing any install state", () => {
++  provision(["traecode"]);
++  const settings = join(traecodeUserDataDir(ctx.home), "User/settings.json");
++  put(settings, '{"editor.fontSize":17,"trae.mcp.enableWorkspaceMcp":false}');
++  const before = snapshot(ctx.home);
++  expect(run(["install", "traecode", "--enable-workspace-mcp"], ctx)).toBe(1);
++  expect(snapshot(ctx.home)).toEqual(before);
++});
++
++it.each([
++  ["workbuddy", ".workbuddy/mcp.json"],
++  ["codebuddy", ".codebuddy/.mcp.json"],
++  ["codebuddy", ".codebuddy/mcp.json"],
++  ["codebuddy", ".codebuddy.json"],
++])("refuses a branded foreign %s collision at %s before staging", (name, relative) => {
++  provision([name]);
++  const configPath = join(root, "router.json");
++  const config = JSON.parse(readFileSync(configPath, "utf8"));
++  put(configPath, JSON.stringify({ ...config, toolPrefix: "abc_" }));
++  put(join(ctx.home, relative), JSON.stringify({ inputs: ["keep"], mcpServers: { abc: { command: "foreign", args: [] } } }));
++  const before = snapshot(ctx.home);
++  expect(run(["install", name], ctx)).toBe(1);
++  expect(snapshot(ctx.home)).toEqual(before);
++});
++
 +
 +it.each(["install", "uninstall"].flatMap(action => ["inputs", "foreign", "empty"].map(rest => ({ action, rest }))))(
 +  "$action removes only the owned Trae user MCP entry with $rest remaining", ({ action, rest }) => {
@@ -13514,7 +13617,7 @@ index d7c757b..ffa8243 100644
    });
  });
 diff --git a/src/installer.ts b/src/installer.ts
-index d42fce2..5049ac5 100644
+index d42fce2..2e81de8 100644
 --- a/src/installer.ts
 +++ b/src/installer.ts
 @@ -1,10 +1,10 @@
@@ -13597,7 +13700,16 @@ index d42fce2..5049ac5 100644
    /** Runs `qwen mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
    qwenMcp?: (args: string[]) => boolean;
    /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
-@@ -151,17 +155,11 @@ function readJson(path: string): Record<string, any> {
+@@ -105,8 +109,6 @@ export interface InstallCtx {
+   hasRust?: () => boolean;
+   /** Reads an old per-agent plugin's endpoint; injectable for tests. */
+   readLegacy?: (home: string, prefer: readonly string[]) => ReturnType<typeof readLegacyEndpoint>;
+-  /** The raw CLI arguments after the command word — harness installers read flags off this
+-   *  (e.g. traecode's --enable-workspace-mcp) without each one re-parsing argv. */
+   args?: readonly string[];
+   log?: (m: string) => void;
+   /** Styles an interactive readLineSync prompt (the CLI passes the InstallerUi rail style). */
+@@ -151,17 +153,11 @@ function readJson(path: string): Record<string, any> {
   * to understand must never be overwritten with just our own key: the caller aborts instead.
   */
  export function parseJsonc(text: string): Record<string, any> | null {
@@ -13620,7 +13732,7 @@ index d42fce2..5049ac5 100644
  }
  
  function writeJson(path: string, value: unknown): void {
-@@ -256,6 +254,74 @@ const mcpServerEntry = (
+@@ -256,6 +252,74 @@ const mcpServerEntry = (
    env: { HINDSIGHT_MCP_HARNESS: harness },
  });
  
@@ -13695,7 +13807,7 @@ index d42fce2..5049ac5 100644
  /** Install/uninstall consume the same lifecycle declaration as the runtime entrypoints. Keeping
   * event names and command files here would allow a host to run a different lifecycle than it installs. */
  function mergeHarnessHooks(
-@@ -315,17 +381,20 @@ function installSkill(c: InstallCtx, harness: string): void {
+@@ -315,17 +379,20 @@ function installSkill(c: InstallCtx, harness: string): void {
    const src = join(c.pkgRoot, "skill");
    if (!existsSync(join(src, "SKILL.md"))) return;
    const skillsBase = skillsBaseFor(c, harness);
@@ -13721,7 +13833,7 @@ index d42fce2..5049ac5 100644
  }
  
  // ── per-harness adapters ────────────────────────────────────────────────────────
-@@ -399,14 +468,14 @@ function runDcodePlugin(args: string[]): boolean {
+@@ -399,14 +466,14 @@ function runDcodePlugin(args: string[]): boolean {
   * Consequences worth knowing: installing either harness wires the other one too (the MARKER filter
   * keeps that idempotent), and uninstalling either removes the shared entry.
   */
@@ -13738,7 +13850,7 @@ index d42fce2..5049ac5 100644
      }
      cfg = parsed;
    }
-@@ -543,7 +612,7 @@ const kilo: HarnessInstaller = {
+@@ -543,7 +610,7 @@ const kilo: HarnessInstaller = {
        const parsed = parseJsonc(readFileSync(path, "utf8"));
        if (!parsed) {
          c.log?.(`kilo: SKIPPED — could not parse ${path}; add the plugin entry manually`);
@@ -13747,7 +13859,7 @@ index d42fce2..5049ac5 100644
        }
        cfg = parsed;
      }
-@@ -585,14 +654,14 @@ const claudeCode: HarnessInstaller = {
+@@ -585,14 +652,14 @@ const claudeCode: HarnessInstaller = {
      // Code reported "Failed to connect — Connection closed" with the hindsight_* tools dead.
      // Remove first (a no-op when absent) so the add always lands, matching how every other host
      // wiring is replaced rather than skipped.
@@ -13764,7 +13876,7 @@ index d42fce2..5049ac5 100644
          "--env",
          "HINDSIGHT_MCP_HARNESS=claude-code",
          "--",
-@@ -601,11 +670,13 @@ const claudeCode: HarnessInstaller = {
+@@ -601,11 +668,13 @@ const claudeCode: HarnessInstaller = {
        ])
      ) {
        c.log?.("claude-code: MCP server registered (claude mcp add, user scope)");
@@ -13779,7 +13891,7 @@ index d42fce2..5049ac5 100644
      }
    },
    uninstall(c) {
-@@ -619,7 +690,7 @@ const claudeCode: HarnessInstaller = {
+@@ -619,7 +688,7 @@ const claudeCode: HarnessInstaller = {
        }
      }
      const mcp = c.claudeMcp ?? defaultClaudeMcp;
@@ -13788,7 +13900,7 @@ index d42fce2..5049ac5 100644
      uninstallSkill(c, "claude-code");
      c.log?.("claude-code: hooks + MCP registration + skill removed");
    },
-@@ -638,31 +709,142 @@ function defaultClaudeMcp(args: string[]): boolean {
+@@ -638,31 +707,142 @@ function defaultClaudeMcp(args: string[]): boolean {
   * Our `[mcp_servers.hindsight]` table (plus any sub-table of it): the header line through to the
   * next table header or EOF. Shared by install — which REPLACES the block — and uninstall.
   */
@@ -13946,7 +14058,7 @@ index d42fce2..5049ac5 100644
      const additions: string[] = [];
      // Codex ≥ 0.145 deprecates `codex_hooks` for `[features].hooks`; accept either as "already
      // enabled", write the modern name for new installs.
-@@ -675,8 +857,15 @@ const codex: HarnessInstaller = {
+@@ -675,8 +855,15 @@ const codex: HarnessInstaller = {
          additions.push("[features]\nhooks = true");
        }
      }
@@ -13963,7 +14075,7 @@ index d42fce2..5049ac5 100644
      if (next !== existing) {
        if (existsSync(tomlPath) && !existsSync(`${tomlPath}.hindsight-backup`)) {
          copyFileSync(tomlPath, `${tomlPath}.hindsight-backup`);
-@@ -700,7 +889,7 @@ const codex: HarnessInstaller = {
+@@ -700,7 +887,7 @@ const codex: HarnessInstaller = {
      const tomlPath = join(c.home, ".codex", "config.toml");
      if (existsSync(tomlPath)) {
        const toml = readFileSync(tomlPath, "utf8");
@@ -13972,7 +14084,7 @@ index d42fce2..5049ac5 100644
        if (cleaned !== toml) writeFileSync(tomlPath, cleaned);
      }
      c.log?.(
-@@ -740,7 +929,7 @@ const antigravity: HarnessInstaller = {
+@@ -740,7 +927,7 @@ const antigravity: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -13981,7 +14093,7 @@ index d42fce2..5049ac5 100644
      };
      writeJson(mcpPath, mcp);
      const settingsPath = join(c.home, ".gemini", "antigravity-cli", "settings.json");
-@@ -785,8 +974,7 @@ const antigravity: HarnessInstaller = {
+@@ -785,8 +972,7 @@ const antigravity: HarnessInstaller = {
      const mcpPath = join(c.home, ".gemini", "config", "mcp_config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -13991,7 +14103,7 @@ index d42fce2..5049ac5 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -851,12 +1039,52 @@ export const ORIGIN_FILE = ".install-origin.json";
+@@ -851,12 +1037,52 @@ export const ORIGIN_FILE = ".install-origin.json";
   * is what opencode and Kilo load as a plugin directory. Repointing them here means no per-harness
   * installer needs to know staging happened.
   *
@@ -14048,7 +14160,7 @@ index d42fce2..5049ac5 100644
    const target = runtimeDir(c.home);
    // Compared through realpath: re-running the STAGED installer must not reach the copy below, which
    // deletes the very dist it is executing from. A symlinked or differently-spelled path to the same
-@@ -868,14 +1096,22 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+@@ -868,14 +1094,22 @@ function stageRuntime(c: InstallCtx): InstallCtx {
        return a === b;
      }
    };
@@ -14073,7 +14185,7 @@ index d42fce2..5049ac5 100644
      const skill = join(c.pkgRoot, "skill");
      if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
      const pkgJson = join(c.pkgRoot, "package.json");
-@@ -900,248 +1136,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+@@ -900,248 +1134,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
        JSON.stringify({ source: c.pkgRoot, stagedAt: new Date().toISOString() })
      );
      c.log?.(`runtime staged at ${target}`);
@@ -14327,7 +14439,7 @@ index d42fce2..5049ac5 100644
    }
  }
  
-@@ -1171,7 +1171,7 @@ const devin: HarnessInstaller = {
+@@ -1171,7 +1169,7 @@ const devin: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -14336,7 +14448,7 @@ index d42fce2..5049ac5 100644
      };
      writeJson(mcpPath, mcp);
      c.log?.(`devin-cli: hooks merged into ${configPath}, MCP into ${mcpPath}`);
-@@ -1189,8 +1189,7 @@ const devin: HarnessInstaller = {
+@@ -1189,8 +1187,7 @@ const devin: HarnessInstaller = {
      const mcpPath = join(c.home, ".config", "devin", "mcp_config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -14346,7 +14458,7 @@ index d42fce2..5049ac5 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1216,7 +1215,7 @@ const cursor: HarnessInstaller = {
+@@ -1216,7 +1213,7 @@ const cursor: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -14355,7 +14467,7 @@ index d42fce2..5049ac5 100644
      };
      writeJson(mcpPath, mcp);
      c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
-@@ -1235,8 +1234,7 @@ const cursor: HarnessInstaller = {
+@@ -1235,8 +1232,7 @@ const cursor: HarnessInstaller = {
      const mcpPath = join(c.home, ".cursor", "mcp.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -14365,7 +14477,7 @@ index d42fce2..5049ac5 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1258,7 +1256,7 @@ const copilot: HarnessInstaller = {
+@@ -1258,7 +1254,7 @@ const copilot: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -14374,7 +14486,7 @@ index d42fce2..5049ac5 100644
      };
      writeJson(mcpPath, mcp);
      installSkill(c, "copilot-cli");
-@@ -1271,8 +1269,7 @@ const copilot: HarnessInstaller = {
+@@ -1271,8 +1267,7 @@ const copilot: HarnessInstaller = {
      const mcpPath = join(c.home, ".copilot", "mcp-config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -14384,7 +14496,7 @@ index d42fce2..5049ac5 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1318,7 +1315,7 @@ function hasUnmarkedGrokEntries(text: string): boolean {
+@@ -1318,7 +1313,7 @@ function hasUnmarkedGrokEntries(text: string): boolean {
    const cfg = parseGrokToml(text);
    if (!cfg)
      return /\[\s*mcp_servers\s*\.\s*hindsight\s*[.\]]/.test(text) || GROK_HOOK_SCRIPT_RE.test(text);
@@ -14393,7 +14505,7 @@ index d42fce2..5049ac5 100644
    return Object.values(cfg.hooks ?? {}).some((entries) =>
      (entries ?? []).some((entry) =>
        (entry?.hooks ?? []).some(
-@@ -1355,7 +1352,7 @@ function stripUnmarkedGrokEntries(toml: string): string {
+@@ -1355,7 +1350,7 @@ function stripUnmarkedGrokEntries(toml: string): string {
      s.lines.slice(1).some((l) => /^\s*[^#\s]/.test(l));
  
    const drop = sections.map((s) => {
@@ -14402,7 +14514,7 @@ index d42fce2..5049ac5 100644
      if (/^\[\[hooks\..+\.hooks\]\]$/.test(s.header)) return isOurs(s);
      return false;
    });
-@@ -1399,19 +1396,21 @@ const grok: HarnessInstaller = {
+@@ -1399,19 +1394,21 @@ const grok: HarnessInstaller = {
      const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
      // REPLACE any previous block rather than skipping when one exists. Skipping made this
      // install-once-only: after the package moved, a re-install silently left the old (now dead)
@@ -14430,7 +14542,7 @@ index d42fce2..5049ac5 100644
        `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
      const next = `${withoutOurs.replace(/\n*$/, "\n")}${block}`;
      // Never hand Grok a config it cannot parse: one bad table takes down every MCP server it has.
-@@ -1439,7 +1438,10 @@ const grok: HarnessInstaller = {
+@@ -1439,7 +1436,10 @@ const grok: HarnessInstaller = {
      const path = join(c.home, ".grok", "config.toml");
      if (existsSync(path)) {
        const existing = readFileSync(path, "utf8");
@@ -14442,7 +14554,7 @@ index d42fce2..5049ac5 100644
        const cleaned = hasUnmarkedGrokEntries(stripped)
          ? stripUnmarkedGrokEntries(stripped)
          : stripped;
-@@ -1510,7 +1512,7 @@ const kimi: HarnessInstaller = {
+@@ -1510,7 +1510,7 @@ const kimi: HarnessInstaller = {
      // Kimi's environment, and silently 401s when it is not.
      const mcpPath = join(kimiHome(c), "mcp.json");
      const mcp = readJson(mcpPath);
@@ -14451,7 +14563,7 @@ index d42fce2..5049ac5 100644
      writeJson(mcpPath, mcp);
      installSkill(c, "kimi-code");
      c.log?.(`kimi-code: native hooks installed in ${path}, MCP in ${mcpPath}`);
-@@ -1525,8 +1527,7 @@ const kimi: HarnessInstaller = {
+@@ -1525,8 +1525,7 @@ const kimi: HarnessInstaller = {
      const mcpPath = join(kimiHome(c), "mcp.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -14461,7 +14573,7 @@ index d42fce2..5049ac5 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1537,7 +1538,7 @@ const kimi: HarnessInstaller = {
+@@ -1537,7 +1536,7 @@ const kimi: HarnessInstaller = {
  
  const CLINE_HOOK_MARKER = "HINDSIGHT_CODING_AGENTS_CLINE";
  const CLINE_OLD_HOOK_EVENTS = ["TaskStart", "UserPromptSubmit", "TaskComplete"];
@@ -14470,7 +14582,7 @@ index d42fce2..5049ac5 100644
  
  /** Remove only wrappers from the short-lived file-hook implementation. Cline file hooks cannot
   * mutate a prompt; keeping them would falsely imply that old installs still inject memory. */
-@@ -1566,7 +1567,7 @@ const cline: HarnessInstaller = {
+@@ -1566,7 +1565,7 @@ const cline: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -14479,7 +14591,7 @@ index d42fce2..5049ac5 100644
      };
      writeJson(mcpPath, mcp);
      installSkill(c, "cline-cli");
-@@ -1575,6 +1576,7 @@ const cline: HarnessInstaller = {
+@@ -1575,6 +1574,7 @@ const cline: HarnessInstaller = {
          ? "cline-cli: native plugin + MCP + skill installed"
          : `cline-cli: MCP + skill installed; run: cline plugin install --force "${c.pkgRoot}"`
      );
@@ -14487,7 +14599,7 @@ index d42fce2..5049ac5 100644
    },
    uninstall(c) {
      removeLegacyClineHooks(c);
-@@ -1584,8 +1586,7 @@ const cline: HarnessInstaller = {
+@@ -1584,8 +1584,7 @@ const cline: HarnessInstaller = {
      const mcpPath = join(c.home, ".cline", "data", "settings", "cline_mcp_settings.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -14497,7 +14609,7 @@ index d42fce2..5049ac5 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1748,7 +1749,7 @@ function dshHome(c: InstallCtx): string {
+@@ -1748,7 +1747,7 @@ function dshHome(c: InstallCtx): string {
   * DeepSeek Harness — a native Cordis plugin, wired through the HOME-level patch layer
   * (`$DSH_HOME/cordis.patch.yml`), which every profile composes after its bundles.
   *
@@ -14506,7 +14618,7 @@ index d42fce2..5049ac5 100644
   * pnpm-installs the package into ONE profile and picks up the `dsh.bundle.patch` this package
   * ships. That is the right route for a published install and is what the docs recommend, but it
   * needs pnpm, a network, and a repeat per profile — so the installer takes the path that always
-@@ -1771,7 +1772,7 @@ const dsh: HarnessInstaller = {
+@@ -1771,7 +1770,7 @@ const dsh: HarnessInstaller = {
      const block =
        `${DSH_MARKER_START}\n` +
        `- insert:\n` +
@@ -14515,7 +14627,7 @@ index d42fce2..5049ac5 100644
        `      name: ${JSON.stringify(entry)}\n` +
        `${DSH_MARKER_END}\n`;
      if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
-@@ -1818,7 +1819,7 @@ const qwen: HarnessInstaller = {
+@@ -1818,7 +1817,7 @@ const qwen: HarnessInstaller = {
      const mcp = c.qwenMcp ?? defaultQwenMcp;
      // Same rationale as claude-code: `qwen mcp add` refuses a name that already exists, so a
      // re-install could never repoint a stale server. Remove first (a no-op when absent).
@@ -14524,7 +14636,7 @@ index d42fce2..5049ac5 100644
      if (
        mcp([
          "mcp",
-@@ -1827,17 +1828,19 @@ const qwen: HarnessInstaller = {
+@@ -1827,17 +1826,19 @@ const qwen: HarnessInstaller = {
          "user",
          "-e",
          "HINDSIGHT_MCP_HARNESS=qwen-code",
@@ -14546,7 +14658,7 @@ index d42fce2..5049ac5 100644
      }
    },
    uninstall(c) {
-@@ -1851,7 +1854,7 @@ const qwen: HarnessInstaller = {
+@@ -1851,7 +1852,7 @@ const qwen: HarnessInstaller = {
        }
      }
      const mcp = c.qwenMcp ?? defaultQwenMcp;
@@ -14555,7 +14667,7 @@ index d42fce2..5049ac5 100644
      uninstallSkill(c, "qwen-code");
      c.log?.("qwen-code: hooks + MCP registration + skill removed");
    },
-@@ -1884,10 +1887,10 @@ const factoryDroid: HarnessInstaller = {
+@@ -1884,10 +1885,10 @@ const factoryDroid: HarnessInstaller = {
    detect: (c) => onPath("droid") || existsSync(join(c.home, ".factory")),
    preflight(c) {
      const mcpPath = join(c.home, ".factory", "mcp.json");
@@ -14568,7 +14680,7 @@ index d42fce2..5049ac5 100644
          "Rename or remove that entry, then re-run install."
        );
      }
-@@ -1911,7 +1914,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1911,7 +1912,7 @@ const factoryDroid: HarnessInstaller = {
      const mcpPath = join(c.home, ".factory", "mcp.json");
      const mcp = readJson(mcpPath);
      mcp.mcpServers = mcp.mcpServers ?? {};
@@ -14577,7 +14689,7 @@ index d42fce2..5049ac5 100644
      writeJson(mcpPath, mcp);
      c.log?.(`factory-droid: MCP server registered in ${mcpPath}`);
    },
-@@ -1926,8 +1929,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1926,8 +1927,7 @@ const factoryDroid: HarnessInstaller = {
      const mcpPath = join(c.home, ".factory", "mcp.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -14587,7 +14699,7 @@ index d42fce2..5049ac5 100644
          if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
          else rmSync(mcpPath);
        }
-@@ -1953,7 +1955,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1953,7 +1953,7 @@ const factoryDroid: HarnessInstaller = {
   *
   * MCP and the companion skill land in the same config/home, so ZCode gets the full surface:
   *
@@ -14596,7 +14708,7 @@ index d42fce2..5049ac5 100644
   *   `HINDSIGHT_MCP_HARNESS=zcode`. ZCode's schema is `{type, command, args?, cwd?, env?}` and its
   *   loader infers `type: "stdio"` from a `command`, so the shared `mcpServerEntry` drops straight
   *   in. A same-named foreign server blocks install instead of being overwritten.
-@@ -1968,10 +1970,10 @@ const zcode: HarnessInstaller = {
+@@ -1968,10 +1968,10 @@ const zcode: HarnessInstaller = {
    detect: (c) => onPath("zcode") || existsSync(join(c.home, ".zcode")),
    preflight(c) {
      const configPath = zcodeConfigPath(c);
@@ -14609,7 +14721,7 @@ index d42fce2..5049ac5 100644
          "Rename or remove that entry, then re-run install."
        );
      }
-@@ -1986,7 +1988,7 @@ const zcode: HarnessInstaller = {
+@@ -1986,7 +1986,7 @@ const zcode: HarnessInstaller = {
      mergeHarnessHooks(hooks.events, "zcode", c.dist);
      config.mcp = config.mcp ?? {};
      config.mcp.servers = config.mcp.servers ?? {};
@@ -14618,7 +14730,7 @@ index d42fce2..5049ac5 100644
      writeJson(configPath, config);
      c.log?.(`zcode: hooks + MCP server merged into ${configPath}`);
      installSkill(c, "zcode");
-@@ -1995,8 +1997,7 @@ const zcode: HarnessInstaller = {
+@@ -1995,8 +1995,7 @@ const zcode: HarnessInstaller = {
      const configPath = zcodeConfigPath(c);
      if (existsSync(configPath)) {
        const config = readJson(configPath);
@@ -14628,7 +14740,7 @@ index d42fce2..5049ac5 100644
          if (!Object.keys(config.mcp.servers).length) delete config.mcp;
        }
        const hooks = config.hooks;
-@@ -2034,9 +2035,11 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
+@@ -2034,9 +2033,11 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
      const mcpPath = traecodeMcpPath(c);
      if (!existsSync(mcpPath)) return false;
      const mcp = readJson(mcpPath);
@@ -14643,9 +14755,20 @@ index d42fce2..5049ac5 100644
      else rmSync(mcpPath);
      return true;
    } catch {
-@@ -2054,39 +2057,8 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
-  * without a human; `--enable-workspace-mcp` is that human, up front.
-  */
+@@ -2044,49 +2045,10 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
+   }
+ }
+ 
+-/**
+- * Trae gates workspace-level MCP files behind `trae.mcp.enableWorkspaceMcp` (global, default
+- * false) — without it the per-repo `.trae/mcp.json` this install relies on is never read and
+- * hindsight's MCP tools stay hidden. Flipping a global setting is the user's call, so it is
+- * asked HERE, on the installer's TTY: `install` is idempotent and re-run often, and the gate
+- * state makes the prompt self-silencing once answered. Non-interactive runs (CI, scripts, the
+- * test suite) print the manual step and touch nothing — a global setting must never flip
+- * without a human; `--enable-workspace-mcp` is that human, up front.
+- */
++// Global workspace-MCP settings remain user-managed; installation only reports the gate.
  function ensureTraecodeWorkspaceMcpGate(c: InstallCtx): void {
 -  const settingsPath = traecodeUserSettingsPath(c.home);
 -  if (workspaceMcpGateState(settingsPath) === "on") return;
@@ -14685,7 +14808,7 @@ index d42fce2..5049ac5 100644
  }
  
  /**
-@@ -2166,13 +2138,12 @@ const traecode: HarnessInstaller = {
+@@ -2166,13 +2128,12 @@ const traecode: HarnessInstaller = {
      // sandbox.json rules targeting Trae's own storage, so on stock installs both hook writes
      // fail — the installer runs unsandboxed and lands them. Because the hook checks before
      // writing, a pre-seeded repo turns every later session into a read-only no-op.
@@ -14701,7 +14824,7 @@ index d42fce2..5049ac5 100644
        for (const repo of repos) {
          // A map entry whose directory is gone must not grow a phantom `.trae` tree via mkdir -p.
          if (!existsSync(repo)) {
-@@ -2183,12 +2154,11 @@ const traecode: HarnessInstaller = {
+@@ -2183,12 +2144,11 @@ const traecode: HarnessInstaller = {
          if (outcome === "registered") written.push(repo);
          else if (outcome === "current") current.push(repo);
          else skipped.push(repo);
@@ -14716,7 +14839,7 @@ index d42fce2..5049ac5 100644
        );
        if (written.length) c.log?.(`  registered: ${written.join(", ")}`);
        if (skipped.length) {
-@@ -2229,8 +2199,8 @@ const traecode: HarnessInstaller = {
+@@ -2229,8 +2189,8 @@ const traecode: HarnessInstaller = {
      // opted-in repo's .trae/mcp.json, deleting the file when nothing remains in it. Foreign
      // servers and foreign "hindsight" entries are never touched — same ownership check as the
      // hook's. Missing repos skip silently; the storage sweep below still catches their switches.
@@ -14727,7 +14850,7 @@ index d42fce2..5049ac5 100644
      const cleaned = repoEntries.filter((repo) =>
        removeTraecodeWorkspaceMcpEntry(repo, { home: c.home })
      );
-@@ -2251,7 +2221,7 @@ const traecode: HarnessInstaller = {
+@@ -2251,7 +2211,7 @@ const traecode: HarnessInstaller = {
        }
      }
      // The per-workspace enable switches the installer/hook seeded — an uninstall leaves no storage behind.
@@ -14736,7 +14859,7 @@ index d42fce2..5049ac5 100644
      uninstallSkill(c, "traecode");
      c.log?.(`traecode: hooks + MCP registration + skill removed`);
    },
-@@ -2287,7 +2257,7 @@ const genieInstaller = (
+@@ -2287,7 +2247,7 @@ const genieInstaller = (
      const mcpPath = paths.find((p) => existsSync(p)) ?? paths[0];
      const mcp = readJson(mcpPath);
      mcp.mcpServers = mcp.mcpServers ?? {};
@@ -14745,7 +14868,7 @@ index d42fce2..5049ac5 100644
      writeJson(mcpPath, mcp);
      c.log?.(`${name}: MCP server registered in ${mcpPath}`);
  
-@@ -2306,8 +2276,7 @@ const genieInstaller = (
+@@ -2306,8 +2266,7 @@ const genieInstaller = (
      for (const mcpPath of mcpPaths(c.home)) {
        if (!existsSync(mcpPath)) continue;
        const mcp = readJson(mcpPath);
@@ -14755,7 +14878,7 @@ index d42fce2..5049ac5 100644
          if (!Object.keys(mcp.mcpServers).length) delete mcp.mcpServers;
          writeJson(mcpPath, mcp);
        }
-@@ -2375,7 +2344,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
+@@ -2375,7 +2334,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
   */
  function importConversations(harness: string, ctx: InstallCtx): void {
    const repo = process.cwd();
@@ -14764,7 +14887,7 @@ index d42fce2..5049ac5 100644
    if (!found.supported) {
      ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
      return;
-@@ -2399,142 +2368,211 @@ function importConversations(harness: string, ctx: InstallCtx): void {
+@@ -2399,142 +2358,211 @@ function importConversations(harness: string, ctx: InstallCtx): void {
        `this runs extraction and may take a while`
    );
    try {
@@ -15092,7 +15215,7 @@ index d42fce2..5049ac5 100644
    return 0;
  }
  
-@@ -2566,12 +2604,19 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2566,12 +2594,19 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      command: process.argv[2],
      version,
      harnessNames: INSTALLERS.map((i) => i.name),
@@ -15114,7 +15237,7 @@ index d42fce2..5049ac5 100644
      home: homedir(),
      pkgRoot,
      dist,
-@@ -2579,11 +2624,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2579,11 +2614,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      // tty.isatty, NOT process.stdin.isTTY: the process.stdin getter initializes the stdin TTY
      // stream, which puts fd 0 in non-blocking mode and breaks readLineSync (see there).
      interactive: Boolean(isatty(0) && isatty(1)),

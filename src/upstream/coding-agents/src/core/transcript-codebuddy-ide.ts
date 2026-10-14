@@ -134,7 +134,10 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
     const role = typeof inner.role === "string" ? inner.role : file?.role;
     const isUser = role === "user";
     const isAssistant = role === "assistant";
-    const stamp = typeof file?.createdAt === "string" ? { timestamp: file.createdAt } : {};
+    const stamp =
+      typeof file?.createdAt === "string" && Number.isFinite(Date.parse(file.createdAt))
+        ? { timestamp: file.createdAt }
+        : {};
 
     const blocks = Array.isArray(inner.content) ? inner.content : [];
     const texts: string[] = [];

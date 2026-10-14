@@ -1,7 +1,11 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { HindsightClient } from "./hindsight";
+import { buildRetain } from "./retain-hook";
+import { memoryCursorStore } from "./retain-cursor";
+import { memoryUsageCursorStore } from "./usage";
 import { readCodebuddyIdeTranscript, readCodebuddyTranscript } from "./transcript-codebuddy-ide";
 
 interface Rec {
@@ -63,6 +67,63 @@ describe("readCodebuddyIdeTranscript", () => {
       { role: "user", content: "before" },
       { role: "assistant", content: "after" },
     ]);
+  });
+
+  it.each(["not-a-date", "", "2026-99-99T00:00:00Z"])("omits invalid timestamp %j while preserving text, actions and valid neighbors", (createdAt) => {
+    const timestamp = "2026-09-15T07:32:20.000Z";
+    const path = session([
+      { role: "user", createdAt, content: [{ type: "text", text: "fix this" }] },
+      {
+        role: "assistant",
+        createdAt,
+        content: [
+          { type: "text", text: "checking" },
+          { type: "tool-call", toolName: "execute_command", args: { command: "ls" } },
+        ],
+      },
+      { role: "assistant", createdAt: timestamp, content: [{ type: "text", text: "done" }] },
+    ]);
+    expect(readCodebuddyTranscript(path)).toEqual([
+      { role: "user", content: "fix this" },
+      { role: "assistant", content: "checking" },
+      { role: "action", content: expect.stringContaining("execute_command") },
+      { role: "assistant", content: "done", timestamp },
+    ]);
+  });
+
+  it("retains a conversation whose first record has an invalid date", async () => {
+    const path = session([
+      { role: "user", createdAt: "not-a-date", content: [{ type: "text", text: "fix this" }] },
+      {
+        role: "assistant",
+        createdAt: "2026-09-15T07:32:20.000Z",
+        content: [{ type: "text", text: "done" }],
+      },
+    ]);
+    const retain = vi.fn<HindsightClient["retain"]>(async (_content, _context, _ref, _tags, _type, options) => {
+      if (!Number.isFinite(Date.parse(options?.timestamp ?? ""))) {
+        throw new Error("invalid document timestamp");
+      }
+    });
+    vi.stubEnv("HINDSIGHT_USAGE_FILE", join(dirname(path), "usage.jsonl"));
+    try {
+      await buildRetain({
+        harness: "codebuddy",
+        sessionId: "invalid-date",
+        bankId: "A",
+        transcriptPath: path,
+        readTranscript: readCodebuddyTranscript,
+        client: { retain, supportsAppendRetain: async () => false },
+        cursors: memoryCursorStore(),
+        usageCursors: memoryUsageCursorStore(),
+      });
+      expect(retain).toHaveBeenCalledOnce();
+      expect(Number.isFinite(Date.parse(retain.mock.calls[0][5]?.timestamp ?? ""))).toBe(true);
+      expect(retain.mock.calls[0][0]).toContain("fix this");
+      expect(retain.mock.calls[0][0]).toContain("done");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("renders a prompt, its tool call and the reply in index order", () => {

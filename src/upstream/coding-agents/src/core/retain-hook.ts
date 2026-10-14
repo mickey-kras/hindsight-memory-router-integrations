@@ -217,8 +217,9 @@ export async function runRetainHook(
   if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
   // Checked only HERE, after the bank is resolved, so a `banks.<id>` section can turn write-back
   // back on for one repo under a global `retainSessions: false` (and vice versa). Before the
-  // daemon start below: a session that writes nothing has no reason to bring a server up. It still
-  // reads the transcript, because usage is recorded either way — it is a local file (#5391).
+  // daemon start below: a session that writes nothing has no reason to bring a server up. Usage
+  // can still read an existing host transcript; journal-only capture requires retention and write
+  // authorization, so an opt-out never creates a local conversation just to measure usage.
   let client: RetainClient | undefined;
   if (!cfg.retainSessions || harnessTransport(cfg.routerHarness).access.writeBank !== bankId) {
     diag(spec.harness, "retain_disabled", { bank: bankId, session: sessionId });

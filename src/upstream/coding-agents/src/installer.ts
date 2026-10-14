@@ -109,8 +109,6 @@ export interface InstallCtx {
   hasRust?: () => boolean;
   /** Reads an old per-agent plugin's endpoint; injectable for tests. */
   readLegacy?: (home: string, prefer: readonly string[]) => ReturnType<typeof readLegacyEndpoint>;
-  /** The raw CLI arguments after the command word — harness installers read flags off this
-   *  (e.g. traecode's --enable-workspace-mcp) without each one re-parsing argv. */
   args?: readonly string[];
   log?: (m: string) => void;
   /** Styles an interactive readLineSync prompt (the CLI passes the InstallerUi rail style). */
@@ -2047,15 +2045,7 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
   }
 }
 
-/**
- * Trae gates workspace-level MCP files behind `trae.mcp.enableWorkspaceMcp` (global, default
- * false) — without it the per-repo `.trae/mcp.json` this install relies on is never read and
- * hindsight's MCP tools stay hidden. Flipping a global setting is the user's call, so it is
- * asked HERE, on the installer's TTY: `install` is idempotent and re-run often, and the gate
- * state makes the prompt self-silencing once answered. Non-interactive runs (CI, scripts, the
- * test suite) print the manual step and touch nothing — a global setting must never flip
- * without a human; `--enable-workspace-mcp` is that human, up front.
- */
+// Global workspace-MCP settings remain user-managed; installation only reports the gate.
 function ensureTraecodeWorkspaceMcpGate(c: InstallCtx): void {
   if (workspaceMcpGateState(traecodeUserSettingsPath(c.home)) !== "on")
     c.log?.('traecode: enableWorkspaceMcp must be enabled in Trae settings before using workspace MCP.');

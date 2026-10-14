@@ -431,6 +431,31 @@ it("installs Trae workspace MCP only in explicitly managed projects using the br
   expect(JSON.parse(readFileSync(file, "utf8")).mcpServers).not.toHaveProperty("abc");
 });
 
+it("rejects the unsupported Trae global-setting flag without writing any install state", () => {
+  provision(["traecode"]);
+  const settings = join(traecodeUserDataDir(ctx.home), "User/settings.json");
+  put(settings, '{"editor.fontSize":17,"trae.mcp.enableWorkspaceMcp":false}');
+  const before = snapshot(ctx.home);
+  expect(run(["install", "traecode", "--enable-workspace-mcp"], ctx)).toBe(1);
+  expect(snapshot(ctx.home)).toEqual(before);
+});
+
+it.each([
+  ["workbuddy", ".workbuddy/mcp.json"],
+  ["codebuddy", ".codebuddy/.mcp.json"],
+  ["codebuddy", ".codebuddy/mcp.json"],
+  ["codebuddy", ".codebuddy.json"],
+])("refuses a branded foreign %s collision at %s before staging", (name, relative) => {
+  provision([name]);
+  const configPath = join(root, "router.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  put(configPath, JSON.stringify({ ...config, toolPrefix: "abc_" }));
+  put(join(ctx.home, relative), JSON.stringify({ inputs: ["keep"], mcpServers: { abc: { command: "foreign", args: [] } } }));
+  const before = snapshot(ctx.home);
+  expect(run(["install", name], ctx)).toBe(1);
+  expect(snapshot(ctx.home)).toEqual(before);
+});
+
 
 it.each(["install", "uninstall"].flatMap(action => ["inputs", "foreign", "empty"].map(rest => ({ action, rest }))))(
   "$action removes only the owned Trae user MCP entry with $rest remaining", ({ action, rest }) => {
