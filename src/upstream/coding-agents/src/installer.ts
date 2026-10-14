@@ -266,10 +266,10 @@ function managedJsonRegistrations(path: string, harness: string, c: InstallCtx, 
   const text = readFileSync(path, "utf8");
   const config = parseJsonc(text);
   if (!config) throw new Error("invalid host config");
-  const name = registrationName();
+  const name = requireDesiredName ? registrationName() : undefined;
   let changed = false;
   for (const servers of mcpRegistries(config)) {
-    if (requireDesiredName && Object.hasOwn(servers, name) && !belongsToHarness(servers[name], harness))
+    if (name !== undefined && Object.hasOwn(servers, name) && !belongsToHarness(servers[name], harness))
       throw new ToolPrefixError("unrelated MCP registration name collision; choose another toolPrefix");
     for (const [key, entry] of Object.entries(servers)) {
       if (!belongsToHarness(entry, harness)) continue;
@@ -279,6 +279,15 @@ function managedJsonRegistrations(path: string, harness: string, c: InstallCtx, 
     }
   }
   if (changed) writeJson(path, config);
+}
+
+function removeOwnedMcpRegistrations(servers: Record<string, unknown> | undefined, harness: string): boolean {
+  if (!servers) return false;
+  let changed = false;
+  for (const [name, entry] of Object.entries(servers)) {
+    if (belongsToHarness(entry, harness)) { delete servers[name]; changed = true; }
+  }
+  return changed;
 }
 
 /** Install/uninstall consume the same lifecycle declaration as the runtime entrypoints. Keeping
@@ -898,8 +907,7 @@ const antigravity: HarnessInstaller = {
     const mcpPath = join(c.home, ".gemini", "config", "mcp_config.json");
     if (existsSync(mcpPath)) {
       const mcp = readJson(mcpPath);
-      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "antigravity-cli")) {
-        delete mcp.mcpServers[registrationName()];
+      if (removeOwnedMcpRegistrations(mcp.mcpServers, "antigravity-cli")) {
         writeJson(mcpPath, mcp);
       }
     }
@@ -1103,8 +1111,7 @@ const devin: HarnessInstaller = {
     const mcpPath = join(c.home, ".config", "devin", "mcp_config.json");
     if (existsSync(mcpPath)) {
       const mcp = readJson(mcpPath);
-      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "devin-cli")) {
-        delete mcp.mcpServers[registrationName()];
+      if (removeOwnedMcpRegistrations(mcp.mcpServers, "devin-cli")) {
         writeJson(mcpPath, mcp);
       }
     }
@@ -1144,8 +1151,7 @@ const cursor: HarnessInstaller = {
     const mcpPath = join(c.home, ".cursor", "mcp.json");
     if (existsSync(mcpPath)) {
       const mcp = readJson(mcpPath);
-      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "cursor-cli")) {
-        delete mcp.mcpServers[registrationName()];
+      if (removeOwnedMcpRegistrations(mcp.mcpServers, "cursor-cli")) {
         writeJson(mcpPath, mcp);
       }
     }
@@ -1180,8 +1186,7 @@ const copilot: HarnessInstaller = {
     const mcpPath = join(c.home, ".copilot", "mcp-config.json");
     if (existsSync(mcpPath)) {
       const mcp = readJson(mcpPath);
-      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "copilot-cli")) {
-        delete mcp.mcpServers[registrationName()];
+      if (removeOwnedMcpRegistrations(mcp.mcpServers, "copilot-cli")) {
         writeJson(mcpPath, mcp);
       }
     }
@@ -1405,8 +1410,7 @@ const cline: HarnessInstaller = {
     const mcpPath = join(c.home, ".cline", "data", "settings", "cline_mcp_settings.json");
     if (existsSync(mcpPath)) {
       const mcp = readJson(mcpPath);
-      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "cline-cli")) {
-        delete mcp.mcpServers[registrationName()];
+      if (removeOwnedMcpRegistrations(mcp.mcpServers, "cline-cli")) {
         writeJson(mcpPath, mcp);
       }
     }
@@ -1725,8 +1729,7 @@ const factoryDroid: HarnessInstaller = {
     const mcpPath = join(c.home, ".factory", "mcp.json");
     if (existsSync(mcpPath)) {
       const mcp = readJson(mcpPath);
-      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "factory-droid")) {
-        delete mcp.mcpServers[registrationName()];
+      if (removeOwnedMcpRegistrations(mcp.mcpServers, "factory-droid")) {
         if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
         else rmSync(mcpPath);
       }
@@ -1794,8 +1797,7 @@ const zcode: HarnessInstaller = {
     const configPath = zcodeConfigPath(c);
     if (existsSync(configPath)) {
       const config = readJson(configPath);
-      if (belongsToHarness(config.mcp?.servers?.[registrationName()], "zcode")) {
-        delete config.mcp.servers[registrationName()];
+      if (removeOwnedMcpRegistrations(config.mcp?.servers, "zcode")) {
         if (!Object.keys(config.mcp.servers).length) delete config.mcp;
       }
       const hooks = config.hooks;
@@ -1885,7 +1887,7 @@ function importConversations(harness: string, ctx: InstallCtx): void {
 }
 
 /** Paths written by adapters, including registries written by their native CLIs. */
-function mutationPaths(ctx: InstallCtx, names: string[]): string[] {
+function mutationPaths(ctx: InstallCtx, names: string[], includeDesiredSkill = true): string[] {
   const paths = [runtimeDir(ctx.home)];
   const files: Record<string, string[]> = {
     opencode: [".config/opencode/opencode.json", ".config/opencode/opencode.jsonc"],
@@ -1910,7 +1912,8 @@ function mutationPaths(ctx: InstallCtx, names: string[]): string[] {
     }
     if (SKILL_DIRS[name]) {
       const base = skillsBaseFor(ctx, name);
-      paths.push(join(base, toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).skillName), ...ownedCompanionSkills(base));
+      paths.push(...ownedCompanionSkills(base));
+      if (includeDesiredSkill) paths.push(join(base, toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).skillName));
     }
     if (name === "dsh") {
       const path = join(dshHome(ctx), "cordis.patch.yml");
@@ -1999,9 +2002,9 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
         if (target.preflight?.(ctx)) return fail();
       }
     }
-    const paths = mutationPaths(ctx, targets.map((target) => target.name));
+    const paths = mutationPaths(ctx, targets.map((target) => target.name), command !== "uninstall");
     for (const target of targets) {
-      for (const path of mutationPaths(ctx, [target.name])) {
+      for (const path of mutationPaths(ctx, [target.name], command !== "uninstall")) {
         if (/\.jsonc?$/.test(path)) managedJsonRegistrations(path, target.name, ctx, false, command !== "uninstall");
       }
     }
@@ -2026,7 +2029,7 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
     transaction = new InstallTransaction(paths);
     if (command !== "uninstall") ctx = stageRuntime(ctx);
     for (const target of targets) {
-      for (const path of mutationPaths(ctx, [target.name])) {
+      for (const path of mutationPaths(ctx, [target.name], command !== "uninstall")) {
         if (/\.jsonc?$/.test(path)) managedJsonRegistrations(path, target.name, ctx, true, command !== "uninstall");
       }
     }

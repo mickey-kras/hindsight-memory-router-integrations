@@ -402,6 +402,34 @@ function installPackagedCodex(dir: string) {
   });
 }
 
+it.each([undefined, "abc_"].flatMap((prefix) => ["missing", "malformed"].map((problem) => ({ prefix, problem }))))(
+  "packaged CLI uninstalls $prefix with $problem managed configuration",
+  ({ prefix, problem }) => {
+    const dir = setup();
+    const configPath = process.env.HINDSIGHT_ROUTER_CONFIG!;
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    writeFileSync(configPath, JSON.stringify({ ...config, toolPrefix: prefix }));
+    const installed = installPackagedCodex(dir);
+    expect(installed.status, installed.stderr).toBe(0);
+    const id = prefix?.slice(0, -1) ?? "hindsight";
+    const tomlPath = join(dir, ".codex/config.toml");
+    const foreign = '[mcp_servers.foreign]\ncommand = "foreign"\n';
+    writeFileSync(tomlPath, readFileSync(tomlPath, "utf8") + "\n" + foreign);
+    if (problem === "missing") rmSync(configPath);
+    else writeFileSync(configPath, "{malformed");
+    const removed = spawnSync(process.execPath, [join(dir, "package/dist/installer.js"), "uninstall", "codex"], {
+      env: { ...process.env, HOME: dir },
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    expect(removed.status, removed.stderr).toBe(0);
+    expect(readFileSync(tomlPath, "utf8")).toContain(foreign);
+    expect(readFileSync(tomlPath, "utf8")).not.toContain(`[mcp_servers.${id}]`);
+    expect(existsSync(join(dir, ".agents/skills", `${id}-coding-agent`))).toBe(false);
+    expect(readFileSync(join(dir, ".codex/hooks.json"), "utf8")).not.toContain("codex-hook.js");
+  },
+);
+
 function initializeCodexMcp(
   dir: string,
   registration: CodexRegistration,

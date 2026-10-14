@@ -191,3 +191,59 @@ it.each([false, true])("preserves retained same-file Codex launch configuration 
   expect(registration.env_vars).toContainEqual({ name: "EXTRA_ENV", source: "local" });
   expect(readFileSync(join(ctx.home, ".agents/skills/abc-coding-agent/SKILL.md"), "utf8")).toContain("abc_reflect");
 });
+
+it.each([undefined, "abc_"].flatMap(prefix => ["missing", "malformed"].map(problem => ({ prefix, problem }))))(
+  "uninstalls owned default/custom registrations and skills with $problem operator config ($prefix)",
+  ({ prefix, problem }) => {
+    provision(prefix);
+    const id = prefix?.slice(0, -1) ?? "hindsight";
+    const harnesses = ["codex", "cursor-cli", "claude-code", "qwen-code"];
+    expect(run(["install", ...harnesses], ctx)).toBe(0);
+    const foreign = { command: "foreign", args: ["foreign-server.js"] };
+    for (const [harness, relativePath] of [
+      ["cursor-cli", ".cursor/mcp.json"], ["claude-code", ".claude.json"], ["qwen-code", ".qwen/settings.json"],
+    ]) {
+      const path = join(ctx.home, relativePath);
+      const config = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+      config.mcpServers = { ...config.mcpServers,
+        [id]: { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: harness } },
+        foreign,
+      };
+      put(path, JSON.stringify(config));
+    }
+    const tomlPath = join(ctx.home, ".codex/config.toml");
+    const foreignToml = '[mcp_servers.foreign]\ncommand = "foreign"\nargs = ["foreign-server.js"]\n';
+    put(tomlPath, readFileSync(tomlPath, "utf8") + "\n" + foreignToml);
+    const skillBases = [".agents/skills", ".cursor/skills", ".claude/skills", ".qwen/skills"];
+    for (const base of skillBases) put(join(ctx.home, base, "personal-coding-agent/SKILL.md"), "Foreign notes");
+    const routerPath = join(root, "router.json");
+    if (problem === "missing") rmSync(routerPath); else put(routerPath, "{malformed");
+    cli.mockClear();
+    expect(run(["uninstall", ...harnesses], ctx)).toBe(0);
+    expect((parseToml(readFileSync(tomlPath, "utf8")).mcp_servers as Record<string, unknown>)).toEqual({ foreign });
+    for (const path of [".cursor/mcp.json", ".claude.json", ".qwen/settings.json"]) {
+      expect(JSON.parse(readFileSync(join(ctx.home, path), "utf8")).mcpServers).toEqual({ foreign });
+    }
+    for (const base of skillBases) {
+      expect(existsSync(join(ctx.home, base, `${id}-coding-agent`))).toBe(false);
+      expect(readFileSync(join(ctx.home, base, "personal-coding-agent/SKILL.md"), "utf8")).toBe("Foreign notes");
+    }
+    const cursorHooks = JSON.parse(readFileSync(join(ctx.home, ".cursor/hooks.json"), "utf8"));
+    expect(JSON.stringify(cursorHooks)).not.toContain("cursor-hook.js");
+    expect(cli.mock.calls.filter(([args]) => args[0] === "mcp" && args[1] === "remove")).toHaveLength(2);
+    expect(cli.mock.calls.every(([args]) => args.includes(id) && !args.includes("foreign"))).toBe(true);
+    expect(process.env.HINDSIGHT_ROUTER_CONFIG).toBe(routerPath);
+  },
+);
+it.each(["missing", "malformed"])("keeps install/update/stats fail closed with %s operator config", problem => {
+  provision("abc_");
+  expect(run(["install", "cursor-cli"], ctx)).toBe(0);
+  const hostPath = join(ctx.home, ".cursor/mcp.json");
+  const before = readFileSync(hostPath, "utf8");
+  const routerPath = join(root, "router.json");
+  if (problem === "missing") rmSync(routerPath); else put(routerPath, "{malformed");
+  expect(run(["install", "cursor-cli"], ctx)).toBe(1);
+  expect(run(["update", "cursor-cli"], ctx)).toBe(1);
+  expect(() => run(["stats"], { ...ctx, log: vi.fn() })).toThrow();
+  expect(readFileSync(hostPath, "utf8")).toBe(before);
+});

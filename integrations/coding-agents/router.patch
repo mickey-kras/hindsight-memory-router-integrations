@@ -10239,10 +10239,10 @@ index 8f2445d..1e4e2a2 100644
        } else if (o.command === "update") {
 diff --git a/src/installer-branding.test.ts b/src/installer-branding.test.ts
 new file mode 100644
-index 0000000..fd6b43f
+index 0000000..05f0c53
 --- /dev/null
 +++ b/src/installer-branding.test.ts
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,249 @@
 +import { assertCompanionSkillPrefix } from "./core/skill-sync";
 +import { afterEach, beforeEach, expect, it, vi } from "vitest";
 +import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -10435,6 +10435,62 @@ index 0000000..fd6b43f
 +  expect(registration.env.EXTRA_OPTION).toBe("preserved");
 +  expect(registration.env_vars).toContainEqual({ name: "EXTRA_ENV", source: "local" });
 +  expect(readFileSync(join(ctx.home, ".agents/skills/abc-coding-agent/SKILL.md"), "utf8")).toContain("abc_reflect");
++});
++
++it.each([undefined, "abc_"].flatMap(prefix => ["missing", "malformed"].map(problem => ({ prefix, problem }))))(
++  "uninstalls owned default/custom registrations and skills with $problem operator config ($prefix)",
++  ({ prefix, problem }) => {
++    provision(prefix);
++    const id = prefix?.slice(0, -1) ?? "hindsight";
++    const harnesses = ["codex", "cursor-cli", "claude-code", "qwen-code"];
++    expect(run(["install", ...harnesses], ctx)).toBe(0);
++    const foreign = { command: "foreign", args: ["foreign-server.js"] };
++    for (const [harness, relativePath] of [
++      ["cursor-cli", ".cursor/mcp.json"], ["claude-code", ".claude.json"], ["qwen-code", ".qwen/settings.json"],
++    ]) {
++      const path = join(ctx.home, relativePath);
++      const config = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
++      config.mcpServers = { ...config.mcpServers,
++        [id]: { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: harness } },
++        foreign,
++      };
++      put(path, JSON.stringify(config));
++    }
++    const tomlPath = join(ctx.home, ".codex/config.toml");
++    const foreignToml = '[mcp_servers.foreign]\ncommand = "foreign"\nargs = ["foreign-server.js"]\n';
++    put(tomlPath, readFileSync(tomlPath, "utf8") + "\n" + foreignToml);
++    const skillBases = [".agents/skills", ".cursor/skills", ".claude/skills", ".qwen/skills"];
++    for (const base of skillBases) put(join(ctx.home, base, "personal-coding-agent/SKILL.md"), "Foreign notes");
++    const routerPath = join(root, "router.json");
++    if (problem === "missing") rmSync(routerPath); else put(routerPath, "{malformed");
++    cli.mockClear();
++    expect(run(["uninstall", ...harnesses], ctx)).toBe(0);
++    expect((parseToml(readFileSync(tomlPath, "utf8")).mcp_servers as Record<string, unknown>)).toEqual({ foreign });
++    for (const path of [".cursor/mcp.json", ".claude.json", ".qwen/settings.json"]) {
++      expect(JSON.parse(readFileSync(join(ctx.home, path), "utf8")).mcpServers).toEqual({ foreign });
++    }
++    for (const base of skillBases) {
++      expect(existsSync(join(ctx.home, base, `${id}-coding-agent`))).toBe(false);
++      expect(readFileSync(join(ctx.home, base, "personal-coding-agent/SKILL.md"), "utf8")).toBe("Foreign notes");
++    }
++    const cursorHooks = JSON.parse(readFileSync(join(ctx.home, ".cursor/hooks.json"), "utf8"));
++    expect(JSON.stringify(cursorHooks)).not.toContain("cursor-hook.js");
++    expect(cli.mock.calls.filter(([args]) => args[0] === "mcp" && args[1] === "remove")).toHaveLength(2);
++    expect(cli.mock.calls.every(([args]) => args.includes(id) && !args.includes("foreign"))).toBe(true);
++    expect(process.env.HINDSIGHT_ROUTER_CONFIG).toBe(routerPath);
++  },
++);
++it.each(["missing", "malformed"])("keeps install/update/stats fail closed with %s operator config", problem => {
++  provision("abc_");
++  expect(run(["install", "cursor-cli"], ctx)).toBe(0);
++  const hostPath = join(ctx.home, ".cursor/mcp.json");
++  const before = readFileSync(hostPath, "utf8");
++  const routerPath = join(root, "router.json");
++  if (problem === "missing") rmSync(routerPath); else put(routerPath, "{malformed");
++  expect(run(["install", "cursor-cli"], ctx)).toBe(1);
++  expect(run(["update", "cursor-cli"], ctx)).toBe(1);
++  expect(() => run(["stats"], { ...ctx, log: vi.fn() })).toThrow();
++  expect(readFileSync(hostPath, "utf8")).toBe(before);
 +});
 diff --git a/src/installer-managed.test.ts b/src/installer-managed.test.ts
 new file mode 100644
@@ -10747,7 +10803,7 @@ index 80d85af..01b0184 100644
    });
  });
 diff --git a/src/installer.ts b/src/installer.ts
-index f6e1e1e..e689335 100644
+index f6e1e1e..db92224 100644
 --- a/src/installer.ts
 +++ b/src/installer.ts
 @@ -1,10 +1,10 @@
@@ -10837,7 +10893,7 @@ index f6e1e1e..e689335 100644
  }
  
  function writeJson(path: string, value: unknown): void {
-@@ -234,10 +235,52 @@ function isOurMcpEntry(entry: unknown): boolean {
+@@ -234,10 +235,61 @@ function isOurMcpEntry(entry: unknown): boolean {
    return (
      parts.at(-1) === "mcp-server.js" &&
      parts.at(-2) === "dist" &&
@@ -10873,10 +10929,10 @@ index f6e1e1e..e689335 100644
 +  const text = readFileSync(path, "utf8");
 +  const config = parseJsonc(text);
 +  if (!config) throw new Error("invalid host config");
-+  const name = registrationName();
++  const name = requireDesiredName ? registrationName() : undefined;
 +  let changed = false;
 +  for (const servers of mcpRegistries(config)) {
-+    if (requireDesiredName && Object.hasOwn(servers, name) && !belongsToHarness(servers[name], harness))
++    if (name !== undefined && Object.hasOwn(servers, name) && !belongsToHarness(servers[name], harness))
 +      throw new ToolPrefixError("unrelated MCP registration name collision; choose another toolPrefix");
 +    for (const [key, entry] of Object.entries(servers)) {
 +      if (!belongsToHarness(entry, harness)) continue;
@@ -10888,10 +10944,19 @@ index f6e1e1e..e689335 100644
 +  if (changed) writeJson(path, config);
 +}
 +
++function removeOwnedMcpRegistrations(servers: Record<string, unknown> | undefined, harness: string): boolean {
++  if (!servers) return false;
++  let changed = false;
++  for (const [name, entry] of Object.entries(servers)) {
++    if (belongsToHarness(entry, harness)) { delete servers[name]; changed = true; }
++  }
++  return changed;
++}
++
  /** Install/uninstall consume the same lifecycle declaration as the runtime entrypoints. Keeping
   * event names and command files here would allow a host to run a different lifecycle than it installs. */
  function mergeHarnessHooks(
-@@ -291,17 +334,20 @@ function installSkill(c: InstallCtx, harness: string): void {
+@@ -291,17 +343,20 @@ function installSkill(c: InstallCtx, harness: string): void {
    const src = join(c.pkgRoot, "skill");
    if (!existsSync(join(src, "SKILL.md"))) return;
    const skillsBase = skillsBaseFor(c, harness);
@@ -10917,7 +10982,7 @@ index f6e1e1e..e689335 100644
  }
  
  // ── per-harness adapters ────────────────────────────────────────────────────────
-@@ -375,14 +421,14 @@ function runDcodePlugin(args: string[]): boolean {
+@@ -375,14 +430,14 @@ function runDcodePlugin(args: string[]): boolean {
   * Consequences worth knowing: installing either harness wires the other one too (the MARKER filter
   * keeps that idempotent), and uninstalling either removes the shared entry.
   */
@@ -10934,7 +10999,7 @@ index f6e1e1e..e689335 100644
      }
      cfg = parsed;
    }
-@@ -519,7 +565,7 @@ const kilo: HarnessInstaller = {
+@@ -519,7 +574,7 @@ const kilo: HarnessInstaller = {
        const parsed = parseJsonc(readFileSync(path, "utf8"));
        if (!parsed) {
          c.log?.(`kilo: SKIPPED — could not parse ${path}; add the plugin entry manually`);
@@ -10943,7 +11008,7 @@ index f6e1e1e..e689335 100644
        }
        cfg = parsed;
      }
-@@ -561,14 +607,14 @@ const claudeCode: HarnessInstaller = {
+@@ -561,14 +616,14 @@ const claudeCode: HarnessInstaller = {
      // Code reported "Failed to connect — Connection closed" with the hindsight_* tools dead.
      // Remove first (a no-op when absent) so the add always lands, matching how every other host
      // wiring is replaced rather than skipped.
@@ -10960,7 +11025,7 @@ index f6e1e1e..e689335 100644
          "--env",
          "HINDSIGHT_MCP_HARNESS=claude-code",
          "--",
-@@ -577,11 +623,13 @@ const claudeCode: HarnessInstaller = {
+@@ -577,11 +632,13 @@ const claudeCode: HarnessInstaller = {
        ])
      ) {
        c.log?.("claude-code: MCP server registered (claude mcp add, user scope)");
@@ -10975,7 +11040,7 @@ index f6e1e1e..e689335 100644
      }
    },
    uninstall(c) {
-@@ -595,7 +643,7 @@ const claudeCode: HarnessInstaller = {
+@@ -595,7 +652,7 @@ const claudeCode: HarnessInstaller = {
        }
      }
      const mcp = c.claudeMcp ?? defaultClaudeMcp;
@@ -10984,7 +11049,7 @@ index f6e1e1e..e689335 100644
      uninstallSkill(c, "claude-code");
      c.log?.("claude-code: hooks + MCP registration + skill removed");
    },
-@@ -614,31 +662,113 @@ function defaultClaudeMcp(args: string[]): boolean {
+@@ -614,31 +671,113 @@ function defaultClaudeMcp(args: string[]): boolean {
   * Our `[mcp_servers.hindsight]` table (plus any sub-table of it): the header line through to the
   * next table header or EOF. Shared by install — which REPLACES the block — and uninstall.
   */
@@ -11113,7 +11178,7 @@ index f6e1e1e..e689335 100644
      const additions: string[] = [];
      // Codex ≥ 0.145 deprecates `codex_hooks` for `[features].hooks`; accept either as "already
      // enabled", write the modern name for new installs.
-@@ -651,8 +781,15 @@ const codex: HarnessInstaller = {
+@@ -651,8 +790,15 @@ const codex: HarnessInstaller = {
          additions.push("[features]\nhooks = true");
        }
      }
@@ -11130,7 +11195,7 @@ index f6e1e1e..e689335 100644
      if (next !== existing) {
        if (existsSync(tomlPath) && !existsSync(`${tomlPath}.hindsight-backup`)) {
          copyFileSync(tomlPath, `${tomlPath}.hindsight-backup`);
-@@ -676,7 +813,7 @@ const codex: HarnessInstaller = {
+@@ -676,7 +822,7 @@ const codex: HarnessInstaller = {
      const tomlPath = join(c.home, ".codex", "config.toml");
      if (existsSync(tomlPath)) {
        const toml = readFileSync(tomlPath, "utf8");
@@ -11139,7 +11204,7 @@ index f6e1e1e..e689335 100644
        if (cleaned !== toml) writeFileSync(tomlPath, cleaned);
      }
      c.log?.(
-@@ -716,7 +853,7 @@ const antigravity: HarnessInstaller = {
+@@ -716,7 +862,7 @@ const antigravity: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11148,18 +11213,17 @@ index f6e1e1e..e689335 100644
      };
      writeJson(mcpPath, mcp);
      const settingsPath = join(c.home, ".gemini", "antigravity-cli", "settings.json");
-@@ -761,8 +898,8 @@ const antigravity: HarnessInstaller = {
+@@ -761,8 +907,7 @@ const antigravity: HarnessInstaller = {
      const mcpPath = join(c.home, ".gemini", "config", "mcp_config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
 -      if (mcp.mcpServers?.hindsight) {
 -        delete mcp.mcpServers.hindsight;
-+      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "antigravity-cli")) {
-+        delete mcp.mcpServers[registrationName()];
++      if (removeOwnedMcpRegistrations(mcp.mcpServers, "antigravity-cli")) {
          writeJson(mcpPath, mcp);
        }
      }
-@@ -827,11 +964,43 @@ export const ORIGIN_FILE = ".install-origin.json";
+@@ -827,11 +972,43 @@ export const ORIGIN_FILE = ".install-origin.json";
   * is what opencode and Kilo load as a plugin directory. Repointing them here means no per-harness
   * installer needs to know staging happened.
   *
@@ -11206,7 +11270,7 @@ index f6e1e1e..e689335 100644
  function stageRuntime(c: InstallCtx): InstallCtx {
    const target = runtimeDir(c.home);
    // Compared through realpath: re-running the STAGED installer must not reach the copy below, which
-@@ -844,8 +1013,13 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+@@ -844,8 +1021,13 @@ function stageRuntime(c: InstallCtx): InstallCtx {
        return a === b;
      }
    };
@@ -11222,7 +11286,7 @@ index f6e1e1e..e689335 100644
    try {
      // Replaced wholesale rather than merged: a stale entry point left behind by an older version
      // would still be reachable from a host config that references it by name.
-@@ -876,245 +1050,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+@@ -876,245 +1058,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
        JSON.stringify({ source: c.pkgRoot, stagedAt: new Date().toISOString() })
      );
      c.log?.(`runtime staged at ${target}`);
@@ -11473,7 +11537,7 @@ index f6e1e1e..e689335 100644
    }
  }
  
-@@ -1144,7 +1085,7 @@ const devin: HarnessInstaller = {
+@@ -1144,7 +1093,7 @@ const devin: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11482,18 +11546,17 @@ index f6e1e1e..e689335 100644
      };
      writeJson(mcpPath, mcp);
      c.log?.(`devin-cli: hooks merged into ${configPath}, MCP into ${mcpPath}`);
-@@ -1162,8 +1103,8 @@ const devin: HarnessInstaller = {
+@@ -1162,8 +1111,7 @@ const devin: HarnessInstaller = {
      const mcpPath = join(c.home, ".config", "devin", "mcp_config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
 -      if (mcp.mcpServers?.hindsight) {
 -        delete mcp.mcpServers.hindsight;
-+      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "devin-cli")) {
-+        delete mcp.mcpServers[registrationName()];
++      if (removeOwnedMcpRegistrations(mcp.mcpServers, "devin-cli")) {
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1184,7 +1125,7 @@ const cursor: HarnessInstaller = {
+@@ -1184,7 +1132,7 @@ const cursor: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11502,18 +11565,17 @@ index f6e1e1e..e689335 100644
      };
      writeJson(mcpPath, mcp);
      c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
-@@ -1203,8 +1144,8 @@ const cursor: HarnessInstaller = {
+@@ -1203,8 +1151,7 @@ const cursor: HarnessInstaller = {
      const mcpPath = join(c.home, ".cursor", "mcp.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
 -      if (mcp.mcpServers?.hindsight) {
 -        delete mcp.mcpServers.hindsight;
-+      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "cursor-cli")) {
-+        delete mcp.mcpServers[registrationName()];
++      if (removeOwnedMcpRegistrations(mcp.mcpServers, "cursor-cli")) {
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1226,7 +1167,7 @@ const copilot: HarnessInstaller = {
+@@ -1226,7 +1173,7 @@ const copilot: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11522,18 +11584,17 @@ index f6e1e1e..e689335 100644
      };
      writeJson(mcpPath, mcp);
      installSkill(c, "copilot-cli");
-@@ -1239,8 +1180,8 @@ const copilot: HarnessInstaller = {
+@@ -1239,8 +1186,7 @@ const copilot: HarnessInstaller = {
      const mcpPath = join(c.home, ".copilot", "mcp-config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
 -      if (mcp.mcpServers?.hindsight) {
 -        delete mcp.mcpServers.hindsight;
-+      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "copilot-cli")) {
-+        delete mcp.mcpServers[registrationName()];
++      if (removeOwnedMcpRegistrations(mcp.mcpServers, "copilot-cli")) {
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1286,7 +1227,7 @@ function hasUnmarkedGrokEntries(text: string): boolean {
+@@ -1286,7 +1232,7 @@ function hasUnmarkedGrokEntries(text: string): boolean {
    const cfg = parseGrokToml(text);
    if (!cfg)
      return /\[\s*mcp_servers\s*\.\s*hindsight\s*[.\]]/.test(text) || GROK_HOOK_SCRIPT_RE.test(text);
@@ -11542,7 +11603,7 @@ index f6e1e1e..e689335 100644
    return Object.values(cfg.hooks ?? {}).some((entries) =>
      (entries ?? []).some((entry) =>
        (entry?.hooks ?? []).some(
-@@ -1323,7 +1264,7 @@ function stripUnmarkedGrokEntries(toml: string): string {
+@@ -1323,7 +1269,7 @@ function stripUnmarkedGrokEntries(toml: string): string {
      s.lines.slice(1).some((l) => /^\s*[^#\s]/.test(l));
  
    const drop = sections.map((s) => {
@@ -11551,7 +11612,7 @@ index f6e1e1e..e689335 100644
      if (/^\[\[hooks\..+\.hooks\]\]$/.test(s.header)) return isOurs(s);
      return false;
    });
-@@ -1359,13 +1300,16 @@ const grok: HarnessInstaller = {
+@@ -1359,13 +1305,16 @@ const grok: HarnessInstaller = {
      // REPLACE any previous block rather than skipping when one exists. Skipping made this
      // install-once-only: after the package moved, a re-install silently left the old (now dead)
      // paths in place, which is exactly the case `install` is meant to repair.
@@ -11571,7 +11632,7 @@ index f6e1e1e..e689335 100644
      // Grok executes this shell command verbatim. Quote the absolute script path so a globally
      // installed package still works when its installation directory contains spaces.
      const command = (entry: string) => JSON.stringify(`node "${join(c.dist, entry)}"`);
-@@ -1375,7 +1319,7 @@ const grok: HarnessInstaller = {
+@@ -1375,7 +1324,7 @@ const grok: HarnessInstaller = {
        `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = \"command\"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
        `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = \"command\"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
        `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
@@ -11580,7 +11641,7 @@ index f6e1e1e..e689335 100644
        `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
      const next = `${withoutOurs.replace(/\n*$/, "\n")}${block}`;
      // Never hand Grok a config it cannot parse: one bad table takes down every MCP server it has.
-@@ -1413,7 +1357,7 @@ const grok: HarnessInstaller = {
+@@ -1413,7 +1362,7 @@ const grok: HarnessInstaller = {
  
  const CLINE_HOOK_MARKER = "HINDSIGHT_CODING_AGENTS_CLINE";
  const CLINE_OLD_HOOK_EVENTS = ["TaskStart", "UserPromptSubmit", "TaskComplete"];
@@ -11589,7 +11650,7 @@ index f6e1e1e..e689335 100644
  
  /** Remove only wrappers from the short-lived file-hook implementation. Cline file hooks cannot
   * mutate a prompt; keeping them would falsely imply that old installs still inject memory. */
-@@ -1442,7 +1386,7 @@ const cline: HarnessInstaller = {
+@@ -1442,7 +1391,7 @@ const cline: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11598,7 +11659,7 @@ index f6e1e1e..e689335 100644
      };
      writeJson(mcpPath, mcp);
      installSkill(c, "cline-cli");
-@@ -1451,6 +1395,7 @@ const cline: HarnessInstaller = {
+@@ -1451,6 +1400,7 @@ const cline: HarnessInstaller = {
          ? "cline-cli: native plugin + MCP + skill installed"
          : `cline-cli: MCP + skill installed; run: cline plugin install --force "${c.pkgRoot}"`
      );
@@ -11606,18 +11667,17 @@ index f6e1e1e..e689335 100644
    },
    uninstall(c) {
      removeLegacyClineHooks(c);
-@@ -1460,8 +1405,8 @@ const cline: HarnessInstaller = {
+@@ -1460,8 +1410,7 @@ const cline: HarnessInstaller = {
      const mcpPath = join(c.home, ".cline", "data", "settings", "cline_mcp_settings.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
 -      if (mcp.mcpServers?.hindsight) {
 -        delete mcp.mcpServers.hindsight;
-+      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "cline-cli")) {
-+        delete mcp.mcpServers[registrationName()];
++      if (removeOwnedMcpRegistrations(mcp.mcpServers, "cline-cli")) {
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1602,7 +1547,7 @@ function dshHome(c: InstallCtx): string {
+@@ -1602,7 +1551,7 @@ function dshHome(c: InstallCtx): string {
   * DeepSeek Harness — a native Cordis plugin, wired through the HOME-level patch layer
   * (`$DSH_HOME/cordis.patch.yml`), which every profile composes after its bundles.
   *
@@ -11626,7 +11686,7 @@ index f6e1e1e..e689335 100644
   * pnpm-installs the package into ONE profile and picks up the `dsh.bundle.patch` this package
   * ships. That is the right route for a published install and is what the docs recommend, but it
   * needs pnpm, a network, and a repeat per profile — so the installer takes the path that always
-@@ -1625,7 +1570,7 @@ const dsh: HarnessInstaller = {
+@@ -1625,7 +1574,7 @@ const dsh: HarnessInstaller = {
      const block =
        `${DSH_MARKER_START}\n` +
        `- insert:\n` +
@@ -11635,7 +11695,7 @@ index f6e1e1e..e689335 100644
        `      name: ${JSON.stringify(entry)}\n` +
        `${DSH_MARKER_END}\n`;
      if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
-@@ -1670,7 +1615,7 @@ const qwen: HarnessInstaller = {
+@@ -1670,7 +1619,7 @@ const qwen: HarnessInstaller = {
      const mcp = c.qwenMcp ?? defaultQwenMcp;
      // Same rationale as claude-code: `qwen mcp add` refuses a name that already exists, so a
      // re-install could never repoint a stale server. Remove first (a no-op when absent).
@@ -11644,7 +11704,7 @@ index f6e1e1e..e689335 100644
      if (
        mcp([
          "mcp",
-@@ -1679,17 +1624,19 @@ const qwen: HarnessInstaller = {
+@@ -1679,17 +1628,19 @@ const qwen: HarnessInstaller = {
          "user",
          "-e",
          "HINDSIGHT_MCP_HARNESS=qwen-code",
@@ -11666,7 +11726,7 @@ index f6e1e1e..e689335 100644
      }
    },
    uninstall(c) {
-@@ -1703,7 +1650,7 @@ const qwen: HarnessInstaller = {
+@@ -1703,7 +1654,7 @@ const qwen: HarnessInstaller = {
        }
      }
      const mcp = c.qwenMcp ?? defaultQwenMcp;
@@ -11675,7 +11735,7 @@ index f6e1e1e..e689335 100644
      uninstallSkill(c, "qwen-code");
      c.log?.("qwen-code: hooks + MCP registration + skill removed");
    },
-@@ -1736,10 +1683,10 @@ const factoryDroid: HarnessInstaller = {
+@@ -1736,10 +1687,10 @@ const factoryDroid: HarnessInstaller = {
    detect: (c) => onPath("droid") || existsSync(join(c.home, ".factory")),
    preflight(c) {
      const mcpPath = join(c.home, ".factory", "mcp.json");
@@ -11688,7 +11748,7 @@ index f6e1e1e..e689335 100644
          "Rename or remove that entry, then re-run install."
        );
      }
-@@ -1763,7 +1710,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1763,7 +1714,7 @@ const factoryDroid: HarnessInstaller = {
      const mcpPath = join(c.home, ".factory", "mcp.json");
      const mcp = readJson(mcpPath);
      mcp.mcpServers = mcp.mcpServers ?? {};
@@ -11697,18 +11757,17 @@ index f6e1e1e..e689335 100644
      writeJson(mcpPath, mcp);
      c.log?.(`factory-droid: MCP server registered in ${mcpPath}`);
    },
-@@ -1778,8 +1725,8 @@ const factoryDroid: HarnessInstaller = {
+@@ -1778,8 +1729,7 @@ const factoryDroid: HarnessInstaller = {
      const mcpPath = join(c.home, ".factory", "mcp.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
 -      if (isOurMcpEntry(mcp.mcpServers?.hindsight)) {
 -        delete mcp.mcpServers.hindsight;
-+      if (belongsToHarness(mcp.mcpServers?.[registrationName()], "factory-droid")) {
-+        delete mcp.mcpServers[registrationName()];
++      if (removeOwnedMcpRegistrations(mcp.mcpServers, "factory-droid")) {
          if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
          else rmSync(mcpPath);
        }
-@@ -1805,7 +1752,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1805,7 +1755,7 @@ const factoryDroid: HarnessInstaller = {
   *
   * MCP and the companion skill land in the same config/home, so ZCode gets the full surface:
   *
@@ -11717,7 +11776,7 @@ index f6e1e1e..e689335 100644
   *   `HINDSIGHT_MCP_HARNESS=zcode`. ZCode's schema is `{type, command, args?, cwd?, env?}` and its
   *   loader infers `type: "stdio"` from a `command`, so the shared `mcpServerEntry` drops straight
   *   in. A same-named foreign server blocks install instead of being overwritten.
-@@ -1820,10 +1767,10 @@ const zcode: HarnessInstaller = {
+@@ -1820,10 +1770,10 @@ const zcode: HarnessInstaller = {
    detect: (c) => onPath("zcode") || existsSync(join(c.home, ".zcode")),
    preflight(c) {
      const configPath = zcodeConfigPath(c);
@@ -11730,7 +11789,7 @@ index f6e1e1e..e689335 100644
          "Rename or remove that entry, then re-run install."
        );
      }
-@@ -1838,7 +1785,7 @@ const zcode: HarnessInstaller = {
+@@ -1838,7 +1788,7 @@ const zcode: HarnessInstaller = {
      mergeHarnessHooks(hooks.events, "zcode", c.dist);
      config.mcp = config.mcp ?? {};
      config.mcp.servers = config.mcp.servers ?? {};
@@ -11739,18 +11798,17 @@ index f6e1e1e..e689335 100644
      writeJson(configPath, config);
      c.log?.(`zcode: hooks + MCP server merged into ${configPath}`);
      installSkill(c, "zcode");
-@@ -1847,8 +1794,8 @@ const zcode: HarnessInstaller = {
+@@ -1847,8 +1797,7 @@ const zcode: HarnessInstaller = {
      const configPath = zcodeConfigPath(c);
      if (existsSync(configPath)) {
        const config = readJson(configPath);
 -      if (isOurMcpEntry(config.mcp?.servers?.hindsight)) {
 -        delete config.mcp.servers.hindsight;
-+      if (belongsToHarness(config.mcp?.servers?.[registrationName()], "zcode")) {
-+        delete config.mcp.servers[registrationName()];
++      if (removeOwnedMcpRegistrations(config.mcp?.servers, "zcode")) {
          if (!Object.keys(config.mcp.servers).length) delete config.mcp;
        }
        const hooks = config.hooks;
-@@ -1903,7 +1850,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
+@@ -1903,7 +1852,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
   */
  function importConversations(harness: string, ctx: InstallCtx): void {
    const repo = process.cwd();
@@ -11759,7 +11817,7 @@ index f6e1e1e..e689335 100644
    if (!found.supported) {
      ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
      return;
-@@ -1927,141 +1874,180 @@ function importConversations(harness: string, ctx: InstallCtx): void {
+@@ -1927,141 +1876,181 @@ function importConversations(harness: string, ctx: InstallCtx): void {
        `this runs extraction and may take a while`
    );
    try {
@@ -11776,7 +11834,7 @@ index f6e1e1e..e689335 100644
 +}
 +
 +/** Paths written by adapters, including registries written by their native CLIs. */
-+function mutationPaths(ctx: InstallCtx, names: string[]): string[] {
++function mutationPaths(ctx: InstallCtx, names: string[], includeDesiredSkill = true): string[] {
 +  const paths = [runtimeDir(ctx.home)];
 +  const files: Record<string, string[]> = {
 +    opencode: [".config/opencode/opencode.json", ".config/opencode/opencode.jsonc"],
@@ -11801,7 +11859,8 @@ index f6e1e1e..e689335 100644
 +    }
 +    if (SKILL_DIRS[name]) {
 +      const base = skillsBaseFor(ctx, name);
-+      paths.push(join(base, toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).skillName), ...ownedCompanionSkills(base));
++      paths.push(...ownedCompanionSkills(base));
++      if (includeDesiredSkill) paths.push(join(base, toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).skillName));
 +    }
 +    if (name === "dsh") {
 +      const path = join(dshHome(ctx), "cordis.patch.yml");
@@ -11975,9 +12034,9 @@ index f6e1e1e..e689335 100644
 -      if (!problem) continue;
 -      ctx.log?.(`\n❌ ${t.name}: ${problem}`);
 -      blocked.add(t.name);
-+    const paths = mutationPaths(ctx, targets.map((target) => target.name));
++    const paths = mutationPaths(ctx, targets.map((target) => target.name), command !== "uninstall");
 +    for (const target of targets) {
-+      for (const path of mutationPaths(ctx, [target.name])) {
++      for (const path of mutationPaths(ctx, [target.name], command !== "uninstall")) {
 +        if (/\.jsonc?$/.test(path)) managedJsonRegistrations(path, target.name, ctx, false, command !== "uninstall");
 +      }
      }
@@ -12002,7 +12061,7 @@ index f6e1e1e..e689335 100644
 +    transaction = new InstallTransaction(paths);
 +    if (command !== "uninstall") ctx = stageRuntime(ctx);
 +    for (const target of targets) {
-+      for (const path of mutationPaths(ctx, [target.name])) {
++      for (const path of mutationPaths(ctx, [target.name], command !== "uninstall")) {
 +        if (/\.jsonc?$/.test(path)) managedJsonRegistrations(path, target.name, ctx, true, command !== "uninstall");
 +      }
 +    }
@@ -12054,7 +12113,7 @@ index f6e1e1e..e689335 100644
    return 0;
  }
  
-@@ -2093,11 +2079,15 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2093,11 +2082,15 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      command: process.argv[2],
      version,
      harnessNames: INSTALLERS.map((i) => i.name),
@@ -12071,7 +12130,7 @@ index f6e1e1e..e689335 100644
    const code = run(process.argv.slice(2), {
      home: homedir(),
      pkgRoot,
-@@ -2106,11 +2096,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2106,11 +2099,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      // tty.isatty, NOT process.stdin.isTTY: the process.stdin getter initializes the stdin TTY
      // stream, which puts fd 0 in non-blocking mode and breaks readLineSync (see there).
      interactive: Boolean(isatty(0) && isatty(1)),
