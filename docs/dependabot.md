@@ -49,6 +49,13 @@ the policy reads `updated-dependencies-json` for grouped PRs. The pinned
 implementation fetches public badges without authentication, despite its
 README's PAT note.
 
+Dependabot automation source edits require a trusted human author (OWNER,
+MEMBER or COLLABORATOR). The guard checks selected source safety contracts;
+these checks do not prove arbitrary JavaScript behavior or prevent hostile
+dead-code padding. Trusted workflow revisions, code review and behavioral
+tests remain required. Workflow shape protections and artifact verification
+remain enforced.
+
 To re-evaluate open PRs, run **Actions -> dependabot auto-merge refresh -> Run
 workflow** on the default branch. Change `MINIMUM_SCORE` in
 `.github/scripts/dependabot-auto-merge.cjs` to adjust the threshold.
