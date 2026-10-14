@@ -2035,8 +2035,11 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
     const mcpPath = traecodeMcpPath(c);
     if (!existsSync(mcpPath)) return false;
     const mcp = readJson(mcpPath);
-    if (!removeOwnedMcpRegistrations(mcp.mcpServers, "traecode")) return false;
-    if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
+    const removed = removeOwnedMcpRegistrations(mcp.mcpServers, "traecode");
+    // Uninstall's registration pass may already have removed our last entry.
+    if (!removed && !(c.ownedMcpNames?.traecode?.length && mcp.mcpServers && !Object.keys(mcp.mcpServers).length)) return false;
+    if (!Object.keys(mcp.mcpServers).length) delete mcp.mcpServers;
+    if (Object.keys(mcp).length) writeJson(mcpPath, mcp);
     else rmSync(mcpPath);
     return true;
   } catch {

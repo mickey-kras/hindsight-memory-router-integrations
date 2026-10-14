@@ -429,6 +429,27 @@ it("installs Trae workspace MCP only in explicitly managed projects using the br
 });
 
 
+it.each(["install", "uninstall"].flatMap(action => ["inputs", "foreign", "empty"].map(rest => ({ action, rest }))))(
+  "$action removes only the owned Trae user MCP entry with $rest remaining", ({ action, rest }) => {
+    provision(["traecode"], { mapPathToBank: { [root]: "A" } });
+    vi.spyOn(process, "cwd").mockReturnValue(root);
+    put(join(ctx.dist, "mcp-server.js"), "runtime");
+    const path = join(ctx.home, ".config/Trae CN/User/mcp.json");
+    const foreign = { command: "foreign", args: ["serve"] };
+    const inputs = [{ id: "api-key", type: "promptString" }];
+    put(path, JSON.stringify({
+      mcpServers: {
+        hindsight: { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: "traecode" } },
+        ...(rest === "foreign" ? { foreign } : {}),
+      },
+      ...(rest === "inputs" ? { inputs } : {}),
+    }));
+    expect(run([action, "traecode"], ctx)).toBe(0);
+    if (rest === "empty") expect(existsSync(path)).toBe(false);
+    else expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(rest === "inputs" ? { inputs } : { mcpServers: { foreign } });
+  },
+);
+
 it.each(["symlink", "hardlink"].flatMap(kind => [".grok/hooks/hindsight.json", ".grok/hooks/hindsight.json.hindsight-backup"].map(path => ({ kind, path }))))(
   "rejects $kind Grok destination $path before any mutation", ({ kind, path }) => {
     provision(["grok-build"]);

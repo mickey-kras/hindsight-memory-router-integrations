@@ -12889,10 +12889,10 @@ index 0000000..3a8ff9c
 +});
 diff --git a/src/installer-managed.test.ts b/src/installer-managed.test.ts
 new file mode 100644
-index 0000000..f67b490
+index 0000000..f927385
 --- /dev/null
 +++ b/src/installer-managed.test.ts
-@@ -0,0 +1,480 @@
+@@ -0,0 +1,501 @@
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 +import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
@@ -13324,6 +13324,27 @@ index 0000000..f67b490
 +});
 +
 +
++it.each(["install", "uninstall"].flatMap(action => ["inputs", "foreign", "empty"].map(rest => ({ action, rest }))))(
++  "$action removes only the owned Trae user MCP entry with $rest remaining", ({ action, rest }) => {
++    provision(["traecode"], { mapPathToBank: { [root]: "A" } });
++    vi.spyOn(process, "cwd").mockReturnValue(root);
++    put(join(ctx.dist, "mcp-server.js"), "runtime");
++    const path = join(ctx.home, ".config/Trae CN/User/mcp.json");
++    const foreign = { command: "foreign", args: ["serve"] };
++    const inputs = [{ id: "api-key", type: "promptString" }];
++    put(path, JSON.stringify({
++      mcpServers: {
++        hindsight: { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: "traecode" } },
++        ...(rest === "foreign" ? { foreign } : {}),
++      },
++      ...(rest === "inputs" ? { inputs } : {}),
++    }));
++    expect(run([action, "traecode"], ctx)).toBe(0);
++    if (rest === "empty") expect(existsSync(path)).toBe(false);
++    else expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(rest === "inputs" ? { inputs } : { mcpServers: { foreign } });
++  },
++);
++
 +it.each(["symlink", "hardlink"].flatMap(kind => [".grok/hooks/hindsight.json", ".grok/hooks/hindsight.json.hindsight-backup"].map(path => ({ kind, path }))))(
 +  "rejects $kind Grok destination $path before any mutation", ({ kind, path }) => {
 +    provision(["grok-build"]);
@@ -13404,7 +13425,7 @@ index d7c757b..ffa8243 100644
    });
  });
 diff --git a/src/installer.ts b/src/installer.ts
-index d42fce2..83eb2a3 100644
+index d42fce2..5049ac5 100644
 --- a/src/installer.ts
 +++ b/src/installer.ts
 @@ -1,10 +1,10 @@
@@ -14518,17 +14539,22 @@ index d42fce2..83eb2a3 100644
          if (!Object.keys(config.mcp.servers).length) delete config.mcp;
        }
        const hooks = config.hooks;
-@@ -2034,8 +2035,7 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
+@@ -2034,9 +2035,11 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
      const mcpPath = traecodeMcpPath(c);
      if (!existsSync(mcpPath)) return false;
      const mcp = readJson(mcpPath);
 -    if (!isOurMcpEntry(mcp.mcpServers?.hindsight)) return false;
 -    delete mcp.mcpServers.hindsight;
-+    if (!removeOwnedMcpRegistrations(mcp.mcpServers, "traecode")) return false;
-     if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
+-    if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
++    const removed = removeOwnedMcpRegistrations(mcp.mcpServers, "traecode");
++    // Uninstall's registration pass may already have removed our last entry.
++    if (!removed && !(c.ownedMcpNames?.traecode?.length && mcp.mcpServers && !Object.keys(mcp.mcpServers).length)) return false;
++    if (!Object.keys(mcp.mcpServers).length) delete mcp.mcpServers;
++    if (Object.keys(mcp).length) writeJson(mcpPath, mcp);
      else rmSync(mcpPath);
      return true;
-@@ -2054,39 +2054,8 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
+   } catch {
+@@ -2054,39 +2057,8 @@ function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
   * without a human; `--enable-workspace-mcp` is that human, up front.
   */
  function ensureTraecodeWorkspaceMcpGate(c: InstallCtx): void {
@@ -14570,7 +14596,7 @@ index d42fce2..83eb2a3 100644
  }
  
  /**
-@@ -2166,13 +2135,12 @@ const traecode: HarnessInstaller = {
+@@ -2166,13 +2138,12 @@ const traecode: HarnessInstaller = {
      // sandbox.json rules targeting Trae's own storage, so on stock installs both hook writes
      // fail — the installer runs unsandboxed and lands them. Because the hook checks before
      // writing, a pre-seeded repo turns every later session into a read-only no-op.
@@ -14586,7 +14612,7 @@ index d42fce2..83eb2a3 100644
        for (const repo of repos) {
          // A map entry whose directory is gone must not grow a phantom `.trae` tree via mkdir -p.
          if (!existsSync(repo)) {
-@@ -2183,12 +2151,11 @@ const traecode: HarnessInstaller = {
+@@ -2183,12 +2154,11 @@ const traecode: HarnessInstaller = {
          if (outcome === "registered") written.push(repo);
          else if (outcome === "current") current.push(repo);
          else skipped.push(repo);
@@ -14601,7 +14627,7 @@ index d42fce2..83eb2a3 100644
        );
        if (written.length) c.log?.(`  registered: ${written.join(", ")}`);
        if (skipped.length) {
-@@ -2229,8 +2196,8 @@ const traecode: HarnessInstaller = {
+@@ -2229,8 +2199,8 @@ const traecode: HarnessInstaller = {
      // opted-in repo's .trae/mcp.json, deleting the file when nothing remains in it. Foreign
      // servers and foreign "hindsight" entries are never touched — same ownership check as the
      // hook's. Missing repos skip silently; the storage sweep below still catches their switches.
@@ -14612,7 +14638,7 @@ index d42fce2..83eb2a3 100644
      const cleaned = repoEntries.filter((repo) =>
        removeTraecodeWorkspaceMcpEntry(repo, { home: c.home })
      );
-@@ -2251,7 +2218,7 @@ const traecode: HarnessInstaller = {
+@@ -2251,7 +2221,7 @@ const traecode: HarnessInstaller = {
        }
      }
      // The per-workspace enable switches the installer/hook seeded — an uninstall leaves no storage behind.
@@ -14621,7 +14647,7 @@ index d42fce2..83eb2a3 100644
      uninstallSkill(c, "traecode");
      c.log?.(`traecode: hooks + MCP registration + skill removed`);
    },
-@@ -2287,7 +2254,7 @@ const genieInstaller = (
+@@ -2287,7 +2257,7 @@ const genieInstaller = (
      const mcpPath = paths.find((p) => existsSync(p)) ?? paths[0];
      const mcp = readJson(mcpPath);
      mcp.mcpServers = mcp.mcpServers ?? {};
@@ -14630,7 +14656,7 @@ index d42fce2..83eb2a3 100644
      writeJson(mcpPath, mcp);
      c.log?.(`${name}: MCP server registered in ${mcpPath}`);
  
-@@ -2306,8 +2273,7 @@ const genieInstaller = (
+@@ -2306,8 +2276,7 @@ const genieInstaller = (
      for (const mcpPath of mcpPaths(c.home)) {
        if (!existsSync(mcpPath)) continue;
        const mcp = readJson(mcpPath);
@@ -14640,7 +14666,7 @@ index d42fce2..83eb2a3 100644
          if (!Object.keys(mcp.mcpServers).length) delete mcp.mcpServers;
          writeJson(mcpPath, mcp);
        }
-@@ -2375,7 +2341,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
+@@ -2375,7 +2344,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
   */
  function importConversations(harness: string, ctx: InstallCtx): void {
    const repo = process.cwd();
@@ -14649,7 +14675,7 @@ index d42fce2..83eb2a3 100644
    if (!found.supported) {
      ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
      return;
-@@ -2399,142 +2365,211 @@ function importConversations(harness: string, ctx: InstallCtx): void {
+@@ -2399,142 +2368,211 @@ function importConversations(harness: string, ctx: InstallCtx): void {
        `this runs extraction and may take a while`
    );
    try {
@@ -14977,7 +15003,7 @@ index d42fce2..83eb2a3 100644
    return 0;
  }
  
-@@ -2566,12 +2601,19 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2566,12 +2604,19 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      command: process.argv[2],
      version,
      harnessNames: INSTALLERS.map((i) => i.name),
@@ -14999,7 +15025,7 @@ index d42fce2..83eb2a3 100644
      home: homedir(),
      pkgRoot,
      dist,
-@@ -2579,11 +2621,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2579,11 +2624,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      // tty.isatty, NOT process.stdin.isTTY: the process.stdin getter initializes the stdin TTY
      // stream, which puts fd 0 in non-blocking mode and breaks readLineSync (see there).
      interactive: Boolean(isatty(0) && isatty(1)),

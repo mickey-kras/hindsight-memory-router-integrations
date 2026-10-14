@@ -193,7 +193,6 @@ export class RouterTransport {
     try {
       const signal = init.signal ?? AbortSignal.timeout(15_000);
       const dispatcher = signalOnlyDispatcher();
-      // dispatcher is a Node fetch extension, absent from the DOM RequestInit used by harness builds.
       return await this.#send(url, {
         ...init,
         ...(dispatcher ? { dispatcher } : {}),
