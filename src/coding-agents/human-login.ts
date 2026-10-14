@@ -292,7 +292,7 @@ export async function runHumanAuth(
     return revoked ? 0 : 1;
   } catch {
     log(
-      "Human authentication unavailable. Verify human provisioning, unlock OS secure storage, then run login interactively. No application credential was used.",
+      "Human authentication unavailable. Verify human provisioning and unlock OS secure storage; if native support is missing, reinstall from a verified package before login. Then run login interactively. No application credential was used.",
     );
     return 1;
   }

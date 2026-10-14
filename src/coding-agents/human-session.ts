@@ -20,7 +20,8 @@ export interface HumanSession {
 export class HumanLoginRequiredError extends AccessDeniedError {
   constructor() {
     super();
-    this.message = "human session unavailable; unlock OS secure storage and run hindsight-coding-agents login";
+    this.message =
+      "human session unavailable; unlock OS secure storage and run hindsight-coding-agents login; if native support is missing, reinstall from a verified package";
     this.name = "HumanLoginRequiredError";
   }
 }

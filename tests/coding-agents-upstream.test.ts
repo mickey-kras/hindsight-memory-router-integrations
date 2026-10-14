@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -924,6 +924,84 @@ it("installs human-mode Codex without a token environment name and keeps native 
   expect(install(["uninstall", "codex"], { ...ctx, pkgRoot: staged, dist: join(staged, "dist") })).toBe(0);
   expect(readFileSync(join(home, ".codex/config.toml"), "utf8")).not.toContain("mcp_servers.hindsight");
   expect(existsSync(join(home, ".agents/skills/hindsight-coding-agent"))).toBe(false);
+});
+
+it("keeps native support through a staged application-to-human migration after source cache removal", () => {
+  const home = temporary();
+  const source = temporary();
+  cpSync(join(packageRoot, "dist"), join(source, "dist"), { recursive: true });
+  cpSync(join(packageRoot, "package.json"), join(source, "package.json"));
+  stageNativeKeychain(packageRoot, source);
+  authMigrationConfig(home, false);
+  expect(install(["install", "codex"], { home, pkgRoot: source, dist: join(source, "dist") })).toBe(0);
+  rmSync(source, { recursive: true, force: true });
+  const staged = join(home, ".hindsight/coding-agents");
+  const loadNative = () =>
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `
+    const requireNative = require("node:module").createRequire(${JSON.stringify(join(staged, "package.json"))});
+    const { Entry } = requireNative("@napi-rs/keyring");
+    if (typeof Entry !== "function") throw new Error("native module missing");
+    process.stdout.write("native-ready");
+  `,
+      ],
+      { encoding: "utf8" },
+    );
+  expect(loadNative()).toBe("native-ready");
+  authMigrationConfig(home, true);
+  expect(install(["install", "codex"], { home, pkgRoot: staged, dist: join(staged, "dist") })).toBe(0);
+  expect(loadNative()).toBe("native-ready");
+  const current = parseToml(readFileSync(join(home, ".codex/config.toml"), "utf8")).mcp_servers.hindsight;
+  expect(current.env.HINDSIGHT_ROUTER_AUTH_MODE).toBe("human");
+  expect(current.env_vars).not.toContain("OLD_CODEX_TOKEN");
+});
+
+it("fails before host changes for an older staged runtime without native support and explains recovery", () => {
+  const home = temporary();
+  authMigrationConfig(home, true);
+  const staged = join(home, ".hindsight/coding-agents");
+  cpSync(join(packageRoot, "dist"), join(staged, "dist"), { recursive: true });
+  cpSync(join(packageRoot, "package.json"), join(staged, "package.json"));
+  mkdirSync(join(home, ".codex"));
+  const path = join(home, ".codex/config.toml");
+  const previous = ownedCodexRegistration(home);
+  writeFileSync(path, previous);
+  const result = spawnSync(process.execPath, [join(staged, "dist/installer.js"), "install", "codex"], {
+    env: { ...process.env, HOME: home },
+    encoding: "utf8",
+  });
+  expect(result.status).toBe(1);
+  expect(result.stdout + result.stderr).toContain("reinstall from a verified package");
+  expect(readFileSync(path, "utf8")).toBe(previous);
+  expect(existsSync(`${path}.hindsight-backup`)).toBe(false);
+  expect(existsSync(join(staged, "node_modules"))).toBe(false);
+});
+
+it("allows absent optional native packages without swallowing invalid package metadata", () => {
+  const source = temporary();
+  const staged = temporary();
+  expect(stageNativeKeychain(source, staged, false)).toBe(false);
+  const home = temporary();
+  authMigrationConfig(home, false);
+  cpSync(join(packageRoot, "dist"), join(source, "dist"), { recursive: true });
+  cpSync(join(packageRoot, "package.json"), join(source, "package.json"));
+  const log = vi.fn();
+  expect(install(["install", "codex"], { home, pkgRoot: source, dist: join(source, "dist"), log })).toBe(0);
+  expect(log.mock.calls.flat().join()).toContain("human login requires reinstalling from a verified package");
+  expect(existsSync(join(home, ".hindsight/coding-agents/node_modules"))).toBe(false);
+  const module = join(source, "node_modules/@napi-rs/keyring");
+  mkdirSync(module, { recursive: true });
+  writeFileSync(join(module, "package.json"), JSON.stringify({ version: "2.1.1", optionalDependencies: {} }));
+  expect(stageNativeKeychain(source, staged, false)).toBe(false);
+  writeFileSync(
+    join(module, "package.json"),
+    JSON.stringify({ version: "2.1.1", optionalDependencies: { "untrusted-module": "2.1.1" } }),
+  );
+  expect(() => stageNativeKeychain(source, staged, false)).toThrow("invalid keychain package");
+  expect(existsSync(join(staged, "node_modules"))).toBe(false);
 });
 
 it("rejects missing native dependency before replacing managed runtime", () => {

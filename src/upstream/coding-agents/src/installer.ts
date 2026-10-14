@@ -1065,8 +1065,9 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     rmSync(join(target, "dist"), { recursive: true, force: true });
     mkdirSync(target, { recursive: true });
     cpSync(c.dist, join(target, "dist"), { recursive: true });
-    if (Object.values(loadValidatedManagedConfig(process.env).principals).some((principal) => principal.human)) {
-      stageNativeKeychain(c.pkgRoot, target);
+    const needsNativeStorage = Object.values(loadValidatedManagedConfig(process.env).principals).some((principal) => principal.human);
+    if (!stageNativeKeychain(c.pkgRoot, target, needsNativeStorage)) {
+      c.log?.("Native secure storage is not installed; human login requires reinstalling from a verified package with native support.");
     }
     const skill = join(c.pkgRoot, "skill");
     if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
