@@ -884,6 +884,41 @@ it("stages native prebuilt dependency without npm lifecycle scripts or source-ca
   if (process.platform === "linux") expect(result).toBe("secure-store-unavailable");
 });
 
+it("bare updates stage native dependencies and preserve them when the next source lacks optional packages", () => {
+  const home = temporary();
+  const source = temporary();
+  cpSync(join(packageRoot, "dist"), join(source, "dist"), { recursive: true });
+  cpSync(join(packageRoot, "package.json"), join(source, "package.json"));
+  stageNativeKeychain(packageRoot, source);
+  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", "");
+  const ctx = { home, pkgRoot: source, dist: join(source, "dist") };
+  expect(install(["update"], ctx)).toBe(0);
+  const staged = join(home, ".hindsight/coding-agents");
+  const nextSource = temporary();
+  cpSync(join(packageRoot, "dist"), join(nextSource, "dist"), { recursive: true });
+  cpSync(join(packageRoot, "package.json"), join(nextSource, "package.json"));
+  writeFileSync(join(nextSource, "dist/new-entry.js"), "updated runtime");
+  expect(install(["update"], { ...ctx, pkgRoot: nextSource, dist: join(nextSource, "dist") })).toBe(0);
+  rmSync(nextSource, { recursive: true });
+  rmSync(source, { recursive: true });
+  expect(readFileSync(join(staged, "dist/new-entry.js"), "utf8")).toBe("updated runtime");
+  expect(
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `
+    const requireNative = require("node:module").createRequire(${JSON.stringify(join(staged, "package.json"))});
+    if (typeof requireNative("@napi-rs/keyring").Entry !== "function") process.exit(1);
+    process.stdout.write("native-ready");
+  `,
+      ],
+      { encoding: "utf8" },
+    ),
+  ).toBe("native-ready");
+  expect(existsSync(join(home, ".codex"))).toBe(false);
+});
+
 it("installs human-mode Codex without a token environment name and keeps native runtime with staged installer", () => {
   const home = temporary();
   const configPath = join(home, "managed.json");

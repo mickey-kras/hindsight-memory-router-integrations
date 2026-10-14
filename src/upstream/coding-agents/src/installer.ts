@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { renderCompanionSkill, renderBrandText, toolBrand, ToolPrefixError } from "@memory-router/shared/tool-prefix";
+import { renderCompanionSkill, renderBrandText, skillPrefix, toolBrand, ToolPrefixError } from "@memory-router/shared/tool-prefix";
 /**
  * hindsight-coding-agents install|uninstall [harness...]
  *
@@ -1007,10 +1007,9 @@ export const ORIGIN_FILE = ".install-origin.json";
  * skipped when already running from the staged copy, which is what
  * makes re-running `install` cheap.
  */
-function brandStagedRuntime(c: InstallCtx): void {
+function brandStagedRuntime(c: InstallCtx, prefix: string): void {
   const manifestPath = join(c.pkgRoot, "plugin.json");
   if (!existsSync(manifestPath)) return;
-  const prefix = loadValidatedManagedConfig(process.env).toolPrefix;
   const brand = toolBrand(prefix);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
     skills?: string;
@@ -1040,7 +1039,16 @@ function brandStagedRuntime(c: InstallCtx): void {
   writeJson(manifestPath, manifest);
 }
 
-function stageRuntime(c: InstallCtx): InstallCtx {
+// The installed namespace belongs to the previous explicit installation. An unattended update
+// must not migrate it when operator config changes or require that config to be available.
+function stagedToolPrefix(home: string): string {
+  const prefixes = new Set(ownedCompanionSkills(runtimeDir(home)).map((path) =>
+    toolBrand(skillPrefix(readFileSync(join(path, "SKILL.md"), "utf8"))).prefix));
+  if (prefixes.size > 1) throw new ToolPrefixError("ambiguous staged tool prefixes; reinstall to migrate");
+  return prefixes.values().next().value ?? toolBrand().prefix;
+}
+
+function stageRuntime(c: InstallCtx, prefix: string, needsNativeStorage: boolean): InstallCtx {
   const target = runtimeDir(c.home);
   // Compared through realpath: re-running the STAGED installer must not reach the copy below, which
   // deletes the very dist it is executing from. A symlinked or differently-spelled path to the same
@@ -1052,7 +1060,7 @@ function stageRuntime(c: InstallCtx): InstallCtx {
       return a === b;
     }
   };
-  if (same(c.pkgRoot, target)) { brandStagedRuntime(c); return c; }
+  if (same(c.pkgRoot, target)) { brandStagedRuntime(c, prefix); return c; }
   if (!existsSync(join(c.dist, "installer.js"))) throw new Error("runtime unavailable");
   // cpSync preserves source links. Reject them before they can enter the installed runtime or
   // companion skill, where a later overwrite could follow them outside the transaction scope.
@@ -1065,8 +1073,7 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     rmSync(join(target, "dist"), { recursive: true, force: true });
     mkdirSync(target, { recursive: true });
     cpSync(c.dist, join(target, "dist"), { recursive: true });
-    const needsNativeStorage = Object.values(loadValidatedManagedConfig(process.env).principals).some((principal) => principal.human);
-    if (!stageNativeKeychain(c.pkgRoot, target, needsNativeStorage)) {
+    if (!stageNativeKeychain(c.pkgRoot, target, needsNativeStorage) && !existsSync(join(target, "node_modules/@napi-rs/keyring/package.json"))) {
       c.log?.("Native secure storage is not installed; human login requires reinstalling from a verified package with native support.");
     }
     const skill = join(c.pkgRoot, "skill");
@@ -1094,8 +1101,8 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     );
     c.log?.(`runtime staged at ${target}`);
     const staged = { ...c, pkgRoot: target, dist: join(target, "dist") };
-  brandStagedRuntime(staged);
-  return staged;
+    brandStagedRuntime(staged, prefix);
+    return staged;
   } catch (error) {
     // The transaction restores the previous runtime; never wire a half-written copy.
     throw new Error("runtime staging failed", { cause: error });
@@ -2008,8 +2015,20 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
   const messages: string[] = [];
   let ctx: InstallCtx = { ...ctxIn, log: (message: string) => { messages.push(message); } };
   let transaction: InstallTransaction | undefined;
-  let targets: HarnessInstaller[];
+  let targets: HarnessInstaller[] = [];
   try {
+    // No harness selection, provisioning, native credential access or host mutations here.
+    // Explicit update <harness> remains the documented install/migration alias below.
+    if (command === "update" && names.length === 0) {
+      if (args.length) return fail();
+      const prefix = stagedToolPrefix(ctx.home);
+      transaction = new InstallTransaction([runtimeDir(ctx.home)]);
+      stageRuntime(ctx, prefix, false);
+      transaction.commit();
+      for (const message of messages) ctxIn.log?.(message);
+      ctxIn.log?.("runtime updated");
+      return 0;
+    }
     if (names.includes("all")) {
       if (names.length !== 1) return fail();
       targets = INSTALLERS.filter((installer) => installer.detect(ctx));
@@ -2065,7 +2084,10 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
       }
     }
     transaction = new InstallTransaction(paths);
-    if (command !== "uninstall") ctx = stageRuntime(ctx);
+    if (command !== "uninstall") {
+      const config = loadValidatedManagedConfig(process.env);
+      ctx = stageRuntime(ctx, config.toolPrefix, Object.values(config.principals).some((principal) => principal.human));
+    }
     for (const target of targets) {
       for (const path of mutationPaths(ctx, [target.name], command !== "uninstall")) {
         if (/\.jsonc?$/.test(path)) managedJsonRegistrations(path, target.name, ctx, true, command !== "uninstall");
@@ -2122,6 +2144,7 @@ if (isMain || mainPath?.endsWith("installer.js")) {
     version,
     harnessNames: INSTALLERS.map((i) => i.name),
     toolPrefix: (() => {
+      if (process.argv[2] === "update" && process.argv.length === 3) return undefined;
       try { return process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined; }
       catch { return undefined; }
     })(),
