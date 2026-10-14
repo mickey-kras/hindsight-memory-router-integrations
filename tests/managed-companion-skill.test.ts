@@ -9,7 +9,7 @@ const packaged = () => readFileSync(join(pkgRoot, "skill/SKILL.md"), "utf8");
 
 describe("managed router companion skill", () => {
   it("regenerates exactly from managed operational sources", () => {
-    execFileSync(process.execPath, [join(pkgRoot, "scripts/build-skill.mjs"), "--check"]);
+    expect(() => execFileSync(process.execPath, [join(pkgRoot, "scripts/build-skill.mjs"), "--check"])).not.toThrow();
   });
   it.each(["hindsight_", "team_"])("renders supported %s tools and managed setup guidance", (prefix) => {
     const skill = renderCompanionSkill(packaged(), prefix);

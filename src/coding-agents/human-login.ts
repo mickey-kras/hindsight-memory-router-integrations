@@ -104,15 +104,20 @@ function exchangeSession(value: unknown, routerUrl: string): HumanSession {
 }
 
 export async function openLoginBrowser(url: string): Promise<void> {
-  const launch =
-    process.platform === "darwin"
-      ? ["/usr/bin/open", url]
-      : process.platform === "win32"
-        ? ["rundll32.exe", "url.dll,FileProtocolHandler", url]
-        : process.platform === "linux"
-          ? ["xdg-open", url]
-          : undefined;
-  if (!launch) throw new HumanLoginRequiredError();
+  let launch: string[];
+  switch (process.platform) {
+    case "darwin":
+      launch = ["/usr/bin/open", url];
+      break;
+    case "win32":
+      launch = ["rundll32.exe", "url.dll,FileProtocolHandler", url];
+      break;
+    case "linux":
+      launch = ["xdg-open", url];
+      break;
+    default:
+      throw new HumanLoginRequiredError();
+  }
   const [command, ...args] = launch;
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true, shell: false });

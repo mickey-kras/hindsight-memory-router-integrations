@@ -30,16 +30,16 @@ export function humanRouterUrl(value: string): string {
   const input = value.trim();
   if (
     Array.from(input).some((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 0x1f || code === 0x7f;
+      const code = character.codePointAt(0);
+      return code !== undefined && (code <= 0x1f || code === 0x7f);
     })
   ) {
     throw new HumanLoginRequiredError();
   }
-  const parts = input.match(/^https:\/\/([^/?#\\@]+)(\/[^?#]*)?$/i);
+  const parts = /^https:\/\/([^/?#\\@]+)(\/[^?#]*)?$/i.exec(input);
   if (!parts) throw new HumanLoginRequiredError();
   const rawPath = parts[2] ?? "";
-  if (input.includes("\\") || /%|\/\.\.?(?:\/|$)|\/{2}$/.test(rawPath)) throw new HumanLoginRequiredError();
+  if (input.includes("\\") || /%|\/\.\.?(?:\/|$)|(?:\/{2}$)/.test(rawPath)) throw new HumanLoginRequiredError();
   const canonical = validateRouterUrl(input);
   const url = new URL(canonical);
   if (url.search || url.hash) throw new HumanLoginRequiredError();

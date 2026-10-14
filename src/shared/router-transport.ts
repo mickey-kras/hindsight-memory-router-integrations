@@ -50,7 +50,7 @@ async function filterVisibleBanks(response: Response, access: BankAccess): Promi
 function assertSafeRequest(url: string, body: RequestInit["body"]): URL {
   // Inspect the original path before URL parsing can normalize traversal segments.
   // Escapes in search text are data, not path separators or bank-routing instructions.
-  const rawPath = url.match(/^[a-z][a-z\d+.-]*:\/\/[^/?#]*([^?#]*)/i)?.[1] ?? "";
+  const rawPath = /^[a-z][a-z\d+.-]*:\/\/[^/?#]*([^?#]*)/i.exec(url)?.[1] ?? "";
   if (url.includes("#") || /\\/.test(rawPath) || /%(?:2e|2f|5c|25)/i.test(rawPath) || /\/\.\.?(?:\/|$)/.test(rawPath)) {
     throw new AccessDeniedError();
   }
