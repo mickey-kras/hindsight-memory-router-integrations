@@ -7,7 +7,6 @@ Requires Node.js 22 or later. From the repository root:
 ```sh
 npm ci
 npm ci --prefix src/upstream/coding-agents
-npm ci --prefix src/mcp
 npm run test:coverage
 npm run build
 npm run build:coding-agents

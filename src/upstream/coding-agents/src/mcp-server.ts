@@ -9,6 +9,7 @@
  * differs). MCP servers launch with the project dir as cwd; the env override is an optional
  * escape hatch (not currently set by the plugin).
  */
+import { toolBrand, DEFAULT_TOOL_PREFIX, assertUniqueToolNames, ToolPrefixError } from "@memory-router/shared/tool-prefix";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -38,6 +39,7 @@ export function selectTools(
     ? []
     : buildKnowledgeTools(client, bankId, {
         repoDir: cwd,
+        toolPrefix: cfg.toolPrefix,
         harness,
         pageTrigger: buildPageTrigger(cfg),
         reflectTimeoutMs: cfg.reflectToolTimeoutMs,
@@ -76,8 +78,10 @@ export function resolveHarness(env: NodeJS.ProcessEnv = process.env): string {
  * without first checking the initialize capabilities. Advertising an empty, queryable tool list
  * keeps that privacy boundary intact while preventing one optional probe from failing startup.
  */
-export function buildMcpServer(tools: ToolSpec[]): McpServer {
-  const server = new McpServer({ name: "hindsight", version: "0.1.0" });
+export function buildMcpServer(tools: ToolSpec[], prefix = DEFAULT_TOOL_PREFIX): McpServer {
+  assertUniqueToolNames(tools);
+  if (tools.some(tool => !tool.name.startsWith(toolBrand(prefix).prefix))) throw new ToolPrefixError("inconsistent MCP identity/tool prefix");
+  const server = new McpServer({ name: toolBrand(prefix).id, version: "0.1.0" });
   if (tools.length === 0) {
     server.server.registerCapabilities({ tools: { listChanged: false } });
     server.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
@@ -101,14 +105,17 @@ export function buildMcpServer(tools: ToolSpec[]): McpServer {
   return server;
 }
 
+let startupPrefix = DEFAULT_TOOL_PREFIX;
+
 async function main() {
   const cwd = process.env.HINDSIGHT_MCP_PROJECT_CWD || process.cwd();
   // Mirrors that harness's hooks: it selects the config `harnesses.<name>` section and feeds the
   // `{harness}` bank template, so both routes into a repo land in ONE bank.
   const harness = resolveHarness();
   const memory = resolveHostMemory(harness, cwd);
+  startupPrefix = memory.cfg.toolPrefix ?? DEFAULT_TOOL_PREFIX;
   const tools = memory.disabled ? [] : selectTools(memory.cfg, memory.client, memory.bankId, { cwd, harness });
-  const server = buildMcpServer(tools);
+  const server = buildMcpServer(tools, memory.cfg.toolPrefix);
 
   await server.connect(new StdioServerTransport());
 }
@@ -117,7 +124,7 @@ async function main() {
 // it (as src/mcp-server.test.ts does) must not start a real server.
 if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch((e) => {
-    console.error("hindsight mcp-server failed:", e);
+    console.error(`${toolBrand(startupPrefix).id} mcp-server failed:`, e);
     process.exit(1);
   });
 }

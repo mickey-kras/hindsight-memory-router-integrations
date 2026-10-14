@@ -1,3 +1,4 @@
+import { DEFAULT_TOOL_PREFIX, renderBrandText } from "@memory-router/shared/tool-prefix";
 export interface PageRef {
   id: string;
   title: string;
@@ -97,6 +98,7 @@ export interface ToolGuideOpts {
    *  the agent straight to hindsight_reflect; it now goes to the knowledge pages first and keeps
    *  reflect for what they don't cover. The field name is unchanged so call sites stay stable. */
   reflectOnNewGoals?: boolean;
+  toolPrefix?: string;
 }
 
 function toolGuide(opts?: ToolGuideOpts): string {
@@ -106,7 +108,7 @@ function toolGuide(opts?: ToolGuideOpts): string {
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */
 export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): string {
   const body = pages.length ? indexLine(pages) : EMPTY_STATE;
-  return (
+  return renderBrandText((
     "<hindsight_knowledge>\n" +
     "This repository has a Hindsight memory + knowledge base (curated, continuously-updated pages plus the raw " +
     "memory behind them). The tools below are registered, but you must actually CALL them at the right moments:\n" +
@@ -117,7 +119,7 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): 
     `${body}\n` +
     "This tool guide and the page list are re-injected for you periodically as things change.\n" +
     "</hindsight_knowledge>"
-  );
+  ), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
 }
 
 /**
@@ -128,11 +130,11 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): 
  */
 export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): string {
   const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
-  return (
+  return renderBrandText((
     "<hindsight_knowledge_refresh>\n" +
     rosterBlock +
     "Reminder — this repo's Hindsight tools are available; call them at the right moments:\n" +
     `${toolGuide(opts)}\n` +
     "</hindsight_knowledge_refresh>"
-  );
+  ), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
 }

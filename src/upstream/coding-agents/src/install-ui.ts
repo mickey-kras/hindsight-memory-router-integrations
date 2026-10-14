@@ -1,3 +1,4 @@
+import { toolBrand } from "@memory-router/shared/tool-prefix";
 /**
  * Styled terminal renderer for the installer CLI (clack/Vercel-style rail).
  *
@@ -19,6 +20,7 @@ import { brandWord } from "./core/brand";
 
 export interface InstallerUiOptions {
   home: string;
+  toolPrefix?: string;
   /** argv[2], used by the outro to say what completed (install vs uninstall vs usage). */
   command?: string;
   version?: string;
@@ -195,7 +197,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
     intro(): void {
       write("");
       write(
-        `${dim("┌")}  ${colors ? brandWord() : "Hindsight"} ${bold("coding agents")}` +
+        `${dim("┌")}  ${colors ? brandWord(o.toolPrefix) : toolBrand(o.toolPrefix).displayName} ${bold("coding agents")}` +
           (o.version ? `  ${dim(`v${o.version}`)}` : "")
       );
       write(bar);
@@ -315,7 +317,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
           write(`   ${dim(`Start a session — settings live in ${settings}.`)}`);
         } else {
           write(
-            `${dim("└")}  ${green("✓")} Uninstalled ${agents} in ${secs}s — Hindsight entries removed, *.hindsight-backup files left in place.`
+            `${dim("└")}  ${green("✓")} Uninstalled ${agents} in ${secs}s — ${toolBrand(o.toolPrefix).displayName} entries removed, *.hindsight-backup files left in place.`
           );
         }
       } else if (o.command === "update") {

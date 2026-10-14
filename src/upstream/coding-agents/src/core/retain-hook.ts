@@ -113,6 +113,7 @@ export async function buildRetain(args: {
   retryUntil?: number;
   /** Resolved bank, recorded on the usage line. */
   bankId?: string;
+  toolPrefix?: string;
   /** Injectable for tests; defaults to the per-session temp file. */
   usageCursors?: UsageCursorStore;
 }): Promise<void> {
@@ -144,6 +145,7 @@ export async function buildRetain(args: {
     harness,
     sessionId,
     bankId: args.bankId ?? "",
+    toolPrefix: args.toolPrefix,
     turns,
     cursors: args.usageCursors ?? fileUsageCursorStore(harness),
     lastTurnComplete: true,
@@ -255,6 +257,7 @@ export async function runRetainHook(
     readLastMessage: spec.readLastMessage,
     retryUntil: hostDeadline,
     bankId,
+    toolPrefix: cfg.toolPrefix,
     stamp: buildRetainStamp(cfg, {
       directory: cwd,
       sessionRoot,

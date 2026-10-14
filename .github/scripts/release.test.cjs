@@ -411,19 +411,16 @@ test("integration package fixes can update tested assets while upstream pins rem
       path: "hindsight-integrations/coding-agents",
     });
     mkdirSync("src/upstream/coding-agents", { recursive: true });
-    mkdirSync("src/mcp", { recursive: true });
     mkdirSync("packages", { recursive: true });
     put("package.json", { name: "@example/openclaw", version: "0.12.0" });
     put("src/upstream/coding-agents/package.json", { name: "@example/coding-agents", version: "0.6.0" });
-    put("src/mcp/package.json", { name: "@example/mcp", version: "0.1.0" });
     writeFileSync("packages/example-openclaw-0.12.0.tgz", "original test fixture");
     writeFileSync("packages/example-coding-agents-0.6.0.tgz", "coding test fixture");
-    writeFileSync("packages/example-mcp-0.1.0.tgz", "mcp test fixture");
     manifest.packages = release.packageAssets();
     assert.deepEqual(
       manifest.packages.map((pkg) => pkg.name),
-      ["@example/openclaw", "@example/coding-agents", "@example/mcp"],
-      "the bundle must carry all three packages as separate entries",
+      ["@example/openclaw", "@example/coding-agents"],
+      "the bundle must carry both packages as separate entries",
     );
     manifest.nix_openclaw = base;
     manifest.router = {
@@ -436,7 +433,7 @@ test("integration package fixes can update tested assets while upstream pins rem
     m.state.prepared = structuredClone(manifest);
     put("release.json", manifest);
     await release.validate(m);
-    put("release.json", { ...manifest, packages: manifest.packages.slice(0, 2) });
+    put("release.json", { ...manifest, packages: manifest.packages.slice(0, 1) });
     await assert.rejects(release.validate(m), /Invalid release package inventory/);
     put("release.json", manifest);
     put("package.json", { name: "@example/openclaw", version: "0.12.1" });
@@ -618,19 +615,16 @@ function integrationPrepared(m, unified = true) {
     path: "hindsight-integrations/coding-agents",
   });
   mkdirSync("src/upstream/coding-agents", { recursive: true });
-  mkdirSync("src/mcp", { recursive: true });
   mkdirSync("packages", { recursive: true });
   put("package.json", { name: "@example/openclaw", version: "0.12.0" });
   put("src/upstream/coding-agents/package.json", { name: "@example/coding-agents", version: "0.6.0" });
-  put("src/mcp/package.json", { name: "@example/mcp", version: "0.1.0" });
   writeFileSync("packages/example-openclaw-0.12.0.tgz", "original test fixture");
   writeFileSync("packages/example-coding-agents-0.6.0.tgz", "coding test fixture");
-  writeFileSync("packages/example-mcp-0.1.0.tgz", "mcp test fixture");
   manifest.packages = release.packageAssets();
   assert.deepEqual(
     manifest.packages.map((pkg) => pkg.name),
-    ["@example/openclaw", "@example/coding-agents", "@example/mcp"],
-    "the bundle must carry all three packages as separate entries",
+    ["@example/openclaw", "@example/coding-agents"],
+    "the bundle must carry both packages as separate entries",
   );
   manifest.nix_openclaw = base;
   manifest.router = {
@@ -719,7 +713,6 @@ test("unified publication uses the explicit candidate while preserving its main 
         "release.json",
         "example-openclaw-0.12.0.tgz",
         "example-coding-agents-0.6.0.tgz",
-        "example-mcp-0.1.0.tgz",
         "PACKAGE_SHA256",
         "PACKAGE_NIX_HASHES",
       ],
@@ -967,7 +960,7 @@ test("cleanup does not delete a candidate advanced beyond its published tag", ()
     assert.deepEqual(m.state.calls, []);
   }));
 
-test("preparation freezes all three packages with the tested router and upstream pins", () =>
+test("preparation freezes both packages with the tested router and upstream pins", () =>
   fixture(async () => {
     const m = mock();
     const fixtureManifest = integrationPrepared(m);

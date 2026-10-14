@@ -215,3 +215,73 @@ describe("readUsage", () => {
     );
   });
 });
+
+
+describe("managed tool namespace usage", () => {
+  it.each([
+    ["search_", "search_knowledge_pages"],
+    ["read_", "read_knowledge_page"],
+    ["hindsight_search_", "search_knowledge_pages"],
+    ["hindsight_read_", "read_knowledge_page"],
+  ])("preserves historical names when %s overlaps a tool suffix", (prefix, suffix) => {
+    const canonical = `hindsight_${suffix}`;
+    const turns = [
+      t("user", "question"),
+      t("action", `${canonical} {}`),
+      t("action", `mcp__hindsight__${canonical} {}`),
+      t("action", `hindsight.${canonical} {}`),
+      t("action", `${prefix}${suffix} {}`),
+      t("action", `mcp__hindsight__${prefix}${suffix} {}`),
+      t("action", `hindsight.${prefix}${suffix} {}`),
+      t("action", `other_${prefix}${suffix} {}`),
+      t("assistant", "From Hindsight memory: evidence"),
+    ];
+    expect(summarizeTurns(turns, prefix)).toEqual([
+      { turn: 1, calls: Array(6).fill(canonical), credited: true },
+    ]);
+    recordUsage({
+      harness: "codex", sessionId: "overlap", bankId: "bank", toolPrefix: prefix,
+      cursors: memoryUsageCursorStore(), lastTurnComplete: true, turns,
+    });
+    expect(readUsage()[0]).toMatchObject({
+      calls: 6, turnsWithRetrieval: 1, creditedTurnsWithRetrieval: 1, byTool: { [canonical]: 6 },
+    });
+  });
+
+  it.each([
+    ["hindsight_ingest_", "ingest_document"],
+    ["hindsight_read_", "read_bank_config"],
+    ["hindsight_capture_", "capture_initiative"],
+  ])("resolves known write and context suffixes for %s", (prefix, suffix) => {
+    const canonical = `hindsight_${suffix}`;
+    expect(summarizeTurns([
+      t("user", "check"),
+      t("action", `${canonical} {}`),
+      t("action", `mcp__hindsight__${prefix}${suffix} {}`),
+      t("action", `${prefix}unsupported_tool {}`),
+    ], prefix)).toEqual([{ turn: 1, calls: [canonical, canonical], credited: false }]);
+  });
+  it("normalizes bare, host-prefixed and historical retrieval names", () => {
+    expect(summarizeTurns([
+      t("user", "question"),
+      t("action", "team_reflect {}"),
+      t("action", "mcp__hindsight__team_search_knowledge_pages {}"),
+      t("action", "hindsight.hindsight_read_knowledge_page {}"),
+      t("action", "other_reflect {}"),
+      t("assistant", "From Hindsight memory: evidence"),
+    ], "team_")).toEqual([{ turn: 1, calls: ["hindsight_reflect", "hindsight_search_knowledge_pages", "hindsight_read_knowledge_page"], credited: true }]);
+  });
+  it("records custom retrieval credit alongside historical logs", () => {
+    writeFileSync(usageFile, JSON.stringify({ harness: "codex", session: "old", turn: 1, calls: ["hindsight_reflect"], credited: true }) + "\n");
+    recordUsage({ harness: "codex", sessionId: "new", bankId: "bank", toolPrefix: "team_", cursors: memoryUsageCursorStore(), lastTurnComplete: true,
+      turns: [t("user", "question"), t("action", "mcp__hindsight__team_reflect {}"), t("assistant", "From Hindsight memory: answer")],
+    });
+    expect(readUsage()).toEqual([expect.objectContaining({ calls: 2, turnsWithRetrieval: 2, creditedTurnsWithRetrieval: 2, byTool: { hindsight_reflect: 2 } })]);
+  });
+  it("does not count custom ingestion as retrieval", () => {
+    recordUsage({ harness: "codex", sessionId: "save", bankId: "bank", toolPrefix: "team_", cursors: memoryUsageCursorStore(), lastTurnComplete: true,
+      turns: [t("user", "save"), t("action", "team_ingest_document {}"), t("assistant", "From Hindsight memory: saved")],
+    });
+    expect(readUsage()[0]).toMatchObject({ calls: 1, turnsWithRetrieval: 0, creditedTurnsWithRetrieval: 0, byTool: { hindsight_ingest_document: 1 } });
+  });
+});

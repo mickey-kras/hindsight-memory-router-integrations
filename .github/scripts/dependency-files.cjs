@@ -3,7 +3,7 @@ const { isDeepStrictEqual } = require("node:util");
 
 const CODING = "src/upstream/coding-agents";
 const PROVENANCE = "integrations/coding-agents/LOCAL_CHANGES.json";
-const PACKAGES = ["", CODING, "src/mcp"];
+const PACKAGES = ["", CODING];
 const MANIFESTS = PACKAGES.map((directory) => (directory ? `${directory}/package.json` : "package.json"));
 const INPUTS = PACKAGES.flatMap((directory) =>
   ["package.json", "npm-shrinkwrap.json"].map((file) => (directory ? `${directory}/${file}` : file)),

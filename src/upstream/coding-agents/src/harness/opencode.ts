@@ -1,3 +1,5 @@
+import { assertUniqueToolNames, toolBrand, renderBrandText } from "@memory-router/shared/tool-prefix";
+import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
 /**
  * opencode harness adapter — full v2 parity with the hook harnesses (Claude Code / Codex).
  *
@@ -20,7 +22,7 @@ import {
   type OcMessage,
 } from "../core/transcript-opencode";
 import { jsonChatReader } from "./registry";
-import { SURVEY_AGENT, SURVEY_AGENT_CONFIG } from "../core/survey";
+import { SURVEY_AGENT_CONFIG } from "../core/survey";
 
 // opencode message part shape for the per-turn prompt (structurally typed).
 type Part = { type?: string; text?: string };
@@ -36,21 +38,29 @@ type Part = { type?: string; text?: string };
  * silently never fire, and the survey would die on an agent the host never heard of. Pinning this
  * one hook to the SDK's own type restores that check where it matters.
  */
-const surveyAgentHook: Pick<Hooks, "config"> = {
-  config: async (cfg: Config) => {
-    cfg.agent ??= {};
-    // Never overwrite an existing entry: a user who defined `hindsight-survey` themselves outranks
-    // us.
-    //
-    // The cast covers one field the published type under-describes: `permission` is declared with a
-    // fixed key set (edit/bash/webfetch/…), while the runtime takes arbitrary action names —
-    // opencode's own built-in `explore` agent is defined with `"*": "deny"` plus per-tool allows,
-    // and a live 1.18.9 session under this agent was offered exactly glob/grep/read/
-    // hindsight_ingest_document. Casting the entry beats widening it to `unknown`, which would drop
-    // the checking on `description`/`mode` too.
-    cfg.agent[SURVEY_AGENT] ??= SURVEY_AGENT_CONFIG as NonNullable<Config["agent"]>[string];
-  },
-};
+function surveyAgentHook(harness: string): Pick<Hooks, "config"> {
+  return {
+    config: async (cfg: Config) => {
+      cfg.agent ??= {};
+      // Never overwrite an existing entry: a user who defined `hindsight-survey` themselves outranks
+      // us.
+      //
+      // The cast covers one field the published type under-describes: `permission` is declared with a
+      // fixed key set (edit/bash/webfetch/…), while the runtime takes arbitrary action names —
+      // opencode's own built-in `explore` agent is defined with `"*": "deny"` plus per-tool allows,
+      // and a live 1.18.9 session under this agent was offered exactly glob/grep/read/
+      // hindsight_ingest_document. Casting the entry beats widening it to `unknown`, which would drop
+      // the checking on `description`/`mode` too.
+      const { hindsight_ingest_document: _ingest, ...permissions } = SURVEY_AGENT_CONFIG.permission;
+      const prefix = managedToolPrefix(harness);
+      cfg.agent[`${toolBrand(prefix).id}-survey`] ??= {
+        ...SURVEY_AGENT_CONFIG,
+        description: renderBrandText(SURVEY_AGENT_CONFIG.description, prefix),
+        permission: { ...permissions, [prefix + "ingest_document"]: "allow" },
+      } as NonNullable<Config["agent"]>[string];
+    },
+  };
+}
 
 const textOf = (parts: Part[]) =>
   (parts || [])
@@ -85,10 +95,12 @@ function toOpencodeTool(spec: ToolSpec) {
 function createRuntime(core: RuntimeCore) {
   // Register the full hindsight_* knowledge + recall suite natively (no MCP server needed).
   const tools: Record<string, ReturnType<typeof tool>> = {};
-  for (const spec of core.toolSpecs()) tools[spec.name] = toOpencodeTool(spec);
+  const specs = core.toolSpecs();
+  assertUniqueToolNames(specs);
+  for (const spec of specs) tools[spec.name] = toOpencodeTool(spec);
 
   return {
-    ...surveyAgentHook,
+    ...surveyAgentHook(core.harness),
     tool: tools,
     // Each user turn: recall on the prompt; the injection it builds is pushed by system.transform.
     "chat.message": async (input: { sessionID?: string }, output: { parts: Part[] }) => {

@@ -1,4 +1,4 @@
-import { visibleBanks } from "@memory-router/shared/bank-access";
+import { AccessDeniedError, visibleBanks } from "@memory-router/shared/bank-access";
 import { harnessTransport } from "@memory-router/coding-agents/runtime";
 import { readAcrossBanks } from "@memory-router/shared/read-execution";
 import { RouterRequestError, boundedRetryAfterMs, type RouterTransport } from "@memory-router/shared/router-transport";
@@ -10,9 +10,7 @@ import { RouterRequestError, boundedRetryAfterMs, type RouterTransport } from "@
  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
  */
 import {
-  type BankOverrides,
   buildPageTrigger,
-  codingBankManifest,
   type CustomPagesConfig,
   type CurrentPageTrigger,
   PAGE_MAX_TOKENS,
@@ -121,11 +119,7 @@ export interface ClientOpts {
   /** Recall-body overrides, merged key-by-key over `DEFAULT_RECALL_OPTIONS`. Passed through to
    *  the API as given (`types`, `max_tokens`, `budget`, …); `query` is never overridable. */
   recallOptions?: Record<string, unknown>;
-  /** Re-read the bearer token from the LIVE config, for hosts that outlive their credential.
-   *  `apiToken` alone is a construction-time snapshot: a long-lived host (dsh, Cline, Kilo, the
-   *  MCP server, any persistent plugin) kept signing with it forever, so enabling auth or rotating
-   *  the key mid-session 401'd every call until the host restarted (#3600). Consulted only on a
-   *  401, so the happy path never touches the filesystem. See `core/host-client.ts`. */
+  /** Deprecated compatibility input. Only the managed principal token environment is used. */
   tokenProvider?: () => string | undefined;
 }
 
@@ -263,10 +257,11 @@ export class HindsightClient {
   readonly pageSearchLimit: number;
   readonly recallOptions: Record<string, unknown>;
 
-  constructor(o: ClientOpts) {
-    this.routerHarness = o.routerHarness;
-    this.transport = harnessTransport(o.routerHarness);
+  constructor(o: ClientOpts, parent?: HindsightClient) {
+    this.routerHarness = parent?.routerHarness ?? o.routerHarness;
+    this.transport = parent?.transport ?? harnessTransport(o.routerHarness);
     this.apiUrl = this.transport.baseUrl;
+    if (o.apiUrl.replace(/\/+$/, "") !== this.apiUrl) throw new AccessDeniedError();
     this.transport.bankUrl(o.bank);
     this.bank = o.bank;
     this.project = o.project;
@@ -289,17 +284,17 @@ export class HindsightClient {
     this.transport.bankUrl(bank);
     return new HindsightClient({ routerHarness: this.routerHarness, apiUrl: this.apiUrl, bank,
       project: this.project, maxParallelRetains: this.maxParallelRetains, observationScopes: this.observationScopes,
-      pageSearchLimit: this.pageSearchLimit, recallOptions: this.recallOptions, log: this.log });
+      pageSearchLimit: this.pageSearchLimit, recallOptions: this.recallOptions, log: this.log }, this);
   }
 
   get apiToken(): undefined { return undefined; }
 
   hasCredentials(): boolean { return this.transport.hasCredentials(); }
 
-  private async fetchWithAuth(url: string, init: RequestInit): Promise<Response> {
+  private async fetchWithAuth(url: string, init: RequestInit, timeoutMs = 15_000): Promise<Response> {
     if (url === this.bankUrl("/memories/recall")) {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-      const result = await readAcrossBanks(this.transport, "recall", body, { timeoutMs: 15000, maxTokens: 4096 });
+      const result = await readAcrossBanks(this.transport, "recall", body, { timeoutMs, maxTokens: 4096, signal: init.signal ?? undefined });
       if (result.partial) this.log("partial memory read: assigned bank unavailable");
       return Response.json({ results: result.results });
     }
@@ -326,17 +321,19 @@ export class HindsightClient {
         method,
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(timeoutMs),
-      });
+      }, timeoutMs);
     } catch (error) {
-      if (!(error instanceof RouterRequestError) || error.statusCode !== 429) throw error;
-      if (!tolerate.includes(429)) throw new RateLimitedError(error.retryAfterMs);
-      r = new Response(null, { status: 429, headers: { "retry-after": String(error.retryAfterMs / 1000) } });
+      if (!(error instanceof RouterRequestError)) throw error;
+      if (error.statusCode === 429 && !tolerate.includes(429)) throw new RateLimitedError(error.retryAfterMs);
+      if (!tolerate.includes(error.statusCode)) throw error;
+      r = new Response(null, { status: error.statusCode,
+        ...(error.statusCode === 429 ? { headers: { "retry-after": String(error.retryAfterMs / 1000) } } : {}) });
     }
     if (r.status === 429 && !tolerate.includes(429))
       throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
     if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
       throw new Error(
-        `${method} ${url} -> ${r.status} ${await r.text()}`
+        `memory request failed (${r.status})`
       );
     return r;
   }
@@ -395,7 +392,8 @@ export class HindsightClient {
       if (!r.ok) return false;
       const j = (await r.json()) as { api_version?: string };
       return semverGte(j.api_version, MIN_IDEMPOTENT_RETAIN_VERSION);
-    } catch {
+    } catch (error) {
+      if (error instanceof AccessDeniedError) throw error;
       return false;
     }
   }
@@ -429,16 +427,8 @@ export class HindsightClient {
     return ids;
   }
 
-  /** Configure the bank: POST the coding bank manifest to /import (missions, retain strategies,
-   *  entity labels), then seed knowledge pages when the server supports them. Both halves are
-   *  idempotent and strictly ADDITIVE — nothing the bank already says is overwritten (#3927) — so
-   *  the deepen engine can re-run this every pass. Creates the bank if missing; legacy servers
-   *  continue with the template-only path.
-   *
-   *  `manage: false` skips the config half entirely, for a bank whose owner shapes it themselves.
-   *  That bank should then define the strategies this plugin writes under (`git`, `gitlog`,
-   *  `conversation`, `document`, `survey`): an unknown strategy name is not an error server-side,
-   *  it just falls back to the bank's own config, so the miss is silent. */
+  /** Seed knowledge pages for an operator-provisioned bank. Bank creation, reset and
+   *  configuration belong to the router operator; the client only maintains pages. */
   async configureBank(
     opts: {
       reset?: boolean;
@@ -450,44 +440,8 @@ export class HindsightClient {
       manage?: boolean;
     } = {}
   ): Promise<void> {
-    if (opts.reset) {
-      await this.req("DELETE", this.bankUrl());
-      this.log(`[bank] reset ${this.bank}`);
-    }
-    if (opts.manage === false) {
-      this.log(`[bank] manageBankConfig: false — leaving ${this.bank}'s configuration alone`);
-    } else {
-      // What the bank ALREADY overrides decides what is left to write: the missions are seeded once
-      // and then belong to whoever set them (#2492), and every other field is added only where the
-      // bank is silent (#3927). A reset just deleted the bank, so there is nothing to read.
-      const manifest = codingBankManifest(opts.reset ? undefined : await this.readBankOverrides());
-      if (!manifest) {
-        this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);
-      } else {
-        await this.req("POST", this.bankUrl("/import"), manifest);
-        this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort((a, b) => a.localeCompare(b)).join(", ")}`);
-      }
-    }
+    if (opts.reset || opts.manage === true) throw new AccessDeniedError();
     await this.seedPages(opts.pageTrigger, opts.pages, opts.customPages);
-  }
-
-  /**
-   * This bank's own config OVERRIDES, or undefined when there are none to read.
-   *
-   * Deliberately the overrides and not the resolved config: an inherited global default is not
-   * something this bank's owner chose, so it must not read as "already set". `undefined` means the
-   * bank does not exist yet, or the deployment has the bank-config API switched off — in neither
-   * case can anything have been customised, so the caller seeds the full template.
-   */
-  private async readBankOverrides(): Promise<BankOverrides | undefined> {
-    try {
-      const r = await this.req("GET", this.bankUrl("/config"));
-      if (!r.ok) return undefined;
-      const j = (await r.json()) as { overrides?: BankOverrides };
-      return j.overrides ?? {};
-    } catch {
-      return undefined;
-    }
   }
 
   /** Explicitly delete one document (and its cascaded memory units/links). Background sync must
@@ -532,7 +486,7 @@ export class HindsightClient {
       let backoffMs = POLL_CYCLE_MS;
       await pool([...pending], this.maxParallelRetains, async (id) => {
         try {
-          const r = await this.fetchWithAuth(this.bankUrl(`/operations/${id}`), { method: "GET" });
+          const r = await this.fetchWithAuth(this.bankUrl(`/operations/${encodeURIComponent(id)}`), { method: "GET" });
           if (r.status === 429) {
             backoffMs = Math.min(
               RETRY_AFTER_CEILING_MS,
@@ -547,10 +501,13 @@ export class HindsightClient {
             if (st !== "completed") failed++;
           }
         } catch (error) {
+          if (error instanceof AccessDeniedError) throw error;
           if (error instanceof RouterRequestError && error.statusCode === 429) {
             backoffMs = Math.min(RETRY_AFTER_CEILING_MS, Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, error.retryAfterMs));
           }
         }
+      }, (_index, error) => {
+        if (error instanceof AccessDeniedError) throw error;
       });
       if (pending.size) {
         this.log(`  … ${pending.size}/${ids.length} ${label} ops pending`);
@@ -934,13 +891,15 @@ export class HindsightClient {
         (n) => n.kind === "folder" && (n.name || "").toLowerCase() === name.toLowerCase()
       );
       if (hit?.id) return hit.id;
-    } catch {
+    } catch (error) {
+      if (error instanceof AccessDeniedError) throw error;
       /* fall through to create */
     }
     try {
       const r = await this.req("POST", this.bankUrl("/knowledge-base/folders"), { name });
       return ((await r.json()) as { id?: string }).id;
-    } catch {
+    } catch (error) {
+      if (error instanceof AccessDeniedError) throw error;
       return undefined;
     }
   }

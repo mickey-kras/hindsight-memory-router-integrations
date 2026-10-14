@@ -1,6 +1,7 @@
 import { coverageConfigDefaults, defineConfig } from "vitest/config";
 
-const mcpSdk = new URL("./src/mcp/node_modules/@modelcontextprotocol/sdk/dist/esm", import.meta.url).pathname;
+const mcpSdk = new URL("./src/upstream/coding-agents/node_modules/@modelcontextprotocol/sdk/dist/esm", import.meta.url)
+  .pathname;
 
 export default defineConfig({
   resolve: {
@@ -18,7 +19,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: [...coverageConfigDefaults.exclude, "src/upstream/**", "src/mcp/dist/**"],
+      exclude: [...coverageConfigDefaults.exclude, "src/upstream/**"],
       thresholds: {
         lines: 90,
         statements: 90,

@@ -18,6 +18,7 @@ export function harnessTransport(harness: string | undefined): RouterTransport {
 export function managedSettings(harness: string | undefined) {
   if (!harness) throw new AccessDeniedError();
   const transport = harnessTransport(harness);
+  const { config } = loadManagedConfig(process.env, harness);
   const readOnlySettings = transport.access.writeBank
     ? {}
     : {
@@ -29,6 +30,7 @@ export function managedSettings(harness: string | undefined) {
   return {
     harness,
     routerHarness: harness,
+    toolPrefix: config.toolPrefix,
     apiUrl: transport.baseUrl,
     apiToken: undefined,
     serverMode: "self-hosted" as const,
@@ -63,4 +65,8 @@ export function managedBank(harness: string | undefined, directory: string): str
   if (!match) throw new AccessDeniedError();
   requireBank(principal, match[1], "read");
   return match[1];
+}
+
+export function managedToolPrefix(harness: string): string {
+  return loadManagedConfig(process.env, harness).config.toolPrefix;
 }

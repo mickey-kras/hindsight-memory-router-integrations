@@ -1,3 +1,4 @@
+import { DEFAULT_TOOL_PREFIX, renderBrandText } from "@memory-router/shared/tool-prefix";
 /** The system-prompt injection wrapper for a surfaced memory (harness-agnostic text). */
 
 /**
@@ -43,10 +44,11 @@ export const PAGE_INJECT_LEAD =
  *  as the configured `autoInject: "pages"` source. */
 export function formatPageFallback(
   hits: { id: string; name: string; snippet: string }[],
-  lead = PAGE_FALLBACK_LEAD
+  lead = PAGE_FALLBACK_LEAD,
+  toolPrefix = DEFAULT_TOOL_PREFIX
 ): string {
   return (
-    `${lead}\n` +
+    `${renderBrandText(lead, toolPrefix)}\n` +
     hits
       .map((h) => {
         const snippet = h.snippet.replace(/\s+/g, " ").trim();
@@ -67,11 +69,11 @@ export const RECALL_INJECT_LEAD =
 
 /** The memory body injected from a raw recall over the bank (`recallOptions`): after a failed
  *  reflect found no page (default lead), or as the configured `autoInject: "recall"`. */
-export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD): string {
-  return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
+export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD, prefix = DEFAULT_TOOL_PREFIX): string {
+  return `${renderBrandText(lead, prefix)}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
 }
 
-export function buildSystemInjection(memory: string): string {
+export function buildSystemInjection(memory: string, toolPrefix = DEFAULT_TOOL_PREFIX): string {
   // The <hindsight_memory> wrapper is LOAD-BEARING: the transcript readers strip this exact tag
   // (transcript-util MEMORY_TAG_RE) so the session write-back never re-ingests the injected
   // synthesis back into the bank (a retain→reflect feedback loop).
@@ -82,7 +84,7 @@ export function buildSystemInjection(memory: string): string {
   // off-target memory reads exactly like a prompt injection, and skeptical models rightly
   // discard the whole channel.
   return (
-    "<hindsight_memory>\n" +
+    renderBrandText("<hindsight_memory>\n" +
     "Automatically retrieved by Hindsight from THIS repository's own history (git rationale and " +
     "past developer sessions) — real memory, but retrieval is heuristic: it may or may not bear " +
     "on the current task.\n" +
@@ -102,7 +104,7 @@ export function buildSystemInjection(memory: string): string {
     "the record: call hindsight_ingest_document with a short correction titled " +
     '"Correction: <topic>" stating (1) what memory claimed, (2) what is actually true now, and ' +
     "(3) the evidence you verified — the newer fact supersedes the stale one in future retrieval.\n\n" +
-    memory +
+    "", toolPrefix) + memory +
     "\n</hindsight_memory>"
   );
 }

@@ -22,13 +22,11 @@ npm run upstream:accept
 python3 scripts/sync-upstream.py ../hindsight --patch-only
 npm ci
 npm ci --prefix src/upstream/coding-agents
-npm ci --prefix src/mcp
 npm run lint
 npm run typecheck
 npm run test:coverage
 npm run build
 npm run build:coding-agents
-npm run build --prefix src/mcp
 npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
 npm test --prefix src/upstream/coding-agents
 ```
@@ -37,8 +35,30 @@ npm test --prefix src/upstream/coding-agents
 `--patch-only` regenerates the complete coding-agent patch, including local additions and deletions.
 Repeat both after any further adapted-source edits.
 
-Pack all three packages with the npm version pinned in `.github/workflows/ci.yml`. Refresh all entries
+Pack both packages with the npm version pinned in `.github/workflows/ci.yml`. Refresh all entries
 in `PACKAGE_SHA256` and the OpenClaw source hash in `PACKAGE_NIX_HASHES`. Recompute `npm_deps` with the
 CI Nix command only if root `npm-shrinkwrap.json` changed. CI rebuilds and byte-compares the packages.
 
 Merge after PR checks pass. Follow [Releasing](RELEASING.md) for the release checkbox and frozen inputs.
+
+## Retiring the standalone MCP package
+
+New releases contain two packages: OpenClaw (including the hosted HTTP client) and coding agents
+(including the upstream coding-agent MCP server). The separate
+`@mickey-kras/hindsight-memory-router-mcp` package is retired. Earlier release artifacts and stored
+memories remain available; migration does not delete or rewrite user data. Drain pending standalone
+retain queues with the previously installed version before removing its registration, and preserve
+its queue directory until replay is verified. The coding-agent installer does not import those queues.
+
+Remove the old standalone server registration. Install the verified coding-agents artifact from
+an explicitly mapped project using the [coding-agent setup](../integrations/coding-agents/README.md).
+Its installer registers MCP with the selected harness identity. Keep that harness's named token
+and `HINDSIGHT_ROUTER_CONFIG` in the managed launch environment. Direct registrations must set
+`HINDSIGHT_MCP_HARNESS` and use the mapped project as cwd (or `HINDSIGHT_MCP_PROJECT_CWD`).
+
+Update tool calls and allowlists to the coding-agent tools: `hindsight_ingest_document`,
+`hindsight_search_knowledge_pages`, `hindsight_list_knowledge_pages`,
+`hindsight_read_knowledge_page`, `hindsight_reflect`, `hindsight_capture_initiative`,
+`hindsight_sync_status` and `hindsight_diagnose` (or the selected `toolPrefix`). Their upstream
+schemas apply; old retain/recall and raw page CRUD names and arguments have no compatibility
+wrappers. Generic non-coding MCP hosts are outside this integration's supported scope.

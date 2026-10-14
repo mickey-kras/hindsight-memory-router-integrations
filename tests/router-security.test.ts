@@ -369,3 +369,31 @@ it("carries bounded Retry-After through a typed transport error without response
     message: "memory request failed (429)",
   });
 });
+
+it("propagates caller cancellation to every assigned-bank read", async () => {
+  const controller = new AbortController();
+  const signals: AbortSignal[] = [];
+  const send = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+    const signal = init?.signal;
+    if (!signal) throw new Error("missing read cancellation signal");
+    signals.push(signal);
+    return new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  });
+  const { client } = transport(send);
+  const pending = readAcrossBanks(
+    client,
+    "recall",
+    { query: "q" },
+    {
+      timeoutMs: 15_000,
+      maxTokens: 100,
+      signal: controller.signal,
+    },
+  );
+  expect(send).toHaveBeenCalledTimes(3);
+  controller.abort();
+  await expect(pending).resolves.toMatchObject({ results: [], partial: true, failedBanks: ["A", "B", "C"] });
+  expect(signals.every((signal) => signal.aborted)).toBe(true);
+});

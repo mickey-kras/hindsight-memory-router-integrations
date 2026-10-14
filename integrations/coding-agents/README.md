@@ -42,17 +42,29 @@ Client routing does not grant access. Memory Router grants are authoritative.
 
 ## Install
 
-Download the coding-agents `.tgz` asset from the [GitHub release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases), verify its hash against that release's `PACKAGE_SHA256`, then install it:
+From an operator-provisioned project, ask your coding agent:
+
+> Install Memory Router for this harness using the pinned coding-agent release below. Use my existing HINDSIGHT_ROUTER_CONFIG and provisioned environment credentials. Do not ask me for JSON, tokens, or a server command.
+
+Run the pinned GitHub release artifact through npm (replace the release and package version placeholders with values from the same published release):
 
 ```sh
-export HINDSIGHT_ROUTER_CONFIG=/absolute/path/router.json
-npm install --global /absolute/path/downloaded-coding-agents.tgz
-hindsight-coding-agents install
+npm exec --yes --package=https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v<release>/mickey-kras-hindsight-memory-router-coding-agents-<package-version>.tgz -- hindsight-coding-agents install
 ```
 
-Replace both paths. The package exposes `hindsight-coding-agents` as its installer command.
-The upstream harness hooks, plugin entrypoints, transcript readers, and background ingestion remain packaged.
-Install from this artifact; do not run upstream's `npx` installer over it.
+The repository currently publishes GitHub release tarballs; it does not claim that the scoped package is available from the npm registry. If registry publication is enabled later, the equivalent pinned command is `npx @mickey-kras/hindsight-memory-router-coding-agents@<package-version> install`.
+
+For a locally verified download, check the coding-agent tarball against the release's `PACKAGE_SHA256`, then run:
+
+```sh
+npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-coding-agents install
+```
+
+The operator sets `HINDSIGHT_ROUTER_CONFIG` to an absolute managed JSON path and provisions each principal's named token environment variable before installation. Run from a mapped project directory. Bare `install` selects `HINDSIGHT_MCP_HARNESS` when supplied, otherwise one unambiguous configured and detected harness (or the sole configured harness before first setup). Ambiguous identity fails closed; explicit `install codex`, another supported harness, or `install all` remains available.
+
+Every selected principal, credential, path mapping, current project and adapter prerequisite is checked before runtime staging or host changes. Missing or invalid provisioning prints one sanitized failure line and exits nonzero. No secret is prompted for or written to a harness configuration. `--api-url`, `--api-token` and `--server` are refused in both separate and inline forms. Human sign-in is unsupported pending Memory Router's managed authorization support (#477).
+
+Installation copies the runtime to a stable path, preserves the native hooks, plugins, companion skills and background ingestion, and restores the previous runtime, host files and native plugin registries if a mutation fails. The transaction snapshots only affected configuration, skills and plugin storage, excluding session history. Symlinked mutation paths are refused before changes. Reinstalling replaces this integration's entries and preserves other settings. `--import-conversations` is an explicit opt-in backfill of the current project's local history after installation commits.
 
 For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installing. The installer adds that variable,
 the `codex` principal's `tokenEnv` name, and optional coding-agent settings to MCP `env_vars`.
@@ -77,3 +89,32 @@ Other bank/config/page reads use an explicit assigned bank; mutations cannot tar
 Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back.
 Memory content is not reused from session caches; lifecycle flags remain cached. A denied token remains blocked until its value changes.
 
+
+### Optional branding and migration
+
+Set `toolPrefix` once at the top level of the operator-managed JSON named by
+`HINDSIGHT_ROUTER_CONFIG`. The default `hindsight_` retains the upstream names. For example,
+`"toolPrefix": "abc_"` produces `abc_reflect`, the `abc-coding-agent` companion skill, and an
+MCP registration/server identity named `abc`. `chatgpt_` and `memory_` work the same way.
+Prefixes are 2–32 lowercase ASCII letters, digits or underscores, begin with a letter and end
+with an underscore. Internal underscores become hyphens in the skill and registration name.
+There is no second brand/display-name setting.
+
+Branding covers the existing upstream eight-tool suite, native MCP and plugin registration,
+companion skill frontmatter/path/content, generated hooks and survey guidance, and visible
+memory banners. Package identities, configuration keys, credential environment variables,
+router principals, assigned banks and upstream attribution remain stable. The original upstream
+operations are `sync_status`, `diagnose`, `search_knowledge_pages`, `list_knowledge_pages`,
+`read_knowledge_page`, `reflect`, `capture_initiative` and `ingest_document` under the selected
+prefix. Custom standalone `memory_router_*` / `agent_knowledge_*` tools are retired; migrate
+callers and allowlists to these upstream operations and schemas rather than assuming aliases or
+argument compatibility.
+
+After changing `toolPrefix`, run the pinned installer again (or `update` for the selected harness)
+and restart existing sessions. The installer migrates only registrations whose command proves
+managed ownership and companion skills with the integration's prefix/provenance marker. It
+snapshots both old and new paths and rolls back the migration if any adapter fails. Unrelated
+skills and registrations survive; a collision at the desired name fails closed. Runtime sessions
+reject stale managed skill namespaces until explicit reinstall. Uninstall removes owned prior
+namespaces even if the operator has since changed the prefix. This never changes bank mapping,
+router authorization, credential sources or the behavior of the retained upstream operations.

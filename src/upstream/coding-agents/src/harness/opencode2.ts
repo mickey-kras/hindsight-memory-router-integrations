@@ -1,3 +1,5 @@
+import { toolBrand } from "@memory-router/shared/tool-prefix";
+import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
 /**
  * opencode2 (opencode v2) harness adapter — full parity with the v1 opencode plugin.
  *
@@ -77,7 +79,6 @@ const IDLE_EVENTS = new Set([
 
 /** The companion skill's directory name everywhere else (core/skill-dirs.ts), reused as the id and
  *  name this host registers it under so the two routes name the same skill. */
-const SKILL_ID = "hindsight-coding-agent";
 
 /** Structural subset of the v2 event envelope we act on. */
 interface Oc2Event {
@@ -130,13 +131,14 @@ function toOpencode2Tool(spec: ToolSpec) {
  * `ctx.skill` (or a host that rejects the draft) loses the skill, never the memory.
  */
 async function registerCompanionSkill(ctx: Opencode2Context, harness: string): Promise<void> {
-  const skill = readPackagedSkill();
+  const skill = readPackagedSkill(undefined, harness);
+  const skillId = toolBrand(managedToolPrefix(harness)).skillName;
   if (!skill) return;
   try {
     await ctx.skill.transform((draft) =>
-      draft.add({ id: SKILL_ID, name: SKILL_ID, ...skill } as never)
+      draft.add({ id: skillId, name: skillId, ...skill } as never)
     );
-    diag(harness, "skill_registered", { id: SKILL_ID });
+    diag(harness, "skill_registered", { id: skillId });
   } catch (e) {
     diag(harness, "skill_register_failed", { error: describeError(e) });
   }
@@ -225,7 +227,7 @@ export async function wireOpencode2Runtime(
  */
 export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
   return {
-    id: `hindsight-${harness}`,
+    id: `${toolBrand(managedToolPrefix(harness)).id}-${harness}`,
     async setup(ctx) {
       // v2 splits v1's single `{worktree, directory}` into a session cwd plus the project root;
       // `location.directory` is the worktree analogue, so it keeps precedence (and the same

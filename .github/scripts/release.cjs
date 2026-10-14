@@ -316,7 +316,7 @@ async function checkPackageReuse(github, repository, packages) {
 
 function packageAssets() {
   if (!existsSync("UPSTREAM_VERSION")) return [];
-  return ["package.json", "src/upstream/coding-agents/package.json", "src/mcp/package.json"].map((path) => {
+  return ["package.json", "src/upstream/coding-agents/package.json"].map((path) => {
     const pkg = readJson(path);
     requireValue(releaseTag.test(`v${pkg.version}`), `Invalid downstream version: ${path}`);
     const filename = `${pkg.name.replace(/^@/, "").replace("/", "-")}-${pkg.version}.tgz`;
@@ -497,7 +497,7 @@ async function validate({ github, context, core, target, read = (path) => readFi
   );
   requireValue(
     Array.isArray(manifest.packages) &&
-      manifest.packages.length === (context.repo.repo === "hindsight-memory-router-integrations" ? 3 : 0),
+      manifest.packages.length === (context.repo.repo === "hindsight-memory-router-integrations" ? 2 : 0),
     "Invalid release package inventory",
   );
   validatePin(manifest.hindsight);

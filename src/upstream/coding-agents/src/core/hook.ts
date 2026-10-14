@@ -1,3 +1,4 @@
+import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
 import { AccessDeniedError } from "@memory-router/shared/bank-access";
 import { harnessTransport } from "@memory-router/coding-agents/runtime";
 /**
@@ -108,7 +109,7 @@ async function injectPages(
     // How MANY pages come back is the client's `pageSearchLimit`, shared with the MCP tool.
     const hits = await client.searchKnowledgePages(prompt.slice(0, 500), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: hits.length });
-    if (hits.length) return formatPageFallback(hits, lead);
+    if (hits.length) return formatPageFallback(hits, lead, managedToolPrefix(harness));
   } catch (e) {
     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
   }
@@ -130,7 +131,7 @@ async function injectRecall(
     // What is asked for — types, token budget, everything — is the client's `recallOptions`.
     const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
-    if (observations.length) return formatRecallFallback(observations, lead);
+    if (observations.length) return formatRecallFallback(observations, lead, managedToolPrefix(harness));
   } catch (e) {
     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
   }
@@ -303,13 +304,13 @@ export async function buildHookOutput(args: {
   // ran. No cadence re-injection: replaying the turn-1 synthesis at arbitrary later turns reads
   // as random noise once the session drifts, and the agent holds hindsight_reflect for a FRESH
   // pass if compaction or drift makes it need memory again.
-  if (reflectAnswer && reflectRanThisTurn) blocks.push(buildSystemInjection(reflectAnswer));
+  if (reflectAnswer && reflectRanThisTurn) blocks.push(buildSystemInjection(reflectAnswer, cfg.toolPrefix));
   // Knowledge pages are NOT auto-injected: the agent pulls them through
   // hindsight_search_knowledge_pages when a question warrants it — an unprompted injection on
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
   if (cadence > 0 && turns % cadence === 0) {
-    blocks.push(buildRosterRefresh(pages, { reflectOnNewGoals: cfg.autoInject !== "reflect" }));
+    blocks.push(buildRosterRefresh(pages, { reflectOnNewGoals: cfg.autoInject !== "reflect", toolPrefix: cfg.toolPrefix }));
   }
   const kept = blocks.filter(Boolean);
 
@@ -329,14 +330,14 @@ export async function buildHookOutput(args: {
       cfg.autoInject === "reflect" ? reflectAnswer : reflectAnswer.split("\n").slice(1).join("\n");
     const preview = body.replaceAll(/\s+/g, " ").trim();
     notice =
-      `${brandWord()} · goal: recall this repo's past decisions about “${excerpt}”\n` +
+      `${brandWord(cfg.toolPrefix)} · goal: recall this repo's past decisions about “${excerpt}”\n` +
       `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;
   } else if (reflectFailed) {
     // The failure is already in the diag trail and plugin.log, but both are files nobody is
     // tailing mid-session, so a memory-less session looked exactly like a healthy one (#3443).
     // One terse line pointing at the trail — not an explanation, and not advice to the agent:
     // this fires at most once per session, on the turn reflect ran.
-    notice = `${brandWord()} · no memory this turn — see ${diagFilePath()}`;
+    notice = `${brandWord(cfg.toolPrefix)} · no memory this turn — see ${diagFilePath()}`;
   }
 
   return { context: kept.length ? kept.join("\n\n") : undefined, notice, pagesKnown: pages.length };
