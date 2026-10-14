@@ -105,12 +105,15 @@ export function buildMcpServer(tools: ToolSpec[], prefix = DEFAULT_TOOL_PREFIX):
   return server;
 }
 
+let startupPrefix = DEFAULT_TOOL_PREFIX;
+
 async function main() {
   const cwd = process.env.HINDSIGHT_MCP_PROJECT_CWD || process.cwd();
   // Mirrors that harness's hooks: it selects the config `harnesses.<name>` section and feeds the
   // `{harness}` bank template, so both routes into a repo land in ONE bank.
   const harness = resolveHarness();
   const memory = resolveHostMemory(harness, cwd);
+  startupPrefix = memory.cfg.toolPrefix ?? DEFAULT_TOOL_PREFIX;
   const tools = memory.disabled ? [] : selectTools(memory.cfg, memory.client, memory.bankId, { cwd, harness });
   const server = buildMcpServer(tools, memory.cfg.toolPrefix);
 
@@ -121,7 +124,7 @@ async function main() {
 // it (as src/mcp-server.test.ts does) must not start a real server.
 if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch((e) => {
-    console.error("hindsight mcp-server failed:", e);
+    console.error(`${toolBrand(startupPrefix).id} mcp-server failed:`, e);
     process.exit(1);
   });
 }

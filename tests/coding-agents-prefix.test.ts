@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { loadManagedConfig } from "../src/shared/managed-config.js";
 import { renderToolText } from "../src/shared/tool-prefix.js";
 import { loadConfig } from "../src/upstream/coding-agents/src/core/config";
+import { buildHookOutput } from "../src/upstream/coding-agents/src/core/hook";
 import { HindsightClient } from "../src/upstream/coding-agents/src/core/hindsight";
 import { buildSystemInjection, formatPageFallback } from "../src/upstream/coding-agents/src/core/inject";
 import { buildKnowledgePreamble, buildRosterRefresh } from "../src/upstream/coding-agents/src/core/knowledge-injection";
@@ -158,3 +160,78 @@ it.each([undefined, "team_"])(
     expect(() => opencodeAdapter.createRuntime(core)).toThrow("collision");
   },
 );
+
+it.each(["success", "failure"])("brands %s hook notices with the configured namespace", async (outcome) => {
+  const dir = config("team_");
+  const cfg = loadConfig({ harness: "codex" });
+  const client = {
+    reflect: async () => {
+      if (outcome === "failure") throw new Error("unavailable");
+      return "remembered decision";
+    },
+    listPages: async () => ({ items: [] }),
+    searchKnowledgePages: async () => [],
+    recallObservations: async () => [],
+  };
+  const result = await buildHookOutput({
+    harness: "codex",
+    prompt: "past decisions",
+    cfg,
+    client,
+    cacheFile: join(dir, "session.json"),
+  });
+  const notice = result.notice === undefined ? undefined : stripVTControlCharacters(result.notice);
+  expect(notice).toContain("team ·");
+  expect(notice).not.toContain("Hindsight");
+  expect(notice).toContain(outcome === "success" ? "remembered decision" : "no memory this turn");
+});
+
+it.each(["disabled", "unavailable"])("brands Dsh %s tool responses from the registered namespace", async (outcome) => {
+  const dir = config("abc_");
+  const workspace = join(dir, "workspace");
+  mkdirSync(workspace);
+  const path = process.env.HINDSIGHT_ROUTER_CONFIG;
+  if (!path) throw new Error("missing test managed config");
+  const managed = JSON.parse(readFileSync(path, "utf8"));
+  managed.principals.dsh = {
+    tokenEnv: "TEST_TOKEN",
+    writeBank: "private",
+    additionalReadBanks: ["shared"],
+    mapPathToBank: { [process.cwd()]: "private", [workspace]: "shared" },
+  };
+  writeFileSync(path, JSON.stringify(managed));
+  const normalPath = join(dir, "normal.json");
+  writeFileSync(normalPath, JSON.stringify({ banks: { shared: { disabled: outcome === "disabled" } } }));
+  vi.stubEnv("HINDSIGHT_CONFIG", normalPath);
+  vi.resetModules();
+  const dsh = await import("../src/upstream/coding-agents/src/dsh");
+  const { RuntimeCore: DshRuntimeCore } = await import("../src/upstream/coding-agents/src/core/runtime");
+  let execute:
+    | ((
+        args: Record<string, unknown>,
+        exec: { agent: { session: { header: { id: string; cwd: string } } } },
+      ) => Promise<string>)
+    | undefined;
+  dsh.apply({
+    on() {},
+    inject(_services, callback) {
+      callback({
+        tools: {
+          register(definition) {
+            if (definition.name === "abc_reflect") execute = definition.execute;
+          },
+          schemas: () => [],
+        },
+      });
+    },
+  });
+  if (!execute) throw new Error("missing branded Dsh tool");
+  if (outcome === "unavailable") vi.spyOn(DshRuntimeCore.prototype, "toolSpecs").mockReturnValue([]);
+  const message = await execute(
+    { query: "q" },
+    { agent: { session: { header: { id: "brand-test", cwd: workspace } } } },
+  );
+  expect(message).toBe(
+    outcome === "disabled" ? "abc memory is disabled for this workspace." : "abc tool abc_reflect is unavailable.",
+  );
+});

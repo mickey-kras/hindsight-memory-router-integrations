@@ -1346,7 +1346,10 @@ const grok: HarnessInstaller = {
     const path = join(c.home, ".grok", "config.toml");
     if (existsSync(path)) {
       const existing = readFileSync(path, "utf8");
-      const stripped = existing.replace(GROK_BLOCK_RE, "\n");
+      const withoutMarked = existing.replace(GROK_BLOCK_RE, "\n");
+      const stripped = parseGrokToml(withoutMarked) === null
+        ? withoutMarked
+        : stripOwnedMcpToml(withoutMarked, "grok-build");
       const cleaned = hasUnmarkedGrokEntries(stripped)
         ? stripUnmarkedGrokEntries(stripped)
         : stripped;
@@ -1958,7 +1961,9 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
   // Never parse or print user-supplied endpoint/credential values.
   if (args.some((arg) => /^--(?:api-url|api-token|server)(?:=|$)/.test(arg))) return fail();
   if (command === "stats") {
-    ctxIn.log?.(renderBrandText(formatUsageReport(readUsage()), toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).prefix));
+    let prefix: string | undefined;
+    try { prefix = process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined; } catch { prefix = undefined; }
+    ctxIn.log?.(renderBrandText(formatUsageReport(readUsage()), toolBrand(prefix).prefix));
     return 0;
   }
   if (!["install", "uninstall", "update"].includes(command)) {

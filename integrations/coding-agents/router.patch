@@ -7314,7 +7314,7 @@ index b972a3c..4d6a22a 100644
  
  /** Is `dir` the repo itself or somewhere inside it? */
 diff --git a/src/core/hook.ts b/src/core/hook.ts
-index bb42efd..0746e98 100644
+index bb42efd..a9451f4 100644
 --- a/src/core/hook.ts
 +++ b/src/core/hook.ts
 @@ -1,3 +1,6 @@
@@ -7374,7 +7374,7 @@ index bb42efd..0746e98 100644
    }
    const kept = blocks.filter(Boolean);
  
-@@ -318,12 +323,12 @@ export async function buildHookOutput(args: {
+@@ -318,21 +323,21 @@ export async function buildHookOutput(args: {
      // source answered and point at the diag file, but that read as an error on a turn that
      // worked; reflect_failed + reflect_fallback_* in the diag trail carry the details.
    } else if (reflectRanThisTurn && reflectAnswer) {
@@ -7387,8 +7387,19 @@ index bb42efd..0746e98 100644
 -    const preview = body.replace(/\s+/g, " ").trim();
 +    const preview = body.replaceAll(/\s+/g, " ").trim();
      notice =
-       `${brandWord()} · goal: recall this repo's past decisions about “${excerpt}”\n` +
+-      `${brandWord()} · goal: recall this repo's past decisions about “${excerpt}”\n` +
++      `${brandWord(cfg.toolPrefix)} · goal: recall this repo's past decisions about “${excerpt}”\n` +
        `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;
+   } else if (reflectFailed) {
+     // The failure is already in the diag trail and plugin.log, but both are files nobody is
+     // tailing mid-session, so a memory-less session looked exactly like a healthy one (#3443).
+     // One terse line pointing at the trail — not an explanation, and not advice to the agent:
+     // this fires at most once per session, on the turn reflect ran.
+-    notice = `${brandWord()} · no memory this turn — see ${diagFilePath()}`;
++    notice = `${brandWord(cfg.toolPrefix)} · no memory this turn — see ${diagFilePath()}`;
+   }
+ 
+   return { context: kept.length ? kept.join("\n\n") : undefined, notice, pagesKnown: pages.length };
 @@ -365,14 +370,6 @@ export async function runHook(
      return;
    }
@@ -8615,20 +8626,24 @@ index 9b45944..84bfde5 100644
        cursors: this.usageCursors,
        lastTurnComplete,
 diff --git a/src/core/seed.ts b/src/core/seed.ts
-index 96380ee..31504c3 100644
+index 96380ee..ca307d5 100644
 --- a/src/core/seed.ts
 +++ b/src/core/seed.ts
-@@ -8,7 +8,6 @@
+@@ -7,8 +7,8 @@
+  * Fail-safe throughout: state read/write never throws — a corrupt or unwritable state file must
   * not break the hook.
   */
++import { toolBrand } from "@memory-router/shared/tool-prefix";
  import { spawn as realSpawn } from "node:child_process";
 -import { readFileSync, writeFileSync } from "node:fs";
  import { dirname, join } from "node:path";
  import { fileURLToPath } from "node:url";
  
-@@ -67,11 +66,12 @@ export function seedControl(
+@@ -66,15 +66,17 @@ export function seedControl(
+   args: {
      repo: string;
      bankId: string;
++    toolPrefix?: string;
      limit?: number;
 +    harness?: string;
      spawn?: typeof realSpawn;
@@ -8639,7 +8654,11 @@ index 96380ee..31504c3 100644
 +    startBackgroundSeed(args.repo, { limit: args.limit, spawn: args.spawn, harness: args.harness });
      return {
        ok: true,
-       message: `🧠 Hindsight is learning this repo → memory bank “${args.bankId}”`,
+-      message: `🧠 Hindsight is learning this repo → memory bank “${args.bankId}”`,
++      message: `🧠 ${toolBrand(args.toolPrefix).displayName} is learning this repo → memory bank “${args.bankId}”`,
+     };
+   }
+   return { ok: false, message: "usage: hindsight-seed seed --repo <dir>" };
 diff --git a/src/core/session-cache.ts b/src/core/session-cache.ts
 index cfb3525..3682c2b 100644
 --- a/src/core/session-cache.ts
@@ -9800,10 +9819,26 @@ index c393112..d2b1632 100644
    });
  
 diff --git a/src/dsh.ts b/src/dsh.ts
-index c9ae594..5bcbdb1 100644
+index c9ae594..c8411e4 100644
 --- a/src/dsh.ts
 +++ b/src/dsh.ts
-@@ -160,8 +160,8 @@ function workspaceFor(root: string): Workspace | undefined {
+@@ -22,6 +22,7 @@
+  * builder (see `toDshParameters`). So there is no dsh package for pnpm to resolve inside a profile,
+  * and no version to keep in step — any dsh whose event names still match can load this file.
+  */
++import { toolBrand } from "@memory-router/shared/tool-prefix";
+ import { randomUUID } from "node:crypto";
+ import { resolveHostMemory } from "./core/host-client";
+ import { diag } from "./core/diag";
+@@ -115,6 +116,7 @@ interface DshToolRunContext {
+ export interface Workspace {
+   core: RuntimeCore;
+   root: string;
++  toolPrefix?: string;
+   /** Started by the first SESSION in this repo, then shared by every later one. */
+   seeded?: Promise<void>;
+   tools?: ToolSpec[];
+@@ -160,8 +162,8 @@ function workspaceFor(root: string): Workspace | undefined {
  
    // One shared builder for every long-lived host (core/host-client.ts): the global switch, the
    // per-bank opt-out and `optInOnly` all land in `cfg.disabled`.
@@ -9814,6 +9849,35 @@ index c9ae594..5bcbdb1 100644
      workspaces.set(root, null); // inert: same agent, no memory (baseline parity)
      return undefined;
    }
+@@ -176,7 +178,7 @@ function workspaceFor(root: string): Workspace | undefined {
+     // alpha.4+ removed Session.events; snapshotEvents() is the public accessor.
+     return agent ? readDshEvents(dshSessionEvents(agent.session)) : [];
+   });
+-  const workspace: Workspace = { core, root };
++  const workspace: Workspace = { core, root, toolPrefix: cfg.toolPrefix };
+   workspaces.set(root, workspace);
+   return workspace;
+ }
+@@ -359,6 +361,7 @@ function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
+   // opt-out) the tools are absent even for other repositories this process later serves.
+   const template = workspaceFor(fallbackRoot);
+   if (!template) return; // memory disabled where this process was launched
++  const brand = toolBrand(template.toolPrefix).displayName;
+   for (const spec of specsOf(template)) {
+     toolCtx.tools.register({
+       name: spec.name,
+@@ -371,9 +374,9 @@ function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
+       async execute(args: Record<string, unknown>, exec: DshToolRunContext): Promise<string> {
+         // Bind to the caller's repository, not to whichever workspace happened to load first.
+         const workspace = exec?.agent ? workspaceForAgent(exec.agent) : template;
+-        if (!workspace) return "Hindsight memory is disabled for this workspace.";
++        if (!workspace) return `${brand} memory is disabled for this workspace.`;
+         const bound = specsOf(workspace).find((candidate) => candidate.name === spec.name);
+-        if (!bound) return `Hindsight tool ${spec.name} is unavailable.`;
++        if (!bound) return `${brand} tool ${spec.name} is unavailable.`;
+         return runSpec(bound, args);
+       },
+     });
 diff --git a/src/e2e/harness.ts b/src/e2e/harness.ts
 index 12eb469..cac7f0c 100644
 --- a/src/e2e/harness.ts
@@ -10138,7 +10202,7 @@ index dcd6b90..0e48cbe 100644
      // Visible presence via the host's own notice API (POST /tui/show-toast) — never stderr, which
      // these TUIs render at the cursor, wedging text against the input bar.
 diff --git a/src/hindsight-seed.ts b/src/hindsight-seed.ts
-index d3e9f9c..0fc4996 100644
+index d3e9f9c..06cc2d9 100644
 --- a/src/hindsight-seed.ts
 +++ b/src/hindsight-seed.ts
 @@ -30,6 +30,6 @@ if (bankId === null) {
@@ -10146,7 +10210,7 @@ index d3e9f9c..0fc4996 100644
    process.exit(1);
  }
 -const result = seedControl(command, { repo, bankId });
-+const result = seedControl(command, { repo, bankId, harness: "claude-code" });
++const result = seedControl(command, { repo, bankId, harness: "claude-code", toolPrefix: cfg.toolPrefix });
  console.log(result.message);
  process.exit(result.ok ? 0 : 1);
 diff --git a/src/install-transaction.ts b/src/install-transaction.ts
@@ -10299,10 +10363,10 @@ index 8f2445d..1e4e2a2 100644
        } else if (o.command === "update") {
 diff --git a/src/installer-branding.test.ts b/src/installer-branding.test.ts
 new file mode 100644
-index 0000000..05f0c53
+index 0000000..3a8ff9c
 --- /dev/null
 +++ b/src/installer-branding.test.ts
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,265 @@
 +import { assertCompanionSkillPrefix } from "./core/skill-sync";
 +import { afterEach, beforeEach, expect, it, vi } from "vitest";
 +import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -10540,7 +10604,7 @@ index 0000000..05f0c53
 +    expect(process.env.HINDSIGHT_ROUTER_CONFIG).toBe(routerPath);
 +  },
 +);
-+it.each(["missing", "malformed"])("keeps install/update/stats fail closed with %s operator config", problem => {
++it.each(["missing", "malformed"])("keeps install/update strict and local stats available with %s operator config", problem => {
 +  provision("abc_");
 +  expect(run(["install", "cursor-cli"], ctx)).toBe(0);
 +  const hostPath = join(ctx.home, ".cursor/mcp.json");
@@ -10549,8 +10613,24 @@ index 0000000..05f0c53
 +  if (problem === "missing") rmSync(routerPath); else put(routerPath, "{malformed");
 +  expect(run(["install", "cursor-cli"], ctx)).toBe(1);
 +  expect(run(["update", "cursor-cli"], ctx)).toBe(1);
-+  expect(() => run(["stats"], { ...ctx, log: vi.fn() })).toThrow();
++  const log = vi.fn();
++  expect(run(["stats"], { ...ctx, log })).toBe(0);
++  expect(log).toHaveBeenCalledOnce();
++  expect(log.mock.calls[0][0]).toContain("Hindsight");
++  expect(log.mock.calls[0][0]).not.toContain("abc");
 +  expect(readFileSync(hostPath, "utf8")).toBe(before);
++});
++
++it.each(["hindsight", "abc"])("uninstalls unmarked Grok owned registration %s without removing foreign tables", name => {
++  provision("memory_");
++  const path = join(ctx.home, ".grok/config.toml");
++  const foreign = '[mcp_servers.foreign]\ncommand = "foreign"\nargs = ["other-server.js"]\n';
++  const owned = `[mcp_servers.${name}]\ncommand = "node"\nargs = ${JSON.stringify([join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")])}\nenv = { HINDSIGHT_MCP_HARNESS = "grok-build" }\n`;
++  put(path, owned + "\n" + foreign);
++  expect(run(["uninstall", "grok-build"], ctx)).toBe(0);
++  const kept = readFileSync(path, "utf8");
++  expect(kept).toContain(foreign);
++  expect(Object.keys(parseToml(kept).mcp_servers as object)).toEqual(["foreign"]);
 +});
 diff --git a/src/installer-managed.test.ts b/src/installer-managed.test.ts
 new file mode 100644
@@ -10863,7 +10943,7 @@ index 80d85af..01b0184 100644
    });
  });
 diff --git a/src/installer.ts b/src/installer.ts
-index f6e1e1e..db92224 100644
+index f6e1e1e..dbf015f 100644
 --- a/src/installer.ts
 +++ b/src/installer.ts
 @@ -1,10 +1,10 @@
@@ -11701,7 +11781,19 @@ index f6e1e1e..db92224 100644
        `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
      const next = `${withoutOurs.replace(/\n*$/, "\n")}${block}`;
      // Never hand Grok a config it cannot parse: one bad table takes down every MCP server it has.
-@@ -1413,7 +1362,7 @@ const grok: HarnessInstaller = {
+@@ -1397,7 +1346,10 @@ const grok: HarnessInstaller = {
+     const path = join(c.home, ".grok", "config.toml");
+     if (existsSync(path)) {
+       const existing = readFileSync(path, "utf8");
+-      const stripped = existing.replace(GROK_BLOCK_RE, "\n");
++      const withoutMarked = existing.replace(GROK_BLOCK_RE, "\n");
++      const stripped = parseGrokToml(withoutMarked) === null
++        ? withoutMarked
++        : stripOwnedMcpToml(withoutMarked, "grok-build");
+       const cleaned = hasUnmarkedGrokEntries(stripped)
+         ? stripUnmarkedGrokEntries(stripped)
+         : stripped;
+@@ -1413,7 +1365,7 @@ const grok: HarnessInstaller = {
  
  const CLINE_HOOK_MARKER = "HINDSIGHT_CODING_AGENTS_CLINE";
  const CLINE_OLD_HOOK_EVENTS = ["TaskStart", "UserPromptSubmit", "TaskComplete"];
@@ -11710,7 +11802,7 @@ index f6e1e1e..db92224 100644
  
  /** Remove only wrappers from the short-lived file-hook implementation. Cline file hooks cannot
   * mutate a prompt; keeping them would falsely imply that old installs still inject memory. */
-@@ -1442,7 +1391,7 @@ const cline: HarnessInstaller = {
+@@ -1442,7 +1394,7 @@ const cline: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11719,7 +11811,7 @@ index f6e1e1e..db92224 100644
      };
      writeJson(mcpPath, mcp);
      installSkill(c, "cline-cli");
-@@ -1451,6 +1400,7 @@ const cline: HarnessInstaller = {
+@@ -1451,6 +1403,7 @@ const cline: HarnessInstaller = {
          ? "cline-cli: native plugin + MCP + skill installed"
          : `cline-cli: MCP + skill installed; run: cline plugin install --force "${c.pkgRoot}"`
      );
@@ -11727,7 +11819,7 @@ index f6e1e1e..db92224 100644
    },
    uninstall(c) {
      removeLegacyClineHooks(c);
-@@ -1460,8 +1410,7 @@ const cline: HarnessInstaller = {
+@@ -1460,8 +1413,7 @@ const cline: HarnessInstaller = {
      const mcpPath = join(c.home, ".cline", "data", "settings", "cline_mcp_settings.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -11737,7 +11829,7 @@ index f6e1e1e..db92224 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1602,7 +1551,7 @@ function dshHome(c: InstallCtx): string {
+@@ -1602,7 +1554,7 @@ function dshHome(c: InstallCtx): string {
   * DeepSeek Harness — a native Cordis plugin, wired through the HOME-level patch layer
   * (`$DSH_HOME/cordis.patch.yml`), which every profile composes after its bundles.
   *
@@ -11746,7 +11838,7 @@ index f6e1e1e..db92224 100644
   * pnpm-installs the package into ONE profile and picks up the `dsh.bundle.patch` this package
   * ships. That is the right route for a published install and is what the docs recommend, but it
   * needs pnpm, a network, and a repeat per profile — so the installer takes the path that always
-@@ -1625,7 +1574,7 @@ const dsh: HarnessInstaller = {
+@@ -1625,7 +1577,7 @@ const dsh: HarnessInstaller = {
      const block =
        `${DSH_MARKER_START}\n` +
        `- insert:\n` +
@@ -11755,7 +11847,7 @@ index f6e1e1e..db92224 100644
        `      name: ${JSON.stringify(entry)}\n` +
        `${DSH_MARKER_END}\n`;
      if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
-@@ -1670,7 +1619,7 @@ const qwen: HarnessInstaller = {
+@@ -1670,7 +1622,7 @@ const qwen: HarnessInstaller = {
      const mcp = c.qwenMcp ?? defaultQwenMcp;
      // Same rationale as claude-code: `qwen mcp add` refuses a name that already exists, so a
      // re-install could never repoint a stale server. Remove first (a no-op when absent).
@@ -11764,7 +11856,7 @@ index f6e1e1e..db92224 100644
      if (
        mcp([
          "mcp",
-@@ -1679,17 +1628,19 @@ const qwen: HarnessInstaller = {
+@@ -1679,17 +1631,19 @@ const qwen: HarnessInstaller = {
          "user",
          "-e",
          "HINDSIGHT_MCP_HARNESS=qwen-code",
@@ -11786,7 +11878,7 @@ index f6e1e1e..db92224 100644
      }
    },
    uninstall(c) {
-@@ -1703,7 +1654,7 @@ const qwen: HarnessInstaller = {
+@@ -1703,7 +1657,7 @@ const qwen: HarnessInstaller = {
        }
      }
      const mcp = c.qwenMcp ?? defaultQwenMcp;
@@ -11795,7 +11887,7 @@ index f6e1e1e..db92224 100644
      uninstallSkill(c, "qwen-code");
      c.log?.("qwen-code: hooks + MCP registration + skill removed");
    },
-@@ -1736,10 +1687,10 @@ const factoryDroid: HarnessInstaller = {
+@@ -1736,10 +1690,10 @@ const factoryDroid: HarnessInstaller = {
    detect: (c) => onPath("droid") || existsSync(join(c.home, ".factory")),
    preflight(c) {
      const mcpPath = join(c.home, ".factory", "mcp.json");
@@ -11808,7 +11900,7 @@ index f6e1e1e..db92224 100644
          "Rename or remove that entry, then re-run install."
        );
      }
-@@ -1763,7 +1714,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1763,7 +1717,7 @@ const factoryDroid: HarnessInstaller = {
      const mcpPath = join(c.home, ".factory", "mcp.json");
      const mcp = readJson(mcpPath);
      mcp.mcpServers = mcp.mcpServers ?? {};
@@ -11817,7 +11909,7 @@ index f6e1e1e..db92224 100644
      writeJson(mcpPath, mcp);
      c.log?.(`factory-droid: MCP server registered in ${mcpPath}`);
    },
-@@ -1778,8 +1729,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1778,8 +1732,7 @@ const factoryDroid: HarnessInstaller = {
      const mcpPath = join(c.home, ".factory", "mcp.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -11827,7 +11919,7 @@ index f6e1e1e..db92224 100644
          if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
          else rmSync(mcpPath);
        }
-@@ -1805,7 +1755,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1805,7 +1758,7 @@ const factoryDroid: HarnessInstaller = {
   *
   * MCP and the companion skill land in the same config/home, so ZCode gets the full surface:
   *
@@ -11836,7 +11928,7 @@ index f6e1e1e..db92224 100644
   *   `HINDSIGHT_MCP_HARNESS=zcode`. ZCode's schema is `{type, command, args?, cwd?, env?}` and its
   *   loader infers `type: "stdio"` from a `command`, so the shared `mcpServerEntry` drops straight
   *   in. A same-named foreign server blocks install instead of being overwritten.
-@@ -1820,10 +1770,10 @@ const zcode: HarnessInstaller = {
+@@ -1820,10 +1773,10 @@ const zcode: HarnessInstaller = {
    detect: (c) => onPath("zcode") || existsSync(join(c.home, ".zcode")),
    preflight(c) {
      const configPath = zcodeConfigPath(c);
@@ -11849,7 +11941,7 @@ index f6e1e1e..db92224 100644
          "Rename or remove that entry, then re-run install."
        );
      }
-@@ -1838,7 +1788,7 @@ const zcode: HarnessInstaller = {
+@@ -1838,7 +1791,7 @@ const zcode: HarnessInstaller = {
      mergeHarnessHooks(hooks.events, "zcode", c.dist);
      config.mcp = config.mcp ?? {};
      config.mcp.servers = config.mcp.servers ?? {};
@@ -11858,7 +11950,7 @@ index f6e1e1e..db92224 100644
      writeJson(configPath, config);
      c.log?.(`zcode: hooks + MCP server merged into ${configPath}`);
      installSkill(c, "zcode");
-@@ -1847,8 +1797,7 @@ const zcode: HarnessInstaller = {
+@@ -1847,8 +1800,7 @@ const zcode: HarnessInstaller = {
      const configPath = zcodeConfigPath(c);
      if (existsSync(configPath)) {
        const config = readJson(configPath);
@@ -11868,7 +11960,7 @@ index f6e1e1e..db92224 100644
          if (!Object.keys(config.mcp.servers).length) delete config.mcp;
        }
        const hooks = config.hooks;
-@@ -1903,7 +1852,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
+@@ -1903,7 +1855,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
   */
  function importConversations(harness: string, ctx: InstallCtx): void {
    const repo = process.cwd();
@@ -11877,7 +11969,7 @@ index f6e1e1e..db92224 100644
    if (!found.supported) {
      ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
      return;
-@@ -1927,141 +1876,181 @@ function importConversations(harness: string, ctx: InstallCtx): void {
+@@ -1927,141 +1879,183 @@ function importConversations(harness: string, ctx: InstallCtx): void {
        `this runs extraction and may take a while`
    );
    try {
@@ -11977,7 +12069,9 @@ index f6e1e1e..db92224 100644
 +  if (args.some((arg) => /^--(?:api-url|api-token|server)(?:=|$)/.test(arg))) return fail();
    if (command === "stats") {
 -    ctx.log?.(formatUsageReport(readUsage()));
-+    ctxIn.log?.(renderBrandText(formatUsageReport(readUsage()), toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).prefix));
++    let prefix: string | undefined;
++    try { prefix = process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined; } catch { prefix = undefined; }
++    ctxIn.log?.(renderBrandText(formatUsageReport(readUsage()), toolBrand(prefix).prefix));
      return 0;
    }
 -  // Everything we write into a host's config is an ABSOLUTE path into this package. Run straight
@@ -12173,7 +12267,7 @@ index f6e1e1e..db92224 100644
    return 0;
  }
  
-@@ -2093,11 +2082,15 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2093,11 +2087,15 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      command: process.argv[2],
      version,
      harnessNames: INSTALLERS.map((i) => i.name),
@@ -12190,7 +12284,7 @@ index f6e1e1e..db92224 100644
    const code = run(process.argv.slice(2), {
      home: homedir(),
      pkgRoot,
-@@ -2106,11 +2099,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2106,11 +2104,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      // tty.isatty, NOT process.stdin.isTTY: the process.stdin getter initializes the stdin TTY
      // stream, which puts fd 0 in non-blocking mode and breaks readLineSync (see there).
      interactive: Boolean(isatty(0) && isatty(1)),
@@ -12233,7 +12327,7 @@ index c1cabed..bb9c512 100644
    });
  
 diff --git a/src/mcp-server.ts b/src/mcp-server.ts
-index 1917baf..0e68f9b 100644
+index 1917baf..76aa564 100644
 --- a/src/mcp-server.ts
 +++ b/src/mcp-server.ts
 @@ -9,6 +9,7 @@
@@ -12274,7 +12368,14 @@ index 1917baf..0e68f9b 100644
    if (tools.length === 0) {
      server.server.registerCapabilities({ tools: { listChanged: false } });
      server.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
-@@ -106,9 +110,9 @@ async function main() {
+@@ -101,14 +105,17 @@ export function buildMcpServer(tools: ToolSpec[]): McpServer {
+   return server;
+ }
+ 
++let startupPrefix = DEFAULT_TOOL_PREFIX;
++
+ async function main() {
+   const cwd = process.env.HINDSIGHT_MCP_PROJECT_CWD || process.cwd();
    // Mirrors that harness's hooks: it selects the config `harnesses.<name>` section and feeds the
    // `{harness}` bank template, so both routes into a repo land in ONE bank.
    const harness = resolveHarness();
@@ -12282,10 +12383,20 @@ index 1917baf..0e68f9b 100644
 -
 -  const server = buildMcpServer(selectTools(cfg, client, bankId, { cwd, harness }));
 +  const memory = resolveHostMemory(harness, cwd);
++  startupPrefix = memory.cfg.toolPrefix ?? DEFAULT_TOOL_PREFIX;
 +  const tools = memory.disabled ? [] : selectTools(memory.cfg, memory.client, memory.bankId, { cwd, harness });
 +  const server = buildMcpServer(tools, memory.cfg.toolPrefix);
  
    await server.connect(new StdioServerTransport());
+ }
+@@ -117,7 +124,7 @@ async function main() {
+ // it (as src/mcp-server.test.ts does) must not start a real server.
+ if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
+   main().catch((e) => {
+-    console.error("hindsight mcp-server failed:", e);
++    console.error(`${toolBrand(startupPrefix).id} mcp-server failed:`, e);
+     process.exit(1);
+   });
  }
 diff --git a/src/status.ts b/src/status.ts
 index 48f7002..fccfc5d 100644

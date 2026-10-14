@@ -30,6 +30,6 @@ if (bankId === null) {
   );
   process.exit(1);
 }
-const result = seedControl(command, { repo, bankId, harness: "claude-code" });
+const result = seedControl(command, { repo, bankId, harness: "claude-code", toolPrefix: cfg.toolPrefix });
 console.log(result.message);
 process.exit(result.ok ? 0 : 1);

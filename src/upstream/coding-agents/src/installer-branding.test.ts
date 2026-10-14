@@ -235,7 +235,7 @@ it.each([undefined, "abc_"].flatMap(prefix => ["missing", "malformed"].map(probl
     expect(process.env.HINDSIGHT_ROUTER_CONFIG).toBe(routerPath);
   },
 );
-it.each(["missing", "malformed"])("keeps install/update/stats fail closed with %s operator config", problem => {
+it.each(["missing", "malformed"])("keeps install/update strict and local stats available with %s operator config", problem => {
   provision("abc_");
   expect(run(["install", "cursor-cli"], ctx)).toBe(0);
   const hostPath = join(ctx.home, ".cursor/mcp.json");
@@ -244,6 +244,22 @@ it.each(["missing", "malformed"])("keeps install/update/stats fail closed with %
   if (problem === "missing") rmSync(routerPath); else put(routerPath, "{malformed");
   expect(run(["install", "cursor-cli"], ctx)).toBe(1);
   expect(run(["update", "cursor-cli"], ctx)).toBe(1);
-  expect(() => run(["stats"], { ...ctx, log: vi.fn() })).toThrow();
+  const log = vi.fn();
+  expect(run(["stats"], { ...ctx, log })).toBe(0);
+  expect(log).toHaveBeenCalledOnce();
+  expect(log.mock.calls[0][0]).toContain("Hindsight");
+  expect(log.mock.calls[0][0]).not.toContain("abc");
   expect(readFileSync(hostPath, "utf8")).toBe(before);
+});
+
+it.each(["hindsight", "abc"])("uninstalls unmarked Grok owned registration %s without removing foreign tables", name => {
+  provision("memory_");
+  const path = join(ctx.home, ".grok/config.toml");
+  const foreign = '[mcp_servers.foreign]\ncommand = "foreign"\nargs = ["other-server.js"]\n';
+  const owned = `[mcp_servers.${name}]\ncommand = "node"\nargs = ${JSON.stringify([join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")])}\nenv = { HINDSIGHT_MCP_HARNESS = "grok-build" }\n`;
+  put(path, owned + "\n" + foreign);
+  expect(run(["uninstall", "grok-build"], ctx)).toBe(0);
+  const kept = readFileSync(path, "utf8");
+  expect(kept).toContain(foreign);
+  expect(Object.keys(parseToml(kept).mcp_servers as object)).toEqual(["foreign"]);
 });

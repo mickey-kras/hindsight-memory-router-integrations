@@ -22,6 +22,7 @@
  * builder (see `toDshParameters`). So there is no dsh package for pnpm to resolve inside a profile,
  * and no version to keep in step — any dsh whose event names still match can load this file.
  */
+import { toolBrand } from "@memory-router/shared/tool-prefix";
 import { randomUUID } from "node:crypto";
 import { resolveHostMemory } from "./core/host-client";
 import { diag } from "./core/diag";
@@ -115,6 +116,7 @@ interface DshToolRunContext {
 export interface Workspace {
   core: RuntimeCore;
   root: string;
+  toolPrefix?: string;
   /** Started by the first SESSION in this repo, then shared by every later one. */
   seeded?: Promise<void>;
   tools?: ToolSpec[];
@@ -176,7 +178,7 @@ function workspaceFor(root: string): Workspace | undefined {
     // alpha.4+ removed Session.events; snapshotEvents() is the public accessor.
     return agent ? readDshEvents(dshSessionEvents(agent.session)) : [];
   });
-  const workspace: Workspace = { core, root };
+  const workspace: Workspace = { core, root, toolPrefix: cfg.toolPrefix };
   workspaces.set(root, workspace);
   return workspace;
 }
@@ -359,6 +361,7 @@ function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
   // opt-out) the tools are absent even for other repositories this process later serves.
   const template = workspaceFor(fallbackRoot);
   if (!template) return; // memory disabled where this process was launched
+  const brand = toolBrand(template.toolPrefix).displayName;
   for (const spec of specsOf(template)) {
     toolCtx.tools.register({
       name: spec.name,
@@ -371,9 +374,9 @@ function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
       async execute(args: Record<string, unknown>, exec: DshToolRunContext): Promise<string> {
         // Bind to the caller's repository, not to whichever workspace happened to load first.
         const workspace = exec?.agent ? workspaceForAgent(exec.agent) : template;
-        if (!workspace) return "Hindsight memory is disabled for this workspace.";
+        if (!workspace) return `${brand} memory is disabled for this workspace.`;
         const bound = specsOf(workspace).find((candidate) => candidate.name === spec.name);
-        if (!bound) return `Hindsight tool ${spec.name} is unavailable.`;
+        if (!bound) return `${brand} tool ${spec.name} is unavailable.`;
         return runSpec(bound, args);
       },
     });

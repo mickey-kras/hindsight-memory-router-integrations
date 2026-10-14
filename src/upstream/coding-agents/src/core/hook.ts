@@ -330,14 +330,14 @@ export async function buildHookOutput(args: {
       cfg.autoInject === "reflect" ? reflectAnswer : reflectAnswer.split("\n").slice(1).join("\n");
     const preview = body.replaceAll(/\s+/g, " ").trim();
     notice =
-      `${brandWord()} · goal: recall this repo's past decisions about “${excerpt}”\n` +
+      `${brandWord(cfg.toolPrefix)} · goal: recall this repo's past decisions about “${excerpt}”\n` +
       `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;
   } else if (reflectFailed) {
     // The failure is already in the diag trail and plugin.log, but both are files nobody is
     // tailing mid-session, so a memory-less session looked exactly like a healthy one (#3443).
     // One terse line pointing at the trail — not an explanation, and not advice to the agent:
     // this fires at most once per session, on the turn reflect ran.
-    notice = `${brandWord()} · no memory this turn — see ${diagFilePath()}`;
+    notice = `${brandWord(cfg.toolPrefix)} · no memory this turn — see ${diagFilePath()}`;
   }
 
   return { context: kept.length ? kept.join("\n\n") : undefined, notice, pagesKnown: pages.length };

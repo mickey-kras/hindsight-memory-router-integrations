@@ -65,7 +65,9 @@
   "exports": {
     ".": {
       "types": "./dist/plugin.d.ts",
-      "import": "./dist/plugin.js"
+      "import": "./dist/plugin.js",
+      "require": "./dist/plugin.js",
+      "default": "./dist/plugin.js"
     },
     "./hosted": {
       "types": "./dist/shared/hosted-client.d.ts",

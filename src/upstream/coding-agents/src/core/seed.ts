@@ -7,6 +7,7 @@
  * Fail-safe throughout: state read/write never throws — a corrupt or unwritable state file must
  * not break the hook.
  */
+import { toolBrand } from "@memory-router/shared/tool-prefix";
 import { spawn as realSpawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,6 +66,7 @@ export function seedControl(
   args: {
     repo: string;
     bankId: string;
+    toolPrefix?: string;
     limit?: number;
     harness?: string;
     spawn?: typeof realSpawn;
@@ -74,7 +76,7 @@ export function seedControl(
     startBackgroundSeed(args.repo, { limit: args.limit, spawn: args.spawn, harness: args.harness });
     return {
       ok: true,
-      message: `🧠 Hindsight is learning this repo → memory bank “${args.bankId}”`,
+      message: `🧠 ${toolBrand(args.toolPrefix).displayName} is learning this repo → memory bank “${args.bankId}”`,
     };
   }
   return { ok: false, message: "usage: hindsight-seed seed --repo <dir>" };

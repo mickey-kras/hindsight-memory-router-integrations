@@ -838,3 +838,53 @@ it("passes the selected harness to conversation import and its retry command", (
   expect(JSON.parse(readFileSync(input, "utf8"))).toHaveLength(1);
   expect(log.mock.calls.map(([line]) => line).join("\n")).toContain('--harness "codex"');
 });
+
+it.each([undefined, "abc_"])("brands the packaged manual seed CLI for %s", (prefix) => {
+  const dir = setup();
+  const configPath = process.env.HINDSIGHT_ROUTER_CONFIG;
+  if (!configPath) throw new Error("missing test managed config");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  config.principals["claude-code"].mapPathToBank[dir] = "A";
+  writeFileSync(configPath, JSON.stringify({ ...config, toolPrefix: prefix }));
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+  const seedPath = join(dir, "package/dist/hindsight-seed.js");
+  const script = `
+    const child = require("node:child_process");
+    child.spawn = () => ({ on() {}, unref() {} });
+    require("node:module").syncBuiltinESMExports();
+    process.argv = [process.execPath, ${JSON.stringify(seedPath)}, "seed", "--repo", ${JSON.stringify(dir)}];
+    import(${JSON.stringify(seedPath)});
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {
+    env: { ...process.env, HOME: dir },
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 10000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain(`${prefix ? "abc" : "Hindsight"} is learning this repo`);
+  if (prefix) expect(result.stdout).not.toContain("Hindsight");
+});
+it.each([undefined, "abc_"])("brands MCP startup failure after configuration initializes for %s", (prefix) => {
+  const dir = setup();
+  const configPath = process.env.HINDSIGHT_ROUTER_CONFIG;
+  if (!configPath) throw new Error("missing test managed config");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  writeFileSync(configPath, JSON.stringify({ ...config, toolPrefix: prefix }));
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+  const serverPath = join(dir, "package/dist/mcp-server.js");
+  const script = `
+    process.stdin.on = () => { throw new Error("startup test failure"); };
+    process.argv[1] = ${JSON.stringify(serverPath)};
+    import(${JSON.stringify(serverPath)});
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {
+    env: { ...process.env, HOME: dir, HINDSIGHT_MCP_HARNESS: "codex", HINDSIGHT_DISABLED: "1" },
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 10000,
+  });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain(`${prefix ? "abc" : "hindsight"} mcp-server failed:`);
+  expect(result.stderr).toContain("startup test failure");
+});
