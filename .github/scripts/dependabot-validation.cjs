@@ -6,6 +6,78 @@ const { dependencyCommits } = require("./dependabot-preparation.cjs");
 const { DOCKERFILE } = require("./docker-provenance.cjs");
 const { CODING, INPUTS, generatedPaths } = require("./dependency-files.cjs");
 
+const VALIDATION_JOBS = [
+  "guard",
+  "quality / checks",
+  "quality / release combination",
+  "aislop / aislop status",
+  "codeql / analyze",
+  "branch-policy / branch name",
+  "dependabot-policy / policy-tests",
+];
+
+async function latestValidation(github, repo, pull) {
+  const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+    ...repo,
+    workflow_id: "pr-validation.yml",
+    branch: pull.head.ref,
+    head_sha: pull.head.sha,
+    per_page: 100,
+  });
+  const applicable = runs.filter(
+    (run) =>
+      run.head_sha === pull.head.sha &&
+      run.head_branch === pull.head.ref &&
+      ["pull_request", "workflow_dispatch"].includes(run.event),
+  );
+  if (applicable.some((run) => run.status !== "completed" || !Number.isFinite(Date.parse(run.run_started_at)))) {
+    return undefined;
+  }
+  // Reruns retain their run ID; order attempts by start, not completion time.
+  applicable.sort((a, b) => Date.parse(b.run_started_at) - Date.parse(a.run_started_at));
+  if (applicable.length > 1 && Date.parse(applicable[0].run_started_at) === Date.parse(applicable[1].run_started_at)) {
+    return { ambiguous: true };
+  }
+  return applicable[0];
+}
+
+async function validationEligibility(github, context, pull) {
+  const run = await latestValidation(github, context.repo, pull);
+  if (run?.ambiguous) {
+    return "Latest PR validation executions have tied start timestamps; run validation again before auto-merge";
+  }
+  if (run?.status !== "completed" || run.conclusion !== "success") {
+    return "Waiting for successful PR validation at the current head";
+  }
+  // A successful workflow can contain a failed advisory combination job.
+  // GitHub's latest filter excludes jobs superseded by a rerun.
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo,
+    run_id: run.id,
+    filter: "latest",
+    per_page: 100,
+  });
+  if (
+    VALIDATION_JOBS.some((name) => jobs.filter((job) => job.name === name).length !== 1) ||
+    jobs.some((job) => job.status !== "completed" || job.conclusion !== "success")
+  ) {
+    return "Every PR validation job must pass, including release combination and policy tests";
+  }
+  const current = await latestValidation(github, context.repo, pull);
+  if (
+    !current ||
+    current.id !== run.id ||
+    current.run_attempt !== run.run_attempt ||
+    current.run_started_at !== run.run_started_at ||
+    current.updated_at !== run.updated_at ||
+    current.status !== "completed" ||
+    current.conclusion !== "success"
+  ) {
+    return "PR validation changed during evaluation; retry on the next refresh";
+  }
+  return null;
+}
+
 async function readFile(github, repo, path, ref) {
   const { data } = await github.rest.repos.getContent({ ...repo, path, ref });
   if (data.type !== "file" || data.encoding !== "base64") throw new Error(`Not a regular file: ${path}`);
@@ -121,4 +193,4 @@ async function requestValidation(github, context, pull, core) {
   core.info(`#${current.number}: requested PR validation including guard at ${current.head.sha}`);
 }
 
-module.exports = { requestValidation, runPolicy, runDispatchedPolicy };
+module.exports = { requestValidation, runPolicy, runDispatchedPolicy, validationEligibility };

@@ -232,8 +232,22 @@ async function run({
         core.info(`#${pull.number}: ${reason}`);
         continue;
       }
+      const validationReason = await require("./dependabot-validation.cjs").validationEligibility(
+        github,
+        context,
+        pull,
+      );
+      if (validationReason) {
+        core.info(`#${pull.number}: ${validationReason}`);
+        continue;
+      }
       const { data: current } = await github.rest.pulls.get(params);
-      if (!trustedPull(current, repository, branch) || current.head.sha !== pull.head.sha) {
+      if (
+        !trustedPull(current, repository, branch) ||
+        current.head.sha !== pull.head.sha ||
+        current.base.sha !== pull.base.sha ||
+        !(await isCurrent(github, context.repo, current))
+      ) {
         core.info(`#${pull.number}: changed during evaluation; retry on the next event or refresh`);
         continue;
       }
