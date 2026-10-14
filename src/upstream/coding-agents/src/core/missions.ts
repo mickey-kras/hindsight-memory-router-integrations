@@ -20,7 +20,7 @@ export const GIT_MISSION =
 
 export const GITLOG_MISSION =
   "You are ingesting an aggregated block of git commit MESSAGES ONLY (no diffs) — the project's " +
-  "recent commit-message history, newest first. Extract the project's INITIATIVES, FEATURES, " +
+  "recent commit-message history, oldest first. Extract the project's INITIATIVES, FEATURES, " +
   "ENHANCEMENTS, and notable changes or THEMES over time — what the project has been working on and " +
   "how it has evolved. Do NOT extract per-line code detail (there is no diff to draw it from). Group " +
   "related commits into a coherent initiative/theme where the messages make that clear; preserve exact " +
@@ -70,13 +70,21 @@ export const OBSERVATIONS_MISSION =
   "than creating a sibling alongside it; note that the rule was revised and when, so the superseded " +
   "version is visible as history rather than as a competing claim.";
 
+/** Extraction modes the plugin can run its own strategies under (`custom` needs instructions the
+ *  plugin does not have, so it is not offered). */
+export const RETAIN_EXTRACTION_MODES = ["concise", "verbose", "verbatim", "chunks"] as const;
+export type RetainExtractionMode = (typeof RETAIN_EXTRACTION_MODES)[number];
+/** `concise`, not `verbose`: every Stop writes the session back, so the mode is paid per turn, and
+ *  verbose made one active Claude Code session cost ~$150/hr on Cloud (#4560). */
+export const DEFAULT_RETAIN_EXTRACTION_MODE: RetainExtractionMode = "concise";
+
 export const RETAIN_STRATEGIES = {
-  git: { retain_mission: GIT_MISSION, retain_extraction_mode: "verbose" },
+  git: { retain_mission: GIT_MISSION, retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE },
   // ONE big aggregated document (last N commit messages, no diffs) -> a larger chunk size so it stays
   // in as few chunks as possible and the extractor sees the whole history arc at once.
   gitlog: {
     retain_mission: GITLOG_MISSION,
-    retain_extraction_mode: "verbose",
+    retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_chunk_size: 12000,
   },
   // ONE strategy for ALL developer conversations — backfilled decision chats and live working
@@ -87,15 +95,15 @@ export const RETAIN_STRATEGIES = {
   // the consolidation layer.
   conversation: {
     retain_mission: CONVERSATION_MISSION,
-    retain_extraction_mode: "verbose",
+    retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_chunk_size: 12000,
   },
   // Structural documents (e.g. the codebase survey's ingested findings) aren't dialogue — the
-  // chat strategy's "final decision vs rejected proposal" extraction doesn't apply. Verbose mode
-  // with a bigger chunk size (documents can run long) captures the concrete facts/structure instead.
+  // chat strategy's "final decision vs rejected proposal" extraction doesn't apply. A bigger chunk
+  // size (documents can run long) keeps the concrete facts/structure together instead.
   document: {
     retain_mission: DOCUMENT_MISSION,
-    retain_extraction_mode: "verbose",
+    retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_chunk_size: 12000,
   },
   // Codebase-SURVEY lifecycle documents, ONE strategy with conditional rules: the survey's
@@ -199,10 +207,13 @@ export interface KnowledgePage {
  * The subject-scoping clause every page this plugin creates carries, naming the subject it is
  * about — the seeded taxonomy (through `pagesFor`) and each captured initiative alike.
  *
- * `project` is the repository when the bank is one repository's, and the BANK otherwise — a bank
+ * `project` is the repository when the bank is one repository's, and undefined otherwise — a bank
  * several repos share has no repo to name, and naming whichever one seeded last made the sentence
- * flip on every session start (#4146). Either way it must be stable for the bank, because the
- * clause is PATCHed onto pages that outlive the session.
+ * flip on every session start (#4146). Naming the BANK instead, as this once did, scoped every page
+ * to a project no memory is about, so a shared bank's pages all came out empty (#4490): such a bank
+ * gets a clause that keeps the dependency exclusion and attributes each item to its own project.
+ * Either way it must be stable for the bank, because the clause is PATCHed onto pages that outlive
+ * the session.
  *
  * A bank collects everything said IN a repository, which is NOT the same as everything said ABOUT
  * it: a repo that reads its dependency's source, drafts its upstream issues, or documents how it
@@ -220,7 +231,15 @@ export interface KnowledgePage {
  * (`codingBankManifest`, #2492) — a mission-only fix would never reach an existing bank, while a
  * reworded query re-syncs through `seedPages()`'s drift PATCH on the next run.
  */
-export function pageScopeRule(project: string): string {
+export function pageScopeRule(project?: string): string {
+  if (project === undefined)
+    return (
+      ` This bank is shared by several projects: attribute each thing you include to the ` +
+      `repository or project its sources name, and group by project where that helps. Leave out ` +
+      `facts about external tools, libraries and services those projects merely use, configure, ` +
+      `deploy or discuss — they belong to somebody else's codebase — including any commit SHA or ` +
+      `identifier from such a dependency's repository.`
+    );
   return (
     ` Scope this page to ${project} ITSELF: the bank also holds facts about external tools, ` +
     `libraries and services that ${project} merely uses, configures, deploys or discusses, and ` +
@@ -316,7 +335,7 @@ export type CustomPagesConfig = Record<string, CustomPage>;
  * failure mode someone rewording or adding a question is not thereby choosing to take on.
  */
 export function pagesFor(
-  project: string,
+  project: string | undefined,
   pages: PagesConfig = {},
   customPages: CustomPagesConfig = {}
 ): KnowledgePage[] {
@@ -609,7 +628,7 @@ export const CODING_BANK_TEMPLATE = {
     enable_observations: true,
     observations_mission: OBSERVATIONS_MISSION,
     retain_mission: GIT_MISSION,
-    retain_extraction_mode: "verbose",
+    retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_default_strategy: "git",
     retain_strategies: RETAIN_STRATEGIES,
     entity_labels: [KNOWLEDGE_LABELS],
@@ -628,6 +647,18 @@ export interface BankManifest {
   version: "1";
   bank: Record<string, unknown>;
 }
+
+/**
+ * Bank-config fields `defaultBankConfig` may NOT set, because this plugin already governs them:
+ * the two containers are merged per entry (see below), and the extraction mode has its own
+ * setting. Letting a default name one of these would either replace a merged map wholesale — the
+ * very failure #3927 fixed — or fight the re-sync that `retainExtractionMode` performs.
+ */
+export const PLUGIN_GOVERNED_BANK_FIELDS: readonly string[] = [
+  "retain_strategies",
+  "entity_labels",
+  "retain_extraction_mode",
+];
 
 /** A bank-config override the bank's owner actually made. Blank is not a choice; `false` is. */
 function isSet(v: unknown): boolean {
@@ -659,8 +690,29 @@ function isSet(v: unknown): boolean {
  * The consequence is deliberate: a release that REWORDS an existing strategy or label does not
  * reach a bank that already has it. Clearing that override on the bank takes the current default
  * back, since the next pass then finds the bank silent there.
+ *
+ * ONE exception, and it is a config key rather than a default: the extraction mode of the plugin's
+ * own strategies follows `mode` (RawConfig.retainExtractionMode) and is re-synced on drift, the way
+ * `seedPages()` re-syncs a page's query. It is what every session write-back costs, so it has to be
+ * changeable from the plugin's config and reach banks seeded before the change (#4560). The
+ * strategy's other fields, and any strategy the plugin did not define, are still left alone.
+ *
+ * `defaults` (RawConfig.defaultBankConfig) are the user's OWN additions to the template — bank-config
+ * fields written under the same rule, only where the bank is silent. They exist because a bank this
+ * plugin creates is otherwise born with the server's defaults for everything the template does not
+ * name — `enable_auto_consolidation`, `mental_model_min_refresh_interval_seconds` — and on a
+ * cost-conscious deployment those are the expensive settings (#4725): a new repo an agent touched
+ * spawned a bank running auto-consolidation on a 60s refresh floor while every other bank had been
+ * hand-set to a cheap baseline. On a key the template also names (`enable_observations`), the
+ * user's default wins, since it is the more specific statement. Applied under the same
+ * silent-only rule, a default reaches an existing bank too — but only where that bank never took
+ * a position, so a value set in the control plane (even one equal to the server default) is kept.
  */
-export function codingBankManifest(overrides: BankOverrides | undefined): BankManifest | undefined {
+export function codingBankManifest(
+  overrides: BankOverrides | undefined,
+  mode: RetainExtractionMode = DEFAULT_RETAIN_EXTRACTION_MODE,
+  defaults: Record<string, unknown> = {}
+): BankManifest | undefined {
   // Unreadable overrides — the bank does not exist yet, or the deployment has the bank-config API
   // switched off. Nothing can have been customised through an API that is not there, and this same
   // POST is what CREATES the bank, so `{}` seeds the lot (every branch below fires, and the result
@@ -676,7 +728,7 @@ export function codingBankManifest(overrides: BankOverrides | undefined): BankMa
     bank.enable_observations = template.enable_observations;
     bank.observations_mission = template.observations_mission;
     bank.retain_mission = template.retain_mission;
-    bank.retain_extraction_mode = template.retain_extraction_mode;
+    bank.retain_extraction_mode = mode;
   }
 
   if (!isSet(current.retain_default_strategy))
@@ -688,15 +740,30 @@ export function codingBankManifest(overrides: BankOverrides | undefined): BankMa
     current.retain_strategies && typeof current.retain_strategies === "object"
       ? (current.retain_strategies as Record<string, unknown>)
       : {};
-  const missing = Object.entries(template.retain_strategies).filter(([n]) => !(n in strategies));
-  // The whole map is one config value, so the UNION has to be sent — not just the additions.
-  if (missing.length > 0)
-    bank.retain_strategies = { ...strategies, ...Object.fromEntries(missing) };
+  const updates: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(template.retain_strategies)) {
+    // `custom` (the survey) carries its own instructions and is not the configured mode's to change.
+    const synced = def.retain_extraction_mode === "custom" ? {} : { retain_extraction_mode: mode };
+    const have = strategies[name] as Record<string, unknown> | null | undefined;
+    if (!have || typeof have !== "object") updates[name] = { ...def, ...synced };
+    else if ("retain_extraction_mode" in synced && have.retain_extraction_mode !== mode)
+      updates[name] = { ...have, ...synced };
+  }
+  // The whole map is one config value, so the UNION has to be sent — not just the changes.
+  if (Object.keys(updates).length > 0) bank.retain_strategies = { ...strategies, ...updates };
 
   const labels = Array.isArray(current.entity_labels) ? current.entity_labels : [];
   const [knowledgeGroup] = template.entity_labels;
   if (!labels.some((g) => (g as { key?: unknown } | null)?.key === knowledgeGroup.key))
     bank.entity_labels = [...labels, knowledgeGroup];
+
+  // After the template, so a default wins the keys both name. The governed fields are dropped at
+  // config resolution (with a warning) and skipped again here, so a caller of this function alone
+  // cannot replace a merged container either.
+  for (const [key, value] of Object.entries(defaults)) {
+    if (PLUGIN_GOVERNED_BANK_FIELDS.includes(key) || !isSet(value) || isSet(current[key])) continue;
+    bank[key] = value;
+  }
 
   return Object.keys(bank).length > 0 ? { version: "1", bank } : undefined;
 }

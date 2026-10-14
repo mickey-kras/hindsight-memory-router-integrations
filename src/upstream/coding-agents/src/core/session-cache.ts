@@ -1,4 +1,6 @@
-import { readPrivateFile, sessionStateFile, writePrivateFileAtomic } from "./private-state";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, renameSync, rmSync } from "node:fs";
+import { readPrivateFile, sessionStateFile, writePrivateFileAtomic, withPrivateFile } from "./private-state";
 import type { PageRef } from "./knowledge-injection";
 import type { RetainCursor, RetainCursorStore } from "./retain-cursor";
 import type { UsageCursorStore } from "./usage";
@@ -8,7 +10,12 @@ import type { UsageCursorStore } from "./usage";
  * bank state. */
 export interface SessionCache {
   turns?: number;
-  reflectAnswer?: string; // present (even "") = reflect already ran this session
+  reflectAnswer?: string; // present (even "") = reflect already resolved this session
+  /** How many times auto-inject has been ATTEMPTED this session — every source, not just reflect.
+   *  A failure leaves `reflectAnswer` unset so a later turn can retry; this bounds that retry (see
+   *  HOOK_INJECT_ATTEMPTS). Named for reflect like `reflectAnswer` above, whose name also predates
+   *  the other two sources. */
+  reflectAttempts?: number;
   /** SessionStart saw a new/empty bank; consume this on prompt one, then allow reflect. */
   deferInitialReflect?: boolean;
   pages?: { atTurn: number; list: PageRef[] };
@@ -21,7 +28,7 @@ export function sessionCacheFile(harness: string, sessionId: string): string {
 export function readSessionCache(cacheFile: string): SessionCache {
   try {
     const cached = JSON.parse(readPrivateFile(cacheFile)) as SessionCache;
-    return { turns: cached.turns, deferInitialReflect: cached.deferInitialReflect, reflectAnswer: cached.reflectAnswer === undefined ? undefined : "" };
+    return { turns: cached.turns, reflectAttempts: cached.reflectAttempts, deferInitialReflect: cached.deferInitialReflect, reflectAnswer: cached.reflectAnswer === undefined ? undefined : "" };
   } catch {
     return {};
   }
@@ -29,9 +36,53 @@ export function readSessionCache(cacheFile: string): SessionCache {
 
 export function writeSessionCache(cacheFile: string, cache: SessionCache): void {
   try {
-    writePrivateFileAtomic(cacheFile, JSON.stringify({ turns: cache.turns, deferInitialReflect: cache.deferInitialReflect, reflectAnswer: cache.reflectAnswer === undefined ? undefined : "" }));
+    writePrivateFileAtomic(cacheFile, JSON.stringify({ turns: cache.turns, reflectAttempts: cache.reflectAttempts, deferInitialReflect: cache.deferInitialReflect, reflectAnswer: cache.reflectAnswer === undefined ? undefined : "" }));
   } catch {
     /* session state is best-effort */
+  }
+}
+
+/** Context a prompt hook could not deliver itself, waiting for the session's next tool hook (see
+ *  HookSpec.toolHook). Its own file: `buildHookOutput` rewrites the session cache every turn. */
+/** Separate the handoff from every other endpoint, mapped bank and workspace. */
+export function pendingContextKey(endpoint: string, bank: string, cwd: string, sessionId: string): string {
+  return createHash("sha256").update(JSON.stringify([endpoint, bank, cwd, sessionId])).digest("hex");
+}
+
+function pendingContextFile(harness: string, sessionId: string): string {
+  return sessionStateFile(harness, sessionId, ".pending");
+}
+
+/** Add a block to the session's pending context. A block already waiting is not added again, so a
+ *  session that goes several turns without a tool call is not handed the same roster N times. */
+export function stashPendingContext(harness: string, sessionId: string, context: string): void {
+  const path = pendingContextFile(harness, sessionId);
+  let existing = "";
+  try {
+    existing = readPrivateFile(path);
+  } catch {
+    /* nothing pending yet */
+  }
+  if (existing.includes(context)) return;
+  try {
+    writePrivateFileAtomic(path, existing ? `${existing}\n\n${context}` : context);
+  } catch {
+    /* best-effort, like the session cache */
+  }
+}
+
+/** Claim and clear the session's pending context. The rename is the claim: tool hooks can run in
+ *  parallel, and only the one whose rename succeeds delivers the block. */
+export function takePendingContext(harness: string, sessionId: string): string | undefined {
+  const path = pendingContextFile(harness, sessionId);
+  const claimed = `${path}.${randomUUID()}.claim`;
+  try {
+    withPrivateFile(path, constants.O_RDONLY, () => renameSync(path, claimed));
+    return readPrivateFile(claimed) || undefined;
+  } catch {
+    return undefined;
+  } finally {
+    rmSync(claimed, { force: true });
   }
 }
 

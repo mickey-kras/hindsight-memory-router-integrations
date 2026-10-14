@@ -59,7 +59,7 @@ it("routes every document, page, seed and operation request through the configur
   expect(send.mock.calls.some(([url, init]) => String(url) === "https://router.test/v1/default/banks/A" && init?.method === "DELETE")).toBe(false);
   expect(send.mock.calls.some(([url, init]) => String(url).endsWith("/knowledge-base/pages") && init?.method === "POST")).toBe(true);
   for (const [url, init] of send.mock.calls) {
-    expect(String(url)).toMatch(/^https:\/\/router\.test\/(?:version|v1\/default\/banks\/[AB]\/)/);
+    expect(String(url)).toMatch(/^https:\/\/router\.test\/(?:(?:v1\/)?version|v1\/default\/banks\/[AB]\/)/);
     expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${credential}`);
     expect(new Headers(init?.headers).get("x-memory-router-agent")).toBe("codex");
     expect(init?.redirect).toBe("error");
@@ -151,10 +151,10 @@ it.each([{}, { manage: false }])("seeds pages without reading or modifying bank 
     expect(JSON.parse(String(init?.body))).toHaveProperty("source_query");
   }
 });
-it("preserves upstream page-capability fallback without attempting bank provisioning", async () => {
+it("keeps page capability unknown on redacted 404 without attempting bank provisioning", async () => {
   const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
   await expect(client().configureBank()).resolves.toBeUndefined();
-  expect(send).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledTimes(2);
   expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
 });
 
@@ -230,4 +230,32 @@ it.each([401, 403])("shares explicit-bank %s denial across root and sibling view
     expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${rotated}`);
     expect(new Headers(init?.headers).get("x-memory-router-agent")).toBe("codex");
   }
+});
+
+
+it("uses both guarded version routes before selecting append and honours bank document storage", async () => {
+  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+    if (String(url).endsWith("/v1/version")) return new Response(null, { status: 404 });
+    if (String(url).endsWith("/version")) return Response.json({ api_version: "1.0.0" });
+    return Response.json({ config: { store_document_text: false } });
+  });
+  await expect(client().supportsAppendRetain()).resolves.toBe(false);
+  expect(send.mock.calls.map(([url]) => String(url))).toEqual([
+    "https://router.test/v1/version", "https://router.test/version", "https://router.test/v1/default/banks/A/config",
+  ]);
+});
+it.each([401, 403])("does not try a fallback after version probe authorization failure %s", async (status) => {
+  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("SECRET_BODY", { status }));
+  const c = client();
+  await expect(c.supportsAppendRetain()).rejects.toThrow(AccessDeniedError);
+  await expect(c.hasDocuments()).rejects.toThrow(AccessDeniedError);
+  expect(send).toHaveBeenCalledOnce();
+});
+it("guards new document freshness reads and denies initiative writes to extra read banks", async () => {
+  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ items: [{ id: "gitlog:repo", tags: ["head:abc"] }], total: 1 }));
+  const c = client().forBank("B");
+  await expect(c.hasDocuments()).resolves.toBe(true);
+  await expect(c.documentTags("gitlog:repo")).resolves.toEqual(["head:abc"]);
+  await expect(c.captureInitiative({ title: "change", summary: "plan" })).rejects.toThrow(AccessDeniedError);
+  expect(send.mock.calls.every(([url, init]) => String(url).includes("/banks/B/") && init?.method === "GET")).toBe(true);
 });

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readPrivateFile, sessionStateFile, writePrivateFileAtomic } from "./private-state";
-import { fileCursorStore, sessionCacheFile, writeSessionCache } from "./session-cache";
+import { fileCursorStore, sessionCacheFile, writeSessionCache, stashPendingContext, takePendingContext } from "./session-cache";
 import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
 
 vi.mock("node:fs", async (original) => ({ ...await original<typeof fs>() }));
@@ -179,5 +179,31 @@ describe.skipIf(process.platform === "win32")("private session state", () => {
     const escaped = sessionCacheFile(name, "../../other-user");
     expect(dirname(escaped)).toBe(dirname(sessionCacheFile(name, "session")));
     expect(escaped).not.toBe(sessionCacheFile(name, "..%2F..%2Fother-user"));
+  });
+});
+
+
+describe.skipIf(process.platform === "win32")("Grok one-time private context handoff", () => {
+  it("uses private state, deduplicates the pending block and consumes it once", () => {
+    const name = harness();
+    stashPendingContext(name, "session", "PRIVATE_MEMORY");
+    stashPendingContext(name, "session", "PRIVATE_MEMORY");
+    const file = sessionStateFile(name, "session", ".pending");
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(dirname(file)).mode & 0o777).toBe(0o700);
+    expect(takePendingContext(name, "session")).toBe("PRIVATE_MEMORY");
+    expect(takePendingContext(name, "session")).toBeUndefined();
+    expect(fs.readdirSync(dirname(file))).toEqual([]);
+  });
+  it.each(["symlink", "hardlink"])("refuses %s pending memory without changing its target", (kind) => {
+    const name = harness();
+    const target = join(temporaryDirectory(), "target");
+    fs.writeFileSync(target, "PRIVATE_EXTERNAL_MEMORY");
+    const file = sessionStateFile(name, "session", ".pending");
+    fs.mkdirSync(dirname(file), { recursive: true });
+    if (kind === "symlink") fs.symlinkSync(target, file); else fs.linkSync(target, file);
+    expect(takePendingContext(name, "session")).toBeUndefined();
+    stashPendingContext(name, "session", "replacement");
+    expect(fs.readFileSync(target, "utf8")).toBe("PRIVATE_EXTERNAL_MEMORY");
   });
 });

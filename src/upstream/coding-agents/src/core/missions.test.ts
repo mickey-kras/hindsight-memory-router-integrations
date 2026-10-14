@@ -337,7 +337,7 @@ describe("codingBankManifest (#3927)", () => {
   it("never deletes a strategy the user defined, nor reverts their edits to ours", () => {
     const mine = {
       ...RETAIN_STRATEGIES,
-      // The user made the conversation strategy concise and small; that is theirs to decide.
+      // The user rewrote the conversation strategy's mission; that is theirs to decide.
       conversation: { retain_mission: "MINE", retain_extraction_mode: "concise" },
       mycustom: { retain_chunk_size: 500 },
     };
@@ -345,6 +345,37 @@ describe("codingBankManifest (#3927)", () => {
     expect(bankOf({ reflect_mission: "seeded", retain_strategies: mine })).not.toHaveProperty(
       "retain_strategies"
     );
+  });
+
+  it("re-syncs the extraction mode of the plugin's own strategies to the configured one (#4560)", () => {
+    // A bank seeded by a release that defaulted to verbose, plus a user tweak and a user strategy.
+    const seeded = Object.fromEntries(
+      Object.entries(RETAIN_STRATEGIES).map(([n, d]) => [
+        n,
+        d.retain_extraction_mode === "custom" ? d : { ...d, retain_extraction_mode: "verbose" },
+      ])
+    );
+    const current = {
+      ...seeded,
+      conversation: { ...seeded.conversation, retain_chunk_size: 500 },
+      mycustom: { retain_extraction_mode: "verbose" },
+    };
+    const strategies = bankOf({ reflect_mission: "seeded", retain_strategies: current })!
+      .retain_strategies as Record<string, Record<string, unknown>>;
+    for (const name of ["git", "gitlog", "conversation", "document"])
+      expect(strategies[name].retain_extraction_mode).toBe("concise");
+    // Only the mode moves: the user's other edits, their own strategy and the survey stay put.
+    expect(strategies.conversation.retain_chunk_size).toBe(500);
+    expect(strategies.mycustom).toEqual({ retain_extraction_mode: "verbose" });
+    expect(strategies.survey).toEqual(RETAIN_STRATEGIES.survey);
+
+    // An explicit choice is honoured the same way, and seeds a new bank with it.
+    const verbose = codingBankManifest(
+      { reflect_mission: "seeded", retain_strategies: RETAIN_STRATEGIES },
+      "verbose"
+    )!.bank.retain_strategies as Record<string, Record<string, unknown>>;
+    expect(verbose.git.retain_extraction_mode).toBe("verbose");
+    expect(codingBankManifest(undefined, "chunks")!.bank.retain_extraction_mode).toBe("chunks");
   });
 
   it("leaves a bank that already carries the whole structure completely alone", () => {
@@ -398,6 +429,87 @@ describe("codingBankManifest (#3927)", () => {
     }
     // A blank override is not a choice.
     expect(bankOf({ reflect_mission: "   " })!.reflect_mission).toBe(REFLECT_MISSION);
+  });
+});
+
+/**
+ * The user's own additions to the template (#4725). A bank the plugin creates was born with the
+ * server's defaults for everything the template does not name — auto-consolidation on, a 60s
+ * mental-model refresh floor — which on a cost-conscious deployment is exactly the expensive
+ * setting; every other bank had been hand-set to a cheap baseline, and the new one was found only
+ * by auditing all of them.
+ */
+describe("codingBankManifest defaultBankConfig (#4725)", () => {
+  const cheap = {
+    enable_observations: false,
+    enable_auto_consolidation: false,
+    mental_model_min_refresh_interval_seconds: 21600,
+  };
+  const withDefaults = (
+    overrides: BankOverrides | undefined,
+    defaults: Record<string, unknown> = cheap
+  ) => codingBankManifest(overrides, "concise", defaults)?.bank;
+
+  it("seeds a new bank with the defaults, which win the keys the template also names", () => {
+    const bank = withDefaults(undefined)!;
+    expect(bank.enable_auto_consolidation).toBe(false);
+    expect(bank.mental_model_min_refresh_interval_seconds).toBe(21600);
+    // The template says `enable_observations: true`; the user's default is the more specific word.
+    expect(bank.enable_observations).toBe(false);
+    // Everything else the template seeds is still there.
+    expect(bank.reflect_mission).toBe(REFLECT_MISSION);
+    expect(bank.retain_strategies).toEqual(CODING_BANK_TEMPLATE.bank.retain_strategies);
+  });
+
+  it("never overwrites a value the bank already holds — even one equal to the server default", () => {
+    // The operator turned auto-consolidation ON in the control plane for this one bank. A cheap
+    // default must not flip it back on the next session start; that would be #3927 all over again.
+    const bank = withDefaults({ reflect_mission: "seeded", enable_auto_consolidation: true })!;
+    expect(bank).not.toHaveProperty("enable_auto_consolidation");
+    // The keys the bank is silent on are still filled in.
+    expect(bank.mental_model_min_refresh_interval_seconds).toBe(21600);
+    expect(bank.enable_observations).toBe(false);
+  });
+
+  it("is a no-op on a bank that already carries the structure and every default", () => {
+    expect(
+      codingBankManifest(
+        {
+          reflect_mission: "seeded",
+          retain_default_strategy: "git",
+          entities_allow_free_form: true,
+          retain_strategies: RETAIN_STRATEGIES,
+          entity_labels: [KNOWLEDGE_LABELS],
+          ...cheap,
+        },
+        "concise",
+        cheap
+      )
+    ).toBeUndefined();
+  });
+
+  it("skips the fields the plugin governs itself, and blank values", () => {
+    // `retain_strategies` is merged per entry and `retain_extraction_mode` follows
+    // retainExtractionMode — a default naming either would replace a merged map wholesale or
+    // fight the re-sync. Config resolution already warns and drops them; this is the backstop.
+    const bank = withDefaults(undefined, {
+      retain_strategies: { mine: {} },
+      entity_labels: [],
+      retain_extraction_mode: "verbose",
+      reflect_source_facts_max_tokens: null,
+      recall_budget_function: "",
+      enable_auto_consolidation: false,
+    })!;
+    expect(bank.retain_strategies).toEqual(CODING_BANK_TEMPLATE.bank.retain_strategies);
+    expect(bank.entity_labels).toEqual(CODING_BANK_TEMPLATE.bank.entity_labels);
+    expect(bank.retain_extraction_mode).toBe("concise");
+    expect(bank).not.toHaveProperty("reflect_source_facts_max_tokens");
+    expect(bank).not.toHaveProperty("recall_budget_function");
+    expect(bank.enable_auto_consolidation).toBe(false);
+  });
+
+  it("changes nothing when there are no defaults", () => {
+    expect(codingBankManifest(undefined, "concise", {})).toEqual(CODING_BANK_TEMPLATE);
   });
 });
 

@@ -53,7 +53,16 @@ import { importLocalHistory } from "./core/history";
 import { type LlmChoice } from "./core/daemon";
 import { readLegacyEndpoint } from "./core/legacy";
 import { ownedCompanionSkills } from "./core/skill-sync";
-import { SKILL_DIRS } from "./core/skill-dirs";
+
+import { SKILL_DIRS, resolveSkillDirs, traecodeDotDirName } from "./core/skill-dirs";
+import {
+  registerTraecodeWorkspaceMcp,
+  removeTraecodeWorkspaceMcpEntry,
+  traecodeUserDataDir,
+  traecodeWorkspaceStorageDir,
+  traecodeUserSettingsPath,
+  workspaceMcpGateState,
+} from "./core/traecode-mcp";
 import { formatUsageReport, readUsage } from "./core/usage";
 import { createInstallerUi, type SelectOption } from "./install-ui";
 
@@ -100,6 +109,9 @@ export interface InstallCtx {
   hasRust?: () => boolean;
   /** Reads an old per-agent plugin's endpoint; injectable for tests. */
   readLegacy?: (home: string, prefer: readonly string[]) => ReturnType<typeof readLegacyEndpoint>;
+  /** The raw CLI arguments after the command word — harness installers read flags off this
+   *  (e.g. traecode's --enable-workspace-mcp) without each one re-parsing argv. */
+  args?: readonly string[];
   log?: (m: string) => void;
   /** Styles an interactive readLineSync prompt (the CLI passes the InstallerUi rail style). */
   promptStyle?: (q: string) => string;
@@ -112,9 +124,21 @@ export interface InstallCtx {
   ) => number | null | undefined;
 }
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * JSON.parse accepts non-object top-level values (`[]`, `null`, a number), and every caller here
+ * treats the result as an object it can index and merge into — an array config would be written
+ * back out as an array, quietly replacing the host's file with something it cannot load. A
+ * top-level value that is not a plain object is as broken as an unparseable file, so both fall
+ * back to `{}`.
+ */
 function readJson(path: string): Record<string, any> {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return isPlainObject(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -217,10 +241,16 @@ const processHook = (dist: string, file: string, timeoutMs: number) => ({
  * back to "claude-code", which is why a Codex `hindsight_ingest_document` landed tagged
  * `harness:claude-code` (and derived its bank as Claude Code's) on machines running both. Every
  * registration MUST name its own harness — pass it here, never rely on the fallback.
+ * `extraArgs` is Cursor-only: Agents Window ignores stdio `cwd`, but interpolates
+ * `${workspaceFolder}` in `args`.
  */
-const mcpServerEntry = (dist: string, harness: HookHarnessName | "cline-cli") => ({
+const mcpServerEntry = (
+  dist: string,
+  harness: HookHarnessName | "cline-cli",
+  extraArgs: string[] = []
+) => ({
   command: "node",
-  args: [join(dist, "mcp-server.js")],
+  args: [join(dist, "mcp-server.js"), ...extraArgs],
   env: { HINDSIGHT_MCP_HARNESS: harness },
 });
 
@@ -300,6 +330,12 @@ function mergeHarnessHooks(
   dist: string
 ): void {
   const spec = HOOK_HARNESSES[harness];
+  // A harness whose hooks live outside the two JSON shapes must never reach the generic
+  // writer: the ternary below would silently take the FLAT branch and emit a JSON block
+  // into a file that host never reads. tsc cannot catch that, so fail loudly here.
+  if (spec.configStyle === "toml-array")
+    throw new Error(`${harness} writes its own TOML hook block; mergeHarnessHooks cannot emit it`);
+
   const installedEvents = new Set<string>();
   for (const hook of [...Object.values(spec.install), ...(spec.additionalHooks ?? [])]) {
     // Antigravity has no SessionStart event. Its first PreInvocation performs the same seed guard,
@@ -332,7 +368,7 @@ function stripHarnessHooks(hooks: Record<string, any>, harness: HookHarnessName)
 /** This host's skills directory, from the map core/skill-sync.ts also reads — see SKILL_DIRS for
  *  why the two sides must not keep separate copies of these paths. */
 function skillsBaseFor(c: InstallCtx, harness: string): string {
-  const parts = SKILL_DIRS[harness];
+  const parts = resolveSkillDirs(harness, c.home);
   if (!parts) throw new Error(`${harness} installs a skill but names no directory in SKILL_DIRS`);
   return join(c.home, ...parts);
 }
@@ -1167,6 +1203,11 @@ const cursor: HarnessInstaller = {
   install(c) {
     const hooksPath = join(c.home, ".cursor", "hooks.json");
     const cfg = readJson(hooksPath);
+    // Cursor's hooks.json schema requires a top-level `version`. Without it the
+    // Customize > Hooks view silently drops every entry (the hooks still run).
+    // The Python cursor-cli installer already setdefault's this; this adapter
+    // used to write only `hooks` and so produced a file the UI would not list.
+    cfg.version ??= 1;
     cfg.hooks = cfg.hooks ?? {};
     mergeHarnessHooks(cfg.hooks, "cursor-cli", c.dist);
     writeJson(hooksPath, cfg);
@@ -1174,7 +1215,7 @@ const cursor: HarnessInstaller = {
     const mcp = readJson(mcpPath);
     mcp.mcpServers = {
       ...(mcp.mcpServers ?? {}),
-      [registrationName()]: mcpServerEntry(c.dist, "cursor-cli"),
+      [registrationName()]: mcpServerEntry(c.dist, "cursor-cli", ["${workspaceFolder}"]),
     };
     writeJson(mcpPath, mcp);
     c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
@@ -1338,6 +1379,15 @@ function stripUnmarkedGrokEntries(toml: string): string {
     .replace(/\n{3,}/g, "\n\n");
 }
 
+/**
+ * Grok Build reads hooks from `~/.grok/hooks/*.json` (Claude's nested matcher-group shape) and
+ * from `[[hooks.<Event>]]` tables in config.toml. Both load, but Grok's config validator does not
+ * know the `hooks` key, so every `grok inspect` flags a config.toml hook block as an
+ * "unrecognized config key". The hooks directory is the documented global location and draws no
+ * warning, so the hooks live in a file this package owns; config.toml keeps only the MCP server.
+ */
+const grokHooksPath = (c: InstallCtx) => join(c.home, ".grok", "hooks", "hindsight.json");
+
 const grok: HarnessInstaller = {
   name: "grok-build",
   detect: (c) => onPath("grok") || existsSync(join(c.home, ".grok")),
@@ -1357,15 +1407,9 @@ const grok: HarnessInstaller = {
     const withoutOurs = hasUnmarkedGrokEntries(strippedMcp)
       ? stripUnmarkedGrokEntries(strippedMcp)
       : strippedMcp;
-    // Grok executes this shell command verbatim. Quote the absolute script path so a globally
-    // installed package still works when its installation directory contains spaces.
-    const command = (entry: string) => JSON.stringify(`node "${join(c.dist, entry)}"`);
     const tomlString = (value: string) => JSON.stringify(value);
     const block =
       `\n${GROK_MARKER_START}\n` +
-      `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = \"command\"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
-      `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = \"command\"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
-      `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
       `[mcp_servers.${registrationName()}]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
       `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
     const next = `${withoutOurs.replace(/\n*$/, "\n")}${block}`;
@@ -1381,8 +1425,14 @@ const grok: HarnessInstaller = {
       copyFileSync(path, `${path}.hindsight-backup`);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, next);
+
+    const hooksPath = grokHooksPath(c);
+    const file = readJson(hooksPath);
+    const hooks = isPlainObject(file.hooks) ? file.hooks : {};
+    mergeHarnessHooks(hooks, "grok-build", c.dist);
+    writeJson(hooksPath, { ...file, hooks });
     installSkill(c, "grok-build");
-    c.log?.(`grok-build: native hooks + MCP installed in ${path}`);
+    c.log?.(`grok-build: hooks installed in ${hooksPath}, MCP in ${path}`);
   },
   uninstall(c) {
     const path = join(c.home, ".grok", "config.toml");
@@ -1400,8 +1450,89 @@ const grok: HarnessInstaller = {
       const safe = parseGrokToml(cleaned) !== null || parseGrokToml(existing) === null;
       if (cleaned !== existing && safe) writeFileSync(path, cleaned);
     }
+    const hooksPath = grokHooksPath(c);
+    if (existsSync(hooksPath)) {
+      const file = readJson(hooksPath);
+      if (isPlainObject(file.hooks)) {
+        stripHarnessHooks(file.hooks, "grok-build");
+        if (!Object.keys(file.hooks).length) delete file.hooks;
+      }
+      if (Object.keys(file).length) writeJson(hooksPath, file);
+      else rmSync(hooksPath);
+    }
     uninstallSkill(c, "grok-build");
     c.log?.("grok-build: native hooks + MCP + skill removed");
+  },
+};
+
+const KIMI_MARKER_START = "# HINDSIGHT_CODING_AGENTS_KIMI_START";
+const KIMI_MARKER_END = "# HINDSIGHT_CODING_AGENTS_KIMI_END";
+const KIMI_BLOCK_RE = new RegExp(`\\n?${KIMI_MARKER_START}[\\s\\S]*?${KIMI_MARKER_END}\\n?`);
+
+/**
+ * Kimi Code home — `$KIMI_CODE_HOME`, else `~/.kimi-code`, the CLI's own resolution order. The
+ * transcript reader resolves sessions the same way (core/transcript-kimi.ts); installing anywhere
+ * else would write hooks into a config.toml the CLI never loads.
+ */
+function kimiHome(c: InstallCtx): string {
+  return process.env.KIMI_CODE_HOME || join(c.home, ".kimi-code");
+}
+
+const kimi: HarnessInstaller = {
+  name: "kimi-code",
+  detect: (c) => onPath("kimi") || existsSync(kimiHome(c)),
+  install(c) {
+    const path = join(kimiHome(c), "config.toml");
+    const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
+    // Replace a previous block rather than skipping when one exists, so a re-install repairs
+    // paths that moved with the package (the grok-build precedent).
+    const withoutOurs = existing.replace(KIMI_BLOCK_RE, "\n");
+    // Kimi validates every [[hooks]] entry against a STRICT 4-key schema
+    // (event / matcher / command / timeout). One unknown key does not drop that entry — it
+    // drops EVERY hook in the file, at warning severity only. So emit those keys and nothing
+    // else, and take the values from the lifecycle spec so the installed hooks can never
+    // diverge from the ones the runtime entrypoints implement.
+    const spec = HOOK_HARNESSES["kimi-code"];
+    const entries = Object.values(spec.install)
+      .map(
+        (h) =>
+          `[[hooks]]\nevent = ${JSON.stringify(h.event)}\n` +
+          `command = ${JSON.stringify(`node "${join(c.dist, h.entry)}"`)}\n` +
+          `timeout = ${h.timeout}\n`
+      )
+      .join("\n");
+    const block = `\n${KIMI_MARKER_START}\n${entries}${KIMI_MARKER_END}\n`;
+    if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
+      copyFileSync(path, `${path}.hindsight-backup`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${withoutOurs.replace(/\n*$/, "\n")}${block}`);
+    // Kimi keeps MCP registration in its own mcp.json, not config.toml. Register the packaged
+    // stdio server: it reads the endpoint and token from ~/.hindsight/coding-agent.json, so the
+    // entry needs no bearerTokenEnvVar. An http entry would need HINDSIGHT_API_KEY exported into
+    // Kimi's environment, and silently 401s when it is not.
+    const mcpPath = join(kimiHome(c), "mcp.json");
+    const mcp = readJson(mcpPath);
+    mcp.mcpServers = { ...(mcp.mcpServers ?? {}), [registrationName()]: mcpServerEntry(c.dist, "kimi-code") };
+    writeJson(mcpPath, mcp);
+    installSkill(c, "kimi-code");
+    c.log?.(`kimi-code: native hooks installed in ${path}, MCP in ${mcpPath}`);
+  },
+  uninstall(c) {
+    const path = join(kimiHome(c), "config.toml");
+    if (existsSync(path)) {
+      const existing = readFileSync(path, "utf8");
+      const cleaned = existing.replace(KIMI_BLOCK_RE, "\n");
+      if (cleaned !== existing) writeFileSync(path, cleaned);
+    }
+    const mcpPath = join(kimiHome(c), "mcp.json");
+    if (existsSync(mcpPath)) {
+      const mcp = readJson(mcpPath);
+      if (removeOwnedMcpRegistrations(mcp.mcpServers, "kimi-code")) {
+        writeJson(mcpPath, mcp);
+      }
+    }
+    uninstallSkill(c, "kimi-code");
+    c.log?.("kimi-code: native hooks + MCP + skill removed");
   },
 };
 
@@ -1587,6 +1718,28 @@ const DSH_MARKER_START = "# HINDSIGHT_CODING_AGENTS_DSH_START";
 const DSH_MARKER_END = "# HINDSIGHT_CODING_AGENTS_DSH_END";
 const DSH_BLOCK_RE = new RegExp(`\\n?${DSH_MARKER_START}[\\s\\S]*?${DSH_MARKER_END}\\n?`);
 
+/**
+ * What `uninstall` leaves behind when our block was the only thing in the file. dsh reads this file
+ * as a top-level YAML array and fails BOOT on anything else, so an emptied file still has to parse;
+ * a missing file would be fine too (`loadOptionalPatches` reads ENOENT as "no patches").
+ */
+const DSH_EMPTY_LIST = "[]";
+
+/**
+ * The user's own patches: our marker block removed, and the empty-list placeholder normalized away.
+ *
+ * Both halves matter. `DSH_BLOCK_RE` strips our row so a re-install repairs a stale path instead of
+ * stacking a second block. And `DSH_EMPTY_LIST` is NOT user content — `"[]"` is a non-empty string,
+ * so treating it as content made the install that follows an uninstall write `[]` *followed by* our
+ * block: two top-level YAML documents, which dsh refuses to parse, so it then failed BOOT for EVERY
+ * profile on the machine, not merely for this plugin. Normalizing here also repairs a home layer
+ * that an earlier version already corrupted.
+ */
+function dshUserPatches(existing: string): string {
+  const others = existing.replace(DSH_BLOCK_RE, "\n").trim();
+  return others === DSH_EMPTY_LIST ? "" : others;
+}
+
 /** DeepSeek Harness home — `$DSH_HOME`, else `~/.dsh` (its own `home-paths` resolution order). */
 function dshHome(c: InstallCtx): string {
   return process.env.DSH_HOME || join(c.home, ".dsh");
@@ -1614,7 +1767,7 @@ const dsh: HarnessInstaller = {
     const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
     // REPLACE any previous block rather than skipping: a re-install after the package moved must
     // repair the now-dead path, which is exactly what `install` is for.
-    const others = existing.replace(DSH_BLOCK_RE, "\n").trim();
+    const others = dshUserPatches(existing);
     const entry = pathToFileURL(join(c.dist, "dsh.js")).href;
     const block =
       `${DSH_MARKER_START}\n` +
@@ -1639,9 +1792,11 @@ const dsh: HarnessInstaller = {
     if (existsSync(path)) {
       const existing = readFileSync(path, "utf8");
       const others = existing.replace(DSH_BLOCK_RE, "\n").trim();
-      // `[]`, not an empty file: dsh requires this file to parse to a top-level ARRAY and fails
-      // BOOT on anything else, so removing the last block must leave an empty list behind.
-      if (others !== existing.trim()) writeFileSync(path, others ? `${others}\n` : "[]\n");
+      // `DSH_EMPTY_LIST`, not an empty file: dsh requires this file to parse to a top-level ARRAY
+      // and fails BOOT on anything else, so removing the last block must leave an empty list
+      // behind. `install` knows that placeholder is not user content — see `dshUserPatches`.
+      if (others !== existing.trim())
+        writeFileSync(path, others ? `${others}\n` : `${DSH_EMPTY_LIST}\n`);
     }
     uninstallSkill(c, "dsh");
     c.log?.("dsh: plugin entry + skill removed");
@@ -1860,6 +2015,291 @@ const zcode: HarnessInstaller = {
   },
 };
 
+/**
+ * TRAE splits its config across two roots: a dot-dir holding hooks.json/sandbox.json (and the
+ * skills root), and the app's Electron userData dir holding per-window storage (`User/
+ * workspaceStorage`; a `~/.trae-cn/mcp.json` is never read). Both roots are edition-branded: the
+ * CN build uses `~/.trae-cn` / "Trae CN", the international build `~/.trae` / "Trae", so every
+ * path resolves by probing for the brand dir that actually exists and falling back to the CN
+ * names (see traecodeDotDirName / traecodeUserDataDir).
+ */
+const traecodeMcpPath = (c: InstallCtx): string =>
+  join(traecodeUserDataDir(c.home), "User", "mcp.json");
+
+/** Remove OUR stale user-level MCP entry from `<userData>/User/mcp.json` (see the harness docs
+ *  for why it must not exist), leaving foreign entries and the rest of the document alone, and
+ *  deleting the file when nothing but our entry was in it. Returns whether anything was removed.
+ *  Never throws. */
+function removeTraecodeUserMcpEntry(c: InstallCtx): boolean {
+  try {
+    const mcpPath = traecodeMcpPath(c);
+    if (!existsSync(mcpPath)) return false;
+    const mcp = readJson(mcpPath);
+    if (!removeOwnedMcpRegistrations(mcp.mcpServers, "traecode")) return false;
+    if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
+    else rmSync(mcpPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Trae gates workspace-level MCP files behind `trae.mcp.enableWorkspaceMcp` (global, default
+ * false) — without it the per-repo `.trae/mcp.json` this install relies on is never read and
+ * hindsight's MCP tools stay hidden. Flipping a global setting is the user's call, so it is
+ * asked HERE, on the installer's TTY: `install` is idempotent and re-run often, and the gate
+ * state makes the prompt self-silencing once answered. Non-interactive runs (CI, scripts, the
+ * test suite) print the manual step and touch nothing — a global setting must never flip
+ * without a human; `--enable-workspace-mcp` is that human, up front.
+ */
+function ensureTraecodeWorkspaceMcpGate(c: InstallCtx): void {
+  if (workspaceMcpGateState(traecodeUserSettingsPath(c.home)) !== "on")
+    c.log?.('traecode: enableWorkspaceMcp must be enabled in Trae settings before using workspace MCP.');
+}
+
+/**
+ * TraeCode (TRAE CN's agent) keeps plain JSON files under `~/.trae-cn/`, so like Factory Droid the
+ * installer needs no CLI round-trip:
+ *
+ * - `hooks.json` - user-level hook registrations. TraeCode speaks Claude Code's hook protocol and
+ *   nests the event map under a top-level `hooks` key (Claude's settings.json shape), NOT at the
+ *   top level the way Droid's hooks.json is read. The host also writes and expects a top-level
+ *   `version` field, so the installer seeds it at 1 when absent and leaves it alone otherwise.
+ * - `skills/` - the companion skill, in TraeCode's own user-level root (see SKILL_DIRS).
+ * - `sandbox.json` - `filesystem.readWrite` rules for `~/.hindsight` (logs, config — without them
+ *   the hooks fail silently, verified on a live install) and for Trae's per-window storage DBs
+ *   (`<userData>/User/workspaceStorage`), which the SessionStart hook seeds with the workspace's
+ *   MCP enable switch (core/traecode-mcp.ts).
+ *
+ * Deliberately NOT touched: the user-level MCP file (`<userData>/User/mcp.json`). Trae launches
+ * user-level servers with the ELECTRON process's cwd (home), so a hindsight entry there is wrong
+ * in every configuration — with `optInOnly` it self-disables (zero tools), without it the tools
+ * resolve the HOME bank instead of the repo's. The only correct registration is per-repo
+ * `<repo>/.trae/mcp.json`, which install pre-seeds and the SessionStart hook tops up
+ * (core/traecode-mcp.ts); install migrates a stale user-level entry left by earlier versions
+ * away (ours only — a foreign `hindsight` entry is the user's own server and is never touched).
+ *
+ * TraeCode keeps sessions in an encrypted local DB or the cloud — there is no transcript file — so
+ * the journal-based lifecycle (see HOOK_HARNESSES.traecode) is the whole write-back path.
+ */
+const traecode: HarnessInstaller = {
+  name: "traecode",
+  detect: (c) => existsSync(join(c.home, traecodeDotDirName(c.home))) || onPath("trae"),
+  install(c) {
+    const hooksPath = join(c.home, traecodeDotDirName(c.home), "hooks.json");
+    const doc = readJson(hooksPath);
+    doc.version = doc.version ?? 1;
+    const hooks = (doc.hooks = doc.hooks ?? {});
+    mergeHarnessHooks(hooks, "traecode", c.dist);
+    writeJson(hooksPath, doc);
+    c.log?.(`traecode: hooks merged into ${hooksPath}`);
+    installSkill(c, "traecode");
+
+    // Migration: installs before 2026-09 registered the MCP server at the user level, where
+    // Trae's home-directory cwd breaks it (see the harness docs). The per-repo `.trae/mcp.json`
+    // the installer and SessionStart hook maintain is the only registration — drop the stale entry.
+    if (removeTraecodeUserMcpEntry(c)) {
+      c.log?.(
+        `traecode: stale user-level MCP entry removed from ${traecodeMcpPath(c)} — per-repo\n` +
+          "  .trae/mcp.json files register the server instead"
+      );
+    }
+
+    // TraeCode runs every hook inside its sandbox; the profile is generated per session from the
+    // defaults plus the user's `~/.trae-cn/sandbox.json` rules. The defaults cover network and the
+    // journal's tmpdir but NOT `~/.hindsight` (logs, config), so without this rule the hooks fail
+    // silently (exit 0, zero effect) and the only workaround would be running hooks unsandboxed.
+    // The per-window storage DBs get the same treatment: the SessionStart hook seeds the
+    // workspace's MCP enable switch there (core/traecode-mcp.ts).
+    const sandboxPath = join(c.home, traecodeDotDirName(c.home), "sandbox.json");
+    const sandbox = readJson(sandboxPath);
+    const fsRules = (sandbox.filesystem = sandbox.filesystem ?? {});
+    const readWrite = (fsRules.readWrite = fsRules.readWrite ?? []);
+    const needed = [join(c.home, ".hindsight"), traecodeWorkspaceStorageDir(c.home)];
+    let sandboxChanged = false;
+    for (const dir of needed) {
+      if (!readWrite.includes(dir)) {
+        readWrite.push(dir);
+        sandboxChanged = true;
+      }
+    }
+    if (sandboxChanged) {
+      writeJson(sandboxPath, sandbox);
+      c.log?.(`traecode: sandbox readWrite rules added (${needed.join(", ")})`);
+    }
+
+    // Pre-seed what the SessionStart hook would otherwise write per session: the per-repo MCP
+    // registration and the workspace enable switch for every repo in mapPathToBank. Trae's hook
+    // sandbox denies file creation in the workspace and (observed live 2026-09-21) drops
+    // sandbox.json rules targeting Trae's own storage, so on stock installs both hook writes
+    // fail — the installer runs unsandboxed and lands them. Because the hook checks before
+    // writing, a pre-seeded repo turns every later session into a read-only no-op.
+    const { principal } = loadManagedConfig(process.env, "traecode");
+    const repos = Object.keys(principal.mapPathToBank ?? {}).sort();
+    if (repos.length) {
+      const written: string[] = [];
+      const current: string[] = [];
+      const skipped: string[] = [];
+      for (const repo of repos) {
+        // A map entry whose directory is gone must not grow a phantom `.trae` tree via mkdir -p.
+        if (!existsSync(repo)) {
+          skipped.push(repo);
+          continue;
+        }
+        const outcome = registerTraecodeWorkspaceMcp(repo, { home: c.home, dist: c.dist });
+        if (outcome === "registered") written.push(repo);
+        else if (outcome === "current") current.push(repo);
+        else skipped.push(repo);
+        // Workspace enable switches remain user-managed.
+      }
+      c.log?.(
+        `traecode: per-repo MCP registration — ${written.length} written, ${current.length} ` +
+          `already current, ${skipped.length} skipped across ${repos.length} managed repo(s)`
+      );
+      if (written.length) c.log?.(`  registered: ${written.join(", ")}`);
+      if (skipped.length) {
+        c.log?.(
+          `  skipped (missing repo, no dist build, or a foreign hindsight entry): ` +
+            skipped.join(", ")
+        );
+      }
+      // A freshly seeded switch takes effect in the NEXT window (Trae holds the running one's
+      // table in memory); if a repo was opened before this install, one panel flip covers it.
+      if (written.length) {
+        c.log?.(
+          "  new registrations appear in the next Trae window — if a repo's server still shows\n" +
+            "  disabled in the MCP panel, flip it on once there"
+        );
+      }
+    }
+
+    ensureTraecodeWorkspaceMcpGate(c);
+  },
+  uninstall(c) {
+    const hooksPath = join(c.home, traecodeDotDirName(c.home), "hooks.json");
+    if (existsSync(hooksPath)) {
+      const doc = readJson(hooksPath);
+      if (doc.hooks) {
+        stripHarnessHooks(doc.hooks, "traecode");
+        if (!Object.keys(doc.hooks).length) delete doc.hooks;
+      }
+      // A file holding nothing but `version` carries no information TraeCode needs: remove it
+      // rather than leave a husk. Foreign hooks keep the file (and the field) alive.
+      if (Object.keys(doc).length > 1) writeJson(hooksPath, doc);
+      else rmSync(hooksPath);
+    }
+    if (removeTraecodeUserMcpEntry(c)) {
+      c.log?.(`traecode: MCP entry removed from ${traecodeMcpPath(c)}`);
+    }
+    // The per-repo registrations the installer (or the hook) wrote: drop our entry from every
+    // opted-in repo's .trae/mcp.json, deleting the file when nothing remains in it. Foreign
+    // servers and foreign "hindsight" entries are never touched — same ownership check as the
+    // hook's. Missing repos skip silently; the storage sweep below still catches their switches.
+    const { principal } = loadManagedConfig(process.env, "traecode");
+    const repoEntries = Object.keys(principal.mapPathToBank ?? {}).sort();
+    const cleaned = repoEntries.filter((repo) =>
+      removeTraecodeWorkspaceMcpEntry(repo, { home: c.home })
+    );
+    if (cleaned.length) {
+      c.log?.(`traecode: per-repo MCP registration removed from:\n  ${cleaned.join("\n  ")}`);
+    }
+    const sandboxPath = join(c.home, traecodeDotDirName(c.home), "sandbox.json");
+    if (existsSync(sandboxPath)) {
+      const sandbox = readJson(sandboxPath);
+      const readWrite = sandbox.filesystem?.readWrite;
+      if (Array.isArray(readWrite)) {
+        const ours = [join(c.home, ".hindsight"), traecodeWorkspaceStorageDir(c.home)];
+        const filtered = readWrite.filter((p: string) => !ours.includes(p));
+        if (filtered.length !== readWrite.length) {
+          sandbox.filesystem.readWrite = filtered;
+          writeJson(sandboxPath, sandbox);
+        }
+      }
+    }
+    // The per-workspace enable switches the installer/hook seeded — an uninstall leaves no storage behind.
+    // Workspace enable switches remain user-managed.
+    uninstallSkill(c, "traecode");
+    c.log?.(`traecode: hooks + MCP registration + skill removed`);
+  },
+};
+
+/**
+ * WorkBuddy and CodeBuddy Code run the same `@genie/agent-cli` engine, one home folder apart
+ * (`~/.workbuddy` vs `~/.codebuddy`). Both read the nested Claude-shaped hooks block from
+ * `<home>/settings.json`, so `mergeHarnessHooks` writes it unchanged, and both take the MCP server
+ * from a plain FILE (no external CLI involved). The companion skill lands in each host's own root
+ * (see SKILL_DIRS).
+ *
+ * `mcpPaths` is the host's MCP file lookup, highest priority first: the installer writes the FIRST
+ * one that exists (or the first one when none do), and uninstall sweeps them all — an entry
+ * installed before a higher-priority file appeared would otherwise survive as a dormant duplicate.
+ */
+const genieInstaller = (
+  name: "workbuddy" | "codebuddy",
+  homeDir: string,
+  mcpPaths: (home: string) => string[]
+): HarnessInstaller => ({
+  name,
+  detect: (c) => existsSync(join(c.home, homeDir)),
+  install(c) {
+    const settingsPath = join(c.home, homeDir, "settings.json");
+    const settings = readJson(settingsPath);
+    settings.hooks = settings.hooks ?? {};
+    mergeHarnessHooks(settings.hooks, name, c.dist);
+    writeJson(settingsPath, settings);
+    c.log?.(`${name}: hooks merged into ${settingsPath}`);
+
+    const paths = mcpPaths(c.home);
+    const mcpPath = paths.find((p) => existsSync(p)) ?? paths[0];
+    const mcp = readJson(mcpPath);
+    mcp.mcpServers = mcp.mcpServers ?? {};
+    mcp.mcpServers[registrationName()] = mcpServerEntry(c.dist, name);
+    writeJson(mcpPath, mcp);
+    c.log?.(`${name}: MCP server registered in ${mcpPath}`);
+
+    installSkill(c, name);
+  },
+  uninstall(c) {
+    const settingsPath = join(c.home, homeDir, "settings.json");
+    if (existsSync(settingsPath)) {
+      const settings = readJson(settingsPath);
+      if (settings.hooks) {
+        stripHarnessHooks(settings.hooks, name);
+        if (!Object.keys(settings.hooks).length) delete settings.hooks;
+        writeJson(settingsPath, settings);
+      }
+    }
+    for (const mcpPath of mcpPaths(c.home)) {
+      if (!existsSync(mcpPath)) continue;
+      const mcp = readJson(mcpPath);
+      if (removeOwnedMcpRegistrations(mcp.mcpServers, name)) {
+        if (!Object.keys(mcp.mcpServers).length) delete mcp.mcpServers;
+        writeJson(mcpPath, mcp);
+      }
+    }
+    uninstallSkill(c, name);
+    c.log?.(`${name}: hooks + MCP registration + skill removed`);
+  },
+});
+
+/** WorkBuddy (Tencent's AI workbench): one MCP file, `~/.workbuddy/mcp.json`. */
+const workbuddy = genieInstaller("workbuddy", ".workbuddy", (home) => [
+  join(home, ".workbuddy", "mcp.json"),
+]);
+
+/**
+ * CodeBuddy resolves its user-scope MCP file by priority — ~/.codebuddy/.mcp.json (recommended),
+ * then ~/.codebuddy/mcp.json (deprecated), then ~/.codebuddy.json (legacy) — reading and writing
+ * the FIRST one that exists (codebuddy.ai/docs/cli/mcp). Writing the recommended path
+ * unconditionally would shadow a user whose servers live in the deprecated file.
+ */
+const codebuddy = genieInstaller("codebuddy", ".codebuddy", (home) => [
+  join(home, ".codebuddy", ".mcp.json"),
+  join(home, ".codebuddy", "mcp.json"),
+  join(home, ".codebuddy.json"),
+]);
+
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
   opencode2,
@@ -1874,11 +2314,15 @@ export const INSTALLERS: HarnessInstaller[] = [
   copilot,
   grok,
   qwen,
+  kimi,
   cline,
   dcode,
   dsh,
   factoryDroid,
   zcode,
+  traecode,
+  workbuddy,
+  codebuddy,
 ];
 
 // The public executable was renamed from Gemini CLI to Antigravity's `agy`. Keep the
@@ -1948,6 +2392,9 @@ function mutationPaths(ctx: InstallCtx, names: string[], includeDesiredSkill = t
     "grok-build": [".grok/config.toml"], "qwen-code": [".qwen/settings.json"],
     "cline-cli": [".cline/data/settings/cline_mcp_settings.json", ".cline/plugins", ...CLINE_OLD_HOOK_EVENTS.map((event) => `Documents/Cline/Hooks/${event}`)],
     dcode: [ ".hindsight/.agents/plugins/marketplace.json", ".hindsight/hindsight-coding-agents-marketplace.json"],
+    workbuddy: [".workbuddy/settings.json", ".workbuddy/mcp.json"],
+    codebuddy: [".codebuddy/settings.json", ".codebuddy/.mcp.json", ".codebuddy/mcp.json", ".codebuddy.json"],
+    "kimi-code": [],
     "factory-droid": [".factory/hooks.json", ".factory/mcp.json"], zcode: [".zcode/cli/config.json"],
   };
   for (const name of names) {
@@ -1959,6 +2406,16 @@ function mutationPaths(ctx: InstallCtx, names: string[], includeDesiredSkill = t
       const base = skillsBaseFor(ctx, name);
       paths.push(...ownedCompanionSkills(base));
       if (includeDesiredSkill) paths.push(join(base, toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).skillName));
+    }
+    if (name === "kimi-code") {
+      const home = kimiHome(ctx);
+      if (!isAbsolute(home)) throw new Error("unsupported plugin location");
+      for (const file of ["config.toml", "mcp.json"]) paths.push(join(home, file), `${join(home, file)}.hindsight-backup`);
+    }
+    if (name === "traecode") {
+      const { principal } = loadManagedConfig(process.env, "traecode");
+      paths.push(join(ctx.home, traecodeDotDirName(ctx.home), "hooks.json"), join(ctx.home, traecodeDotDirName(ctx.home), "sandbox.json"), traecodeMcpPath(ctx));
+      for (const repo of Object.keys(principal.mapPathToBank ?? {})) paths.push(join(repo, ".trae/mcp.json"), join(repo, ".gitignore"));
     }
     if (name === "dsh") {
       const path = join(dshHome(ctx), "cordis.patch.yml");

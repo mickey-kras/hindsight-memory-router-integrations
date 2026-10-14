@@ -23,7 +23,7 @@ const ROUTING_KEYS = ["bankId", "bank_id", "bank_ids"];
 
 function assertAuthorizedUrl(url: string, method: string, baseUrl: string, access: BankAccess): boolean {
   const listing = url === `${baseUrl}/v1/default/banks` && method === "GET";
-  if (listing || (url === `${baseUrl}/version` && method === "GET")) {
+  if (listing || ([`${baseUrl}/version`, `${baseUrl}/v1/version`].includes(url) && method === "GET")) {
     return listing;
   }
   const prefix = `${baseUrl}/v1/default/banks/`;
@@ -170,6 +170,7 @@ export class RouterTransport {
         redirect: "error",
         headers: {
           "Content-Type": "application/json",
+          "Accept-Encoding": "identity",
           Authorization: `Bearer ${token}`,
           ...(this.#principalId
             ? {

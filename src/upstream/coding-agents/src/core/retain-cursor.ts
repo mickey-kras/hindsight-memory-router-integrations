@@ -17,9 +17,16 @@
  *                        NOT Claude Code compaction, which this used to cite: that appends a
  *                        summary record and leaves every earlier record in place (#3379), so the
  *                        prefix stays intact and the append path keeps working.
+ *                        NOR a session that moved to a NEW transcript FILE (Codex writes a
+ *                        continuation rollout under the same session id, #4493): nothing was
+ *                        rewritten there, the earlier turns simply live in the earlier file, so
+ *                        that case appends the new file whole instead of replacing the document
+ *                        with it — see `paths` below.
  *   - dirty              a REPLACE was started and not confirmed. There is nothing worth replaying
  *                        (another replace re-establishes the same truth from the same transcript),
  *                        so the next write-back simply replaces again.
+ *   - failed op          a write the server accepted whose operation later FAILED (see `ops`): its
+ *                        turns never reached the document, so appending after them leaves a gap.
  *
  * An APPEND that fails does NOT fall back to replace, because that fallback is what made a single
  * outage cost a full re-extraction on every subsequent Stop for the life of the session (#3989).
@@ -56,6 +63,21 @@ export const PENDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
  *  the buffer stops growing and the cursor falls back to it. Also bounds the cursor file. */
 export const PENDING_MAX_BYTES = 256 * 1024;
 
+/** How many of a session's rollout files the cursor remembers. Past this the oldest is forgotten and
+ *  a late hook for it costs one more append of that file — bounded, where an unbounded list would
+ *  grow the cursor file for the life of the session. */
+export const MAX_CURSOR_PATHS = 16;
+
+/** The `paths` a cursor carries once `path`'s turns are in the document: the files already there,
+ *  with this one last, since that is the file `turns`/`fingerprint` now describe. */
+export function advancePaths(
+  seen: string[] | undefined,
+  path: string | undefined
+): string[] | undefined {
+  if (!path) return seen;
+  return [...(seen ?? []).filter((p) => p !== path), path].slice(-MAX_CURSOR_PATHS);
+}
+
 /** Whether a cursor's buffered appends can still be replayed, or the write-back must replace. */
 export function pendingReplayable(cursor: RetainCursor, now: number): boolean {
   const pending = cursor.pending ?? [];
@@ -74,12 +96,38 @@ export interface RetainCursor {
    *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
    *  its id and changes bank, and the new bank holds no document to append to. */
   bank: string;
+  /** The transcript FILES whose turns are already in the document, oldest first — the last is the
+   *  one `turns`/`fingerprint` describe. Empty for the persistent-plugin runtime, which holds its
+   *  turns in memory and has no file. One session can move between files — Codex writes a
+   *  continuation rollout under the same `session_meta.id` (#4493) — and the new file starts at
+   *  that segment rather than repeating the earlier one; without this the differing prefix reads as
+   *  a rewritten transcript and the replace drops everything already retained.
+   *
+   *  It is the whole set and not just the latest because a file can fire again AFTER the session
+   *  moved on (a late hook, or a second process still writing the earlier rollout): against the
+   *  latest path alone that reads as another new segment, and every alternation appends the file
+   *  again — unbounded. A file we have already written is never a new segment.
+   *
+   *  A cursor written before this field existed has none, so a session already in flight when the
+   *  plugin was upgraded keeps the old replace behaviour until its next write-back sets it. */
+  paths?: string[];
+  /** The server answered that it can take appends. Cached so later write-backs skip the probe. */
+  appendSupported?: boolean;
   /** A REPLACE was started and not confirmed: the next retain must replace, not append. */
   dirty?: boolean;
   /** Appends started and not confirmed, oldest first — replayed before anything new. Their turns
    *  are already counted in `turns`: the cursor covers what is committed OR buffered. */
   pending?: PendingAppend[];
+  /** Operation ids the server ACCEPTED but has not been seen to complete, oldest first. Accepted is
+   *  not stored: extraction can still fail (a provider at its usage limit), and the cursor has
+   *  already moved past those turns — so the next write-back checks these first, and one that
+   *  failed makes it replace, re-sending the turns it carried (#5251). */
+  ops?: string[];
 }
+
+/** How many accepted-but-unconfirmed operations a cursor tracks. Older ones are forgotten.
+ *  ponytail: an op still running after 8 more write-backs goes unchecked; widen if that shows up. */
+export const MAX_CURSOR_OPS = 8;
 
 /**
  * Identity of the first `count` turns — every one of them, hashed incrementally.
@@ -108,7 +156,7 @@ export type RetainPlan =
 export function planRetain(
   turns: TransportTurn[],
   cursor: RetainCursor | undefined,
-  opts: { appendSupported: boolean; bank: string; now?: number }
+  opts: { appendSupported: boolean; bank: string; path?: string; now?: number }
 ): RetainPlan {
   if (!turns.length) return { mode: "skip" };
   if (!opts.appendSupported || !cursor || cursor.dirty) return { mode: "replace" };
@@ -117,9 +165,20 @@ export function planRetain(
   if (!pendingReplayable(cursor, opts.now ?? Date.now())) return { mode: "replace" };
   // A different bank holds no document for this session: appending would store the tail alone.
   if (cursor.bank !== opts.bank) return { mode: "replace" };
-  // Fewer turns than we wrote: the transcript shrank, so it was rewritten, not extended.
-  if (cursor.turns > turns.length) return { mode: "replace" };
-  if (fingerprintTurns(turns, cursor.turns) !== cursor.fingerprint) return { mode: "replace" };
+  // A file we have NEVER written whose turns do not continue what we wrote is a continuation
+  // segment, not a rewrite (#4493): the earlier turns still exist, in the earlier file, and only
+  // this file's turns are missing from the document. Append them all rather than replacing the
+  // document with this segment alone. A resumed transcript that COPIES the earlier turns keeps a
+  // matching prefix and falls through to the ordinary append below, so it is not duplicated. A file
+  // already in `paths` is not a new segment however far the session has moved since, so a late hook
+  // for it replaces (as it did before #4493) instead of appending its turns a second time.
+  const seen = cursor.paths ?? [];
+  const newFile = Boolean(opts.path && seen.length && !seen.includes(opts.path));
+  const continues =
+    cursor.turns <= turns.length && fingerprintTurns(turns, cursor.turns) === cursor.fingerprint;
+  // Not a continuation of what we wrote — a shorter transcript, or a differing prefix — means the
+  // file was rewritten (an edited or redacted turn, a truncated rollout), so replace.
+  if (!continues) return newFile ? { mode: "append", fromTurn: 0 } : { mode: "replace" };
   if (cursor.turns === turns.length) return { mode: "skip" }; // nothing new since the last write
   return { mode: "append", fromTurn: cursor.turns };
 }

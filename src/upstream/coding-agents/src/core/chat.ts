@@ -3,8 +3,16 @@
  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
  * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
  */
+import { diag } from "./diag";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
-import { fingerprintTurns, planRetain, type RetainCursorStore } from "./retain-cursor";
+import {
+  advancePaths,
+  fingerprintTurns,
+  MAX_CURSOR_OPS,
+  planRetain,
+  type RetainCursor,
+  type RetainCursorStore,
+} from "./retain-cursor";
 import type { RetainStamp } from "./retain-stamp";
 import type { ChatSession } from "./types";
 import { uuidV5 } from "./uuid";
@@ -58,18 +66,26 @@ export async function ingestChats(
     async (s, i) => {
       const id = s.id || `s${i}`;
       const stamp = opts.stampFor?.(id);
-      // each turn gets an ABSOLUTE timestamp: its own if provided, else synthesized from the real clock,
-      // staggered per session + 1 min/turn to preserve ordering. List order is CHRONOLOGICAL (a later
-      // chat can amend an earlier one), so the LAST session is the newest — the previous `NOW - i*1h`
-      // inverted recency and made an amendment rank older than the decision it superseded.
+      // List order is CHRONOLOGICAL (a later chat can amend an earlier one), so the LAST session is
+      // the newest — the previous `NOW - i*1h` inverted recency and made an amendment rank older than
+      // the decision it superseded. This synthetic stagger is therefore only a FALLBACK, for a
+      // transcript that carries no clocks of its own.
       const sessBase = NOW - (sessions.length - 1 - i) * 3600000;
-      const baseIso = new Date(sessBase).toISOString();
+      // A backfilled session keeps the clock it actually happened on: when any turn carries a source
+      // timestamp, the first one dates the document (verbatim, offset included) and anchors the
+      // turns that have none. Dating it to the import made an old session surface as recent even
+      // though every turn inside it was dated correctly.
+      const sourceTs = (s.turns || [])
+        .map((t) => t.timestamp)
+        .find((v): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v)));
+      const anchorMs = sourceTs ? Date.parse(sourceTs) : sessBase;
+      const baseIso = sourceTs ?? new Date(sessBase).toISOString();
       const turns = withRefId(
         `chat:${id}`,
         (s.turns || []).map((t, j) => ({
           role: t.role,
           content: t.text,
-          timestamp: t.timestamp || new Date(sessBase + (j + 1) * 60000).toISOString(),
+          timestamp: t.timestamp || new Date(anchorMs + (j + 1) * 60000).toISOString(),
         })),
         baseIso
       );
@@ -99,14 +115,53 @@ export async function ingestChats(
   return failures;
 }
 
-/** Capability probe for the append path. Any failure answers "no": a write-back must never be lost
- *  because we couldn't work out whether the cheaper form of it was available. */
+/** Capability probe for the append path. A failed server-version probe answers "no": appending
+ *  without `operation_id` dedupe can double-write, so doubt falls back to a full replace. A failed
+ *  bank-config probe answers "yes" (see HindsightClient.supportsAppendRetain): banks store document
+ *  text by default, and only an explicit `store_document_text: false` rules append out (#4613). */
 async function supportsAppend(client: HindsightClient): Promise<boolean> {
   try {
-    return await client.supportsIdempotentRetain();
+    return await client.supportsAppendRetain();
   } catch {
     return false;
   }
+}
+
+/** Short: this runs on every write-back that follows an accepted one, inside a hook's budget. */
+const OP_CHECK_TIMEOUT_MS = 5_000;
+const LOST_OP_STATUSES = new Set(["failed", "cancelled", "error"]);
+
+/**
+ * Settle the cursor's accepted-but-unconfirmed operations (#5251). Returns the cursor to plan from —
+ * marked `dirty` when one of them failed, so the plan replaces and re-sends the turns it carried —
+ * and the ids still worth checking next time. Fail-open: an op whose status cannot be read stays
+ * tracked, never counts as failed.
+ */
+async function settleOps(
+  client: HindsightClient,
+  cursor: RetainCursor
+): Promise<{ cursor: RetainCursor; ops: string[] }> {
+  const ops = cursor.ops ?? [];
+  const statuses = await Promise.all(
+    ops.map(async (id) => {
+      try {
+        const r = await client.req(
+          "GET",
+          client.bankUrl(`/operations/${encodeURIComponent(id)}`),
+          undefined,
+          [],
+          OP_CHECK_TIMEOUT_MS
+        );
+        if (r.status === 404) return "not_found"; // pruned: nothing left to learn
+        return String(((await r.json()) as { status?: unknown }).status ?? "").toLowerCase();
+      } catch {
+        return "";
+      }
+    })
+  );
+  const lost = statuses.some((s) => LOST_OP_STATUSES.has(s));
+  const open = ops.filter((_, i) => !["completed", "not_found"].includes(statuses[i]));
+  return { cursor: lost ? { ...cursor, dirty: true } : cursor, ops: lost ? [] : open };
 }
 
 /** Retry window for a caller that did not supply one — a long-lived host with no external clock. */
@@ -187,6 +242,17 @@ function serialize(
 }
 
 /**
+ * The `context` of a session write-back when `retainContext` is unset. The second sentence keeps an
+ * agent's own "fixed"/"passes" a claim: stored as fact, a later session applied it without checking
+ * the code (#4791). It lives here rather than in the bank's retain mission because the mission is
+ * seeded once and never reaches a bank that already has one; the context rides on every write.
+ */
+export const DEFAULT_RETAIN_CONTEXT =
+  "conversation between the user and you (the coding agent): user turns are the user's words and " +
+  "decisions, assistant turns are yours. When an assistant turn says something is fixed, passes or " +
+  'works, record it as the agent\'s claim ("the agent reported X fixed"), not as an established fact.';
+
+/**
  * Live write-back: upsert a running session under a stable document_id, sending only what is new.
  *
  * Given a cursor store, a session that has already been written APPENDS the turns added since the
@@ -207,7 +273,13 @@ export async function retainLiveSession(
   turns: TransportTurn[],
   startTs: string,
   harness?: string,
-  opts: { cursors?: RetainCursorStore; stamp?: RetainStamp; retryUntil?: number } = {}
+  opts: {
+    cursors?: RetainCursorStore;
+    stamp?: RetainStamp;
+    retryUntil?: number;
+    /** The transcript file the turns came from, when there is one — see RetainCursor.paths. */
+    transcriptPath?: string;
+  } = {}
 ): Promise<void> {
   const cursors = opts.cursors;
   if (!cursors)
@@ -219,11 +291,22 @@ export async function retainLiveSession(
       harness,
       opts.stamp,
       undefined,
-      opts.retryUntil
+      opts.retryUntil,
+      opts.transcriptPath
     );
   // Serialised so the plan is made against the previous write-back's CONFIRMED cursor (see above).
   return serialize(cursors, sessionId, () =>
-    writeSession(client, sessionId, turns, startTs, harness, opts.stamp, cursors, opts.retryUntil)
+    writeSession(
+      client,
+      sessionId,
+      turns,
+      startTs,
+      harness,
+      opts.stamp,
+      cursors,
+      opts.retryUntil,
+      opts.transcriptPath
+    )
   );
 }
 
@@ -236,13 +319,39 @@ async function writeSession(
   stamp?: RetainStamp,
   cursors?: RetainCursorStore,
   /** Absolute time this write-back may keep retrying until; the caller owns its own clock. */
-  retryUntil = Date.now() + DEFAULT_RETRY_WINDOW_MS
+  retryUntil = Date.now() + DEFAULT_RETRY_WINDOW_MS,
+  transcriptPath?: string
 ): Promise<void> {
   if (!turns.length) return;
   const refId = `conversation:${sessionId}`;
-  const appendSupported = Boolean(cursors) && (await supportsAppend(client));
-  const cursor = cursors?.read(sessionId);
-  const plan = planRetain(turns, cursor, { appendSupported, bank: client.bank });
+  let cursor = cursors?.read(sessionId);
+  // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
+  // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
+  // (#4560). A "no" is not remembered — the server can be upgraded mid-session.
+  const probed = Boolean(cursors) && cursor?.appendSupported !== true;
+  const appendSupported =
+    Boolean(cursors) && (cursor?.appendSupported === true || (await supportsAppend(client)));
+  // Only an append can build on a lost write; a replace already re-sends everything.
+  let ops: string[] = [];
+  if (appendSupported && cursor?.ops?.length && !cursor.dirty)
+    ({ cursor, ops } = await settleOps(client, cursor));
+  const plan = planRetain(turns, cursor, {
+    appendSupported,
+    bank: client.bank,
+    path: transcriptPath,
+  });
+  // Recorded whenever the probe ran, so a deployment where append never activates shows up in the
+  // diag trail instead of only as oversized retains (#5286). A cached "yes" is not re-logged.
+  if (probed) diag(harness ?? "", "retain_mode", { mode: plan.mode, appendSupported });
+  // Which files the document holds after this write-back. A replace rebuilds it from THIS file
+  // alone, so it forgets the others — which is what lets the file it dropped be appended back as a
+  // segment on its next hook, rather than replacing again.
+  const paths =
+    plan.mode === "replace"
+      ? transcriptPath
+        ? [transcriptPath]
+        : undefined
+      : advancePaths(cursor?.paths, transcriptPath);
   // Appends built but never confirmed. A replace rewrites the whole document from the same
   // transcript, so it SUBSUMES them; on every other path they go out first, oldest first, before
   // anything new — the document only ever grows in transcript order.
@@ -256,7 +365,10 @@ async function writeSession(
   const submit = (content: string, operationId: string, append: boolean) =>
     client.retain(
       content,
-      "coding agent session",
+      // Configured context wins. Extraction reads this to decide whose claim a sentence is, so the
+      // default names both speakers: the previous "coding agent session" said nothing about
+      // authorship and let an assistant's proposal be recorded as the user's decision.
+      stamp?.context ?? DEFAULT_RETAIN_CONTEXT,
       refId,
       // Configured tags first, built-ins last and deduped: `source:chat` and `harness:<id>` are what
       // the documents list filters and draws its agent logo from, so a template cannot displace them.
@@ -288,6 +400,13 @@ async function writeSession(
     turns: turns.length,
     fingerprint: fingerprintTurns(turns, turns.length),
     bank: client.bank,
+    ...(paths ? { paths } : {}),
+    ...(appendSupported ? { appendSupported: true } : {}),
+  };
+  /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */
+  const accepted = (id?: string) => {
+    if (id) ops = [...ops, id].slice(-MAX_CURSOR_OPS);
+    return ops.length ? { ...next, ops } : next;
   };
   // Still ours to retry only while the cursor holds the claim we write below.
   const stillOurs = () => {
@@ -302,12 +421,10 @@ async function writeSession(
     // same truth from the same transcript. Claim the position unconfirmed so an outcome we never
     // learn resolves to another replace rather than an append onto an unknown state.
     cursors?.write(sessionId, { ...next, dirty: true });
-    await submitWithRetry(
-      () => submit(content, opId("replace", content), false),
-      stillOurs,
-      retryUntil
-    );
-    cursors?.write(sessionId, next);
+    const operationId = opId("replace", content);
+    await submitWithRetry(() => submit(content, operationId, false), stillOurs, retryUntil);
+    ops = []; // the replace re-sends every turn, so nothing older can still lose any
+    cursors?.write(sessionId, accepted(operationId));
     return;
   }
 
@@ -326,7 +443,7 @@ async function writeSession(
   // session (#3989). Replay is safe precisely because the bytes and the operation id are unchanged:
   // a write the server DID commit collapses into that same operation instead of appending twice,
   // which is the one thing appending onto an unknown state could otherwise get wrong.
-  cursors?.write(sessionId, { ...next, pending: queue });
+  cursors?.write(sessionId, { ...accepted(), pending: queue });
   for (let i = 0; i < queue.length; i++) {
     // One request per entry, each able to burn the full 15s abort — where this used to send exactly
     // once. Never START one that cannot finish inside the caller's budget: a hook harness is killed
@@ -343,6 +460,7 @@ async function writeSession(
     // Confirmed: drop it immediately, so a failure on a LATER entry cannot resubmit it as part of
     // the next flush. Whatever is still queued when this throws is what the next flush replays.
     const remaining = queue.slice(i + 1);
-    cursors?.write(sessionId, remaining.length ? { ...next, pending: remaining } : next);
+    const done = accepted(entry.operationId);
+    cursors?.write(sessionId, remaining.length ? { ...done, pending: remaining } : done);
   }
 }

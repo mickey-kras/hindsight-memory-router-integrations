@@ -52,9 +52,35 @@ describe("dsh pre-step injection", () => {
     expect(appended).toMatchObject({
       role: "user",
       content: [{ type: "text", text: "<hindsight_memory>past decision</hindsight_memory>" }],
-      source: { kind: "plugin", plugin: "hindsight", form: "recall" },
     });
+    // Exact, not a partial match: dsh 0.1.7 (session format V4) aborts the turn on the retired
+    // `kind: "plugin"` wrapper, so no `plugin` field may ride along either.
+    expect(appended.source).toEqual({ kind: "plugin:hindsight", form: "recall" });
     expect(appended.id).toEqual(expect.any(String));
+  });
+
+  it("does not re-append a block identical to the one already injected this session", async () => {
+    // dsh keeps every injected message in the history it sends, so the same roster appended on
+    // every turn stacked up as N identical copies (#5026).
+    let block = "<hindsight_knowledge_refresh>roster</hindsight_knowledge_refresh>";
+    const core = {
+      onPrompt: vi.fn(async () => {}),
+      getInjection: vi.fn(() => block),
+      seedIfCold: vi.fn(async () => {}),
+    };
+    const hooks = createDshHooks(() => fakeWorkspace(core));
+    const step = (id: string, text: string) =>
+      hooks.preStep(
+        { agent: agentWith(id), signal: new AbortController().signal },
+        enter([userMessage(text)])
+      ) as Promise<{ messages: unknown[] }>;
+
+    expect((await step("s-1", "first")).messages).toHaveLength(2);
+    expect((await step("s-1", "second")).messages).toHaveLength(1);
+    // Another session gets its own copy, and a changed block is injected again.
+    expect((await step("s-2", "first")).messages).toHaveLength(2);
+    block = "<hindsight_knowledge_refresh>new page</hindsight_knowledge_refresh>";
+    expect((await step("s-1", "third")).messages).toHaveLength(2);
   });
 
   it("does not recall again on a tool continuation that claimed no new input", async () => {

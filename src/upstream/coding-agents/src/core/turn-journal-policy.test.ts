@@ -67,7 +67,7 @@ function clients() {
   };
   const retainClient = {
     retain: vi.fn<HindsightClient["retain"]>().mockResolvedValue(undefined),
-    supportsIdempotentRetain: vi.fn<HindsightClient["supportsIdempotentRetain"]>().mockResolvedValue(false),
+    supportsAppendRetain: vi.fn<HindsightClient["supportsAppendRetain"]>().mockResolvedValue(false),
   };
   return {
     makePrompt: vi.fn(() => promptClient),
@@ -191,5 +191,45 @@ describe("ZCode journal retention policy", () => {
     await runRetainHook(spec.retain, client.makeRetain);
     expect(readFileSync(path, "utf8")).toBe(before);
     expect(client.makeRetain).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("one-time tool-hook handoff authorization", () => {
+  const hook = { ...spec.prompt, journalPrompt: false, toolHook: {
+    accept: (ev: Record<string, unknown>) => ev.tool === true,
+    emit: (context: string) => ({ deliveredContext: context }),
+  } };
+  it("delivers pending context only after a fresh guarded read, once", async () => {
+    await runHook(hook, clients().makePrompt);
+    const out = vi.mocked(process.stdout.write);
+    out.mockClear();
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ items: [] }));
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await runHook(hook, clients().makePrompt);
+    expect(out.mock.calls.flat().join()).toContain("deliveredContext");
+    expect(fetch.mock.calls[0][0]).toBe("https://router.example.test/v1/default/banks/A/documents?limit=1");
+    out.mockClear();
+    await runHook(hook, clients().makePrompt);
+    expect(out).not.toHaveBeenCalled();
+  });
+  it.each([401, 403])("refuses pending memory after HTTP %s", async (status) => {
+    await runHook(hook, clients().makePrompt);
+    const out = vi.mocked(process.stdout.write);
+    out.mockClear();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("SECRET_AUTH_BODY", { status }));
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
+    expect(out).not.toHaveBeenCalled();
+  });
+  it("cannot hand old bank memory to a newly mapped bank", async () => {
+    await runHook(hook, clients().makePrompt);
+    const out = vi.mocked(process.stdout.write);
+    out.mockClear();
+    authorize({ bank: "B" });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ items: [] }));
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await runHook(hook, clients().makePrompt);
+    expect(out).not.toHaveBeenCalled();
   });
 });

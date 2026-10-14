@@ -122,6 +122,7 @@ describe("hosted router facade contract", () => {
     expect(init.redirect).toBe("error");
     expect(init.headers).toEqual({
       "Content-Type": "application/json",
+      "Accept-Encoding": "identity",
       Authorization: `Bearer ${token}`,
       "x-memory-router-agent": "hosted",
     });

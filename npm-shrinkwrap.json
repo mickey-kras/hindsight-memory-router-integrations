@@ -15,7 +15,7 @@
       "devDependencies": {
         "@biomejs/biome": "2.5.15",
         "@types/node": "22.20.5",
-        "@vectorize-io/hindsight-client": "0.10.2",
+        "@vectorize-io/hindsight-client": "1.0.0",
         "@vitest/coverage-v8": "5.0.3",
         "aislop": "0.18.1",
         "typescript": "^7.0.2",
@@ -2074,17 +2074,10 @@
         "@vectorize-io/hindsight-client": "^0.6.2"
       }
     },
-    "node_modules/@vectorize-io/hindsight-agent-sdk/node_modules/@vectorize-io/hindsight-client": {
-      "version": "0.6.2",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-0.6.2.tgz",
-      "integrity": "sha512-bymmlMWI1z0zOjgY+wRMLudNxzqcW20VHMtyV3QLhwJm63NeQN/nEZ4plWPR0p28DffaUM5nk2VSxzQljN+Mow==",
-      "license": "MIT"
-    },
     "node_modules/@vectorize-io/hindsight-client": {
-      "version": "0.10.2",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-0.10.2.tgz",
-      "integrity": "sha512-mhGK4xCWYPWi/odk4xmxhgWfFnG+4pKugPBrGZtx/aJN7qGa1wJZm/WWlxX8D6kuVlOny9yp8l0tzHFlx+Vsew==",
-      "dev": true,
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-1.0.0.tgz",
+      "integrity": "sha512-QQIainWu2jN9z65GuNitQxRos8Lg7o3RwBv/w+PRaJWcwvhBE0PtPtF7xL3NqTLARccqpDYB11aaa7Iklu2goA==",
       "license": "MIT"
     },
     "node_modules/@vitest/coverage-v8": {

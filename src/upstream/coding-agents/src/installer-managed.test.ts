@@ -378,3 +378,52 @@ describe("operator-managed installation", () => {
     expect(run(["install", "cursor-cli"], ctx)).toBe(1); expect(readdirSync(ctx.home)).toEqual([]);
   });
 });
+
+
+it.each([
+  ["workbuddy", ".workbuddy/mcp.json"],
+  ["codebuddy", ".codebuddy/.mcp.json"],
+  ["kimi-code", ".kimi-code/mcp.json"],
+])("installs %s with its managed identity and custom namespace and preserves foreign servers", (name, relative) => {
+  provision([name]);
+  const configPath = join(root, "router.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  put(configPath, JSON.stringify({ ...config, toolPrefix: "abc_" }));
+  const path = join(ctx.home, relative);
+  const foreign = { command: "foreign", args: [] };
+  put(path, JSON.stringify({ mcpServers: { unrelated: foreign } }));
+  expect(run(["install", name], ctx)).toBe(0);
+  const servers = JSON.parse(readFileSync(path, "utf8")).mcpServers;
+  expect(servers.abc.env.HINDSIGHT_MCP_HARNESS).toBe(name);
+  expect(servers).not.toHaveProperty("hindsight");
+  expect(servers.unrelated).toEqual(foreign);
+  expect(run(["uninstall", name], ctx)).toBe(0);
+  expect(JSON.parse(readFileSync(path, "utf8")).mcpServers).toEqual({ unrelated: foreign });
+});
+it.each([
+  ["workbuddy", ".workbuddy/mcp.json"],
+  ["codebuddy", ".codebuddy/.mcp.json"],
+  ["kimi-code", ".kimi-code/mcp.json"],
+])("refuses foreign registration collision in new %s adapter before any mutation", (name, relative) => {
+  provision([name]);
+  put(join(ctx.home, relative), JSON.stringify({ mcpServers: { hindsight: { command: "foreign", args: [] } } }));
+  const before = snapshot(ctx.home);
+  expect(run(["install", name], ctx)).toBe(1);
+  expect(snapshot(ctx.home)).toEqual(before);
+});
+
+it("installs Trae workspace MCP only in explicitly managed projects using the branded identity", () => {
+  provision(["traecode"], { mapPathToBank: { [root]: "A" } });
+  vi.spyOn(process, "cwd").mockReturnValue(root);
+  const configPath = join(root, "router.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  put(configPath, JSON.stringify({ ...config, toolPrefix: "abc_" }));
+  put(join(ctx.dist, "mcp-server.js"), "runtime");
+  expect(run(["install", "traecode"], ctx)).toBe(0);
+  const file = join(root, ".trae/mcp.json");
+  const entry = JSON.parse(readFileSync(file, "utf8")).mcpServers.abc;
+  expect(entry.env).toMatchObject({ HINDSIGHT_MCP_HARNESS: "traecode", HINDSIGHT_MCP_PROJECT_CWD: root });
+  expect(existsSync(join(ctx.home, ".config/Trae CN/User/settings.json"))).toBe(false);
+  expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8")).mcpServers).not.toHaveProperty("abc");
+});
