@@ -145,8 +145,25 @@ describe("OS credential isolation", () => {
     expect(() => humanRouterUrl(url)).toThrow();
   });
 
+  it.each([0, 1, 3, 4])("rejects malformed HTTPS authority with %i separators before normalization", (count) => {
+    for (const path of ["/prefix", "/prefix/../admin", "/a%2Fb"]) {
+      expect(() => humanRouterUrl(`https:${"/".repeat(count)}router.example${path}`)).toThrow(
+        "human session unavailable",
+      );
+    }
+  });
+
+  it.each(["https://", "https:///", "https://?query", "https://#fragment", "https://@router.test"])(
+    "rejects missing or ambiguous authority %s",
+    (url) => expect(() => humanRouterUrl(url)).toThrow("human session unavailable"),
+  );
+
   it("normalizes host/default TLS port and retains router prefix", () => {
     expect(humanRouterUrl("https://ROUTER.example.test:443/prefix/")).toBe(router);
+    expect(humanRouterUrl("HTTPS://ROUTER.example.test:8443/prefix/child")).toBe(
+      "https://router.example.test:8443/prefix/child",
+    );
+    expect(humanRouterUrl("https://[::1]:8443/prefix")).toBe("https://[::1]:8443/prefix");
     expect(humanRouterUrl(" \thttps://ROUTER.example.test:443/prefix/\r\n ")).toBe(router);
     expect(() => secureEntry(router, "bad/ref")).toThrow("human session unavailable");
   });

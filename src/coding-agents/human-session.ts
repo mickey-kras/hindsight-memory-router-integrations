@@ -35,7 +35,9 @@ export function humanRouterUrl(value: string): string {
   ) {
     throw new HumanLoginRequiredError();
   }
-  const rawPath = input.match(/^https:\/\/[^/]+(\/[^?#]*)?/i)?.[1] ?? "";
+  const parts = input.match(/^https:\/\/([^/?#\\@]+)(\/[^?#]*)?$/i);
+  if (!parts) throw new HumanLoginRequiredError();
+  const rawPath = parts[2] ?? "";
   if (input.includes("\\") || /%|\/\.\.?(?:\/|$)|\/{2}$/.test(rawPath)) throw new HumanLoginRequiredError();
   const canonical = validateRouterUrl(input);
   const url = new URL(canonical);
