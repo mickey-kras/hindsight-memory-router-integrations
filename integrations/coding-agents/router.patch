@@ -11215,7 +11215,7 @@ index 7526361..f2c5273 100644
        JSON.stringify({ ...state, lastEnableHint: now }, null, 2) + "\n"
      );
 diff --git a/src/core/transcript-codebuddy-ide.test.ts b/src/core/transcript-codebuddy-ide.test.ts
-index 5d1cbf2..ebd234d 100644
+index 5d1cbf2..418d458 100644
 --- a/src/core/transcript-codebuddy-ide.test.ts
 +++ b/src/core/transcript-codebuddy-ide.test.ts
 @@ -1,7 +1,11 @@
@@ -11232,7 +11232,7 @@ index 5d1cbf2..ebd234d 100644
  import { readCodebuddyIdeTranscript, readCodebuddyTranscript } from "./transcript-codebuddy-ide";
  
  interface Rec {
-@@ -52,6 +56,76 @@ const FIRST_PROMPT =
+@@ -52,6 +56,111 @@ const FIRST_PROMPT =
    "<user_query>\nfix the flake\n</user_query>";
  
  describe("readCodebuddyIdeTranscript", () => {
@@ -11249,7 +11249,18 @@ index 5d1cbf2..ebd234d 100644
 +    ]);
 +  });
 +
-+  it.each(["not-a-date", "", "2026-99-99T00:00:00Z"])("omits invalid timestamp %j while preserving text, actions and valid neighbors", (createdAt) => {
++  it.each([
++    "not-a-date",
++    "",
++    "2026-99-99T00:00:00Z",
++    "2026-02-30T00:00:00Z",
++    "2026-02-29T00:00:00Z",
++    "1900-02-29T00:00:00+05:30",
++    "2026-04-31T00:00:00-07:00",
++    "0000-01-01T00:00:00Z",
++    "2026-09-15T24:00:00Z",
++    "2026-09-15T07:32:20+99:99",
++  ])("omits invalid timestamp %j while preserving text, actions and valid neighbors", (createdAt) => {
 +    const timestamp = "2026-09-15T07:32:20.000Z";
 +    const path = session([
 +      { role: "user", createdAt, content: [{ type: "text", text: "fix this" }] },
@@ -11271,9 +11282,31 @@ index 5d1cbf2..ebd234d 100644
 +    ]);
 +  });
 +
-+  it("retains a conversation whose first record has an invalid date", async () => {
++  it.each([
++    "2026-09-15T07:32:20.000Z",
++    "2026-09-15T07:32:20Z",
++    "2026-09-15T07:32:20.123456Z",
++    "2026-09-15T07:32:20.000+05:30",
++    "2026-09-15T07:32:20-07:00",
++    "2024-02-29T00:00:00Z",
++    "2000-02-29T00:00:00+05:30",
++    "0001-01-01T00:00:00Z",
++    "9999-12-31T23:59:59Z",
++  ])("preserves valid timestamp %j verbatim", (createdAt) => {
 +    const path = session([
-+      { role: "user", createdAt: "not-a-date", content: [{ type: "text", text: "fix this" }] },
++      { role: "user", createdAt, content: [{ type: "text", text: "fix this" }] },
++    ]);
++    expect(readCodebuddyTranscript(path)).toEqual([
++      { role: "user", content: "fix this", timestamp: createdAt },
++    ]);
++  });
++
++  it.each(["not-a-date", "2026-02-30T00:00:00Z", "1900-02-29T00:00:00+05:30", "0000-01-01T00:00:00Z"])("retains a conversation whose first record has invalid date %j", async (createdAt) => {
++    const fallbackTimestamp = "2026-10-14T12:00:00.000Z";
++    vi.useFakeTimers({ toFake: ["Date"] });
++    vi.setSystemTime(fallbackTimestamp);
++    const path = session([
++      { role: "user", createdAt, content: [{ type: "text", text: "fix this" }] },
 +      {
 +        role: "assistant",
 +        createdAt: "2026-09-15T07:32:20.000Z",
@@ -11281,7 +11314,7 @@ index 5d1cbf2..ebd234d 100644
 +      },
 +    ]);
 +    const retain = vi.fn<HindsightClient["retain"]>(async (_content, _context, _ref, _tags, _type, options) => {
-+      if (!Number.isFinite(Date.parse(options?.timestamp ?? ""))) {
++      if (options?.timestamp !== fallbackTimestamp) {
 +        throw new Error("invalid document timestamp");
 +      }
 +    });
@@ -11298,10 +11331,12 @@ index 5d1cbf2..ebd234d 100644
 +        usageCursors: memoryUsageCursorStore(),
 +      });
 +      expect(retain).toHaveBeenCalledOnce();
-+      expect(Number.isFinite(Date.parse(retain.mock.calls[0][5]?.timestamp ?? ""))).toBe(true);
++      await expect(retain.mock.results[0].value).resolves.toBeUndefined();
++      expect(retain.mock.calls[0][5]?.timestamp).toBe(fallbackTimestamp);
 +      expect(retain.mock.calls[0][0]).toContain("fix this");
 +      expect(retain.mock.calls[0][0]).toContain("done");
 +    } finally {
++      vi.useRealTimers();
 +      vi.unstubAllEnvs();
 +    }
 +  });
@@ -11310,10 +11345,29 @@ index 5d1cbf2..ebd234d 100644
      const path = session([
        {
 diff --git a/src/core/transcript-codebuddy-ide.ts b/src/core/transcript-codebuddy-ide.ts
-index 879c22a..1d86f9f 100644
+index 879c22a..30f578d 100644
 --- a/src/core/transcript-codebuddy-ide.ts
 +++ b/src/core/transcript-codebuddy-ide.ts
-@@ -129,11 +129,15 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
+@@ -34,6 +34,7 @@
+  */
+ import { readFileSync } from "node:fs";
+ import { basename, dirname, join } from "node:path";
++import { iso, refine } from "zod/mini";
+ import type { TransportTurn } from "./chat";
+ import { actionLine, stripInjectedMemory } from "./transcript-util";
+ import {
+@@ -42,6 +43,10 @@ import {
+   unwrapUserQuery,
+ } from "./transcript-workbuddy";
+ 
++const timestampSchema = iso.datetime({ offset: true }).check(
++  refine<string>((value) => !value.startsWith("0000-"))
++);
++
+ /** One `index.json` entry: the message order the IDE recorded, carrying no prose of its own. */
+ interface IdeIndexEntry {
+   id?: string;
+@@ -129,11 +134,15 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
      } catch {
        continue; // a truncated record contributes nothing rather than failing the hook
      }
@@ -11324,7 +11378,7 @@ index 879c22a..1d86f9f 100644
      const isAssistant = role === "assistant";
 -    const stamp = typeof file?.createdAt === "string" ? { timestamp: file.createdAt } : {};
 +    const stamp =
-+      typeof file?.createdAt === "string" && Number.isFinite(Date.parse(file.createdAt))
++      typeof file?.createdAt === "string" && timestampSchema.safeParse(file.createdAt).success
 +        ? { timestamp: file.createdAt }
 +        : {};
  

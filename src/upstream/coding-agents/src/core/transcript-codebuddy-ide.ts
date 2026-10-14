@@ -34,6 +34,7 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { iso, refine } from "zod/mini";
 import type { TransportTurn } from "./chat";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 import {
@@ -41,6 +42,10 @@ import {
   readWorkbuddyTranscript,
   unwrapUserQuery,
 } from "./transcript-workbuddy";
+
+const timestampSchema = iso.datetime({ offset: true }).check(
+  refine<string>((value) => !value.startsWith("0000-"))
+);
 
 /** One `index.json` entry: the message order the IDE recorded, carrying no prose of its own. */
 interface IdeIndexEntry {
@@ -135,7 +140,7 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
     const isUser = role === "user";
     const isAssistant = role === "assistant";
     const stamp =
-      typeof file?.createdAt === "string" && Number.isFinite(Date.parse(file.createdAt))
+      typeof file?.createdAt === "string" && timestampSchema.safeParse(file.createdAt).success
         ? { timestamp: file.createdAt }
         : {};
 
