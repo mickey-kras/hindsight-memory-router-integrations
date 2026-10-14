@@ -84,7 +84,7 @@ jobs:
     needs: [quality, aislop, codeql]
     runs-on: ubuntu-latest
     steps:
-      - uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -106,7 +106,7 @@ jobs:
           tags: tag:github-sonar
           use-cache: 'true'
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.3
           cache: npm
@@ -168,7 +168,7 @@ jobs:
       CANDIDATE_REF: ${{ inputs.candidate_ref }}
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
     steps:
-      - uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -176,7 +176,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.23.3
       - name: Resolve retained packages
@@ -190,7 +190,7 @@ jobs:
             });
       - name: Restore retained packages
         if: steps.retained.outputs.artifact != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           artifact-ids: ${{ steps.retained.outputs.artifact }}
           path: packages
@@ -214,7 +214,7 @@ jobs:
           sha256sum --check PACKAGE_SHA256
       - name: Retain tested packages
         if: steps.retained.outputs.artifact == ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: packages-${{ inputs.candidate_sha }}
           path: packages/*.tgz
