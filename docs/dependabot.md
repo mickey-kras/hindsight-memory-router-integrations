@@ -8,6 +8,9 @@
   Security updates use the same merge policy. Node typings stay on Node 22.
 - Required repository checks still apply. The score reflects other projects'
   CI results; it does not replace this repository's tests.
+- Bot auto-merge also waits for every job in the latest PR validation run for
+  the current head, including release combination and Dependabot policy tests,
+  to finish successfully. A newer run or rerun is evaluated again on refresh.
 - PR events and the 30-minute refresh use the same implementation. A failed
   lookup clears an earlier bot auto-merge decision. Manually enabled
   auto-merge still gets branch refresh and validation recovery.

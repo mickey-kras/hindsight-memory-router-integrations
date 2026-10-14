@@ -20,7 +20,7 @@ const pull = {
     ref: "dependabot/npm_and_yarn/example-1.0.1",
     repo: { full_name: "owner/repo" },
   },
-  base: { ref: "main" },
+  base: { ref: "main", sha: "b".repeat(40) },
 };
 
 for (const score of [75, 80, 100]) {
@@ -93,6 +93,26 @@ test("reads upstream multiline output and rejects missing/truncated data", () =>
   assert.throws(() => readDependencies("updated-dependencies-json<<x\n[]\n"));
 });
 
+const validationRun = {
+  id: 100,
+  run_attempt: 1,
+  updated_at: "2026-10-14T05:10:00Z",
+  head_sha: pull.head.sha,
+  head_branch: pull.head.ref,
+  event: "pull_request",
+  status: "completed",
+  conclusion: "success",
+};
+const validationJobs = [
+  "guard",
+  "quality / checks",
+  "quality / release combination",
+  "aislop / aislop status",
+  "codeql / analyze",
+  "branch-policy / branch name",
+  "dependabot-policy / policy-tests",
+].map((name) => ({ name, status: "completed", conclusion: "success" }));
+
 function harness({
   pulls = [pull],
   afterLookup,
@@ -100,17 +120,21 @@ function harness({
   runs = [],
   associated = [],
   event = "schedule",
+  validationRuns = [validationRun],
+  jobs = validationJobs,
+  afterValidationLookup,
 } = {}) {
   const commands = [],
     dispatches = [],
     warnings = [],
-    failures = [];
+    failures = [],
+    requests = [];
   let reads = 0;
+  let validationReads = 0;
   const endpoints = Object.fromEntries(
-    ["getRepo", "getBranch", "getPull", "listPulls", "listCommits", "associated", "runs", "dispatch"].map((k) => [
-      k,
-      { name: k },
-    ]),
+    ["getRepo", "getBranch", "getPull", "listPulls", "listCommits", "associated", "runs", "jobs", "dispatch"].map(
+      (k) => [k, { name: k }],
+    ),
   );
   const github = {
     rest: {
@@ -128,14 +152,22 @@ function harness({
       },
       actions: {
         listWorkflowRuns: endpoints.runs,
+        listJobsForWorkflowRun: endpoints.jobs,
         createWorkflowDispatch: async (input) => dispatches.push(input),
       },
     },
-    paginate: async (endpoint) => {
+    paginate: async (endpoint, input) => {
+      requests.push({ endpoint: endpoint.name, input });
       if (endpoint === endpoints.listPulls) return pulls;
       if (endpoint === endpoints.listCommits) return commits;
       if (endpoint === endpoints.associated) return associated;
-      if (endpoint === endpoints.runs) return runs;
+      if (endpoint === endpoints.runs) {
+        if (input.workflow_id === "pr-validation.yml") {
+          return (++validationReads > 1 && afterValidationLookup) || validationRuns;
+        }
+        return runs;
+      }
+      if (endpoint === endpoints.jobs) return jobs;
       throw new Error("Unexpected endpoint");
     },
   };
@@ -163,7 +195,7 @@ function harness({
     prepareDocker: async () => false,
     isCurrent: async () => true,
   };
-  return { options, commands, dispatches, warnings, failures };
+  return { options, commands, dispatches, warnings, failures, requests };
 }
 for (const event of ["pull_request_target", "schedule", "workflow_dispatch"]) {
   test(`${event} applies the same policy and matches the evaluated SHA`, async () => {
@@ -178,6 +210,202 @@ test("a changed head cannot be queued", async () => {
   });
   await run(h.options);
   assert.deepEqual(h.commands, []);
+});
+
+test("a changed base cannot be queued", async () => {
+  const h = harness({ afterLookup: { ...pull, base: { ...pull.base, sha: "c".repeat(40) } } });
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+test("main ancestry is checked again after validation before queuing", async () => {
+  const h = harness();
+  let comparisons = 0;
+  h.options.isCurrent = async () => ++comparisons === 1;
+  await run(h.options);
+  assert.equal(comparisons, 2);
+  assert.deepEqual(h.commands, []);
+});
+
+for (const validationRuns of [
+  [],
+  [{ ...validationRun, head_sha: "c".repeat(40) }],
+  [{ ...validationRun, head_branch: "feat/unrelated" }],
+  [{ ...validationRun, event: "push" }],
+  [{ ...validationRun, status: "queued", conclusion: null }],
+  [{ ...validationRun, status: "in_progress", conclusion: null, run_attempt: 2 }],
+  [{ ...validationRun, conclusion: "failure" }],
+  [{ ...validationRun, conclusion: "cancelled" }],
+]) {
+  test(`incomplete or unrelated validation cannot queue (${JSON.stringify(validationRuns)})`, async () => {
+    const h = harness({ validationRuns });
+    await run(h.options);
+    assert.deepEqual(h.commands, []);
+    assert.deepEqual(h.failures, []);
+  });
+}
+
+for (const name of ["quality / release combination", "dependabot-policy / policy-tests"]) {
+  for (const conclusion of ["failure", "skipped", null]) {
+    test(`workflow success cannot hide ${name} ${conclusion}`, async () => {
+      const h = harness({
+        jobs: validationJobs.map((job) =>
+          job.name === name ? { ...job, status: conclusion === null ? "in_progress" : "completed", conclusion } : job,
+        ),
+      });
+      await run(h.options);
+      assert.deepEqual(h.commands, []);
+    });
+  }
+  test(`missing ${name} prevents auto-merge`, async () => {
+    const h = harness({ jobs: validationJobs.filter((job) => job.name !== name) });
+    await run(h.options);
+    assert.deepEqual(h.commands, []);
+  });
+}
+
+test("duplicate job names and additional failed jobs prevent auto-merge", async () => {
+  for (const jobs of [
+    [...validationJobs, validationJobs[0]],
+    [...validationJobs, { name: "new gate", status: "completed", conclusion: "failure" }],
+  ]) {
+    const h = harness({ jobs });
+    await run(h.options);
+    assert.deepEqual(h.commands, []);
+  }
+});
+test("the newest applicable run blocks an older passing run", async () => {
+  const h = harness({
+    validationRuns: [validationRun, { ...validationRun, id: 101, status: "in_progress", conclusion: null }],
+  });
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+for (const status of ["queued", "in_progress", "completed"]) {
+  test(`an older run ID rerun after a passing run blocks auto-merge (${status})`, async () => {
+    const h = harness({
+      validationRuns: [
+        { ...validationRun, id: 101 },
+        {
+          ...validationRun,
+          run_attempt: 2,
+          updated_at: "2026-10-14T06:05:00Z",
+          status,
+          conclusion: status === "completed" ? "failure" : null,
+        },
+      ],
+    });
+    await run(h.options);
+    assert.deepEqual(h.commands, []);
+  });
+}
+test("any applicable pending run blocks even when an older timestamp remains during rerun queuing", async () => {
+  const h = harness({
+    validationRuns: [
+      { ...validationRun, id: 101, updated_at: "2026-10-14T06:05:00Z" },
+      { ...validationRun, run_attempt: 2, status: "queued", conclusion: null },
+    ],
+  });
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+test("a later successful execution supersedes an earlier failed execution regardless of run ID", async () => {
+  const h = harness({
+    validationRuns: [
+      { ...validationRun, id: 101, conclusion: "failure" },
+      { ...validationRun, run_attempt: 2, updated_at: "2026-10-14T06:05:00Z" },
+    ],
+  });
+  await run(h.options);
+  assert.equal(h.commands.length, 1);
+  assert.equal(h.requests.find((r) => r.endpoint === "jobs").input.run_id, 100);
+});
+test("ambiguous timestamps cannot hide a failing execution", async () => {
+  const h = harness({
+    validationRuns: [
+      { ...validationRun, id: 101 },
+      { ...validationRun, conclusion: "failure" },
+    ],
+  });
+  await run(h.options);
+  assert.deepEqual(h.commands, []);
+});
+for (const advisoryConclusion of ["success", "failure"]) {
+  test(`tied successful workflow timestamps block auto-merge even with advisory job ${advisoryConclusion}`, async () => {
+    const h = harness({
+      validationRuns: [
+        { ...validationRun, id: 101 },
+        { ...validationRun, run_attempt: 2 },
+      ],
+    });
+    const paginate = h.options.github.paginate;
+    h.options.github.paginate = async (endpoint, input) => {
+      if (endpoint.name === "jobs" && input.run_id === 100) {
+        return validationJobs.map((job) =>
+          job.name === "quality / release combination" ? { ...job, conclusion: advisoryConclusion } : job,
+        );
+      }
+      return paginate(endpoint, input);
+    };
+    await run(h.options);
+    assert.deepEqual(h.commands, []);
+    assert.equal(
+      h.requests.some((request) => request.endpoint === "jobs"),
+      false,
+    );
+  });
+}
+test("missing or invalid execution timestamps block auto-merge", async () => {
+  for (const updated_at of [undefined, "invalid"]) {
+    const h = harness({ validationRuns: [{ ...validationRun, updated_at }] });
+    await run(h.options);
+    assert.deepEqual(h.commands, []);
+  }
+});
+test("successful recovery uses latest jobs and cannot reuse jobs from an older attempt", async () => {
+  const h = harness({
+    validationRuns: [
+      { ...validationRun, id: 101, run_attempt: 2, event: "workflow_dispatch", updated_at: "2026-10-14T06:05:00Z" },
+      validationRun,
+    ],
+  });
+  await run(h.options);
+  assert.equal(h.commands.length, 1);
+  assert.deepEqual(h.requests.find((r) => r.endpoint === "jobs").input, {
+    owner: "owner",
+    repo: "repo",
+    run_id: 101,
+    filter: "latest",
+    per_page: 100,
+  });
+  assert.ok(
+    h.requests
+      .filter((r) => r.endpoint === "runs" && r.input.workflow_id === "pr-validation.yml")
+      .every((r) => r.input.branch === pull.head.ref && r.input.head_sha === pull.head.sha),
+  );
+});
+for (const afterValidationLookup of [
+  [{ ...validationRun, id: 101 }],
+  [{ ...validationRun, run_attempt: 2 }],
+  [{ ...validationRun, status: "in_progress", conclusion: null }],
+  [{ ...validationRun, updated_at: "2026-10-14T06:05:00Z" }],
+  [validationRun, { ...validationRun, id: 99, run_attempt: 2, status: "queued", conclusion: null }],
+]) {
+  test(`validation changing during job lookup prevents auto-merge (${JSON.stringify(afterValidationLookup)})`, async () => {
+    const h = harness({ afterValidationLookup });
+    await run(h.options);
+    assert.deepEqual(h.commands, []);
+  });
+}
+test("validation API failure revokes a prior bot queue decision", async () => {
+  const h = harness({ pulls: [{ ...pull, auto_merge: { enabled_by: { login: "github-actions[bot]" } } }] });
+  const paginate = h.options.github.paginate;
+  h.options.github.paginate = async (endpoint, input) => {
+    if (endpoint.name === "jobs") throw new Error("Actions unavailable");
+    return paginate(endpoint, input);
+  };
+  await run(h.options);
+  assert.deepEqual(h.commands, [["owner/repo", 1, ["--disable-auto"]]]);
+  assert.equal(h.failures.length, 1);
 });
 test("artifact preparation runs before auto-merge", async () => {
   const h = harness();
