@@ -43,7 +43,7 @@ export function renderToolText(text: string, prefix: string, sourcePrefix = DEFA
   const target = validatedToolPrefix(prefix);
   const source = validatedToolPrefix(sourcePrefix);
   const references = new RegExp(
-    `${source}(${[...TOOL_SUFFIXES].sort((a, b) => b.length - a.length).join("|")})\\b`,
+    String.raw`${source}(${[...TOOL_SUFFIXES].sort((a, b) => b.length - a.length).join("|")})\b`,
     "g",
   );
   return text.replace(references, (_match, suffix: string) => target + suffix);
@@ -66,7 +66,7 @@ export function prefixTools<T extends { name: string; description: string }>(
 
 function assertSkillPrefix(text: string, prefix: string): void {
   const references = new RegExp(
-    `\\b([a-z][a-z0-9_]*_)(${[...TOOL_SUFFIXES].sort((a, b) => b.length - a.length).join("|")})\\b`,
+    String.raw`\b([a-z][a-z0-9_]*_)(${[...TOOL_SUFFIXES].sort((a, b) => b.length - a.length).join("|")})\b`,
     "g",
   );
   for (const match of text.matchAll(references)) {
@@ -79,12 +79,12 @@ function assertSkillPrefix(text: string, prefix: string): void {
 const SKILL_MARKER = /<!-- hindsight-tool-prefix: ([^\n]+) -->/;
 export function renderCompanionSkill(raw: string, prefix: string, installed?: string): string {
   const target = validatedToolPrefix(prefix);
-  const configured = raw.match(SKILL_MARKER)?.[1] ?? DEFAULT_TOOL_PREFIX;
+  const configured = SKILL_MARKER.exec(raw)?.[1] ?? DEFAULT_TOOL_PREFIX;
   assertSkillPrefix(raw, configured);
   if (configured !== DEFAULT_TOOL_PREFIX && configured !== target)
     throw new ToolPrefixError("inconsistent packaged skill/tool prefixes");
   if (installed !== undefined) {
-    const existing = installed.match(SKILL_MARKER)?.[1];
+    const existing = SKILL_MARKER.exec(installed)?.[1];
     assertSkillPrefix(installed, existing ?? DEFAULT_TOOL_PREFIX);
     if (existing !== undefined && existing !== target)
       throw new ToolPrefixError("installed skill/tool prefix mismatch; reinstall to migrate");
@@ -112,7 +112,7 @@ export interface ToolBrand {
 
 export function toolBrand(value: unknown = undefined): ToolBrand {
   const prefix = validatedToolPrefix(value);
-  const id = prefix.slice(0, -1).replace(/_+/g, "-").replace(/-$/, "");
+  const id = prefix.slice(0, -1).replaceAll(/_+/g, "-").replace(/-$/, "");
   return {
     prefix,
     id,
@@ -126,11 +126,11 @@ export function renderBrandText(text: string, prefix: string, sourcePrefix = DEF
   if (prefix === DEFAULT_TOOL_PREFIX && sourcePrefix === DEFAULT_TOOL_PREFIX) return text;
   return renderToolText(text, prefix, sourcePrefix)
     .replaceAll("Hindsight", brand.displayName)
-    .replace(/\bhindsight-coding-agent\b/g, brand.skillName)
+    .replaceAll(/\bhindsight-coding-agent\b/g, brand.skillName)
     .replaceAll("in hindsight", `in ${brand.id}`);
 }
 
 export function skillPrefix(raw: string): string | undefined {
-  const match = raw.match(SKILL_MARKER)?.[1];
+  const match = SKILL_MARKER.exec(raw)?.[1];
   return match === undefined ? undefined : validatedToolPrefix(match);
 }

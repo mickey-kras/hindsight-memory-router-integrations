@@ -3,9 +3,10 @@ import { AccessDeniedError, type BankAccess } from "./bank-access.js";
 import { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 import { RouterRequestError, type RouterTransport } from "./router-transport.js";
 
+export type { BankAccess } from "./bank-access.js";
+export { AccessDeniedError } from "./bank-access.js";
+export { RouterRequestError } from "./router-transport.js";
 export { RouterUrlError } from "./router-url.js";
-export type { BankAccess };
-export { AccessDeniedError, RouterRequestError };
 
 export type FacadeObject = Record<string, unknown>;
 export interface HostedRouterOptions extends BankAccess {
