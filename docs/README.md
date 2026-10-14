@@ -2,12 +2,12 @@
 
 [Repository](../README.md)
 
-Choose the guide for your client: [OpenClaw](OPENCLAW.md), [coding agents](../integrations/coding-agents/README.md), or the optional [MCP server](../src/mcp/README.md). All require an HTTPS router endpoint and matching server grants.
+Choose the guide for your client: [OpenClaw](OPENCLAW.md), [coding agents](../integrations/coding-agents/README.md), or the [hosted HTTP client](hosted-client.md). The two release packages require an HTTPS router endpoint and matching server grants. Coding-agent MCP is included in the coding-agents package.
 
 ## Install and use
 
 - [OpenClaw](OPENCLAW.md): plugin configuration, queue retention and audit logs
-- [MCP server](../src/mcp/README.md): optional stdio tools for other MCP hosts
+- [Hosted HTTP client](hosted-client.md): typed router access for hosted agents and apps
 - [Coding agents](../integrations/coding-agents/README.md): harness identity, credentials and project mappings
 - [Routing and data behavior](BEHAVIOR.md): bank rules, partial reads, queue limits and ingest identity
 

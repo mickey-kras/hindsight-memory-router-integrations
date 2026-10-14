@@ -10,9 +10,7 @@ import { RouterRequestError, boundedRetryAfterMs, type RouterTransport } from "@
  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
  */
 import {
-  type BankOverrides,
   buildPageTrigger,
-  codingBankManifest,
   type CustomPagesConfig,
   type CurrentPageTrigger,
   PAGE_MAX_TOKENS,
@@ -429,16 +427,8 @@ export class HindsightClient {
     return ids;
   }
 
-  /** Configure the bank: PATCH missing config fields through the router (missions, retain strategies,
-   *  entity labels), then seed knowledge pages when the server supports them. Both halves are
-   *  idempotent and strictly ADDITIVE — nothing the bank already says is overwritten (#3927) — so
-   *  the deepen engine can re-run this every pass. Banks must already be provisioned by the router
-   *  operator; a missing bank fails closed.
-   *
-   *  `manage: false` skips the config half entirely, for a bank whose owner shapes it themselves.
-   *  That bank should then define the strategies this plugin writes under (`git`, `gitlog`,
-   *  `conversation`, `document`, `survey`): an unknown strategy name is not an error server-side,
-   *  it just falls back to the bank's own config, so the miss is silent. */
+  /** Seed knowledge pages for an operator-provisioned bank. Bank creation, reset and
+   *  configuration belong to the router operator; the client only maintains pages. */
   async configureBank(
     opts: {
       reset?: boolean;
@@ -450,31 +440,8 @@ export class HindsightClient {
       manage?: boolean;
     } = {}
   ): Promise<void> {
-    if (opts.reset) throw new AccessDeniedError();
-    if (opts.manage === false) {
-      this.log(`[bank] manageBankConfig: false — leaving ${this.bank}'s configuration alone`);
-    } else {
-      // What the bank ALREADY overrides decides what is left to write: the missions are seeded once
-      // and then belong to whoever set them (#2492), and every other field is added only where the
-      // bank is silent (#3927). A reset just deleted the bank, so there is nothing to read.
-      const overrides = await this.readBankOverrides();
-      const manifest = codingBankManifest(overrides);
-      if (!manifest) {
-        this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);
-      } else {
-        await this.req("PATCH", this.bankUrl("/config"), { updates: manifest.bank });
-        this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort((a, b) => a.localeCompare(b)).join(", ")}`);
-      }
-    }
+    if (opts.reset || opts.manage === true) throw new AccessDeniedError();
     await this.seedPages(opts.pageTrigger, opts.pages, opts.customPages);
-  }
-
-  /** Read existing overrides. Missing or unreadable configuration cannot authorize seeding. */
-  private async readBankOverrides(): Promise<BankOverrides | undefined> {
-    const r = await this.req("GET", this.bankUrl("/config"));
-    if (r.status === 404) throw new RouterRequestError(404);
-    const j = (await r.json()) as { overrides?: BankOverrides };
-    return j.overrides ?? {};
   }
 
   /** Explicitly delete one document (and its cascaded memory units/links). Background sync must

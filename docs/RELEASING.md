@@ -24,7 +24,6 @@ original candidate even if main subsequently advances.
 | Router image and Python package | `release-version.json` and `pyproject.toml`, kept equal | `0.1.0` |
 | OpenClaw package | root `package.json` | `0.12.0` |
 | Coding-agents package | `src/upstream/coding-agents/package.json` | `0.6.0` |
-| MCP server package | `src/mcp/package.json` | `0.1.0` |
 | Integrations release manifest | integrations `release-version.json` | `0.1.0` |
 
 These versions advance independently. The integrations Git tag identifies its manifest;
@@ -53,14 +52,14 @@ Source-drift failures still require review; preparation does not accept new hash
 Release the router first. Integrations preparation pins its latest immutable release,
 including its commit and image digests, and requires the same Hindsight pin.
 The integrations smoke gate runs packaged OpenClaw retain/recall, a packaged Codex
-hook and packaged MCP server retain/recall against that router and real Hindsight,
+hook and the coding-agent package's MCP knowledge tools against that router and real Hindsight,
 with a deterministic test LLM.
 On main and ordinary PRs, this gate builds router main at a resolved commit.
 For both built and released images, it verifies the running router's installed
 `hindsight-memory-router` distribution against that checkout's `release-version.json`.
 The liveness response is checked separately for HTTP 200 and `status: alive`.
 
-The integrations manifest records all three package versions/checksums, the tested
+The integrations manifest records both package versions/checksums, the tested
 router, upstream integration versions/commits, Hindsight, and the current
 `nix-openclaw` commit.
 That flake reference is recorded for deployment; CI does not launch OpenClaw through Nix

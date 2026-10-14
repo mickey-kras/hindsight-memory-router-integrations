@@ -60,7 +60,7 @@ export function prefixTools<T extends { name: string; description: string }>(
     const name = toolName(tool.name, target);
     if (names.has(name)) throw new ToolPrefixError(`tool name collision: ${name}`);
     names.add(name);
-    return { ...tool, name, description: renderToolText(tool.description, target) };
+    return { ...tool, name, description: renderBrandText(tool.description, target) };
   });
 }
 
@@ -92,7 +92,7 @@ export function renderCompanionSkill(raw: string, prefix: string, installed?: st
       throw new ToolPrefixError("installed skill/tool prefix mismatch; reinstall to migrate");
   }
   const body = raw.replace(SKILL_MARKER, "");
-  return `${renderToolText(body, target, configured)}\n<!-- hindsight-tool-prefix: ${target} -->\n`;
+  return `${renderBrandText(body, target, configured)}\n<!-- hindsight-tool-prefix: ${target} -->\n`;
 }
 
 export function assertUniqueToolNames(tools: readonly { name: string }[]): void {
@@ -101,4 +101,36 @@ export function assertUniqueToolNames(tools: readonly { name: string }[]): void 
     if (names.has(tool.name)) throw new ToolPrefixError(`tool name collision: ${tool.name}`);
     names.add(tool.name);
   }
+}
+
+export interface ToolBrand {
+  prefix: string;
+  id: string;
+  skillName: string;
+  displayName: string;
+}
+
+export function toolBrand(value: unknown = undefined): ToolBrand {
+  const prefix = validatedToolPrefix(value);
+  const id = prefix.slice(0, -1).replace(/_+/g, "-").replace(/-$/, "");
+  return {
+    prefix,
+    id,
+    skillName: `${id}-coding-agent`,
+    displayName: prefix === DEFAULT_TOOL_PREFIX ? "Hindsight" : id,
+  };
+}
+
+export function renderBrandText(text: string, prefix: string, sourcePrefix = DEFAULT_TOOL_PREFIX): string {
+  const brand = toolBrand(prefix);
+  if (prefix === DEFAULT_TOOL_PREFIX && sourcePrefix === DEFAULT_TOOL_PREFIX) return text;
+  return renderToolText(text, prefix, sourcePrefix)
+    .replaceAll("Hindsight", brand.displayName)
+    .replace(/\bhindsight-coding-agent\b/g, brand.skillName)
+    .replaceAll("in hindsight", `in ${brand.id}`);
+}
+
+export function skillPrefix(raw: string): string | undefined {
+  const match = raw.match(SKILL_MARKER)?.[1];
+  return match === undefined ? undefined : validatedToolPrefix(match);
 }

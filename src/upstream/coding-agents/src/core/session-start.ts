@@ -1,3 +1,4 @@
+import { toolBrand } from "@memory-router/shared/tool-prefix";
 /**
  * Shared `SessionStart` lifecycle: deterministically auto-seeds a cold repo's bank from its git
  * history (in the background, non-blocking), keeps warm banks deepening on every start, and
@@ -61,12 +62,12 @@ interface SeedContextClient {
  * server's banner) plus the repo's bank. Shown on EVERY session start; "learning" on a cold
  * repo (first ingest running), "remembering" once the bank is warm.
  */
-export function buildSeedBanner(bankId: string, cold = true, gitNote?: string): string {
+export function buildSeedBanner(bankId: string, cold = true, gitNote?: string, prefix?: string): string {
   // Two lines: what Hindsight DOES for this repo (value, not mechanism), then where the memory
   // lives + sync state. The brand word leads line 1 so the host TUI's message prefix lands there.
   const headline = cold
-    ? `${brandWord()} is learning this repo — ingesting its decisions, conventions and history`
-    : `${brandWord()} is tracking the decisions, conventions and history of this repo`;
+    ? `${brandWord(prefix)} is learning this repo — ingesting its decisions, conventions and history`
+    : `${brandWord(prefix)} is tracking the decisions, conventions and history of this repo`;
   const details = `  ↳ memory bank “${bankId}”` + (gitNote ? ` · ${gitNote}` : "");
   return `${headline}\n${details}`;
 }
@@ -181,7 +182,7 @@ export async function buildSessionStartContext(args: {
     try {
       const stamp = retainStamp();
       const content =
-        `🛰️ Hindsight is researching this codebase — survey started at commit ${sha.slice(0, 12)}. ` +
+        `🛰️ ${toolBrand(cfg.toolPrefix).displayName} is researching this codebase — survey started at commit ${sha.slice(0, 12)}. ` +
         `(Internal marker: no memories are extracted from this document.)`;
       const tags = [...new Set([...stamp.tags, SURVEY_BASELINE_TAG])];
       // Fire-and-forget; Promise.resolve tolerates a non-Promise return (e.g. a test spy).
@@ -325,7 +326,7 @@ export async function buildSessionStartContext(args: {
       cold: cold === true,
     }).catch(() => undefined);
   }
-  systemMessage = buildSeedBanner(bankId, cold === true, gitNote);
+  systemMessage = buildSeedBanner(bankId, cold === true, gitNote, cfg.toolPrefix);
 
   // The old per-agent plugin keeps running next to this one until the user removes it — say so
   // where they will see it. Only Claude Code had that plugin.

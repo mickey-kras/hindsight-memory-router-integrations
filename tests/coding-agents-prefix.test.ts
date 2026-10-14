@@ -2,8 +2,6 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { loadMcpStack } from "../src/mcp/managed-config.js";
-import { buildTools } from "../src/mcp/tools.js";
 import { loadManagedConfig } from "../src/shared/managed-config.js";
 import { renderToolText } from "../src/shared/tool-prefix.js";
 import { loadConfig } from "../src/upstream/coding-agents/src/core/config";
@@ -15,6 +13,7 @@ import { RuntimeCore } from "../src/upstream/coding-agents/src/core/runtime";
 import { readPackagedSkill, syncCompanionSkill } from "../src/upstream/coding-agents/src/core/skill-sync";
 import { opencodeAdapter } from "../src/upstream/coding-agents/src/harness/opencode";
 import { createPluginEntry } from "../src/upstream/coding-agents/src/harness/plugin-entry";
+import { selectTools } from "../src/upstream/coding-agents/src/mcp-server";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -49,16 +48,15 @@ it.each([undefined, "team_", "memory_router_", "agent_knowledge_"])(
     config(value);
     const prefix = value ?? "hindsight_";
     expect(loadManagedConfig(process.env, "codex").config.toolPrefix).toBe(prefix);
-    const stack = loadMcpStack(process.env, { warn: vi.fn(), error: vi.fn() });
-    const tools = buildTools(stack);
-    expect(tools.every((tool) => tool.name.startsWith(prefix))).toBe(true);
-    expect(tools.map((tool) => tool.name)).toContain(`${prefix}recall`);
-    expect(tools.map((tool) => tool.name)).toContain(`${prefix}get_page`);
     const client = new HindsightClient({
       apiUrl: "https://router.example.test",
       bank: "private",
       routerHarness: "codex",
     });
+    const tools = selectTools(loadConfig({ harness: "codex" }), client, "private", { harness: "codex" });
+    expect(tools.every((tool) => tool.name.startsWith(prefix))).toBe(true);
+    expect(tools.map((tool) => tool.name)).toContain(`${prefix}reflect`);
+    expect(tools.map((tool) => tool.name)).toContain(`${prefix}read_knowledge_page`);
     const knowledge = buildKnowledgeTools(client, "private", { harness: "codex", toolPrefix: prefix });
     expect(knowledge.every((tool) => tool.name.startsWith(prefix))).toBe(true);
     const opts = { toolPrefix: prefix };
@@ -141,14 +139,17 @@ it.each([undefined, "team_"])(
     const prefix = toolPrefix ?? "hindsight_";
     expect(Object.keys(runtime.tool ?? {}).every((name) => name.startsWith(prefix))).toBe(true);
     expect(runtime.tool).toHaveProperty(`${prefix}ingest_document`);
-    expect(cfg.agent?.["hindsight-survey"].permission).toEqual({
+    expect(cfg.agent?.[`${prefix.slice(0, -1).replaceAll("_", "-")}-survey`].permission).toEqual({
       "*": "deny",
       read: "allow",
       grep: "allow",
       glob: "allow",
       [`${prefix}ingest_document`]: "allow",
     });
-    if (toolPrefix) expect(cfg.agent?.["hindsight-survey"].permission).not.toHaveProperty("hindsight_ingest_document");
+    if (toolPrefix)
+      expect(cfg.agent?.[`${prefix.slice(0, -1).replaceAll("_", "-")}-survey`].permission).not.toHaveProperty(
+        "hindsight_ingest_document",
+      );
     const resolved = loadConfig({ harness: "kilo" });
     const client = new HindsightClient({ apiUrl: resolved.apiUrl, bank: "private", routerHarness: "kilo" });
     const core = new RuntimeCore(client, "private", resolved, "kilo", dir);

@@ -35,7 +35,7 @@ const prGuardScript = execFileSync(
   ],
   { encoding: "utf8" },
 );
-const executePrGuard = new (Object.getPrototypeOf(async function () {}).constructor)(
+const executePrGuard = new (Object.getPrototypeOf(async () => {}).constructor)(
   "github",
   "context",
   "core",
@@ -66,7 +66,6 @@ const manifest = {
   devDependencies: { example: "1.0.0", "@types/node": "22.20.0" },
 };
 const coding = { ...manifest, name: "@owner/coding" };
-const mcp = { ...manifest, name: "@owner/mcp" };
 const provenance = { "package.json": "old", "npm-shrinkwrap.json": "old", "src/index.ts": "preserved" };
 const commit = { sha: head, author: bot, commit: { verification: { verified: true } } };
 const context = { repo: { owner: "owner", repo: "repo" }, ref: "refs/heads/main", sha: base };
@@ -97,10 +96,9 @@ function harness() {
   };
   const contents = {
     "package.json": JSON.stringify(manifest),
-    "src/mcp/package.json": JSON.stringify(mcp),
     [`${CODING}/package.json`]: JSON.stringify(coding),
     ...Object.fromEntries(
-      [manifest, coding, mcp].map((pkg, index) => [
+      [manifest, coding].map((pkg, index) => [
         INPUTS[index * 2 + 1],
         JSON.stringify({ version: pkg.version, packages: { "": { version: pkg.version } } }),
       ]),
@@ -164,7 +162,7 @@ function harness() {
       updateProvenance(provenance, contents[`${CODING}/package.json`], contents[`${CODING}/npm-shrinkwrap.json`]),
     ),
   };
-  artifacts.PACKAGE_SHA256 = packagePaths(manifest, coding, mcp)
+  artifacts.PACKAGE_SHA256 = packagePaths(manifest, coding)
     .sort()
     .map((path, index) => `${String(index + 1).repeat(64)}  ${path}\n`)
     .join("");
@@ -204,7 +202,7 @@ test("provenance refresh preserves every non-dependency hash", () => {
 
 test("dependency preparation bumps only changed packages and both shrinkwrap version fields", () => {
   const { contents } = harness();
-  for (const index of [0, 1, 2]) {
+  for (const index of [0, 1]) {
     const changed = { ...contents };
     const lockPath = INPUTS[index * 2 + 1];
     const lock = JSON.parse(changed[lockPath]);
@@ -272,7 +270,7 @@ test("publication rejects package scripts, dependencies, and extra shrinkwrap ed
 });
 
 test("publication accepts patch bumps and validates their signed generated commit", async () => {
-  for (const indexes of [[0], [1], [2], [0, 1, 2]]) {
+  for (const indexes of [[0], [1], [0, 1]]) {
     const h = harness();
     const original = { ...h.contents };
     const changed = { ...original };
@@ -886,9 +884,9 @@ for (const [name, mutate] of [
   });
 }
 
-test("MCP-only dependency updates dispatch preparation and retain all three checksum pins", async () => {
+test("coding-agent dependency updates dispatch preparation and retain both checksum pins", async () => {
   const h = harness();
-  h.state.files = ["src/mcp/package.json", "src/mcp/npm-shrinkwrap.json"].map((filename) => ({
+  h.state.files = [`${CODING}/package.json`, `${CODING}/npm-shrinkwrap.json`].map((filename) => ({
     filename,
     status: "modified",
   }));
@@ -897,17 +895,17 @@ test("MCP-only dependency updates dispatch preparation and retain all three chec
   await inspect(h.github, context, 1, head);
   assert.equal(await publish(h.github, context, h.payload, "unused", h.metadata), generated);
   const checksums = h.payload.files.find((file) => file.path === "PACKAGE_SHA256");
-  assert.match(Buffer.from(checksums.contents, "base64").toString(), /owner-mcp-1\.0\.0\.tgz/);
+  assert.match(Buffer.from(checksums.contents, "base64").toString(), /owner-coding-1\.0\.0\.tgz/);
 });
 
 test("checksum inventory rejects missing, duplicate, substituted, and malformed package pins", async () => {
-  const paths = packagePaths(manifest, coding, mcp);
+  const paths = packagePaths(manifest, coding);
   const valid = paths.map((path) => `${"a".repeat(64)}  ${path}\n`).join("");
   assert.doesNotThrow(() => validateChecksums(valid, paths));
   for (const invalid of [
-    `${valid.split("\n").slice(0, 2).join("\n")}\n`,
-    valid.replace(paths[2], paths[1]),
-    valid.replace(paths[2], "packages/owner-untrusted-1.0.0.tgz"),
+    `${valid.split("\n").slice(0, 1).join("\n")}\n`,
+    valid.replace(paths[1], paths[0]),
+    valid.replace(paths[1], "packages/owner-untrusted-1.0.0.tgz"),
     valid.replace(/^a/, "z"),
   ]) {
     const h = harness();
@@ -915,19 +913,19 @@ test("checksum inventory rejects missing, duplicate, substituted, and malformed 
     await assert.rejects(publish(h.github, context, h.payload, "unused", h.metadata), /checksum/);
     assert.equal(h.state.published.length, 0);
   }
-  assert.throws(() => packagePaths(manifest, coding), /inventory/);
+  assert.throws(() => packagePaths(manifest), /inventory/);
 });
 
-test("MCP dependency preparation still rejects script changes", async () => {
+test("coding-agent dependency preparation still rejects script changes", async () => {
   const h = harness();
   const original = h.github.rest.repos.getContent;
   h.github.rest.repos.getContent = async (args) =>
-    args.path === MANIFESTS[2] && args.ref === head
+    args.path === MANIFESTS[1] && args.ref === head
       ? {
           data: {
             type: "file",
             encoding: "base64",
-            content: Buffer.from(JSON.stringify({ ...mcp, scripts: { build: "untrusted" } })).toString("base64"),
+            content: Buffer.from(JSON.stringify({ ...coding, scripts: { build: "untrusted" } })).toString("base64"),
           },
         }
       : original(args);
@@ -967,7 +965,7 @@ test("generated artifact commits allow Dependabot rebasing and the new bot head 
         ? {
             ...file,
             contents: Buffer.from(
-              packagePaths(manifest, coding, mcp)
+              packagePaths(manifest, coding)
                 .sort()
                 .map((path) => `${hash(`updated ${path}`)}  ${path}\n`)
                 .join(""),

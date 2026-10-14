@@ -90,21 +90,31 @@ Bank configuration is operator-managed (`manageBankConfig: false`). Provision co
 Memory content is not reused from session caches; lifecycle flags remain cached. A denied token remains blocked until its value changes.
 
 
-### Tool namespace and migration
+### Optional branding and migration
 
-Set `toolPrefix` once at the top level of the JSON file named by `HINDSIGHT_ROUTER_CONFIG`.
-When omitted, tool names use `hindsight_`. A custom prefix must contain 2–32 lowercase ASCII
-letters, digits or underscores, start with a letter, and end with an underscore (for example
-`"toolPrefix": "team_"`). The same value controls registered MCP/native tools, installed companion
-skills, hook guidance and survey tool permissions. Normal coding-agent configuration, per-bank
-settings and environment overrides cannot select another tool namespace. Invalid prefixes,
-duplicate tool names and inconsistent skill namespaces fail closed.
+Set `toolPrefix` once at the top level of the operator-managed JSON named by
+`HINDSIGHT_ROUTER_CONFIG`. The default `hindsight_` retains the upstream names. For example,
+`"toolPrefix": "abc_"` produces `abc_reflect`, the `abc-coding-agent` companion skill, and an
+MCP registration/server identity named `abc`. `chatgpt_` and `memory_` work the same way.
+Prefixes are 2–32 lowercase ASCII letters, digits or underscores, begin with a letter and end
+with an underscore. Internal underscores become hyphens in the skill and registration name.
+There is no second brand/display-name setting.
 
-To migrate existing `memory_router_*` retain/recall names and `agent_knowledge_*` page/ingest names,
-update client tool calls and allowlists to the selected prefix, reinstall each coding-agent harness
-to regenerate its companion skill, and restart existing MCP/native sessions. Both old namespaces
-converge on the single selected prefix; no aliases are silently registered. A consumer that needs
-its existing namespace may explicitly select `memory_router_` or `agent_knowledge_`, then update
-its other tool calls to that same prefix. A runtime session rejects a stale skill with another
-prefix; explicit reinstall is the migration action. Bank assignments, router grants, token sources,
-read/write authorization and each operation's arguments and behavior are unchanged.
+Branding covers the existing upstream eight-tool suite, native MCP and plugin registration,
+companion skill frontmatter/path/content, generated hooks and survey guidance, and visible
+memory banners. Package identities, configuration keys, credential environment variables,
+router principals, assigned banks and upstream attribution remain stable. The original upstream
+operations are `sync_status`, `diagnose`, `search_knowledge_pages`, `list_knowledge_pages`,
+`read_knowledge_page`, `reflect`, `capture_initiative` and `ingest_document` under the selected
+prefix. Custom standalone `memory_router_*` / `agent_knowledge_*` tools are retired; migrate
+callers and allowlists to these upstream operations and schemas rather than assuming aliases or
+argument compatibility.
+
+After changing `toolPrefix`, run the pinned installer again (or `update` for the selected harness)
+and restart existing sessions. The installer migrates only registrations whose command proves
+managed ownership and companion skills with the integration's prefix/provenance marker. It
+snapshots both old and new paths and rolls back the migration if any adapter fails. Unrelated
+skills and registrations survive; a collision at the desired name fails closed. Runtime sessions
+reject stale managed skill namespaces until explicit reinstall. Uninstall removes owned prior
+namespaces even if the operator has since changed the prefix. This never changes bank mapping,
+router authorization, credential sources or the behavior of the retained upstream operations.

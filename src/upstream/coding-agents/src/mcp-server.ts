@@ -9,6 +9,7 @@
  * differs). MCP servers launch with the project dir as cwd; the env override is an optional
  * escape hatch (not currently set by the plugin).
  */
+import { toolBrand, DEFAULT_TOOL_PREFIX, assertUniqueToolNames, ToolPrefixError } from "@memory-router/shared/tool-prefix";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -77,8 +78,10 @@ export function resolveHarness(env: NodeJS.ProcessEnv = process.env): string {
  * without first checking the initialize capabilities. Advertising an empty, queryable tool list
  * keeps that privacy boundary intact while preventing one optional probe from failing startup.
  */
-export function buildMcpServer(tools: ToolSpec[]): McpServer {
-  const server = new McpServer({ name: "hindsight", version: "0.1.0" });
+export function buildMcpServer(tools: ToolSpec[], prefix = DEFAULT_TOOL_PREFIX): McpServer {
+  assertUniqueToolNames(tools);
+  if (tools.some(tool => !tool.name.startsWith(toolBrand(prefix).prefix))) throw new ToolPrefixError("inconsistent MCP identity/tool prefix");
+  const server = new McpServer({ name: toolBrand(prefix).id, version: "0.1.0" });
   if (tools.length === 0) {
     server.server.registerCapabilities({ tools: { listChanged: false } });
     server.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
@@ -109,7 +112,7 @@ async function main() {
   const harness = resolveHarness();
   const memory = resolveHostMemory(harness, cwd);
   const tools = memory.disabled ? [] : selectTools(memory.cfg, memory.client, memory.bankId, { cwd, harness });
-  const server = buildMcpServer(tools);
+  const server = buildMcpServer(tools, memory.cfg.toolPrefix);
 
   await server.connect(new StdioServerTransport());
 }

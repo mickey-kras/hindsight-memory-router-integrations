@@ -17,7 +17,7 @@ export interface AntigravityStatusLineState {
 /** Build the compact, user-visible Hindsight indicator from Antigravity's documented state payload. */
 export function buildAntigravityStatusLine(state: AntigravityStatusLineState, cfg: Config): string {
   const cwd = state.cwd || state.workspace?.current_dir;
-  if (!cwd) return brandWord();
+  if (!cwd) return brandWord(cfg.toolPrefix);
 
   // No session root here: the documented state payload carries no conversation id, so there is no
   // key to look one up by (see core/session-cache.ts). Outside a git repo this can therefore name
@@ -25,9 +25,9 @@ export function buildAntigravityStatusLine(state: AntigravityStatusLineState, cf
   // (#3563). It is a display-only divergence — this command never calls the API, so nothing is
   // retained or created under the name shown.
   const bankId = deriveBankIdOrSkip(cfg, cwd, "antigravity-cli");
-  if (bankId === null) return brandWord(); // unidentifiable repo: name no bank rather than the wrong one
+  if (bankId === null) return brandWord(cfg.toolPrefix); // unidentifiable repo: name no bank rather than the wrong one
   const resolved = applyBankConfig(cfg, bankId, cwd);
-  return resolved.cfg.disabled ? "" : `${brandWord()} · ${resolved.bankId}`;
+  return resolved.cfg.disabled ? "" : `${brandWord(cfg.toolPrefix)} · ${resolved.bankId}`;
 }
 
 /* c8 ignore start */

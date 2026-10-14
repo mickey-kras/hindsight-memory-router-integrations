@@ -19,7 +19,7 @@
  * Local only — nothing here is sent anywhere. Fail-open throughout.
  */
 import { readFileSync } from "node:fs";
-import { DEFAULT_TOOL_PREFIX, TOOL_SUFFIXES, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
+import { DEFAULT_TOOL_PREFIX, TOOL_SUFFIXES, toolBrand, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
 import { join } from "node:path";
 import type { TransportTurn } from "./chat";
 import { appendLogLine, logsDir } from "./log";
@@ -79,7 +79,7 @@ export function summarizeTurns(turns: TransportTurn[], toolPrefix = DEFAULT_TOOL
     if (t.role === "action") {
       const tool = canonicalToolName(t.content.split(" ", 1)[0], toolPrefix);
       if (tool) current.calls.push(tool);
-    } else if (ASSISTANT_ROLES.has(t.role) && CREDIT_RE.test(t.content)) {
+    } else if (ASSISTANT_ROLES.has(t.role) && (CREDIT_RE.test(t.content) || t.content.toLowerCase().includes(`from ${toolBrand(toolPrefix).displayName.toLowerCase()} memory`))) {
       current.credited = true;
     }
   }

@@ -1,4 +1,4 @@
-import { assertUniqueToolNames } from "@memory-router/shared/tool-prefix";
+import { assertUniqueToolNames, toolBrand, renderBrandText } from "@memory-router/shared/tool-prefix";
 import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
 /**
  * opencode harness adapter — full v2 parity with the hook harnesses (Claude Code / Codex).
@@ -22,7 +22,7 @@ import {
   type OcMessage,
 } from "../core/transcript-opencode";
 import { jsonChatReader } from "./registry";
-import { SURVEY_AGENT, SURVEY_AGENT_CONFIG } from "../core/survey";
+import { SURVEY_AGENT_CONFIG } from "../core/survey";
 
 // opencode message part shape for the per-turn prompt (structurally typed).
 type Part = { type?: string; text?: string };
@@ -52,9 +52,11 @@ function surveyAgentHook(harness: string): Pick<Hooks, "config"> {
       // hindsight_ingest_document. Casting the entry beats widening it to `unknown`, which would drop
       // the checking on `description`/`mode` too.
       const { hindsight_ingest_document: _ingest, ...permissions } = SURVEY_AGENT_CONFIG.permission;
-      cfg.agent[SURVEY_AGENT] ??= {
+      const prefix = managedToolPrefix(harness);
+      cfg.agent[`${toolBrand(prefix).id}-survey`] ??= {
         ...SURVEY_AGENT_CONFIG,
-        permission: { ...permissions, [managedToolPrefix(harness) + "ingest_document"]: "allow" },
+        description: renderBrandText(SURVEY_AGENT_CONFIG.description, prefix),
+        permission: { ...permissions, [prefix + "ingest_document"]: "allow" },
       } as NonNullable<Config["agent"]>[string];
     },
   };

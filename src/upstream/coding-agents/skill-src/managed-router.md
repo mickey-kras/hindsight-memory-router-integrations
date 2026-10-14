@@ -51,3 +51,16 @@ limits and logging may be configured by the operator in the supported coding-age
 The managed routing boundary owns bank access and transport; do not create banks, rewrite bank
 configuration, provision servers or substitute a provider client. Background ingestion and hooks
 use the same router boundary as interactive tools.
+
+### Optional branding
+
+The operator may set `toolPrefix` in the same managed router JSON. The default `hindsight_`
+keeps the upstream names. Tool, skill, registration and display names derive from that one
+value. Package
+names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants
+remain unchanged. Use the names registered in the current session; do not guess aliases.
+
+A branding change requires the pinned installer (`install` or `update`) and a fresh session.
+The installer migrates only managed entries and refuses unrelated name collisions. A stale
+managed skill namespace fails closed until reinstall; never repair this by changing bank
+assignments, credentials or the operational memory workflow above.

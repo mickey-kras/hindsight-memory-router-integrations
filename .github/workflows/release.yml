@@ -76,15 +76,12 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
-          npm ci --prefix src/mcp --ignore-scripts --no-audit --no-fund
           npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
           npm run build
           npm run build:coding-agents
-          npm run build --prefix src/mcp
           mkdir -p packages
           npm pack --pack-destination packages --silent
           (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
-          npm pack ./src/mcp --pack-destination packages --silent
           node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
       - name: Install release tools

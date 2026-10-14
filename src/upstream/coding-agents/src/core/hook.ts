@@ -131,7 +131,7 @@ async function injectRecall(
     // What is asked for — types, token budget, everything — is the client's `recallOptions`.
     const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
-    if (observations.length) return formatRecallFallback(observations, lead);
+    if (observations.length) return formatRecallFallback(observations, lead, managedToolPrefix(harness));
   } catch (e) {
     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
   }

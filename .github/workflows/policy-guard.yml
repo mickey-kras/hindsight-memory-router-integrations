@@ -786,12 +786,7 @@ jobs:
                   if step is not None:
                       check_gate_step(path, 'sonar', step)
 
-          # The 'policy guard' step run must carry ALL of these tokens and be
-          # a plausibly full implementation (> 4000 chars), so echoing the
-          # tokens alone cannot spoof it; human review is the documented
-          # backstop for a full self-gutting rewrite. The round-5 tokens kill
-          # the round-4 minimal tokens+padding gut, which only echoed the
-          # original seven.
+          # Require a full guard and its structural tokens; human review remains necessary.
           GUARD_RUN_TOKENS = (
               'safe_load', 'protected', 'GATES', 'check_workflow',
               'ALLOWED_PERMISSIONS', 'UniqueKeyLoader', 'workflow_events',
@@ -799,13 +794,8 @@ jobs:
               'resolve_pr_context', 'AISLOP_UPLOAD_IF',
           )
 
-          # Exit-branch contract for the guard itself: the run must keep a
-          # genuine failure exit in BOTH the failures branch and the main()
-          # catch-all (so deleting or flipping either one fails), and must
-          # not carry any silent-success escape. All needles are assembled
-          # from pieces so this file's own run body stays clean under the
-          # banned-forms scan and a naive flip/replace cannot corrupt the
-          # required-exit needle itself.
+          # Require both failure exits and reject success escapes. Split scan needles
+          # so the guard's source cannot match or corrupt its own checks.
           T_SYS_EXIT1 = 'sys.exit(' + '1)'
           BANNED_GUARD_EXITS = (
               'sys.exit(' + '0)',
@@ -1014,12 +1004,6 @@ jobs:
                   fail('.semgrep.yml: top-level paths exclusions are not allowed')
               rules = doc.get('rules')
               ids = {
-          POLICY_SOURCE
-
-      - name: Policy source 3
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   rule.get('id') for rule in rules
                   if isinstance(rule, dict) and isinstance(rule.get('id'), str)
               } if isinstance(rules, list) else set()
@@ -1034,6 +1018,12 @@ jobs:
                   fail(f'.semgrep.yml: required rules missing: {", ".join(missing)}')
           def gate_dependabot(path, content):
               doc = parse_yaml_file(path, content)
+          POLICY_SOURCE
+
+      - name: Policy source 3
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
               if doc is None:
                   return
               updates = doc.get('updates')
@@ -1090,7 +1080,7 @@ jobs:
           DEPENDENCY_PREPARATION_SCRIPTS = {
               '.github/scripts/docker-provenance.cjs': ('216e3cadee233f280a1c560ccb6995d522beb7ac98906139182573afc172bf67',),
               '.github/scripts/dependabot-auto-merge.cjs': ('5da076a4e27a1bb7e657d30e0e6f79a19c0bdb0dd11b389c383304bdb483ef32', 'a3b44baec133791a81e25b8257597f7c92173ea89a0727bd5ed37976a30d3b3c', '9e35e7b47d63714e5b9710f93455eb34180f78ddefaeac0e2a4e8bcf1fd6e14b', '5e7599b6f8ee7c35a696196be54fa6ffee868528c596b4eeb60623a2f38e4e5e', '7c179097b31faca35820986b2fe12ac39ee165ca9dbe2103ddeead8e87728535', '546fe0c758c17b5336c7767e3a8305dd3280c1c297e7246b3aa460c1e1ac1e85', '1eb897a75f744c9688d191a3b033fe7898da3f985236ce8e2883f227caa959ba'),
-              '.github/scripts/dependency-files.cjs': ('401d0945695821073cedde61648e58537f56d05fbe52e5adeb502c397264363d', '3c2f255c274ffde722a31531da541baaa109c00a6e314a1e336c4d60c974bc54', '62b397211d1b71e7512e8a50645365a17a0a805d307b2ca4a0901113f3631dfc', 'b475ee2ca9fa7897325b71c44b78f33151f752df668a66724ec113571e711f39'),
+              '.github/scripts/dependency-files.cjs': ('401d0945695821073cedde61648e58537f56d05fbe52e5adeb502c397264363d', '3c2f255c274ffde722a31531da541baaa109c00a6e314a1e336c4d60c974bc54', '62b397211d1b71e7512e8a50645365a17a0a805d307b2ca4a0901113f3631dfc', 'b475ee2ca9fa7897325b71c44b78f33151f752df668a66724ec113571e711f39', '1891c179830b16634277d33885425e162632dc702642f3672553edf78a7f58dc'),
               '.github/scripts/dependabot-preparation.cjs': ('62ca4d2cb372de1ba6d5332db0b8cd5b0b4ab92445003e36cc5db1714c621e5f', 'ab8d460b0ebcd47633cf032c041f50daaf552486c0d960c13e9076e9cf62a528', '2c9f962d15ef043ee72da9a2d55c2157bf425d922c90d9610fd074ef21e7dcb7', '5d5f01c251e93a846218948b83d5c470cebc7acc6b988c7c7565cb0524ffa463', '06c1b2dafec663eef59630a772324b8521ad9463ffff2fbcee9c6928ef64d924', '9cf269d531db85b590e02777108af43e51ca3d2e911f4b9789f664896b2090af', 'c694c598676c30e43cd63e9143f828f90c7e7cf93fabcb9b84ee1ff40280dd19', 'd6c0ee74154d9ccfcda36720dc0e98a9b955c9d0adc310ef9e9ef6b4f32f3fe7', '506ced3ba264573c58fe7d93313b3a915119f8d6d111390bb6d9dc614d45f3f6', 'affdc6f804f99da7171b38400246d9c0c1ea4a67ea5706bdfb1dc67cc3aa345b', '488f26ba872e3da95c7cede85f86957f6b11b3385066ff83848b72aec9b5cbb5', 'f043cb653216bac0eedb85a4d6fed47ed7cb2feed09c56e95d02ede03931477f'),
               '.github/scripts/refresh-dependency-artifacts.cjs': ('951ff6b864c238e2f1b7ce98906f572a6fe02f9680a63b9a425ee46518bd1cfd', '1b66ade5cb2c13770556c9aa266e56afda612bb28df6be30a42229b9a19a5250', '3b6df6f648bd037e739070b17125acfb224c36f002b270316403af6a7434d2d5', 'e83945347efaeac6cc67845fa7a8dc0a1ab228efdefb9294df4557a3058c51be', '6a44bd5266bb72833fb7dfc60b2855fc67ea919d240c6ab1ab251aa324092744'),
               '.github/scripts/dependabot-validation.cjs': ('a6c1d925ac97e90f79129ad3fffcc2e6f4a9f59eaf74b92ef8f02c17bba58182', '199dbdcfda4e7589cdbcf21f3ec2178342af56ad1e658e01d4ce6924fd480ba5', '484157141f5e864b7cd1eecc6545a7077cf660bd683fabe67a773de5878443ad', 'b0775ac32cee8dca1c842e3c79a71a85c7f818f13806cd34067f3c7c2403bbb1', 'af5f1349fe209d2792c976022df09adb2735c2cc617baa7f2b17cd2bfd3497c0', '7f201a932c975f2a8e880c92b98cae87fd288782f08ca836e44917399c037d6d'),
@@ -1102,9 +1092,9 @@ jobs:
           # Only reviewed automation workflow shapes may write or use
           # the privileged PR trigger. Action SHA updates remain allowed.
           AUTOMATION_SHAPES = {
-              '.github/workflows/ci.yml': ('94b99e1708f6e5fe3b78725113b4529a52768bd2972e455c5e01d69da6d53ce4', 'af4b2e3a471a3def863507c7f4b2bff6e9f20870ed424d4fbe32b4b1f19bed24',),
-              '.github/workflows/main.yml': ('656f5d9b3fefabf005d9729dac8d373bbe983f14550f3d4dd9e103df892225d8','8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e','4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd','75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746','11ebd1dbdd531ee9cd928002296cb0fce8e1e1e19204e5cc4f3e973672ad19da','39af26a5e2dd7f9fde43ffb1b0ca867d31433e1af2a00a0fdaba3016a164d2da','5cb2724f04882313fd92d84afcd5797c6ce62bbdf1183d3595f00e467c5e5c54','978986c5c4297bae695520a4ed1e17055c5fd41ade6e8afed8152a1003ec4259','f6e820ffb5bb391007a9b8e5ffc626a019233a8d9dacd2d6e173ed74faa19c16','11743111a6054b09a0f6b26014b8667565499ce2aa90c1252a17b1e84201760d','c14dd84414cd95fa0540f0e9a8d82d418bc7e3aa13366ed17443850ad0ee4a2d', '63acb62bcc32e691693589147f5583b0f6903181a0272ff6685379b940b11098',),
-              '.github/workflows/release.yml': ('e20163669d0d5dd2f9e6bce99bba5a1d7af68811d0307845f294a8f74bbf2f13','da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5','2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3','6f0608e02206116936a94d1d690682e1ed024c0bd748f28b3cc28d02708b106c','40b04e291989c5a6f2fb42d72d2006b4b9cb692a9ec0615fafad8b34d615cce2'),
+              '.github/workflows/ci.yml': ('94b99e1708f6e5fe3b78725113b4529a52768bd2972e455c5e01d69da6d53ce4', 'af4b2e3a471a3def863507c7f4b2bff6e9f20870ed424d4fbe32b4b1f19bed24', '6afcaffa52e85b54ead0cda2122fd6cccf420c4cea40ec50d02eea8e3ca189aa'),
+              '.github/workflows/main.yml': ('656f5d9b3fefabf005d9729dac8d373bbe983f14550f3d4dd9e103df892225d8', '8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e', '4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd', '75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746', '11ebd1dbdd531ee9cd928002296cb0fce8e1e1e19204e5cc4f3e973672ad19da', '39af26a5e2dd7f9fde43ffb1b0ca867d31433e1af2a00a0fdaba3016a164d2da', '5cb2724f04882313fd92d84afcd5797c6ce62bbdf1183d3595f00e467c5e5c54', '978986c5c4297bae695520a4ed1e17055c5fd41ade6e8afed8152a1003ec4259', 'f6e820ffb5bb391007a9b8e5ffc626a019233a8d9dacd2d6e173ed74faa19c16', '11743111a6054b09a0f6b26014b8667565499ce2aa90c1252a17b1e84201760d', 'c14dd84414cd95fa0540f0e9a8d82d418bc7e3aa13366ed17443850ad0ee4a2d', '63acb62bcc32e691693589147f5583b0f6903181a0272ff6685379b940b11098', 'f057995cab13e53280a6d2f9ba65275ec5599429d7fa2a5efe6c7fed85e2cc3b'),
+              '.github/workflows/release.yml': ('e20163669d0d5dd2f9e6bce99bba5a1d7af68811d0307845f294a8f74bbf2f13', 'da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5', '2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3', '6f0608e02206116936a94d1d690682e1ed024c0bd748f28b3cc28d02708b106c', '40b04e291989c5a6f2fb42d72d2006b4b9cb692a9ec0615fafad8b34d615cce2', 'b25089c268d59c2ef1a3bdd6cff38d45e0a66d7783df15e5945380443b617341'),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
               '.github/workflows/dependabot-preparation.yml': ('5782edc05e95995fa5c45f190a42707a595a633e6bf5b19430ce2e203a90a92c','c8d826e549d44cdbb850df7580e681957b76c8755510a9be7517c0978447b171','82cb9992e9aec4e8cd43a02d94cf114e95eb9421bc35acef60fd2fdb671f1d09','c5dc2fec63ea7d7f310b2c1076b21214ba6c864969d03657a83de899b030c96a','e122ae56a9db3626a2aa1c47454144741c2a61bb3914c16c0307af6534c92cd9','284be32dfbfd5211c4a7e7734a52e00a5e4ae7735549c1fd59f13280e4cec4ef','523375bdbb0d23c2e9b9137493c4f038cab0b442f4b5f99ac6910f291b0e0c8f'),
               '.github/workflows/dependabot-policy-tests.yml': ('157b9cac1669869fdacb9b9780bfaec7ffb5d01a63f803b3f1e09cbc7697b448',),
@@ -1134,12 +1124,12 @@ jobs:
               '.github/scripts/package.json': ('9c5ae4358d83ef9a326dedb33bec455aed50f32107ba0f72b502059f92a95aa5', 'db0324a5389e1d9005519058dff2b4f17b2b8632c8392e87d2a0b0d1a5be3470'),
               '.github/scripts/package-lock.json': ('a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e', 'f550ad0ec8aec53e0aadfe7d38ce0df154daf73ef6feefc333537c2a824ec600'),
               '.github/scripts/combination.cjs': ('dad2f629eca60a28c0979d286edc1954ac487911a70355f5d9c83692ed15af0c', '7866bdaf091681673f643b9e70221ff3d828e2198dfb5a41bd5bb3da6ee94850'),
-              '.github/scripts/combination-smoke.sh': ('3074e9c0b6b8f4c3e8e36586478a93f37271694dff5b93511ac6946717f5d53f', '052e5e4155cff8f5c8b19eda4b908aa5b69441f4e6461ae8af8572cb183c49e1'),
-              '.github/scripts/combination-smoke.mjs': ('7bdb7f4b189c8ab538eaa49ad16395da9d9fb9950f8d263cc68dafb9e6587622', '14c32c344feb9b026613f67e1dbfd465ef2ab3195b1b4cc0e05b2e8e337e3f51'),
+              '.github/scripts/combination-smoke.sh': ('3074e9c0b6b8f4c3e8e36586478a93f37271694dff5b93511ac6946717f5d53f', '052e5e4155cff8f5c8b19eda4b908aa5b69441f4e6461ae8af8572cb183c49e1', '6fe4bc2445f0ae10c4443556757bdb0a83e00b0861f4ab72b4d6c484ad575cbb'),
+              '.github/scripts/combination-smoke.mjs': ('7bdb7f4b189c8ab538eaa49ad16395da9d9fb9950f8d263cc68dafb9e6587622', '14c32c344feb9b026613f67e1dbfd465ef2ab3195b1b4cc0e05b2e8e337e3f51', '858c23df82e6fd4b2c69713aa7c0fd0243d8bb27ad3152017d76847d55c4fdb6'),
               '.github/scripts/combination.test.cjs': ('0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2', 'de885e0207e66dcd3a2e3210b15c5fd3059c17452aa58b54579300d010e9562b', '3d2d763b4213340109fe6c909e7e693142a1e926a839a2d3053dfa307af191d7'),
-              '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77', 'f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36', 'e5c150df0b2cd53c7c552d2a6af9a340afaa1d94900f0f695363b978fc88bba8', '04cdad684a138433c2db8ab9c5086ee1d671523aeeea7a0b3ff807fde1c5fd69', '412d76a8d9c99e8a695a4e1e2d5b440c7367101c6af8e6a777c2b48565ea1af3', '4e3480ad9e385ba501ec1ea23d8fa943f0eb6e1107f9db2b8e1b416800582f7d'),
+              '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77', 'f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36', 'e5c150df0b2cd53c7c552d2a6af9a340afaa1d94900f0f695363b978fc88bba8', '04cdad684a138433c2db8ab9c5086ee1d671523aeeea7a0b3ff807fde1c5fd69', '412d76a8d9c99e8a695a4e1e2d5b440c7367101c6af8e6a777c2b48565ea1af3', '4e3480ad9e385ba501ec1ea23d8fa943f0eb6e1107f9db2b8e1b416800582f7d', '2a457b1eec191dd86b2a64f6593863d674618f58db0d7c5748de220b3cb77dc9'),
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
-              '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5', 'f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23', 'f206b57c6feb37a573b3a8cd9f211dd6d7e9a216d5121e6459978ca6f4fdd31f', '5d2f482546b4ba0431717950c49f7533dd37381efa00017551995d2d39789540', '214c7178e1e2cc01e38e96a6b8cc29e9e2b1aab3c24e8c290e99d328054201a4', '5571e081f47f4568443728b74846cd54a18cf51eac205115e48da74bcdbd9f40'),
+              '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5', 'f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23', 'f206b57c6feb37a573b3a8cd9f211dd6d7e9a216d5121e6459978ca6f4fdd31f', '5d2f482546b4ba0431717950c49f7533dd37381efa00017551995d2d39789540', '214c7178e1e2cc01e38e96a6b8cc29e9e2b1aab3c24e8c290e99d328054201a4', '5571e081f47f4568443728b74846cd54a18cf51eac205115e48da74bcdbd9f40', '8ffd8de74374fce6eae741e02ae49afe0e24d0f49229c92ba523494c94e2af9b'),
               '.github/scripts/release-policy.test.py': '174412c9929d2f32f7c75a84febdc66e288130dc7f9c1d0ba5744fd152e834fd',
               '.github/scripts/release-cleanup.cjs': ('f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533', '3ec27d21d0df5fad08222606bce4bb3eaa07226f72ae3bd37c3e70bf83ff87e9', 'bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8'),
               '.github/scripts/release-cleanup.test.cjs': ('99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd', '9495c6943363dfb0984573d0efce88e95e25cbb0c7691cb52bfc0a5820ada5be', '1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956'),
@@ -1317,6 +1307,7 @@ jobs:
                   traceback.print_exc()
                   sys.exit(1)
           POLICY_SOURCE
+
       - name: policy guard
         env:
           GH_TOKEN: ${{ github.token }}

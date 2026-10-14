@@ -50,7 +50,6 @@ jobs:
 
       - run: npm ci
       - run: npm ci --prefix src/upstream/coding-agents
-      - run: npm ci --prefix src/mcp
       - run: npm run lint
       - run: npm run format:check
       - run: npm run typecheck
@@ -58,7 +57,6 @@ jobs:
         run: npm run test:coverage
       - run: npm run build
       - run: npm run build:coding-agents
-      - run: npm run build --prefix src/mcp
       - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
       - run: npm test --prefix src/upstream/coding-agents
       - run: node scripts/verify-coding-upstream.mjs
@@ -98,9 +96,6 @@ jobs:
           node .github/scripts/npm-audit.cjs
           node .github/scripts/npm-audit.cjs src/upstream/coding-agents
 
-      - name: MCP tooling audit
-        run: node .github/scripts/npm-audit.cjs src/mcp
-
       - name: Verify package
         # packages/ is gitignored: tarballs are CI-built, never committed.
         # Reproducibility is enforced twice: each package is packed twice and
@@ -115,14 +110,10 @@ jobs:
           test "$artifact" = "$repeat"
           cmp "packages/$artifact" "$RUNNER_TEMP/repack/$repeat"
           coding_artifact="$(cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --json | jq -r '.[0].filename')"
+          tar -tzf "packages/$coding_artifact" | grep -Fxq package/npm-shrinkwrap.json
           coding_repeat="$(cd src/upstream/coding-agents && npm pack --pack-destination "$RUNNER_TEMP/repack" --json | jq -r '.[0].filename')"
           test "$coding_artifact" = "$coding_repeat"
           cmp "packages/$coding_artifact" "$RUNNER_TEMP/repack/$coding_repeat"
-          mcp_artifact="$(npm pack ./src/mcp --pack-destination packages --json | jq -r '.[0].filename')"
-          tar -tzf "packages/$mcp_artifact" | grep -Fxq package/npm-shrinkwrap.json
-          mcp_repeat="$(npm pack ./src/mcp --pack-destination "$RUNNER_TEMP/repack" --json | jq -r '.[0].filename')"
-          test "$mcp_artifact" = "$mcp_repeat"
-          cmp "packages/$mcp_artifact" "$RUNNER_TEMP/repack/$mcp_repeat"
           node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
 
@@ -235,15 +226,12 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
-          npm ci --prefix src/mcp --ignore-scripts --no-audit --no-fund
           npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
           npm run build
           npm run build:coding-agents
-          npm run build --prefix src/mcp
           mkdir -p packages
           npm pack --pack-destination packages --silent
           (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
-          npm pack ./src/mcp --pack-destination packages --silent
           node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
       - name: Resolve tested combination

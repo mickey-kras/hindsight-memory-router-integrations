@@ -18,7 +18,7 @@ const routerUrl = "https://localhost:9443";
 if (process.argv[2] === "prepare") {
   const principals = {};
   const credentials = {};
-  for (const id of ["openclaw", "codex", "mcp"]) {
+  for (const id of ["openclaw", "codex"]) {
     const secret = randomBytes(32).toString("hex");
     const token = `mr_${id}_${secret}`;
     credentials[id] = token;
@@ -255,18 +255,7 @@ if (process.argv[2] === "prepare") {
     assert.ok(!traces.some((item) => item.status >= 400 && item.status !== 404), JSON.stringify(traces));
     assert.equal(typeof JSON.parse(stdout).hookSpecificOutput.additionalContext, "string");
 
-    put("mcp-managed.json", {
-      routerUrl,
-      queueDir: join(state, "mcp-queue"),
-      principals: {
-        mcp: {
-          writeBank: bank,
-          additionalReadBanks: [],
-          tokenEnv: "COMBINATION_MCP_TOKEN",
-        },
-      },
-    });
-    const mcpPackage = join(state, "mcp/package");
+    const mcpPackage = join(state, "coding/package");
     const requireMcp = createRequire(join(mcpPackage, "package.json"));
     const { Client } = await import(pathToFileURL(requireMcp.resolve("@modelcontextprotocol/sdk/client/index.js")));
     const { StdioClientTransport } = await import(
@@ -274,12 +263,14 @@ if (process.argv[2] === "prepare") {
     );
     const mcpTransport = new StdioClientTransport({
       command: process.execPath,
-      args: [join(mcpPackage, "dist/mcp/server.js")],
+      args: [join(mcpPackage, "dist/mcp-server.js")],
       env: {
         ...process.env,
-        HINDSIGHT_ROUTER_CONFIG: join(state, "mcp-managed.json"),
-        HINDSIGHT_ROUTER_PRINCIPAL: "mcp",
-        COMBINATION_MCP_TOKEN: credentials.mcp,
+        HINDSIGHT_ROUTER_CONFIG: join(state, "managed.json"),
+        HINDSIGHT_CONFIG: join(state, "normal.json"),
+        HINDSIGHT_MCP_HARNESS: "codex",
+        HINDSIGHT_MCP_PROJECT_CWD: state,
+        COMBINATION_CODEX_TOKEN: credentials.codex,
       },
       stderr: "pipe",
     });
@@ -287,29 +278,56 @@ if (process.argv[2] === "prepare") {
     try {
       await mcpClient.connect(mcpTransport);
       const { tools } = await mcpClient.listTools();
-      for (const name of ["hindsight_retain", "hindsight_recall"]) {
+      for (const name of [
+        "hindsight_ingest_document",
+        "hindsight_search_knowledge_pages",
+        "hindsight_list_knowledge_pages",
+        "hindsight_read_knowledge_page",
+        "hindsight_reflect",
+        "hindsight_capture_initiative",
+        "hindsight_sync_status",
+        "hindsight_diagnose",
+      ]) {
         assert.ok(
           tools.some((tool) => tool.name === name),
-          `Packaged MCP server must expose ${name}`,
+          `Packaged coding-agent MCP must expose ${name}`,
         );
       }
-      const mcpRetained = await mcpClient.callTool({
-        name: "hindsight_retain",
-        arguments: { content: "The release smoke project deploys with Docker Compose." },
+      assert.equal(tools.length, 8, "Coding-agent MCP must expose only its original tool set");
+      const call = async (name, args) => {
+        const result = await mcpClient.callTool({ name, arguments: args });
+        assert.equal(result.isError, undefined, JSON.stringify(result.content));
+        assert.ok(Array.isArray(result.content) && result.content.length > 0);
+        return result;
+      };
+      await call("hindsight_ingest_document", {
+        title: "Release smoke deployment",
+        content: "The release smoke project deploys with Docker Compose.",
       });
-      assert.equal(mcpRetained.isError, undefined, JSON.stringify(mcpRetained.content));
-      const mcpRecalled = await mcpClient.callTool({
-        name: "hindsight_recall",
-        arguments: { query: "How is the project deployed?" },
+      await call("hindsight_reflect", { query: "How is the project deployed?" });
+      await call("hindsight_search_knowledge_pages", { query: "release smoke deployment" });
+      await call("hindsight_list_knowledge_pages", {});
+      const captured = await call("hindsight_capture_initiative", {
+        title: "Release smoke integration",
+        summary: "Verify coding-agent memory tools use the assigned project bank through Memory Router.",
       });
-      assert.equal(mcpRecalled.isError, undefined, JSON.stringify(mcpRecalled.content));
-      assert.ok(Array.isArray(mcpRecalled.content) && mcpRecalled.content.length > 0);
+      const capturedText = captured.content.find((item) => item.type === "text");
+      assert.ok(capturedText);
+      const { page_id: pageId } = JSON.parse(capturedText.text);
+      assert.equal(typeof pageId, "string");
+      await call("hindsight_read_knowledge_page", { page_id: pageId });
+      const denied = await mcpClient.callTool({
+        name: "hindsight_list_knowledge_pages",
+        arguments: { bankId: "unassigned" },
+      });
+      assert.equal(denied.isError, true, "MCP reads must reject unassigned banks");
     } finally {
       await mcpClient.close();
     }
     assert.ok(!traces.some((item) => item.status >= 400 && item.status !== 404), JSON.stringify(traces));
+    assert.ok(!traces.some((item) => item.path.includes("unassigned")), "MCP denied bank must never reach the router");
     console.log(
-      "Packaged OpenClaw retain/recall, Codex reflect and MCP retain/recall passed against the pinned router and Hindsight.",
+      "Packaged OpenClaw retain/recall, Codex hook and coding-agent MCP knowledge tools passed against the pinned router and Hindsight.",
     );
   } finally {
     server.closeAllConnections();

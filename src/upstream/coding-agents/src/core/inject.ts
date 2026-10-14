@@ -1,4 +1,4 @@
-import { DEFAULT_TOOL_PREFIX, renderToolText } from "@memory-router/shared/tool-prefix";
+import { DEFAULT_TOOL_PREFIX, renderBrandText } from "@memory-router/shared/tool-prefix";
 /** The system-prompt injection wrapper for a surfaced memory (harness-agnostic text). */
 
 /**
@@ -48,7 +48,7 @@ export function formatPageFallback(
   toolPrefix = DEFAULT_TOOL_PREFIX
 ): string {
   return (
-    `${renderToolText(lead, toolPrefix)}\n` +
+    `${renderBrandText(lead, toolPrefix)}\n` +
     hits
       .map((h) => {
         const snippet = h.snippet.replace(/\s+/g, " ").trim();
@@ -69,8 +69,8 @@ export const RECALL_INJECT_LEAD =
 
 /** The memory body injected from a raw recall over the bank (`recallOptions`): after a failed
  *  reflect found no page (default lead), or as the configured `autoInject: "recall"`. */
-export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD): string {
-  return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
+export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD, prefix = DEFAULT_TOOL_PREFIX): string {
+  return `${renderBrandText(lead, prefix)}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
 }
 
 export function buildSystemInjection(memory: string, toolPrefix = DEFAULT_TOOL_PREFIX): string {
@@ -84,7 +84,7 @@ export function buildSystemInjection(memory: string, toolPrefix = DEFAULT_TOOL_P
   // off-target memory reads exactly like a prompt injection, and skeptical models rightly
   // discard the whole channel.
   return (
-    renderToolText("<hindsight_memory>\n" +
+    renderBrandText("<hindsight_memory>\n" +
     "Automatically retrieved by Hindsight from THIS repository's own history (git rationale and " +
     "past developer sessions) — real memory, but retrieval is heuristic: it may or may not bear " +
     "on the current task.\n" +

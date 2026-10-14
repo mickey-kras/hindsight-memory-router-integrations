@@ -1,4 +1,4 @@
-import { renderToolText, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
+import { renderBrandText, toolBrand, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
 /**
  * Codebase survey (Option C): on a cold repo, `session-start.ts` (hook harnesses) or
  * `runtime.ts`'s `seedIfCold` (opencode) spawns a DETACHED headless coding agent alongside the
@@ -189,7 +189,7 @@ function buildSurveyPlan(
   opts: { model?: string; budgetUsd?: number; mcpServerPath: string; toolPrefix?: string }
 ): SpawnPlan {
   const prefix = validatedToolPrefix(opts.toolPrefix);
-  const prompt = renderToolText(SURVEY_PROMPT, prefix);
+  const prompt = renderBrandText(SURVEY_PROMPT, prefix);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     // Anti-recursion: the survey's own agent session must not fire our hooks (session-start,
@@ -204,7 +204,7 @@ function buildSurveyPlan(
     case "claude-code": {
       const mcpConfig = JSON.stringify({
         mcpServers: {
-          hindsight: {
+          [toolBrand(prefix).id]: {
             command: "node",
             args: [opts.mcpServerPath],
             // HINDSIGHT_MCP_HARNESS names the agent whose CLI this recipe drives — the survey's
@@ -229,7 +229,7 @@ function buildSurveyPlan(
           "Read",
           "Glob",
           "Grep",
-          `mcp__hindsight__${prefix}ingest_document`,
+          `mcp__${toolBrand(prefix).id}__${prefix}ingest_document`,
           "--disallowedTools",
           ...SURVEY_DISALLOWED_TOOLS,
           "--max-budget-usd",
@@ -251,13 +251,13 @@ function buildSurveyPlan(
           "--sandbox",
           "read-only",
           "-c",
-          `mcp_servers.hindsight.command="node"`,
+          `mcp_servers.${toolBrand(prefix).id}.command="node"`,
           "-c",
-          `mcp_servers.hindsight.args=["${opts.mcpServerPath}"]`,
+          `mcp_servers.${toolBrand(prefix).id}.args=["${opts.mcpServerPath}"]`,
           "-c",
-          `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
+          `mcp_servers.${toolBrand(prefix).id}.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
           "-c",
-          `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
+          `mcp_servers.${toolBrand(prefix).id}.env.HINDSIGHT_MCP_HARNESS="codex"`,
           prompt,
         ],
         env,
@@ -283,7 +283,7 @@ function buildSurveyPlan(
       // configured default (its `provider/model` format differs per setup).
       return {
         bin,
-        args: ["run", "--agent", SURVEY_AGENT, prompt],
+        args: ["run", "--agent", `${toolBrand(prefix).id}-survey`, prompt],
         env,
       };
     }

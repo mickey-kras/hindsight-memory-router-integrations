@@ -1,3 +1,4 @@
+import { toolBrand } from "@memory-router/shared/tool-prefix";
 import { stripVTControlCharacters } from "node:util";
 /**
  * Host adapter runtime for PERSISTENT-PLUGIN harnesses (opencode, Kilo, Cline). It delegates SessionStart and
@@ -143,7 +144,8 @@ export class RuntimeCore {
       if (out.systemMessage) {
         const plain = stripVTControlCharacters(out.systemMessage);
         log.info(this.harness, plain);
-        this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
+        const title = toolBrand(this.cfg.toolPrefix).displayName;
+        this.notify?.(title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
       }
       this.preamble = out.additionalContext ?? "";
       this.deferInitialReflect = out.deferInitialReflect === true;
@@ -192,7 +194,7 @@ export class RuntimeCore {
     if (output.notice) {
       const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
       log.info(this.harness, "reflect goal", { preview });
-      this.notify?.("Hindsight · recalled past decisions", preview);
+      this.notify?.(`${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
     }
     const block = blocks.filter(Boolean).join("\n\n");
     this.injection.set(sessionId, block);

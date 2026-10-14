@@ -4,8 +4,6 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
-import { loadMcpStack } from "../src/mcp/managed-config.js";
-import { buildTools } from "../src/mcp/tools.js";
 import plugin, { PLUGIN_ID } from "../src/plugin.js";
 import { deriveBankId } from "../src/upstream/coding-agents/src/core/bank";
 import { applyBankConfig, loadConfig, resolveConfig } from "../src/upstream/coding-agents/src/core/config";
@@ -14,6 +12,7 @@ import { buildHookOutput } from "../src/upstream/coding-agents/src/core/hook";
 import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/knowledge-tools";
 import { readSessionCache, writeSessionCache } from "../src/upstream/coding-agents/src/core/session-cache";
 import { run as install, parseJsonc } from "../src/upstream/coding-agents/src/installer";
+import { selectTools } from "../src/upstream/coding-agents/src/mcp-server";
 
 const dirs: string[] = [];
 const token = `mr_codex_${"b".repeat(64)}`;
@@ -259,8 +258,8 @@ it.each([
     });
     const client = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A" });
     const coding = buildKnowledgeTools(client, "A").find((tool) => tool.name === "hindsight_ingest_document");
-    const mcp = buildTools(loadMcpStack({ ...process.env, HINDSIGHT_ROUTER_PRINCIPAL: "codex" }, logger)).find(
-      (tool) => tool.name === "hindsight_ingest",
+    const mcp = selectTools(loadConfig({ harness: "codex" }), client, "A", { cwd: dir, harness: "codex" }).find(
+      (tool) => tool.name === "hindsight_ingest_document",
     );
     let openclawTools: Array<{ name: string; execute(id: string, params: Record<string, unknown>): Promise<unknown> }> =
       [];
@@ -379,7 +378,7 @@ it.each(["", "\n"])("Codex uninstall preserves adjacent tables with EOF suffix %
   const kept = '[mcp_servers.other]\ncommand = "other"\n\n[features]\nhooks = true\n';
   writeFileSync(
     path,
-    '[mcp_servers.hindsight]\ncommand = "old"\n\n' + kept + '[mcp_servers.hindsight.env]\nTOKEN = "old"' + ending,
+    `${ownedCodexRegistration(dir)}\n${kept}[mcp_servers.hindsight.env]\nTOKEN = "old"${ending}`,
   );
   expect(
     install(["uninstall", "codex"], {
@@ -391,6 +390,10 @@ it.each(["", "\n"])("Codex uninstall preserves adjacent tables with EOF suffix %
   ).toBe(0);
   expect(readFileSync(path, "utf8")).toBe(kept);
 });
+
+function ownedCodexRegistration(dir: string): string {
+  return `[mcp_servers.hindsight]\ncommand = "node"\nargs = [${JSON.stringify(join(dir, ".hindsight", "coding-agents", "dist", "mcp-server.js"))}]\n`;
+}
 
 function installPackagedCodex(dir: string) {
   execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
@@ -492,7 +495,7 @@ it("preserves Codex overrides and manual allowlist entries when reinstalling wit
   vi.stubEnv("CUSTOM_CODEX_TOKEN", token);
   writeFileSync(
     path,
-    `[mcp_servers.other]\ncommand = "untouched"\n\n[mcp_servers.hindsight]\ncommand = "old-node"\nargs = ["old.js"]\nenv_vars = ["USER_APPROVED_ENV", "HINDSIGHT_CONFIG"]\nstartup_timeout_sec = 45\ntool_timeout_sec = 180\nenabled = true\n\n[mcp_servers.hindsight.env]\nHINDSIGHT_ROUTER_CONFIG = ${JSON.stringify(override)}\nHINDSIGHT_MCP_HARNESS = "wrong"\nHINDSIGHT_LOG_LEVEL = "error"\n`,
+    `[mcp_servers.other]\ncommand = "untouched"\n\n${ownedCodexRegistration(dir)}env_vars = ["USER_APPROVED_ENV", "HINDSIGHT_CONFIG"]\nstartup_timeout_sec = 45\ntool_timeout_sec = 180\nenabled = true\n\n[mcp_servers.hindsight.env]\nHINDSIGHT_ROUTER_CONFIG = ${JSON.stringify(override)}\nHINDSIGHT_MCP_HARNESS = "codex"\nHINDSIGHT_LOG_LEVEL = "error"\n`,
   );
   expect(installPackagedCodex(dir).status).toBe(0);
   const installed = readFileSync(path, "utf8");
@@ -527,7 +530,7 @@ it.each(["local", "remote", undefined] as const)(
       '{ name = "HINDSIGHT_ROUTER_CONFIG" }',
       '{ name = "UPSTREAM_TEST_TOKEN", source = "local" }',
     ];
-    writeFileSync(path, `[mcp_servers.hindsight]\ncommand = "node"\nenv_vars = [${entries.join(", ")}]\n`);
+    writeFileSync(path, `${ownedCodexRegistration(dir)}env_vars = [${entries.join(", ")}]\n`);
     expect(installPackagedCodex(dir).status).toBe(0);
     const installed = readFileSync(path, "utf8");
     const registration = parseToml(installed).mcp_servers.hindsight;
@@ -560,7 +563,7 @@ it.each([
   const dir = setup();
   mkdirSync(join(dir, ".codex"));
   const path = join(dir, ".codex", "config.toml");
-  const existing = `[mcp_servers.hindsight]\ncommand = "node"\nenv_vars = [${entry}]\n`;
+  const existing = `${ownedCodexRegistration(dir)}env_vars = [${entry}]\n`;
   writeFileSync(path, existing);
   const installed = installPackagedCodex(dir);
   expect(installed.status).toBe(1);
@@ -579,7 +582,8 @@ it("preserves structured Codex allowlist entries written as array tables", () =>
   const path = join(dir, ".codex", "config.toml");
   writeFileSync(
     path,
-    '[mcp_servers.hindsight]\ncommand = "node"\n\n[[mcp_servers.hindsight.env_vars]]\nname = "UPSTREAM_TEST_TOKEN"\nsource = "local"\n',
+    ownedCodexRegistration(dir) +
+      '\n[[mcp_servers.hindsight.env_vars]]\nname = "UPSTREAM_TEST_TOKEN"\nsource = "local"\n',
   );
   expect(installPackagedCodex(dir).status).toBe(0);
   const installed = readFileSync(path, "utf8");
@@ -614,7 +618,7 @@ it("refuses to copy a literal managed token when repairing an existing Codex reg
   const dir = setup();
   mkdirSync(join(dir, ".codex"));
   const path = join(dir, ".codex", "config.toml");
-  const existing = `[mcp_servers.hindsight]\ncommand = "node"\nenv = { UPSTREAM_TEST_TOKEN = "${token}" }\n`;
+  const existing = `${ownedCodexRegistration(dir)}env = { UPSTREAM_TEST_TOKEN = "${token}" }\n`;
   writeFileSync(path, existing);
   const installed = installPackagedCodex(dir);
   expect(installed.status).toBe(1);

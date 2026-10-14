@@ -1,5 +1,5 @@
 import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
-import { renderCompanionSkill, ToolPrefixError } from "@memory-router/shared/tool-prefix";
+import { renderCompanionSkill, skillPrefix, toolBrand, ToolPrefixError } from "@memory-router/shared/tool-prefix";
 /**
  * Companion-skill self-update: `npm update -g` refreshes the PACKAGE's skill/, but the copies the
  * installer placed in each host's skills directory would go stale. Every session start compares
@@ -17,7 +17,7 @@ import { renderCompanionSkill, ToolPrefixError } from "@memory-router/shared/too
  * LOADED is the installation signal: uninstalling removes the entry that loads us, so a running
  * plugin can only mean the host still wants us.
  */
-import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,7 +43,9 @@ export function syncCompanionSkill(
     const src = opts.srcDir ?? packagedSkillDir();
     const srcMd = join(src, "SKILL.md");
     if (!existsSync(srcMd)) return;
-    const dst = join(opts.home ?? homedir(), ...parts, "hindsight-coding-agent");
+    const base = join(opts.home ?? homedir(), ...parts);
+    assertInstalledSkillBrand(base, prefix);
+    const dst = join(base, toolBrand(prefix).skillName);
     const dstMd = join(dst, "SKILL.md");
     const installed = existsSync(dstMd);
     if (!installed && !opts.install) return; // never installed here — not ours to decide
@@ -86,6 +88,31 @@ export function readPackagedSkill(
 export function assertCompanionSkillPrefix(harness: string, prefix: string, home = homedir()): void {
   const parts = SKILL_DIRS[harness];
   if (!parts) return;
-  const path = join(home, ...parts, "hindsight-coding-agent", "SKILL.md");
+  const base = join(home, ...parts);
+  assertInstalledSkillBrand(base, prefix);
+  const path = join(base, toolBrand(prefix).skillName, "SKILL.md");
   if (existsSync(path)) renderCompanionSkill("", prefix, readFileSync(path, "utf8"));
+}
+
+export function ownedCompanionSkills(base: string): string[] {
+  if (!existsSync(base)) return [];
+  return readdirSync(base, { withFileTypes: true }).flatMap(entry => {
+    if (!entry.isDirectory()) return [];
+    const path = join(base, entry.name, "SKILL.md");
+    if (!existsSync(path)) return [];
+    const raw = readFileSync(path, "utf8");
+    const prefix = skillPrefix(raw);
+    if (prefix !== undefined && (toolBrand(prefix).skillName === entry.name || entry.name === "hindsight-coding-agent")) return [join(base, entry.name)];
+    // The original generated default skill can be migrated without claiming a user's namesake.
+    if (entry.name === "hindsight-coding-agent" && /^name: hindsight-coding-agent$/m.test(raw) &&
+      raw.includes("<!-- GENERATED from skill-src/preamble.md + skill-src/managed-router.md.")) return [join(base, entry.name)];
+    return [];
+  });
+}
+
+export function assertInstalledSkillBrand(base: string, prefix: string): void {
+  const desired = join(base, toolBrand(prefix).skillName);
+  const owned = ownedCompanionSkills(base);
+  if (existsSync(desired) && !owned.includes(desired)) throw new ToolPrefixError("unrelated skill name collision; choose another toolPrefix");
+  if (owned.some(path => path !== desired)) throw new ToolPrefixError("installed skill/tool prefix mismatch; reinstall to migrate");
 }

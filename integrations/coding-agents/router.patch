@@ -4403,10 +4403,10 @@ index 4579d4b..e5d1cdb 100644
  }
 diff --git a/skill-src/managed-router.md b/skill-src/managed-router.md
 new file mode 100644
-index 0000000..0e9520b
+index 0000000..4846bf2
 --- /dev/null
 +++ b/skill-src/managed-router.md
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,66 @@
 +## Managed setup and updates
 +
 +Use the existing operator-provisioned `HINDSIGHT_ROUTER_CONFIG` absolute path and named credential
@@ -4460,6 +4460,19 @@ index 0000000..0e9520b
 +The managed routing boundary owns bank access and transport; do not create banks, rewrite bank
 +configuration, provision servers or substitute a provider client. Background ingestion and hooks
 +use the same router boundary as interactive tools.
++
++### Optional branding
++
++The operator may set `toolPrefix` in the same managed router JSON. The default `hindsight_`
++keeps the upstream names. Tool, skill, registration and display names derive from that one
++value. Package
++names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants
++remain unchanged. Use the names registered in the current session; do not guess aliases.
++
++A branding change requires the pinned installer (`install` or `update`) and a fresh session.
++The installer migrates only managed entries and refuses unrelated name collisions. A stale
++managed skill namespace fails closed until reinstall; never repair this by changing bank
++assignments, credentials or the operational memory workflow above.
 diff --git a/skill-src/preamble.md b/skill-src/preamble.md
 index 118cae5..639b990 100644
 --- a/skill-src/preamble.md
@@ -4529,7 +4542,7 @@ index 118cae5..639b990 100644
 +access, report the verified correction for an authorized writer; do not attempt a write or change
 +credentials.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index da2f474..ecc7f7f 100644
+index da2f474..25c0c27 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
 @@ -1,36 +1,39 @@
@@ -4593,7 +4606,7 @@ index da2f474..ecc7f7f 100644
  - An **external document, notes, or durable findings** → `hindsight_ingest_document(title, content)`.
  - A **new feature/initiative being started** → `hindsight_capture_initiative(title, summary)`,
    right after the plan is agreed and before code is written.
-@@ -59,607 +62,60 @@ source contradicts it), FIX THE RECORD — don't just ignore it. Call
+@@ -59,607 +62,73 @@ source contradicts it), FIX THE RECORD — don't just ignore it. Call
  - **content**: (1) what memory claimed, (2) what is verifiably true now, (3) the evidence you
    checked (file/commit/output). Quote exact values verbatim.
  
@@ -5258,6 +5271,19 @@ index da2f474..ecc7f7f 100644
 +The managed routing boundary owns bank access and transport; do not create banks, rewrite bank
 +configuration, provision servers or substitute a provider client. Background ingestion and hooks
 +use the same router boundary as interactive tools.
++
++### Optional branding
++
++The operator may set `toolPrefix` in the same managed router JSON. The default `hindsight_`
++keeps the upstream names. Tool, skill, registration and display names derive from that one
++value. Package
++names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants
++remain unchanged. Use the names registered in the current session; do not guess aliases.
++
++A branding change requires the pinned installer (`install` or `update`) and a fresh session.
++The installer migrates only managed entries and refuses unrelated name collisions. A stale
++managed skill namespace fails closed until reinstall; never repair this by changing bank
++assignments, credentials or the operational memory workflow above.
 diff --git a/src/antigravity-statusline.test.ts b/src/antigravity-statusline.test.ts
 index df76d3d..0118726 100644
 --- a/src/antigravity-statusline.test.ts
@@ -5273,6 +5299,31 @@ index df76d3d..0118726 100644
  
  describe("Antigravity status line", () => {
    it("identifies the resolved Hindsight bank for the active workspace", () => {
+diff --git a/src/antigravity-statusline.ts b/src/antigravity-statusline.ts
+index 9a1ec42..23b1835 100644
+--- a/src/antigravity-statusline.ts
++++ b/src/antigravity-statusline.ts
+@@ -17,7 +17,7 @@ export interface AntigravityStatusLineState {
+ /** Build the compact, user-visible Hindsight indicator from Antigravity's documented state payload. */
+ export function buildAntigravityStatusLine(state: AntigravityStatusLineState, cfg: Config): string {
+   const cwd = state.cwd || state.workspace?.current_dir;
+-  if (!cwd) return brandWord();
++  if (!cwd) return brandWord(cfg.toolPrefix);
+ 
+   // No session root here: the documented state payload carries no conversation id, so there is no
+   // key to look one up by (see core/session-cache.ts). Outside a git repo this can therefore name
+@@ -25,9 +25,9 @@ export function buildAntigravityStatusLine(state: AntigravityStatusLineState, cf
+   // (#3563). It is a display-only divergence — this command never calls the API, so nothing is
+   // retained or created under the name shown.
+   const bankId = deriveBankIdOrSkip(cfg, cwd, "antigravity-cli");
+-  if (bankId === null) return brandWord(); // unidentifiable repo: name no bank rather than the wrong one
++  if (bankId === null) return brandWord(cfg.toolPrefix); // unidentifiable repo: name no bank rather than the wrong one
+   const resolved = applyBankConfig(cfg, bankId, cwd);
+-  return resolved.cfg.disabled ? "" : `${brandWord()} · ${resolved.bankId}`;
++  return resolved.cfg.disabled ? "" : `${brandWord(cfg.toolPrefix)} · ${resolved.bankId}`;
+ }
+ 
+ /* c8 ignore start */
 diff --git a/src/cline.ts b/src/cline.ts
 index 0050fc1..43ed7d6 100644
 --- a/src/cline.ts
@@ -5414,6 +5465,107 @@ index 71cf320..2e5e0c6 100644
  }
  
  /**
+diff --git a/src/core/brand.ts b/src/core/brand.ts
+index b5c8436..56d2401 100644
+--- a/src/core/brand.ts
++++ b/src/core/brand.ts
+@@ -1,15 +1,16 @@
++import { DEFAULT_TOOL_PREFIX, toolBrand } from "@memory-router/shared/tool-prefix";
+ /**
+  * "Hindsight" in the brand gradient (#0074d9 → #009296) — the same colors the API server's
+  * banner uses (hindsight_api/banner.py gradient_text). ANSI foreground-only, so it renders
+  * anywhere the session logo does.
+  */
+-export function brandWord(): string {
++export function brandWord(prefix = DEFAULT_TOOL_PREFIX): string {
+   const start = [0, 116, 217];
+   const end = [0, 146, 150];
+-  const word = "Hindsight";
++  const word = toolBrand(prefix).displayName;
+   let out = "";
+   for (let i = 0; i < word.length; i++) {
+-    const t = i / (word.length - 1);
++    const t = i / Math.max(1, word.length - 1);
+     const [r, g, b] = start.map((s, k) => Math.round(s + (end[k] - s) * t));
+     out += `\x1b[38;2;${r};${g};${b}m${word[i]}`;
+   }
+diff --git a/src/core/branding.test.ts b/src/core/branding.test.ts
+new file mode 100644
+index 0000000..4a8d1cb
+--- /dev/null
++++ b/src/core/branding.test.ts
+@@ -0,0 +1,71 @@
++import { afterEach, expect, it, vi } from "vitest";
++import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { stripVTControlCharacters } from "node:util";
++import { Client } from "@modelcontextprotocol/sdk/client/index.js";
++import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
++import { renderCompanionSkill, toolBrand } from "@memory-router/shared/tool-prefix";
++import { loadConfig } from "./config";
++import { HindsightClient } from "./hindsight";
++import { buildKnowledgeTools } from "./knowledge-tools";
++import { buildKnowledgePreamble, buildRosterRefresh } from "./knowledge-injection";
++import { buildSystemInjection } from "./inject";
++import { buildSeedBanner } from "./session-start";
++import { assertCompanionSkillPrefix, readPackagedSkill } from "./skill-sync";
++import { buildMcpServer } from "../mcp-server";
++import { createPluginEntry } from "../harness/plugin-entry";
++import { summarizeTurns } from "./usage";
++
++const dirs: string[] = [];
++afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); dirs.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })); });
++function setup(prefix?: string) {
++  const dir = mkdtempSync(join(tmpdir(), "branding-")); dirs.push(dir);
++  const path = join(dir, "router.json");
++  writeFileSync(path, JSON.stringify({ routerUrl: "https://router.test", toolPrefix: prefix,
++    principals: Object.fromEntries(["kilo", "codex", "opencode2"].map(name => [name, { tokenEnv: "TEST_TOKEN", writeBank: "bank", mapPathToBank: { [dir]: "bank" } }])) }));
++  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", path); vi.stubEnv("TEST_TOKEN", `mr_test_${"a".repeat(64)}`);
++  vi.stubEnv("HINDSIGHT_CONFIG", join(dir, "normal.json")); vi.stubEnv("HINDSIGHT_DISABLE_HOOKS", "1");
++  return dir;
++}
++it.each([undefined, "abc_", "chatgpt_", "memory_"])("uses one brand for upstream tools, guidance, MCP identity and Kilo native registration: %s", async prefix => {
++  const dir = setup(prefix); const brand = toolBrand(prefix);
++  const cfg = loadConfig({ harness: "kilo" }); const client = new HindsightClient({ apiUrl: cfg.apiUrl, bank: "bank", routerHarness: "kilo" });
++  const tools = buildKnowledgeTools(client, "bank", { toolPrefix: brand.prefix, harness: "kilo" });
++  expect(tools).toHaveLength(8); expect(tools.map(tool => tool.name)).not.toContain(brand.prefix + "list_banks");
++  expect(tools.every(tool => tool.name.startsWith(brand.prefix))).toBe(true);
++  const entry = createPluginEntry("kilo"); const runtime = await entry({ directory: dir, worktree: dir } as Parameters<typeof entry>[0]);
++  const host: Parameters<NonNullable<typeof runtime.config>>[0] = {};
++  if (!runtime.config) throw new Error("native config hook missing"); await runtime.config(host);
++  expect(host.agent?.[`${brand.id}-survey`]?.permission).toEqual({ "*": "deny", read: "allow", grep: "allow", glob: "allow", [`${brand.prefix}ingest_document`]: "allow" });
++  expect(runtime.tool).toHaveProperty(`${brand.prefix}reflect`);
++  const protocolClient = new Client({ name: "test-host", version: "1.0.0" }); const server = buildMcpServer(tools, brand.prefix);
++  const [transport, peer] = InMemoryTransport.createLinkedPair();
++  try {
++    await server.connect(transport); await protocolClient.connect(peer);
++    expect(protocolClient.getServerVersion()?.name).toBe(brand.id);
++    expect((await protocolClient.listTools()).tools.map(tool => tool.name)).toEqual(tools.map(tool => tool.name));
++  } finally { await protocolClient.close(); await server.close(); }
++  const rendered = readPackagedSkill(undefined, "opencode2"); expect(rendered?.description).toContain(brand.displayName);
++  for (const body of [buildKnowledgePreamble([], { toolPrefix: brand.prefix }), buildRosterRefresh([], { toolPrefix: brand.prefix }), buildSystemInjection("unchanged historical Hindsight memory", brand.prefix)]) {
++    expect(body).toContain(`From ${brand.displayName} memory`);
++    if (prefix) expect(body).not.toContain("call hindsight_ingest_document");
++  }
++  expect(stripVTControlCharacters(buildSeedBanner("bank", false, undefined, brand.prefix))).toContain(brand.displayName);
++  const usage = summarizeTurns([{ role: "user", content: "question" }, { role: "action", content: `${brand.prefix}reflect query` }, { role: "assistant", content: `> From ${brand.displayName} memory` }], brand.prefix);
++  expect(usage[0].credited).toBe(true);
++});
++it("rejects stale skill branding and preserves unmarked user skills", () => {
++  const home = setup("abc_"); const base = join(home, ".agents/skills"); const old = join(base, "hindsight-coding-agent"); mkdirSync(old, { recursive: true });
++  writeFileSync(join(old, "SKILL.md"), renderCompanionSkill("Call hindsight_reflect", "hindsight_"));
++  expect(() => assertCompanionSkillPrefix("codex", "abc_", home)).toThrow("reinstall");
++  writeFileSync(join(old, "SKILL.md"), "User-owned unmarked content");
++  expect(() => assertCompanionSkillPrefix("codex", "abc_", home)).not.toThrow();
++  expect(readFileSync(join(old, "SKILL.md"), "utf8")).toBe("User-owned unmarked content");
++});
++it("rejects MCP identity mismatches and duplicates", () => {
++  setup(); const cfg = loadConfig({ harness: "kilo" }); const client = new HindsightClient({ apiUrl: cfg.apiUrl, bank: "bank", routerHarness: "kilo" });
++  const tools = buildKnowledgeTools(client, "bank", { harness: "kilo" });
++  expect(() => buildMcpServer(tools, "abc_")).toThrow("inconsistent");
++  expect(() => buildMcpServer([tools[0], tools[0]])).toThrow("collision");
++});
 diff --git a/src/core/config.ts b/src/core/config.ts
 index 0446ed7..b009345 100644
 --- a/src/core/config.ts
@@ -6082,7 +6234,7 @@ index 9350ca3..6847850 100644
        expect(post.body.tags).toHaveLength(1);
        expect(post.body.tags[0]).toMatch(
 diff --git a/src/core/hindsight.ts b/src/core/hindsight.ts
-index a0e5a7d..7650e54 100644
+index a0e5a7d..874ea7c 100644
 --- a/src/core/hindsight.ts
 +++ b/src/core/hindsight.ts
 @@ -1,3 +1,7 @@
@@ -6093,7 +6245,17 @@ index a0e5a7d..7650e54 100644
  /**
   * Harness-agnostic Hindsight HTTP client (raw fetch, no SDK dep).
   *
-@@ -76,7 +80,7 @@ export function resolveRetainScopes(
+@@ -6,9 +10,7 @@
+  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
+  */
+ import {
+-  type BankOverrides,
+   buildPageTrigger,
+-  codingBankManifest,
+   type CustomPagesConfig,
+   type CurrentPageTrigger,
+   PAGE_MAX_TOKENS,
+@@ -76,7 +78,7 @@ export function resolveRetainScopes(
    configured: ObservationScopes
  ): ObservationScopes {
    if (configured !== "per_source") return configured;
@@ -6102,7 +6264,7 @@ index a0e5a7d..7650e54 100644
    return [[], ...sources.map((s) => [s])];
  }
  
-@@ -96,6 +100,7 @@ export function resolveRetainScopes(
+@@ -96,6 +98,7 @@ export function resolveRetainScopes(
  export const DEFAULT_OBSERVATION_SCOPES: ObservationScopes = "shared";
  
  export interface ClientOpts {
@@ -6110,7 +6272,7 @@ index a0e5a7d..7650e54 100644
    apiUrl: string;
    apiToken?: string;
    bank: string;
-@@ -116,11 +121,7 @@ export interface ClientOpts {
+@@ -116,11 +119,7 @@ export interface ClientOpts {
    /** Recall-body overrides, merged key-by-key over `DEFAULT_RECALL_OPTIONS`. Passed through to
     *  the API as given (`types`, `max_tokens`, `budget`, …); `query` is never overridable. */
    recallOptions?: Record<string, unknown>;
@@ -6123,7 +6285,7 @@ index a0e5a7d..7650e54 100644
    tokenProvider?: () => string | undefined;
  }
  
-@@ -158,11 +159,7 @@ export class RateLimitedError extends Error {
+@@ -158,11 +157,7 @@ export class RateLimitedError extends Error {
  
  /** Parse a `Retry-After` header (delta-seconds or HTTP-date) into ms; 0 when absent or unusable. */
  export function retryAfterMs(header: string | null | undefined): number {
@@ -6136,7 +6298,7 @@ index a0e5a7d..7650e54 100644
  }
  
  /** Raised when the target server predates the knowledge-pages API surface. */
-@@ -246,11 +243,9 @@ const RETRY_AFTER_FLOOR_MS = 10 * 1000;
+@@ -246,11 +241,9 @@ const RETRY_AFTER_FLOOR_MS = 10 * 1000;
  const RETRY_AFTER_CEILING_MS = 60 * 1000;
  
  export class HindsightClient {
@@ -6150,7 +6312,7 @@ index a0e5a7d..7650e54 100644
    readonly bank: string;
    readonly project?: string;
    readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
-@@ -265,9 +260,11 @@ export class HindsightClient {
+@@ -265,9 +258,11 @@ export class HindsightClient {
    readonly recallOptions: Record<string, unknown>;
  
    constructor(o: ClientOpts) {
@@ -6165,7 +6327,7 @@ index a0e5a7d..7650e54 100644
      this.bank = o.bank;
      this.project = o.project;
      this.log = o.log ?? (() => {});
-@@ -280,58 +277,30 @@ export class HindsightClient {
+@@ -280,58 +275,30 @@ export class HindsightClient {
      this.recallOptions = { ...DEFAULT_RECALL_OPTIONS, ...o.recallOptions };
    }
  
@@ -6222,8 +6384,6 @@ index a0e5a7d..7650e54 100644
 -    return send();
 -  }
 +  get apiToken(): undefined { return undefined; }
-+
-+  hasCredentials(): boolean { return this.transport.hasCredentials(); }
  
 -  /** A 401 with no `Authorization` header is a different failure from a rejected key, and the
 -   *  server answers identically for both — only the client knows which it sent. */
@@ -6232,6 +6392,8 @@ index a0e5a7d..7650e54 100644
 -    return this.token
 -      ? " (the configured apiToken was rejected — check ~/.hindsight/coding-agent.json)"
 -      : " (no apiToken is configured, so no Authorization header was sent)";
++  hasCredentials(): boolean { return this.transport.hasCredentials(); }
++
 +  private async fetchWithAuth(url: string, init: RequestInit): Promise<Response> {
 +    if (url === this.bankUrl("/memories/recall")) {
 +      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -6243,7 +6405,7 @@ index a0e5a7d..7650e54 100644
    }
  
    bankUrl(suffix = ""): string {
-@@ -348,16 +317,25 @@ export class HindsightClient {
+@@ -348,16 +315,25 @@ export class HindsightClient {
    ): Promise<Response> {
      // Hard cap on EVERY request: a stalled server (pool deadlock, network) must degrade to a
      // memoryless turn — never hang a host that awaits us (opencode blocks its BOOT on plugin init).
@@ -6275,7 +6437,7 @@ index a0e5a7d..7650e54 100644
        );
      return r;
    }
-@@ -416,7 +394,8 @@ export class HindsightClient {
+@@ -416,7 +392,8 @@ export class HindsightClient {
        if (!r.ok) return false;
        const j = (await r.json()) as { api_version?: string };
        return semverGte(j.api_version, MIN_IDEMPOTENT_RETAIN_VERSION);
@@ -6285,22 +6447,26 @@ index a0e5a7d..7650e54 100644
        return false;
      }
    }
-@@ -450,11 +429,11 @@ export class HindsightClient {
+@@ -450,16 +427,8 @@ export class HindsightClient {
      return ids;
    }
  
 -  /** Configure the bank: POST the coding bank manifest to /import (missions, retain strategies,
-+  /** Configure the bank: PATCH missing config fields through the router (missions, retain strategies,
-    *  entity labels), then seed knowledge pages when the server supports them. Both halves are
-    *  idempotent and strictly ADDITIVE — nothing the bank already says is overwritten (#3927) — so
+-   *  entity labels), then seed knowledge pages when the server supports them. Both halves are
+-   *  idempotent and strictly ADDITIVE — nothing the bank already says is overwritten (#3927) — so
 -   *  the deepen engine can re-run this every pass. Creates the bank if missing; legacy servers
 -   *  continue with the template-only path.
-+   *  the deepen engine can re-run this every pass. Banks must already be provisioned by the router
-+   *  operator; a missing bank fails closed.
-    *
-    *  `manage: false` skips the config half entirely, for a bank whose owner shapes it themselves.
-    *  That bank should then define the strategies this plugin writes under (`git`, `gitlog`,
-@@ -471,44 +450,31 @@ export class HindsightClient {
+-   *
+-   *  `manage: false` skips the config half entirely, for a bank whose owner shapes it themselves.
+-   *  That bank should then define the strategies this plugin writes under (`git`, `gitlog`,
+-   *  `conversation`, `document`, `survey`): an unknown strategy name is not an error server-side,
+-   *  it just falls back to the bank's own config, so the miss is silent. */
++  /** Seed knowledge pages for an operator-provisioned bank. Bank creation, reset and
++   *  configuration belong to the router operator; the client only maintains pages. */
+   async configureBank(
+     opts: {
+       reset?: boolean;
+@@ -471,46 +440,10 @@ export class HindsightClient {
        manage?: boolean;
      } = {}
    ): Promise<void> {
@@ -6308,25 +6474,21 @@ index a0e5a7d..7650e54 100644
 -      await this.req("DELETE", this.bankUrl());
 -      this.log(`[bank] reset ${this.bank}`);
 -    }
-+    if (opts.reset) throw new AccessDeniedError();
-     if (opts.manage === false) {
-       this.log(`[bank] manageBankConfig: false — leaving ${this.bank}'s configuration alone`);
-     } else {
-       // What the bank ALREADY overrides decides what is left to write: the missions are seeded once
-       // and then belong to whoever set them (#2492), and every other field is added only where the
-       // bank is silent (#3927). A reset just deleted the bank, so there is nothing to read.
+-    if (opts.manage === false) {
+-      this.log(`[bank] manageBankConfig: false — leaving ${this.bank}'s configuration alone`);
+-    } else {
+-      // What the bank ALREADY overrides decides what is left to write: the missions are seeded once
+-      // and then belong to whoever set them (#2492), and every other field is added only where the
+-      // bank is silent (#3927). A reset just deleted the bank, so there is nothing to read.
 -      const manifest = codingBankManifest(opts.reset ? undefined : await this.readBankOverrides());
-+      const overrides = await this.readBankOverrides();
-+      const manifest = codingBankManifest(overrides);
-       if (!manifest) {
-         this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);
-       } else {
+-      if (!manifest) {
+-        this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);
+-      } else {
 -        await this.req("POST", this.bankUrl("/import"), manifest);
 -        this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort().join(", ")}`);
-+        await this.req("PATCH", this.bankUrl("/config"), { updates: manifest.bank });
-+        this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort((a, b) => a.localeCompare(b)).join(", ")}`);
-       }
-     }
+-      }
+-    }
++    if (opts.reset || opts.manage === true) throw new AccessDeniedError();
      await this.seedPages(opts.pageTrigger, opts.pages, opts.customPages);
    }
  
@@ -6338,8 +6500,7 @@ index a0e5a7d..7650e54 100644
 -   * bank does not exist yet, or the deployment has the bank-config API switched off — in neither
 -   * case can anything have been customised, so the caller seeds the full template.
 -   */
-+  /** Read existing overrides. Missing or unreadable configuration cannot authorize seeding. */
-   private async readBankOverrides(): Promise<BankOverrides | undefined> {
+-  private async readBankOverrides(): Promise<BankOverrides | undefined> {
 -    try {
 -      const r = await this.req("GET", this.bankUrl("/config"));
 -      if (!r.ok) return undefined;
@@ -6348,14 +6509,12 @@ index a0e5a7d..7650e54 100644
 -    } catch {
 -      return undefined;
 -    }
-+    const r = await this.req("GET", this.bankUrl("/config"));
-+    if (r.status === 404) throw new RouterRequestError(404);
-+    const j = (await r.json()) as { overrides?: BankOverrides };
-+    return j.overrides ?? {};
-   }
- 
+-  }
+-
    /** Explicitly delete one document (and its cascaded memory units/links). Background sync must
-@@ -553,7 +519,7 @@ export class HindsightClient {
+    *  never use this as a cleanup primitive: a document id alone does not prove repository ownership. */
+   async deleteDocument(documentId: string): Promise<void> {
+@@ -553,7 +486,7 @@ export class HindsightClient {
        let backoffMs = POLL_CYCLE_MS;
        await pool([...pending], this.maxParallelRetains, async (id) => {
          try {
@@ -6364,7 +6523,7 @@ index a0e5a7d..7650e54 100644
            if (r.status === 429) {
              backoffMs = Math.min(
                RETRY_AFTER_CEILING_MS,
-@@ -567,9 +533,14 @@ export class HindsightClient {
+@@ -567,9 +500,14 @@ export class HindsightClient {
              pending.delete(id);
              if (st !== "completed") failed++;
            }
@@ -6381,7 +6540,7 @@ index a0e5a7d..7650e54 100644
        });
        if (pending.size) {
          this.log(`  … ${pending.size}/${ids.length} ${label} ops pending`);
-@@ -590,33 +561,12 @@ export class HindsightClient {
+@@ -590,33 +528,12 @@ export class HindsightClient {
     * tool's configured window and aborted every high-budget synthesis mid-flight (#3590).
     */
    async reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string> {
@@ -6420,7 +6579,7 @@ index a0e5a7d..7650e54 100644
    }
  
    /**
-@@ -888,8 +838,8 @@ export class HindsightClient {
+@@ -888,8 +805,8 @@ export class HindsightClient {
      return (
        s
          .toLowerCase()
@@ -6431,7 +6590,7 @@ index a0e5a7d..7650e54 100644
          .slice(0, 60) || "initiative"
      );
    }
-@@ -974,13 +924,15 @@ export class HindsightClient {
+@@ -974,13 +891,15 @@ export class HindsightClient {
          (n) => n.kind === "folder" && (n.name || "").toLowerCase() === name.toLowerCase()
        );
        if (hit?.id) return hit.id;
@@ -6472,7 +6631,7 @@ index b972a3c..4d6a22a 100644
  
  /** Is `dir` the repo itself or somewhere inside it? */
 diff --git a/src/core/hook.ts b/src/core/hook.ts
-index bb42efd..40a25d8 100644
+index bb42efd..0746e98 100644
 --- a/src/core/hook.ts
 +++ b/src/core/hook.ts
 @@ -1,3 +1,6 @@
@@ -6488,6 +6647,15 @@ index bb42efd..40a25d8 100644
      diag(harness, event, { ms: Date.now() - t0, count: hits.length });
 -    if (hits.length) return formatPageFallback(hits, lead);
 +    if (hits.length) return formatPageFallback(hits, lead, managedToolPrefix(harness));
+   } catch (e) {
+     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
+   }
+@@ -128,7 +131,7 @@ async function injectRecall(
+     // What is asked for — types, token budget, everything — is the client's `recallOptions`.
+     const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
+     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
+-    if (observations.length) return formatRecallFallback(observations, lead);
++    if (observations.length) return formatRecallFallback(observations, lead, managedToolPrefix(harness));
    } catch (e) {
      diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
    }
@@ -6655,11 +6823,11 @@ index 89f5abb..87f02ed 100644
    };
  }
 diff --git a/src/core/inject.ts b/src/core/inject.ts
-index 6354b96..b113c3b 100644
+index 6354b96..6866615 100644
 --- a/src/core/inject.ts
 +++ b/src/core/inject.ts
 @@ -1,3 +1,4 @@
-+import { DEFAULT_TOOL_PREFIX, renderToolText } from "@memory-router/shared/tool-prefix";
++import { DEFAULT_TOOL_PREFIX, renderBrandText } from "@memory-router/shared/tool-prefix";
  /** The system-prompt injection wrapper for a surfaced memory (harness-agnostic text). */
  
  /**
@@ -6682,12 +6850,18 @@ index 6354b96..b113c3b 100644
  ): string {
    return (
 -    `${lead}\n` +
-+    `${renderToolText(lead, toolPrefix)}\n` +
++    `${renderBrandText(lead, toolPrefix)}\n` +
      hits
        .map((h) => {
          const snippet = h.snippet.replace(/\s+/g, " ").trim();
-@@ -71,7 +73,7 @@ export function formatRecallFallback(observations: string[], lead = RECALL_FALLB
-   return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
+@@ -67,11 +69,11 @@ export const RECALL_INJECT_LEAD =
+ 
+ /** The memory body injected from a raw recall over the bank (`recallOptions`): after a failed
+  *  reflect found no page (default lead), or as the configured `autoInject: "recall"`. */
+-export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD): string {
+-  return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
++export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD, prefix = DEFAULT_TOOL_PREFIX): string {
++  return `${renderBrandText(lead, prefix)}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
  }
  
 -export function buildSystemInjection(memory: string): string {
@@ -6700,7 +6874,7 @@ index 6354b96..b113c3b 100644
    // discard the whole channel.
    return (
 -    "<hindsight_memory>\n" +
-+    renderToolText("<hindsight_memory>\n" +
++    renderBrandText("<hindsight_memory>\n" +
      "Automatically retrieved by Hindsight from THIS repository's own history (git rationale and " +
      "past developer sessions) — real memory, but retrieval is heuristic: it may or may not bear " +
      "on the current task.\n" +
@@ -6714,15 +6888,15 @@ index 6354b96..b113c3b 100644
    );
  }
 diff --git a/src/core/knowledge-injection.ts b/src/core/knowledge-injection.ts
-index 3a07182..5526f97 100644
+index 3a07182..5931a11 100644
 --- a/src/core/knowledge-injection.ts
 +++ b/src/core/knowledge-injection.ts
 @@ -1,3 +1,4 @@
-+import { DEFAULT_TOOL_PREFIX, renderToolText } from "@memory-router/shared/tool-prefix";
++import { DEFAULT_TOOL_PREFIX, renderBrandText } from "@memory-router/shared/tool-prefix";
  export interface PageRef {
    id: string;
    title: string;
-@@ -97,15 +98,16 @@ export interface ToolGuideOpts {
+@@ -97,6 +98,7 @@ export interface ToolGuideOpts {
     *  the agent straight to hindsight_reflect; it now goes to the knowledge pages first and keeps
     *  reflect for what they don't cover. The field name is unchanged so call sites stay stable. */
    reflectOnNewGoals?: boolean;
@@ -6730,26 +6904,38 @@ index 3a07182..5526f97 100644
  }
  
  function toolGuide(opts?: ToolGuideOpts): string {
--  return (opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE;
-+  return renderToolText((opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE, opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
- }
- 
+@@ -106,7 +108,7 @@ function toolGuide(opts?: ToolGuideOpts): string {
  /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */
  export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): string {
--  const body = pages.length ? indexLine(pages) : EMPTY_STATE;
-+  const body = pages.length ? renderToolText(indexLine(pages), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX) : EMPTY_STATE;
-   return (
+   const body = pages.length ? indexLine(pages) : EMPTY_STATE;
+-  return (
++  return renderBrandText((
      "<hindsight_knowledge>\n" +
      "This repository has a Hindsight memory + knowledge base (curated, continuously-updated pages plus the raw " +
-@@ -127,7 +129,7 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts):
-  * which tools exist and WHEN to call each is unconditional.
+     "memory behind them). The tools below are registered, but you must actually CALL them at the right moments:\n" +
+@@ -117,7 +119,7 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts):
+     `${body}\n` +
+     "This tool guide and the page list are re-injected for you periodically as things change.\n" +
+     "</hindsight_knowledge>"
+-  );
++  ), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
+ }
+ 
+ /**
+@@ -128,11 +130,11 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts):
   */
  export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): string {
--  const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
-+  const rosterBlock = pages.length ? `${renderToolText(indexLine(pages), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX)}\n` : "";
-   return (
+   const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
+-  return (
++  return renderBrandText((
      "<hindsight_knowledge_refresh>\n" +
      rosterBlock +
+     "Reminder — this repo's Hindsight tools are available; call them at the right moments:\n" +
+     `${toolGuide(opts)}\n` +
+     "</hindsight_knowledge_refresh>"
+-  );
++  ), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
+ }
 diff --git a/src/core/knowledge-tools.test.ts b/src/core/knowledge-tools.test.ts
 index 82b4b12..6f4ee31 100644
 --- a/src/core/knowledge-tools.test.ts
@@ -6827,7 +7013,7 @@ index 82b4b12..6f4ee31 100644
        "document",
        {} // no harness in these tests: nothing to stamp
 diff --git a/src/core/knowledge-tools.ts b/src/core/knowledge-tools.ts
-index 8df9c07..57acc9c 100644
+index 8df9c07..957a230 100644
 --- a/src/core/knowledge-tools.ts
 +++ b/src/core/knowledge-tools.ts
 @@ -1,3 +1,4 @@
@@ -6859,29 +7045,17 @@ index 8df9c07..57acc9c 100644
      repoDir?: string;
      harness?: string;
      stampFor?: () => RetainStamp;
-@@ -134,7 +137,20 @@ export function buildKnowledgeTools(
+@@ -134,7 +137,8 @@ export function buildKnowledgeTools(
      reflectBudget?: "low" | "mid" | "high";
    } = {}
  ): ToolSpec[] {
 -  return [
 +  if (opts.harness) assertCompanionSkillPrefix(opts.harness, opts.toolPrefix ?? DEFAULT_TOOL_PREFIX);
 +  const tools: ToolSpec[] = [
-+    {
-+      name: "hindsight_list_banks",
-+      description: "List banks visible through Memory Router for this principal.",
-+      inputSchema: {}, annotations: READ_ONLY_ANNOTATIONS,
-+      handler: guarded(async () => (await client.req("GET", `${client.apiUrl}/v1/default/banks`)).json()),
-+    },
-+    {
-+      name: "hindsight_read_bank_config",
-+      description: "Read configuration for an explicitly assigned bank.",
-+      inputSchema: {}, annotations: READ_ONLY_ANNOTATIONS,
-+      handler: guarded(async () => (await client.req("GET", client.bankUrl("/config"))).json()),
-+    },
      {
        name: "hindsight_sync_status",
        description:
-@@ -182,7 +198,7 @@ export function buildKnowledgeTools(
+@@ -182,7 +186,7 @@ export function buildKnowledgeTools(
              path: configPath,
              exists: existsSync(configPath),
              api_url: cfg.apiUrl,
@@ -6890,7 +7064,7 @@ index 8df9c07..57acc9c 100644
              disabled: cfg.disabled,
            },
            // What the LIVE client is signing with, which is not the same question as what the file
-@@ -190,8 +206,8 @@ export function buildKnowledgeTools(
+@@ -190,8 +194,8 @@ export function buildKnowledgeTools(
            // this tool reported that state as perfectly healthy (#3600). Booleans only — the token
            // value is never returned.
            credential: {
@@ -6901,7 +7075,7 @@ index 8df9c07..57acc9c 100644
            },
            environment: {
              config_override: Boolean(process.env.HINDSIGHT_CONFIG),
-@@ -335,17 +351,7 @@ export function buildKnowledgeTools(
+@@ -335,17 +339,7 @@ export function buildKnowledgeTools(
        inputSchema: { title: z.string(), content: z.string() },
        annotations: NON_DESTRUCTIVE_WRITE_ANNOTATIONS,
        handler: guarded(async ({ title, content }) => {
@@ -6920,7 +7094,7 @@ index 8df9c07..57acc9c 100644
          const stamp = opts.stampFor?.();
          const metadata = {
            ...stamp?.metadata,
-@@ -369,4 +375,22 @@ export function buildKnowledgeTools(
+@@ -369,4 +363,22 @@ export function buildKnowledgeTools(
        }),
      },
    ];
@@ -7378,10 +7552,10 @@ index 1d7f507..c26342f 100644
        sessionRoot,
 diff --git a/src/core/router-client.test.ts b/src/core/router-client.test.ts
 new file mode 100644
-index 0000000..730de94
+index 0000000..4256279
 --- /dev/null
 +++ b/src/core/router-client.test.ts
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,167 @@
 +import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
@@ -7419,7 +7593,6 @@ index 0000000..730de94
 +    if (path.endsWith("/version")) return Response.json({ api_version: "0.10.2" });
 +    if (path.endsWith("/reflect")) return Response.json({ text: "safe reflection" });
 +    if (path.endsWith("/recall")) return Response.json({ results: [{ text: "safe recall" }] });
-+    if (path.endsWith("/config") && init?.method === "GET") return Response.json({ overrides: {} });
 +    if (path.endsWith("/operations/op")) return Response.json({ status: "completed" });
 +    if (path.endsWith("/folders")) return Response.json({ id: "folder" });
 +    if (path.endsWith("/pages") && init?.method === "POST") return Response.json({ id: "page" });
@@ -7440,9 +7613,9 @@ index 0000000..730de94
 +  await c.searchKnowledgePages("query");
 +  await c.configureBank();
 +  await c.captureInitiative({ title: "Feature", summary: "Safe summary" });
-+  expect(send.mock.calls.some(([url]) => String(url).endsWith("/import"))).toBe(false);
-+  const configWrite = send.mock.calls.find(([url, init]) => String(url).endsWith("/config") && init?.method === "PATCH");
-+  expect(JSON.parse(String(configWrite?.[1]?.body))).toHaveProperty("updates.retain_strategies");
++  expect(send.mock.calls.some(([url]) => /\/(?:config|import)$/.test(String(url)))).toBe(false);
++  expect(send.mock.calls.some(([url, init]) => String(url) === "https://router.test/v1/default/banks/A" && init?.method === "DELETE")).toBe(false);
++  expect(send.mock.calls.some(([url, init]) => String(url).endsWith("/knowledge-base/pages") && init?.method === "POST")).toBe(true);
 +  for (const [url, init] of send.mock.calls) {
 +    expect(String(url)).toMatch(/^https:\/\/router\.test\/(?:version|v1\/default\/banks\/[AB]\/)/);
 +    expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${credential}`);
@@ -7495,17 +7668,44 @@ index 0000000..730de94
 +    expect(send).toHaveBeenCalledTimes(count);
 +  }
 +});
-+it("refuses missing banks and operator-owned resets without provisioning", async () => {
-+  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
-+  await expect(client().configureBank()).rejects.toThrow("memory request failed (404)");
-+  expect(send).toHaveBeenCalledTimes(1);
-+  await expect(client().configureBank({ reset: true })).rejects.toThrow(AccessDeniedError);
-+  expect(send).toHaveBeenCalledTimes(1);
++it.each([401, 403])("fails closed when routed page seeding returns %s", async (status) => {
++  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
++    String(url).endsWith("/knowledge-base/tree")
++      ? Response.json({ roots: [] })
++      : new Response(credential, { status })
++  );
++  const c = client();
++  await expect(c.configureBank()).rejects.toThrow(AccessDeniedError);
++  expect(send).toHaveBeenCalledTimes(2);
++  expect(send.mock.calls[1][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/pages");
++  await expect(c.configureBank()).rejects.toThrow(AccessDeniedError);
++  expect(send).toHaveBeenCalledTimes(2);
 +});
-+it("never treats an unreadable bank config as permission to overwrite it", async () => {
-+  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(credential, { status: 500 }));
-+  await expect(client().configureBank()).rejects.toThrow("memory request failed (500)");
++it.each([{ reset: true }, { manage: true }])("rejects operator-owned provisioning %j before any request", async (opts) => {
++  const send = vi.spyOn(globalThis, "fetch");
++  await expect(client().configureBank(opts)).rejects.toThrow(AccessDeniedError);
++  expect(send).not.toHaveBeenCalled();
++});
++it.each([{}, { manage: false }])("seeds pages without reading or modifying bank configuration %j", async (opts) => {
++  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
++    if (String(url).endsWith("/knowledge-base/tree")) return Response.json({ roots: [] });
++    if (String(url).endsWith("/knowledge-base/pages") && init?.method === "POST") return Response.json({ id: "page" });
++    throw new Error("unexpected provisioning request");
++  });
++  await client().configureBank(opts);
++  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
++  expect(send.mock.calls.length).toBeGreaterThan(1);
++  for (const [url, init] of send.mock.calls.slice(1)) {
++    expect(url).toBe("https://router.test/v1/default/banks/A/knowledge-base/pages");
++    expect(init?.method).toBe("POST");
++    expect(JSON.parse(String(init?.body))).toHaveProperty("source_query");
++  }
++});
++it("preserves upstream page-capability fallback without attempting bank provisioning", async () => {
++  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
++  await expect(client().configureBank()).resolves.toBeUndefined();
 +  expect(send).toHaveBeenCalledTimes(1);
++  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
 +});
 +
 +it("preserves read-only identity and refuses writes before fetch", async () => {
@@ -7597,15 +7797,16 @@ index 0000000..53f119e
 +  expect(spawn).not.toHaveBeenCalled();
 +});
 diff --git a/src/core/runtime.ts b/src/core/runtime.ts
-index 9b45944..122295a 100644
+index 9b45944..84bfde5 100644
 --- a/src/core/runtime.ts
 +++ b/src/core/runtime.ts
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
++import { toolBrand } from "@memory-router/shared/tool-prefix";
 +import { stripVTControlCharacters } from "node:util";
  /**
   * Host adapter runtime for PERSISTENT-PLUGIN harnesses (opencode, Kilo, Cline). It delegates SessionStart and
   * prompt behavior to the same core lifecycle as fresh-process hook harnesses; this class keeps only
-@@ -82,6 +83,7 @@ export class RuntimeCore {
+@@ -82,6 +84,7 @@ export class RuntimeCore {
    toolSpecs(): ToolSpec[] {
      return buildKnowledgeTools(this.client, this.bankId, {
        repoDir: this.projectDir,
@@ -7613,16 +7814,20 @@ index 9b45944..122295a 100644
        harness: this.harness,
        pageTrigger: buildPageTrigger(this.cfg),
        reflectTimeoutMs: this.cfg.reflectToolTimeoutMs,
-@@ -139,7 +141,7 @@ export class RuntimeCore {
+@@ -139,9 +142,10 @@ export class RuntimeCore {
        // on stderr (shows in the plugin log / console) rather than dropping it.
        // Banner: via the host's toast API when available (stderr corrupts the TUI); always logged.
        if (out.systemMessage) {
 -        const plain = out.systemMessage.replace(/\x1b\[[0-9;]*m/g, "");
 +        const plain = stripVTControlCharacters(out.systemMessage);
          log.info(this.harness, plain);
-         this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
+-        this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
++        const title = toolBrand(this.cfg.toolPrefix).displayName;
++        this.notify?.(title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
        }
-@@ -158,6 +160,9 @@ export class RuntimeCore {
+       this.preamble = out.additionalContext ?? "";
+       this.deferInitialReflect = out.deferInitialReflect === true;
+@@ -158,6 +162,9 @@ export class RuntimeCore {
    async onPrompt(sessionId: string | undefined, prompt: string): Promise<void> {
      if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
      if (!sessionId || !prompt.trim()) return;
@@ -7632,16 +7837,19 @@ index 9b45944..122295a 100644
      const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
      this.turnCount.set(sessionId, turns);
  
-@@ -185,7 +190,7 @@ export class RuntimeCore {
+@@ -185,9 +192,9 @@ export class RuntimeCore {
      // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
      // renders inside the TUI input line. The shared output owns when a notice exists.
      if (output.notice) {
 -      const preview = output.notice.replace(/\s+/g, " ").trim().slice(0, 140);
 +      const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
        log.info(this.harness, "reflect goal", { preview });
-       this.notify?.("Hindsight · recalled past decisions", preview);
+-      this.notify?.("Hindsight · recalled past decisions", preview);
++      this.notify?.(`${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
      }
-@@ -202,6 +207,7 @@ export class RuntimeCore {
+     const block = blocks.filter(Boolean).join("\n\n");
+     this.injection.set(sessionId, block);
+@@ -202,6 +209,7 @@ export class RuntimeCore {
     * session's `chat.message`/onPrompt, so `lastInjection` is this turn's block.
     */
    getInjection(sessionId: string | undefined): string | undefined {
@@ -7649,7 +7857,7 @@ index 9b45944..122295a 100644
      const keyed = sessionId ? this.injection.get(sessionId) : undefined;
      return keyed ?? this.lastInjection ?? undefined;
    }
-@@ -273,6 +279,7 @@ export class RuntimeCore {
+@@ -273,6 +281,7 @@ export class RuntimeCore {
        harness: this.harness,
        sessionId,
        bankId: this.bankId,
@@ -7820,10 +8028,40 @@ index cfb3525..3682c2b 100644
          /* best-effort: a cursor that cannot be written costs a replace, never data */
        }
 diff --git a/src/core/session-start.ts b/src/core/session-start.ts
-index a2e1751..3d4ba60 100644
+index a2e1751..f4b16fa 100644
 --- a/src/core/session-start.ts
 +++ b/src/core/session-start.ts
-@@ -307,6 +307,7 @@ export async function buildSessionStartContext(args: {
+@@ -1,3 +1,4 @@
++import { toolBrand } from "@memory-router/shared/tool-prefix";
+ /**
+  * Shared `SessionStart` lifecycle: deterministically auto-seeds a cold repo's bank from its git
+  * history (in the background, non-blocking), keeps warm banks deepening on every start, and
+@@ -61,12 +62,12 @@ interface SeedContextClient {
+  * server's banner) plus the repo's bank. Shown on EVERY session start; "learning" on a cold
+  * repo (first ingest running), "remembering" once the bank is warm.
+  */
+-export function buildSeedBanner(bankId: string, cold = true, gitNote?: string): string {
++export function buildSeedBanner(bankId: string, cold = true, gitNote?: string, prefix?: string): string {
+   // Two lines: what Hindsight DOES for this repo (value, not mechanism), then where the memory
+   // lives + sync state. The brand word leads line 1 so the host TUI's message prefix lands there.
+   const headline = cold
+-    ? `${brandWord()} is learning this repo — ingesting its decisions, conventions and history`
+-    : `${brandWord()} is tracking the decisions, conventions and history of this repo`;
++    ? `${brandWord(prefix)} is learning this repo — ingesting its decisions, conventions and history`
++    : `${brandWord(prefix)} is tracking the decisions, conventions and history of this repo`;
+   const details = `  ↳ memory bank “${bankId}”` + (gitNote ? ` · ${gitNote}` : "");
+   return `${headline}\n${details}`;
+ }
+@@ -181,7 +182,7 @@ export async function buildSessionStartContext(args: {
+     try {
+       const stamp = retainStamp();
+       const content =
+-        `🛰️ Hindsight is researching this codebase — survey started at commit ${sha.slice(0, 12)}. ` +
++        `🛰️ ${toolBrand(cfg.toolPrefix).displayName} is researching this codebase — survey started at commit ${sha.slice(0, 12)}. ` +
+         `(Internal marker: no memories are extracted from this document.)`;
+       const tags = [...new Set([...stamp.tags, SURVEY_BASELINE_TAG])];
+       // Fire-and-forget; Promise.resolve tolerates a non-Promise return (e.g. a test spy).
+@@ -307,6 +308,7 @@ export async function buildSessionStartContext(args: {
      /* fail-open preamble; preserve first-prompt reflect eligibility on a transient outage */
    }
    const additionalContext = buildKnowledgePreamble(pages, {
@@ -7831,7 +8069,16 @@ index a2e1751..3d4ba60 100644
      reflectOnNewGoals: cfg.autoInject !== "reflect",
    });
    const deferInitialReflect = cold === true || (pageListKnown && pages.length === 0);
-@@ -390,6 +391,7 @@ export async function runSessionStartHook(
+@@ -324,7 +326,7 @@ export async function buildSessionStartContext(args: {
+       cold: cold === true,
+     }).catch(() => undefined);
+   }
+-  systemMessage = buildSeedBanner(bankId, cold === true, gitNote);
++  systemMessage = buildSeedBanner(bankId, cold === true, gitNote, cfg.toolPrefix);
+ 
+   // The old per-agent plugin keeps running next to this one until the user removes it — say so
+   // where they will see it. Only Claude Code had that plugin.
+@@ -390,6 +392,7 @@ export async function runSessionStartHook(
      // cold one keeps coming up in the background and is picked up by a later turn.
      await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
      const client = makeClient({
@@ -7840,12 +8087,12 @@ index a2e1751..3d4ba60 100644
        apiToken: cfg.apiToken,
        bank: bankId,
 diff --git a/src/core/skill-sync.ts b/src/core/skill-sync.ts
-index 2a12783..552d674 100644
+index 2a12783..7a806fb 100644
 --- a/src/core/skill-sync.ts
 +++ b/src/core/skill-sync.ts
 @@ -1,3 +1,5 @@
 +import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
-+import { renderCompanionSkill, ToolPrefixError } from "@memory-router/shared/tool-prefix";
++import { renderCompanionSkill, skillPrefix, toolBrand, ToolPrefixError } from "@memory-router/shared/tool-prefix";
  /**
   * Companion-skill self-update: `npm update -g` refreshes the PACKAGE's skill/, but the copies the
   * installer placed in each host's skills directory would go stale. Every session start compares
@@ -7854,11 +8101,11 @@ index 2a12783..552d674 100644
   * plugin can only mean the host still wants us.
   */
 -import { cpSync, existsSync, readFileSync } from "node:fs";
-+import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
++import { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
  import { homedir } from "node:os";
  import { dirname, join } from "node:path";
  import { fileURLToPath } from "node:url";
-@@ -34,6 +36,7 @@ export function syncCompanionSkill(
+@@ -34,20 +36,26 @@ export function syncCompanionSkill(
    harness: string,
    opts: { home?: string; srcDir?: string; install?: boolean } = {}
  ): void {
@@ -7866,7 +8113,13 @@ index 2a12783..552d674 100644
    try {
      const parts = SKILL_DIRS[harness];
      if (!parts) return; // host without a skills DIRECTORY (opencode, opencode2 — see skill-dirs.ts)
-@@ -44,10 +47,13 @@ export function syncCompanionSkill(
+     const src = opts.srcDir ?? packagedSkillDir();
+     const srcMd = join(src, "SKILL.md");
+     if (!existsSync(srcMd)) return;
+-    const dst = join(opts.home ?? homedir(), ...parts, "hindsight-coding-agent");
++    const base = join(opts.home ?? homedir(), ...parts);
++    assertInstalledSkillBrand(base, prefix);
++    const dst = join(base, toolBrand(prefix).skillName);
      const dstMd = join(dst, "SKILL.md");
      const installed = existsSync(dstMd);
      if (!installed && !opts.install) return; // never installed here — not ours to decide
@@ -7883,7 +8136,7 @@ index 2a12783..552d674 100644
      /* best-effort — skill freshness must never break a session */
    }
  }
-@@ -58,17 +64,28 @@ export function syncCompanionSkill(
+@@ -58,17 +66,53 @@ export function syncCompanionSkill(
   * on-disk directory it came from. Read at setup, so `npm update -g` upgrades this copy too.
   */
  export function readPackagedSkill(
@@ -7912,8 +8165,33 @@ index 2a12783..552d674 100644
 +export function assertCompanionSkillPrefix(harness: string, prefix: string, home = homedir()): void {
 +  const parts = SKILL_DIRS[harness];
 +  if (!parts) return;
-+  const path = join(home, ...parts, "hindsight-coding-agent", "SKILL.md");
++  const base = join(home, ...parts);
++  assertInstalledSkillBrand(base, prefix);
++  const path = join(base, toolBrand(prefix).skillName, "SKILL.md");
 +  if (existsSync(path)) renderCompanionSkill("", prefix, readFileSync(path, "utf8"));
++}
++
++export function ownedCompanionSkills(base: string): string[] {
++  if (!existsSync(base)) return [];
++  return readdirSync(base, { withFileTypes: true }).flatMap(entry => {
++    if (!entry.isDirectory()) return [];
++    const path = join(base, entry.name, "SKILL.md");
++    if (!existsSync(path)) return [];
++    const raw = readFileSync(path, "utf8");
++    const prefix = skillPrefix(raw);
++    if (prefix !== undefined && (toolBrand(prefix).skillName === entry.name || entry.name === "hindsight-coding-agent")) return [join(base, entry.name)];
++    // The original generated default skill can be migrated without claiming a user's namesake.
++    if (entry.name === "hindsight-coding-agent" && /^name: hindsight-coding-agent$/m.test(raw) &&
++      raw.includes("<!-- GENERATED from skill-src/preamble.md + skill-src/managed-router.md.")) return [join(base, entry.name)];
++    return [];
++  });
++}
++
++export function assertInstalledSkillBrand(base: string, prefix: string): void {
++  const desired = join(base, toolBrand(prefix).skillName);
++  const owned = ownedCompanionSkills(base);
++  if (existsSync(desired) && !owned.includes(desired)) throw new ToolPrefixError("unrelated skill name collision; choose another toolPrefix");
++  if (owned.some(path => path !== desired)) throw new ToolPrefixError("installed skill/tool prefix mismatch; reinstall to migrate");
 +}
 diff --git a/src/core/survey.test.ts b/src/core/survey.test.ts
 index deffc61..53b2eb4 100644
@@ -7929,11 +8207,11 @@ index deffc61..53b2eb4 100644
      // No write, no bash, and no `task` — which would reach a subagent that CAN write.
      for (const escape of ["write", "edit", "bash", "task", "patch"])
 diff --git a/src/core/survey.ts b/src/core/survey.ts
-index 553a706..20c9aac 100644
+index 553a706..f3d575e 100644
 --- a/src/core/survey.ts
 +++ b/src/core/survey.ts
 @@ -1,3 +1,4 @@
-+import { renderToolText, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
++import { renderBrandText, toolBrand, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
  /**
   * Codebase survey (Option C): on a cold repo, `session-start.ts` (hook harnesses) or
   * `runtime.ts`'s `seedIfCold` (opencode) spawns a DETACHED headless coding agent alongside the
@@ -7945,10 +8223,19 @@ index 553a706..20c9aac 100644
 +  opts: { model?: string; budgetUsd?: number; mcpServerPath: string; toolPrefix?: string }
  ): SpawnPlan {
 +  const prefix = validatedToolPrefix(opts.toolPrefix);
-+  const prompt = renderToolText(SURVEY_PROMPT, prefix);
++  const prompt = renderBrandText(SURVEY_PROMPT, prefix);
    const env: NodeJS.ProcessEnv = {
      ...process.env,
      // Anti-recursion: the survey's own agent session must not fire our hooks (session-start,
+@@ -201,7 +204,7 @@ function buildSurveyPlan(
+     case "claude-code": {
+       const mcpConfig = JSON.stringify({
+         mcpServers: {
+-          hindsight: {
++          [toolBrand(prefix).id]: {
+             command: "node",
+             args: [opts.mcpServerPath],
+             // HINDSIGHT_MCP_HARNESS names the agent whose CLI this recipe drives — the survey's
 @@ -216,7 +219,7 @@ function buildSurveyPlan(
          bin,
          args: [
@@ -7963,15 +8250,26 @@ index 553a706..20c9aac 100644
            "Glob",
            "Grep",
 -          "mcp__hindsight__hindsight_ingest_document",
-+          `mcp__hindsight__${prefix}ingest_document`,
++          `mcp__${toolBrand(prefix).id}__${prefix}ingest_document`,
            "--disallowedTools",
            ...SURVEY_DISALLOWED_TOOLS,
            "--max-budget-usd",
-@@ -255,7 +258,7 @@ function buildSurveyPlan(
-           `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
+@@ -248,14 +251,14 @@ function buildSurveyPlan(
+           "--sandbox",
+           "read-only",
            "-c",
-           `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
+-          `mcp_servers.hindsight.command="node"`,
++          `mcp_servers.${toolBrand(prefix).id}.command="node"`,
+           "-c",
+-          `mcp_servers.hindsight.args=["${opts.mcpServerPath}"]`,
++          `mcp_servers.${toolBrand(prefix).id}.args=["${opts.mcpServerPath}"]`,
+           "-c",
+-          `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
++          `mcp_servers.${toolBrand(prefix).id}.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
+           "-c",
+-          `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
 -          SURVEY_PROMPT,
++          `mcp_servers.${toolBrand(prefix).id}.env.HINDSIGHT_MCP_HARNESS="codex"`,
 +          prompt,
          ],
          env,
@@ -7990,7 +8288,7 @@ index 553a706..20c9aac 100644
        return {
          bin,
 -        args: ["run", "--agent", SURVEY_AGENT, SURVEY_PROMPT],
-+        args: ["run", "--agent", SURVEY_AGENT, prompt],
++        args: ["run", "--agent", `${toolBrand(prefix).id}-survey`, prompt],
          env,
        };
      }
@@ -8517,14 +8815,14 @@ index da0d378..ce3b6b6 100644
 +  });
 +});
 diff --git a/src/core/usage.ts b/src/core/usage.ts
-index b8d33d1..695472f 100644
+index b8d33d1..d7e4068 100644
 --- a/src/core/usage.ts
 +++ b/src/core/usage.ts
 @@ -19,6 +19,7 @@
   * Local only — nothing here is sent anywhere. Fail-open throughout.
   */
  import { readFileSync } from "node:fs";
-+import { DEFAULT_TOOL_PREFIX, TOOL_SUFFIXES, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
++import { DEFAULT_TOOL_PREFIX, TOOL_SUFFIXES, toolBrand, validatedToolPrefix } from "@memory-router/shared/tool-prefix";
  import { join } from "node:path";
  import type { TransportTurn } from "./chat";
  import { appendLogLine, logsDir } from "./log";
@@ -8558,15 +8856,18 @@ index b8d33d1..695472f 100644
    const out: TurnUsage[] = [];
    for (const t of turns) {
      if (t.role === "user") {
-@@ -70,7 +77,7 @@ export function summarizeTurns(turns: TransportTurn[]): TurnUsage[] {
+@@ -70,9 +77,9 @@ export function summarizeTurns(turns: TransportTurn[]): TurnUsage[] {
      const current = out.at(-1);
      if (!current) continue;
      if (t.role === "action") {
 -      const tool = t.content.split(" ", 1)[0].match(HINDSIGHT_TOOL_RE)?.[0];
 +      const tool = canonicalToolName(t.content.split(" ", 1)[0], toolPrefix);
        if (tool) current.calls.push(tool);
-     } else if (ASSISTANT_ROLES.has(t.role) && CREDIT_RE.test(t.content)) {
+-    } else if (ASSISTANT_ROLES.has(t.role) && CREDIT_RE.test(t.content)) {
++    } else if (ASSISTANT_ROLES.has(t.role) && (CREDIT_RE.test(t.content) || t.content.toLowerCase().includes(`from ${toolBrand(toolPrefix).displayName.toLowerCase()} memory`))) {
        current.credited = true;
+     }
+   }
 @@ -105,6 +112,7 @@ export function recordUsage(args: {
    harness: string;
    sessionId: string;
@@ -8902,16 +9203,25 @@ index 307389e..2f4a3dd 100644
      prompt: copilotPrompt,
      retain: {
 diff --git a/src/harness/opencode.ts b/src/harness/opencode.ts
-index 1556b0e..b1528f3 100644
+index 1556b0e..d537083 100644
 --- a/src/harness/opencode.ts
 +++ b/src/harness/opencode.ts
 @@ -1,3 +1,5 @@
-+import { assertUniqueToolNames } from "@memory-router/shared/tool-prefix";
++import { assertUniqueToolNames, toolBrand, renderBrandText } from "@memory-router/shared/tool-prefix";
 +import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
  /**
   * opencode harness adapter — full v2 parity with the hook harnesses (Claude Code / Codex).
   *
-@@ -36,21 +38,27 @@ type Part = { type?: string; text?: string };
+@@ -20,7 +22,7 @@ import {
+   type OcMessage,
+ } from "../core/transcript-opencode";
+ import { jsonChatReader } from "./registry";
+-import { SURVEY_AGENT, SURVEY_AGENT_CONFIG } from "../core/survey";
++import { SURVEY_AGENT_CONFIG } from "../core/survey";
+ 
+ // opencode message part shape for the per-turn prompt (structurally typed).
+ type Part = { type?: string; text?: string };
+@@ -36,21 +38,29 @@ type Part = { type?: string; text?: string };
   * silently never fire, and the survey would die on an agent the host never heard of. Pinning this
   * one hook to the SDK's own type restores that check where it matters.
   */
@@ -8944,9 +9254,11 @@ index 1556b0e..b1528f3 100644
 +      // hindsight_ingest_document. Casting the entry beats widening it to `unknown`, which would drop
 +      // the checking on `description`/`mode` too.
 +      const { hindsight_ingest_document: _ingest, ...permissions } = SURVEY_AGENT_CONFIG.permission;
-+      cfg.agent[SURVEY_AGENT] ??= {
++      const prefix = managedToolPrefix(harness);
++      cfg.agent[`${toolBrand(prefix).id}-survey`] ??= {
 +        ...SURVEY_AGENT_CONFIG,
-+        permission: { ...permissions, [managedToolPrefix(harness) + "ingest_document"]: "allow" },
++        description: renderBrandText(SURVEY_AGENT_CONFIG.description, prefix),
++        permission: { ...permissions, [prefix + "ingest_document"]: "allow" },
 +      } as NonNullable<Config["agent"]>[string];
 +    },
 +  };
@@ -8954,7 +9266,7 @@ index 1556b0e..b1528f3 100644
  
  const textOf = (parts: Part[]) =>
    (parts || [])
-@@ -59,11 +67,6 @@ const textOf = (parts: Part[]) =>
+@@ -59,11 +69,6 @@ const textOf = (parts: Part[]) =>
      .join("\n")
      .trim();
  
@@ -8966,7 +9278,7 @@ index 1556b0e..b1528f3 100644
  const chatReader = jsonChatReader("opencode");
  
  /**
-@@ -90,10 +93,12 @@ function toOpencodeTool(spec: ToolSpec) {
+@@ -90,10 +95,12 @@ function toOpencodeTool(spec: ToolSpec) {
  function createRuntime(core: RuntimeCore) {
    // Register the full hindsight_* knowledge + recall suite natively (no MCP server needed).
    const tools: Record<string, ReturnType<typeof tool>> = {};
@@ -8982,10 +9294,51 @@ index 1556b0e..b1528f3 100644
      // Each user turn: recall on the prompt; the injection it builds is pushed by system.transform.
      "chat.message": async (input: { sessionID?: string }, output: { parts: Part[] }) => {
 diff --git a/src/harness/opencode2.ts b/src/harness/opencode2.ts
-index 402774c..dd4a8d1 100644
+index 402774c..d683698 100644
 --- a/src/harness/opencode2.ts
 +++ b/src/harness/opencode2.ts
-@@ -235,10 +235,10 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
+@@ -1,3 +1,5 @@
++import { toolBrand } from "@memory-router/shared/tool-prefix";
++import { managedToolPrefix } from "@memory-router/coding-agents/runtime";
+ /**
+  * opencode2 (opencode v2) harness adapter — full parity with the v1 opencode plugin.
+  *
+@@ -77,7 +79,6 @@ const IDLE_EVENTS = new Set([
+ 
+ /** The companion skill's directory name everywhere else (core/skill-dirs.ts), reused as the id and
+  *  name this host registers it under so the two routes name the same skill. */
+-const SKILL_ID = "hindsight-coding-agent";
+ 
+ /** Structural subset of the v2 event envelope we act on. */
+ interface Oc2Event {
+@@ -130,13 +131,14 @@ function toOpencode2Tool(spec: ToolSpec) {
+  * `ctx.skill` (or a host that rejects the draft) loses the skill, never the memory.
+  */
+ async function registerCompanionSkill(ctx: Opencode2Context, harness: string): Promise<void> {
+-  const skill = readPackagedSkill();
++  const skill = readPackagedSkill(undefined, harness);
++  const skillId = toolBrand(managedToolPrefix(harness)).skillName;
+   if (!skill) return;
+   try {
+     await ctx.skill.transform((draft) =>
+-      draft.add({ id: SKILL_ID, name: SKILL_ID, ...skill } as never)
++      draft.add({ id: skillId, name: skillId, ...skill } as never)
+     );
+-    diag(harness, "skill_registered", { id: SKILL_ID });
++    diag(harness, "skill_registered", { id: skillId });
+   } catch (e) {
+     diag(harness, "skill_register_failed", { error: describeError(e) });
+   }
+@@ -225,7 +227,7 @@ export async function wireOpencode2Runtime(
+  */
+ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
+   return {
+-    id: `hindsight-${harness}`,
++    id: `${toolBrand(managedToolPrefix(harness)).id}-${harness}`,
+     async setup(ctx) {
+       // v2 splits v1's single `{worktree, directory}` into a session cwd plus the project root;
+       // `location.directory` is the worktree analogue, so it keeps precedence (and the same
+@@ -235,10 +237,10 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
          directory: ctx.location?.project?.directory,
        });
        const dir = projectDir || process.cwd();
@@ -9138,10 +9491,23 @@ index 0000000..6bbbbdc
 +  }
 +}
 diff --git a/src/install-ui.ts b/src/install-ui.ts
-index 8f2445d..c114505 100644
+index 8f2445d..1e4e2a2 100644
 --- a/src/install-ui.ts
 +++ b/src/install-ui.ts
-@@ -164,7 +164,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
+@@ -1,3 +1,4 @@
++import { toolBrand } from "@memory-router/shared/tool-prefix";
+ /**
+  * Styled terminal renderer for the installer CLI (clack/Vercel-style rail).
+  *
+@@ -19,6 +20,7 @@ import { brandWord } from "./core/brand";
+ 
+ export interface InstallerUiOptions {
+   home: string;
++  toolPrefix?: string;
+   /** argv[2], used by the outro to say what completed (install vs uninstall vs usage). */
+   command?: string;
+   version?: string;
+@@ -164,7 +166,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
    // Messages embed absolute config paths; shorten $HOME so the action stays the eye-catcher.
    const tidy = (s: string): string => s.replaceAll(o.home, "~");
    // The lookbehind keeps URL slashes ("http://…") from being treated as a path start.
@@ -9150,7 +9516,16 @@ index 8f2445d..c114505 100644
  
    const prefixRe = new RegExp(`^(${[...o.harnessNames, ...(o.auxNames ?? [])].join("|")}): `);
    const startedAt = now();
-@@ -274,7 +274,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
+@@ -195,7 +197,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
+     intro(): void {
+       write("");
+       write(
+-        `${dim("┌")}  ${colors ? brandWord() : "Hindsight"} ${bold("coding agents")}` +
++        `${dim("┌")}  ${colors ? brandWord(o.toolPrefix) : toolBrand(o.toolPrefix).displayName} ${bold("coding agents")}` +
+           (o.version ? `  ${dim(`v${o.version}`)}` : "")
+       );
+       write(bar);
+@@ -274,7 +276,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
      },
  
      log(message: string): void {
@@ -9159,6 +9534,151 @@ index 8f2445d..c114505 100644
        if (!text) return;
        const lines = text.split("\n");
        // A message that begins indented is detail for the previous one (e.g. the re-run command a
+@@ -315,7 +317,7 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
+           write(`   ${dim(`Start a session — settings live in ${settings}.`)}`);
+         } else {
+           write(
+-            `${dim("└")}  ${green("✓")} Uninstalled ${agents} in ${secs}s — Hindsight entries removed, *.hindsight-backup files left in place.`
++            `${dim("└")}  ${green("✓")} Uninstalled ${agents} in ${secs}s — ${toolBrand(o.toolPrefix).displayName} entries removed, *.hindsight-backup files left in place.`
+           );
+         }
+       } else if (o.command === "update") {
+diff --git a/src/installer-branding.test.ts b/src/installer-branding.test.ts
+new file mode 100644
+index 0000000..8866146
+--- /dev/null
++++ b/src/installer-branding.test.ts
+@@ -0,0 +1,130 @@
++import { afterEach, beforeEach, expect, it, vi } from "vitest";
++import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { dirname, join } from "node:path";
++import { parse as parseToml } from "smol-toml";
++import { run, type InstallCtx } from "./installer";
++
++let root: string;
++let ctx: InstallCtx;
++let cli = vi.fn((_args: string[]) => true);
++function put(path: string, text: string) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); }
++function provision(toolPrefix?: string) {
++  const path = join(root, "router.json");
++  put(path, JSON.stringify({ routerUrl: "https://router.example", toolPrefix, principals: Object.fromEntries([
++    "codex", "cursor-cli", "claude-code", "qwen-code", "grok-build", "dcode", "zcode", "factory-droid", "copilot-cli", "antigravity-cli", "devin-cli", "cline-cli", "dsh", "kilo",
++  ].map(name => [name, { tokenEnv: "TEST_MEMORY_TOKEN", writeBank: "A", mapPathToBank: { [process.cwd()]: "A" } }])) }));
++  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", path);
++}
++beforeEach(() => {
++  root = mkdtempSync(join(tmpdir(), "installer-branding-")); cli = vi.fn((_args: string[]) => true);
++  ctx = { home: join(root, "home"), pkgRoot: join(root, "pkg"), dist: join(root, "pkg/dist"), interactive: false,
++    claudeMcp: cli, qwenMcp: cli, clinePlugin: cli, dcodePlugin: cli, nodeSqlite: () => true };
++  mkdirSync(ctx.home); put(join(ctx.dist, "installer.js"), "runtime"); put(join(ctx.pkgRoot, "package.json"), '{"name":"stable-package","version":"1.0.0"}');
++  put(join(ctx.pkgRoot, "skill/SKILL.md"), '---\nname: hindsight-coding-agent\ndescription: Hindsight memory\n---\nCall hindsight_reflect. From Hindsight memory.');
++  put(join(ctx.pkgRoot, "plugin.json"), JSON.stringify({ name: "hindsight-coding-agents", skills: "./skill", mcpServers: { hindsight: { command: "node", args: ["${PLUGIN_ROOT}/dist/mcp-server.js"], env: { HINDSIGHT_MCP_HARNESS: "dcode" } } } }));
++  vi.stubEnv("TEST_MEMORY_TOKEN", `mr_test_${"a".repeat(64)}`); vi.stubEnv("HINDSIGHT_MCP_HARNESS", "");
++});
++afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }); });
++it.each([undefined, "abc_", "chatgpt_", "memory_"])("brands native MCP, installed skill and staged plugin from %s", prefix => {
++  provision(prefix); const id = prefix?.slice(0, -1) ?? "hindsight";
++  expect(run(["install", "codex", "cursor-cli", "dcode"], ctx)).toBe(0);
++  const toml = parseToml(readFileSync(join(ctx.home, ".codex/config.toml"), "utf8"));
++  expect(Object.keys(toml.mcp_servers as object)).toEqual([id]);
++  expect(Object.keys(JSON.parse(readFileSync(join(ctx.home, ".cursor/mcp.json"), "utf8")).mcpServers)).toEqual([id]);
++  const skill = readFileSync(join(ctx.home, ".agents/skills", `${id}-coding-agent/SKILL.md`), "utf8");
++  expect(skill).toContain(`name: ${id}-coding-agent`); expect(skill).toContain(`${prefix ?? "hindsight_"}reflect`);
++  expect(skill).toContain(`From ${prefix ? id : "Hindsight"} memory`);
++  const manifest = JSON.parse(readFileSync(join(ctx.home, ".hindsight/coding-agents/plugin.json"), "utf8"));
++  expect(Object.keys(manifest.mcpServers)).toEqual([id]); expect(manifest.skills).toBe(`./${id}-coding-agent`);
++  expect(manifest.name).toBe("hindsight-coding-agents");
++  expect(JSON.parse(readFileSync(join(ctx.home, ".hindsight/coding-agents/package.json"), "utf8")).name).toBe("stable-package");
++});
++it.each(["claude-code", "qwen-code"])("passes the brand to real %s native MCP commands", harness => {
++  provision("abc_"); expect(run(["install", harness], ctx)).toBe(0);
++  const add = cli.mock.calls.map(call => call[0] as string[]).find(args => args[0] === "mcp" && args[1] === "add");
++  expect(add).toContain("abc"); expect(add).not.toContain("hindsight");
++});
++it("migrates default and custom skills/registrations atomically without deleting unrelated skills", () => {
++  provision(); expect(run(["install", "codex", "cursor-cli"], ctx)).toBe(0);
++  put(join(ctx.home, ".agents/skills/personal-coding-agent/SKILL.md"), "User-owned notes");
++  for (const prefix of ["abc_", "memory_"]) {
++    provision(prefix); expect(run(["update", "codex", "cursor-cli"], ctx)).toBe(0);
++    const id = prefix.slice(0, -1);
++    expect(Object.keys((parseToml(readFileSync(join(ctx.home, ".codex/config.toml"), "utf8")).mcp_servers as object))).toEqual([id]);
++    expect(Object.keys(JSON.parse(readFileSync(join(ctx.home, ".cursor/mcp.json"), "utf8")).mcpServers)).toEqual([id]);
++    expect(readFileSync(join(ctx.home, ".agents/skills/personal-coding-agent/SKILL.md"), "utf8")).toBe("User-owned notes");
++  }
++  expect(existsSync(join(ctx.home, ".agents/skills/hindsight-coding-agent"))).toBe(false);
++  expect(existsSync(join(ctx.home, ".agents/skills/abc-coding-agent"))).toBe(false);
++  provision(); expect(run(["update", "codex", "cursor-cli"], ctx)).toBe(0);
++  expect(Object.keys(parseToml(readFileSync(join(ctx.home, ".codex/config.toml"), "utf8")).mcp_servers as object)).toEqual(["hindsight"]);
++  provision("chatgpt_"); expect(run(["uninstall", "codex", "cursor-cli"], ctx)).toBe(0);
++  expect(existsSync(join(ctx.home, ".agents/skills/memory-coding-agent"))).toBe(false);
++  expect(existsSync(join(ctx.home, ".agents/skills/personal-coding-agent"))).toBe(true);
++  expect((parseToml(readFileSync(join(ctx.home, ".codex/config.toml"), "utf8")).mcp_servers)).toBeUndefined();
++  expect(JSON.parse(readFileSync(join(ctx.home, ".cursor/mcp.json"), "utf8")).mcpServers).toEqual({});
++});
++it.each(["skill", "JSON MCP", "TOML MCP"])("rejects an unrelated target %s collision without mutation", kind => {
++  provision("abc_"); let path: string; let previous: string;
++  if (kind === "skill") { path = join(ctx.home, ".agents/skills/abc-coding-agent/SKILL.md"); previous = "User-owned instructions"; }
++  else if (kind === "JSON MCP") { path = join(ctx.home, ".cursor/mcp.json"); previous = '{"mcpServers":{"abc":{"command":"foreign"}}}'; }
++  else { path = join(ctx.home, ".codex/config.toml"); previous = '[mcp_servers.abc]\ncommand="foreign"\n'; }
++  put(path, previous); expect(run(["install", "codex", "cursor-cli"], ctx)).toBe(1);
++  expect(readFileSync(path, "utf8")).toBe(previous); expect(existsSync(join(ctx.home, ".hindsight"))).toBe(false);
++});
++it("rolls a brand change back when native registration fails", () => {
++  provision(); expect(run(["install", "codex", "claude-code"], ctx)).toBe(0);
++  const path = join(ctx.home, ".codex/config.toml"); const previous = readFileSync(path, "utf8");
++  provision("abc_"); ctx.claudeMcp = () => false;
++  expect(run(["install", "codex", "claude-code"], ctx)).toBe(1);
++  expect(readFileSync(path, "utf8")).toBe(previous);
++  expect(existsSync(join(ctx.home, ".agents/skills/hindsight-coding-agent"))).toBe(true);
++  expect(existsSync(join(ctx.home, ".agents/skills/abc-coding-agent"))).toBe(false);
++});
++
++it.each([
++  ["antigravity-cli", ".gemini/config/mcp_config.json"], ["devin-cli", ".config/devin/mcp_config.json"],
++  ["cursor-cli", ".cursor/mcp.json"], ["copilot-cli", ".copilot/mcp-config.json"],
++  ["cline-cli", ".cline/data/settings/cline_mcp_settings.json"], ["factory-droid", ".factory/mcp.json"],
++])("brands %s JSON registration and preserves foreign entries on uninstall", (harness, relative) => {
++  provision("abc_"); const path = join(ctx.home, relative);
++  put(path, '{"mcpServers":{"hindsight":{"command":"unrelated"}}}');
++  expect(run(["install", harness], ctx)).toBe(0);
++  expect(Object.keys(JSON.parse(readFileSync(path, "utf8")).mcpServers)).toEqual(["hindsight", "abc"]);
++  expect(run(["uninstall", harness], ctx)).toBe(0);
++  expect(JSON.parse(readFileSync(path, "utf8")).mcpServers).toEqual({ hindsight: { command: "unrelated" } });
++});
++it("brands Grok's actual TOML MCP table through custom and default migrations", () => {
++  for (const prefix of ["abc_", "memory_", undefined]) {
++    provision(prefix); expect(run(["install", "grok-build"], ctx)).toBe(0);
++    expect(Object.keys(parseToml(readFileSync(join(ctx.home, ".grok/config.toml"), "utf8")).mcp_servers as object)).toEqual([prefix?.slice(0, -1) ?? "hindsight"]);
++  }
++});
++it.each(["claude-code", "qwen-code"])("removes only saved managed native CLI aliases when %s branding changes", harness => {
++  provision("abc_"); const path = join(ctx.home, harness === "claude-code" ? ".claude.json" : ".qwen/settings.json");
++  const entry = { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: harness } };
++  put(path, JSON.stringify({ mcpServers: { oldbrand: entry, hindsight: { command: "foreign" } } }));
++  expect(run(["install", harness], ctx)).toBe(0);
++  const removes = cli.mock.calls.map(call => call[0] as string[]).filter(args => args[0] === "mcp" && args[1] === "remove");
++  expect(removes.flat()).toContain("oldbrand"); expect(removes.flat()).not.toContain("hindsight");
++  expect(JSON.parse(readFileSync(path, "utf8")).mcpServers.hindsight).toEqual({ command: "foreign" });
++});
++it.each([undefined, "abc_"])("migrates owned Codex array tables while preserving adjacent foreign tables: %s", prefix => {
++  provision(prefix); const path = join(ctx.home, ".codex/config.toml"); const source = prefix ? "legacy" : "hindsight";
++  const foreign = '  [mcp_servers.foreign]\n  command = "foreign"\n\n  [[mcp_servers.foreign.env_vars]]\n  name = "FOREIGN_TOKEN"\n  source = "remote"\n';
++  const owned = `[mcp_servers.${source}]\ncommand = "node"\nargs = ${JSON.stringify([join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")])}\n\n` +
++    `  [[mcp_servers.${source}.env_vars]]\n  name = "TEST_MEMORY_TOKEN"\n  source = "local"\n\n`;
++  put(path, owned + foreign);
++  expect(run(["install", "codex"], ctx)).toBe(0);
++  const first = readFileSync(path, "utf8"); const parsed = parseToml(first);
++  const servers = parsed.mcp_servers as Record<string, { env_vars?: { name: string; source: string }[] }>;
++  expect(servers[prefix ? "abc" : "hindsight"].env_vars?.[0]).toEqual({ name: "TEST_MEMORY_TOKEN", source: "local" });
++  expect(servers.foreign.env_vars).toEqual([{ name: "FOREIGN_TOKEN", source: "remote" }]);
++  expect(first).toContain(foreign);
++  if (prefix) expect(servers).not.toHaveProperty("legacy");
++  expect(run(["install", "codex"], ctx)).toBe(0); expect(readFileSync(path, "utf8")).toBe(first);
++  expect(run(["uninstall", "codex"], ctx)).toBe(0);
++  const remaining = readFileSync(path, "utf8"); expect(remaining).toContain(foreign);
++  expect(Object.keys(parseToml(remaining).mcp_servers as object)).toEqual(["foreign"]);
++});
 diff --git a/src/installer-managed.test.ts b/src/installer-managed.test.ts
 new file mode 100644
 index 0000000..887b6ae
@@ -9421,12 +9941,12 @@ index 80d85af..01b0184 100644
    });
  });
 diff --git a/src/installer.ts b/src/installer.ts
-index f6e1e1e..382813c 100644
+index f6e1e1e..f92525c 100644
 --- a/src/installer.ts
 +++ b/src/installer.ts
 @@ -1,10 +1,10 @@
  #!/usr/bin/env node
-+import { renderCompanionSkill } from "@memory-router/shared/tool-prefix";
++import { renderCompanionSkill, renderBrandText, toolBrand, ToolPrefixError } from "@memory-router/shared/tool-prefix";
  /**
   * hindsight-coding-agents install|uninstall [harness...]
   *
@@ -9438,7 +9958,7 @@ index f6e1e1e..382813c 100644
   *
   *   opencode     add this package to `plugin` in ~/.config/opencode/opencode.json
   *   claude-code  3 hooks in ~/.claude/settings.json + `claude mcp add` (user scope)
-@@ -30,20 +30,25 @@ import {
+@@ -30,21 +30,27 @@ import {
    mkdirSync,
    mkdtempSync,
    readFileSync,
@@ -9467,9 +9987,11 @@ index f6e1e1e..382813c 100644
 -import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
 +import { type LlmChoice } from "./core/daemon";
  import { readLegacyEndpoint } from "./core/legacy";
++import { ownedCompanionSkills } from "./core/skill-sync";
  import { SKILL_DIRS } from "./core/skill-dirs";
  import { formatUsageReport, readUsage } from "./core/usage";
-@@ -54,7 +59,7 @@ import { createInstallerUi, type SelectOption } from "./install-ui";
+ import { createInstallerUi, type SelectOption } from "./install-ui";
+@@ -54,7 +60,7 @@ import { createInstallerUi, type SelectOption } from "./install-ui";
   * `uninstall` removes exactly what we added.
   *
   * It must appear in the package path under BOTH layouts: npm
@@ -9478,7 +10000,15 @@ index f6e1e1e..382813c 100644
   * (`hindsight-integrations/coding-agents/...`). The old value was the full package name, which the
   * repo path stopped containing when the directory dropped its `hindsight-` prefix — silently
   * breaking dedupe-on-reinstall and uninstall for anyone running from a checkout.
-@@ -122,17 +127,11 @@ function readJson(path: string): Record<string, any> {
+@@ -74,6 +80,7 @@ export interface InstallCtx {
+   dist: string; // built entry points
+   /** Runs `claude mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
+   claudeMcp?: (args: string[]) => boolean;
++  ownedMcpNames?: Record<string, string[]>;
+   /** Runs `qwen mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
+   qwenMcp?: (args: string[]) => boolean;
+   /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
+@@ -122,17 +129,11 @@ function readJson(path: string): Record<string, any> {
   * to understand must never be overwritten with just our own key: the caller aborts instead.
   */
  export function parseJsonc(text: string): Record<string, any> | null {
@@ -9501,18 +10031,87 @@ index f6e1e1e..382813c 100644
  }
  
  function writeJson(path: string, value: unknown): void {
-@@ -293,7 +292,10 @@ function installSkill(c: InstallCtx, harness: string): void {
+@@ -234,10 +235,52 @@ function isOurMcpEntry(entry: unknown): boolean {
+   return (
+     parts.at(-1) === "mcp-server.js" &&
+     parts.at(-2) === "dist" &&
+-    (parts.at(-3) === "coding-agents" || parts.at(-3) === "hindsight-coding-agents")
++    (parts.at(-3) === "coding-agents" || parts.at(-3) === "hindsight-coding-agents" ||
++      (parts.at(-3) === "hindsight-memory-router-coding-agents" && parts.at(-4) === "@mickey-kras"))
++  );
++}
++
++function registrationName(): string {
++  return toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).id;
++}
++
++function belongsToHarness(entry: unknown, harness: string): boolean {
++  if (!isOurMcpEntry(entry)) return false;
++  const env = (entry as { env?: Record<string, unknown> }).env;
++  return env?.HINDSIGHT_MCP_HARNESS === undefined || env.HINDSIGHT_MCP_HARNESS === harness;
++}
++
++function nativeRegistrationNames(c: InstallCtx, harness: string): string[] {
++  return [...new Set([...(c.ownedMcpNames?.[harness] ?? []), registrationName()])];
++}
++
++function mcpRegistries(config: Record<string, unknown>): Record<string, unknown>[] {
++  const nested = config.mcp as { servers?: unknown } | undefined;
++  return [config.mcpServers, config.mcp_servers, nested?.servers].filter(
++    (value): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value),
+   );
+ }
+ 
++function managedJsonRegistrations(path: string, harness: string, c: InstallCtx, mutate = false): void {
++  if (!existsSync(path)) return;
++  const text = readFileSync(path, "utf8");
++  const config = parseJsonc(text);
++  if (!config) throw new Error("invalid host config");
++  const name = registrationName();
++  let changed = false;
++  for (const servers of mcpRegistries(config)) {
++    if (Object.hasOwn(servers, name) && !belongsToHarness(servers[name], harness))
++      throw new ToolPrefixError("unrelated MCP registration name collision; choose another toolPrefix");
++    for (const [key, entry] of Object.entries(servers)) {
++      if (!belongsToHarness(entry, harness)) continue;
++      c.ownedMcpNames ??= {};
++      c.ownedMcpNames[harness] = [...new Set([...(c.ownedMcpNames[harness] ?? []), key])];
++      if (mutate && key !== name) { delete servers[key]; changed = true; }
++    }
++  }
++  if (changed) writeJson(path, config);
++}
++
+ /** Install/uninstall consume the same lifecycle declaration as the runtime entrypoints. Keeping
+  * event names and command files here would allow a host to run a different lifecycle than it installs. */
+ function mergeHarnessHooks(
+@@ -291,17 +334,20 @@ function installSkill(c: InstallCtx, harness: string): void {
+   const src = join(c.pkgRoot, "skill");
+   if (!existsSync(join(src, "SKILL.md"))) return;
    const skillsBase = skillsBaseFor(c, harness);
-   const dst = join(skillsBase, "hindsight-coding-agent");
+-  const dst = join(skillsBase, "hindsight-coding-agent");
++  const prefix = loadValidatedManagedConfig(process.env).toolPrefix;
++  const dst = join(skillsBase, toolBrand(prefix).skillName);
++  const owned = ownedCompanionSkills(skillsBase);
++  if (existsSync(dst) && !owned.includes(dst)) throw new ToolPrefixError("unrelated skill name collision; choose another toolPrefix");
    mkdirSync(skillsBase, { recursive: true });
-+  const prefix = loadValidatedManagedConfig(process.env).toolPrefix!;
 +  const rendered = renderCompanionSkill(readFileSync(join(src, "SKILL.md"), "utf8"), prefix);
    cpSync(src, dst, { recursive: true });
 +  writeFileSync(join(dst, "SKILL.md"), rendered);
++  for (const previous of owned) if (previous !== dst) rmSync(previous, { recursive: true, force: true });
    c.log?.(`${harness}: skill installed at ${dst}`);
  }
  
-@@ -375,14 +377,14 @@ function runDcodePlugin(args: string[]): boolean {
+ function uninstallSkill(c: InstallCtx, harness: string): void {
+-  rmSync(join(skillsBaseFor(c, harness), "hindsight-coding-agent"), {
+-    recursive: true,
+-    force: true,
+-  });
++  for (const path of ownedCompanionSkills(skillsBaseFor(c, harness))) rmSync(path, { recursive: true, force: true });
+ }
+ 
+ // ── per-harness adapters ────────────────────────────────────────────────────────
+@@ -375,14 +421,14 @@ function runDcodePlugin(args: string[]): boolean {
   * Consequences worth knowing: installing either harness wires the other one too (the MARKER filter
   * keeps that idempotent), and uninstalling either removes the shared entry.
   */
@@ -9529,7 +10128,7 @@ index f6e1e1e..382813c 100644
      }
      cfg = parsed;
    }
-@@ -519,7 +521,7 @@ const kilo: HarnessInstaller = {
+@@ -519,7 +565,7 @@ const kilo: HarnessInstaller = {
        const parsed = parseJsonc(readFileSync(path, "utf8"));
        if (!parsed) {
          c.log?.(`kilo: SKIPPED — could not parse ${path}; add the plugin entry manually`);
@@ -9538,7 +10137,24 @@ index f6e1e1e..382813c 100644
        }
        cfg = parsed;
      }
-@@ -577,11 +579,13 @@ const claudeCode: HarnessInstaller = {
+@@ -561,14 +607,14 @@ const claudeCode: HarnessInstaller = {
+     // Code reported "Failed to connect — Connection closed" with the hindsight_* tools dead.
+     // Remove first (a no-op when absent) so the add always lands, matching how every other host
+     // wiring is replaced rather than skipped.
+-    mcp(["mcp", "remove", "--scope", "user", "hindsight"]);
++    for (const name of nativeRegistrationNames(c, "claude-code")) mcp(["mcp", "remove", "--scope", "user", name]);
+     if (
+       mcp([
+         "mcp",
+         "add",
+         "--scope",
+         "user",
+-        "hindsight",
++        registrationName(),
+         "--env",
+         "HINDSIGHT_MCP_HARNESS=claude-code",
+         "--",
+@@ -577,11 +623,13 @@ const claudeCode: HarnessInstaller = {
        ])
      ) {
        c.log?.("claude-code: MCP server registered (claude mcp add, user scope)");
@@ -9546,18 +10162,32 @@ index f6e1e1e..382813c 100644
      } else {
        c.log?.(
          `claude-code: could not run \`claude mcp add\` — register the tools manually:\n` +
-           `  claude mcp add --scope user hindsight --env HINDSIGHT_MCP_HARNESS=claude-code -- node "${join(c.dist, "mcp-server.js")}"`
+-          `  claude mcp add --scope user hindsight --env HINDSIGHT_MCP_HARNESS=claude-code -- node "${join(c.dist, "mcp-server.js")}"`
++          `  claude mcp add --scope user ${registrationName()} --env HINDSIGHT_MCP_HARNESS=claude-code -- node "${join(c.dist, "mcp-server.js")}"`
        );
 +      return false;
      }
    },
    uninstall(c) {
-@@ -614,31 +618,92 @@ function defaultClaudeMcp(args: string[]): boolean {
+@@ -595,7 +643,7 @@ const claudeCode: HarnessInstaller = {
+       }
+     }
+     const mcp = c.claudeMcp ?? defaultClaudeMcp;
+-    mcp(["mcp", "remove", "--scope", "user", "hindsight"]);
++    for (const name of nativeRegistrationNames(c, "claude-code")) mcp(["mcp", "remove", "--scope", "user", name]);
+     uninstallSkill(c, "claude-code");
+     c.log?.("claude-code: hooks + MCP registration + skill removed");
+   },
+@@ -614,31 +662,109 @@ function defaultClaudeMcp(args: string[]): boolean {
   * Our `[mcp_servers.hindsight]` table (plus any sub-table of it): the header line through to the
   * next table header or EOF. Shared by install — which REPLACES the block — and uninstall.
   */
 -const CODEX_MCP_BLOCK_RE = /^\[mcp_servers\.hindsight(?:\.[^\]]+)?\][^\n]*\n(?:(?!\[)[^\n]*\n?)*/gm;
-+const CODEX_MCP_BLOCK_RE = /^\[\[?mcp_servers\.hindsight(?:\.[^\]]+)?\]\]?[^\n]*\n(?:(?!\[)(?:[^\n]+\n?|\n))*/gm;
+ 
+-/** Inline `env`, so CODEX_MCP_BLOCK_RE never has to straddle a `[mcp_servers.hindsight.env]` table. */
+-const codexMcpBlock = (dist: string) =>
+-  `[mcp_servers.hindsight]\ncommand = "node"\nargs = [${JSON.stringify(join(dist, "mcp-server.js"))}]\n` +
+-  `env = { HINDSIGHT_MCP_HARNESS = "codex" }`;
 +
 +const CODEX_ENV_VARS = [
 +  "HINDSIGHT_ROUTER_CONFIG",
@@ -9577,28 +10207,41 @@ index f6e1e1e..382813c 100644
 +    (!("source" in value) || value.source === "local" || value.source === "remote") &&
 +    Object.keys(value).every((key) => key === "name" || key === "source");
 +}
- 
--/** Inline `env`, so CODEX_MCP_BLOCK_RE never has to straddle a `[mcp_servers.hindsight.env]` table. */
--const codexMcpBlock = (dist: string) =>
--  `[mcp_servers.hindsight]\ncommand = "node"\nargs = [${JSON.stringify(join(dist, "mcp-server.js"))}]\n` +
--  `env = { HINDSIGHT_MCP_HARNESS = "codex" }`;
++
 +interface CodexMcpConfig {
 +  env?: Record<string, string>;
 +  env_vars?: CodexEnvVar[];
 +  [key: string]: unknown;
 +}
 +
-+function parseCodexToml(text: string): { mcp_servers?: { hindsight?: CodexMcpConfig } } {
++function parseCodexToml(text: string): { mcp_servers?: Record<string, CodexMcpConfig> } {
 +  try {
-+    return parseToml(text) as { mcp_servers?: { hindsight?: CodexMcpConfig } };
++    return parseToml(text) as { mcp_servers?: Record<string, CodexMcpConfig> };
 +  } catch {
 +    throw new Error("codex: invalid config.toml; no host configuration changed");
 +  }
 +}
 +
++function stripOwnedMcpToml(text: string, harness: string): string {
++  const parsed = parseToml(text) as { mcp_servers?: Record<string, unknown> };
++  const names = Object.entries(parsed.mcp_servers ?? {}).filter(([, entry]) => belongsToHarness(entry, harness)).map(([name]) => name);
++  let next = text;
++  for (const name of names) {
++    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++    const headers = new RegExp(`^[ \\t]*\\[\\[?(?:mcp_servers\\.(?:${escaped}|"${escaped}"|'${escaped}'))(?:\\.[^\\]]+)?\\]\\]?[^\\n]*\\n(?:(?![ \\t]*\\[)(?:[^\\n]+\\n?|\\n))*`, "gm");
++    next = next.replace(headers, "");
++  }
++  const remaining = (parseToml(next) as { mcp_servers?: Record<string, unknown> }).mcp_servers ?? {};
++  if (Object.values(remaining).some(entry => belongsToHarness(entry, harness))) throw new ToolPrefixError("managed MCP table uses unsupported TOML spelling; migrate it explicitly");
++  return next;
++}
++
 +function codexMcpBlock(dist: string, existing: string): string {
 +  const parsed = parseCodexToml(existing);
-+  const previous = parsed.mcp_servers?.hindsight ?? {};
++  const name = registrationName();
++  const servers = parsed.mcp_servers ?? {};
++  if (servers[name] && !belongsToHarness(servers[name], "codex")) throw new ToolPrefixError("unrelated MCP registration name collision");
++  const previous = servers[name] ?? Object.values(servers).find(entry => belongsToHarness(entry, "codex")) ?? {};
 +  if (typeof previous !== "object" || Array.isArray(previous)) {
 +    throw new Error("codex: mcp_servers.hindsight must be a table");
 +  }
@@ -9624,7 +10267,7 @@ index f6e1e1e..382813c 100644
 +  const requiredNames = [...new Set([...CODEX_ENV_VARS, tokenEnv])];
 +  return stringifyToml({
 +    mcp_servers: {
-+      hindsight: {
++      [name]: {
 +        ...previous,
 +        command: "node",
 +        args: [join(dist, "mcp-server.js")],
@@ -9656,11 +10299,11 @@ index f6e1e1e..382813c 100644
 -    const tomlPath = join(c.home, ".codex", "config.toml");
 -    const existing = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
 -    const toml = existing.replace(CODEX_MCP_BLOCK_RE, "");
-+    const toml = existing.replaceAll(CODEX_MCP_BLOCK_RE, "");
++    const toml = stripOwnedMcpToml(existing, "codex");
      const additions: string[] = [];
      // Codex ≥ 0.145 deprecates `codex_hooks` for `[features].hooks`; accept either as "already
      // enabled", write the modern name for new installs.
-@@ -651,8 +716,15 @@ const codex: HarnessInstaller = {
+@@ -651,8 +777,15 @@ const codex: HarnessInstaller = {
          additions.push("[features]\nhooks = true");
        }
      }
@@ -9677,16 +10320,36 @@ index f6e1e1e..382813c 100644
      if (next !== existing) {
        if (existsSync(tomlPath) && !existsSync(`${tomlPath}.hindsight-backup`)) {
          copyFileSync(tomlPath, `${tomlPath}.hindsight-backup`);
-@@ -676,7 +748,7 @@ const codex: HarnessInstaller = {
+@@ -676,7 +809,7 @@ const codex: HarnessInstaller = {
      const tomlPath = join(c.home, ".codex", "config.toml");
      if (existsSync(tomlPath)) {
        const toml = readFileSync(tomlPath, "utf8");
 -      const cleaned = toml.replace(CODEX_MCP_BLOCK_RE, "");
-+      const cleaned = toml.replaceAll(CODEX_MCP_BLOCK_RE, "");
++      const cleaned = stripOwnedMcpToml(toml, "codex");
        if (cleaned !== toml) writeFileSync(tomlPath, cleaned);
      }
      c.log?.(
-@@ -827,9 +899,8 @@ export const ORIGIN_FILE = ".install-origin.json";
+@@ -716,7 +849,7 @@ const antigravity: HarnessInstaller = {
+     const mcp = readJson(mcpPath);
+     mcp.mcpServers = {
+       ...(mcp.mcpServers ?? {}),
+-      hindsight: mcpServerEntry(c.dist, "antigravity-cli"),
++      [registrationName()]: mcpServerEntry(c.dist, "antigravity-cli"),
+     };
+     writeJson(mcpPath, mcp);
+     const settingsPath = join(c.home, ".gemini", "antigravity-cli", "settings.json");
+@@ -761,8 +894,8 @@ const antigravity: HarnessInstaller = {
+     const mcpPath = join(c.home, ".gemini", "config", "mcp_config.json");
+     if (existsSync(mcpPath)) {
+       const mcp = readJson(mcpPath);
+-      if (mcp.mcpServers?.hindsight) {
+-        delete mcp.mcpServers.hindsight;
++      if (mcp.mcpServers?.[registrationName()]) {
++        delete mcp.mcpServers[registrationName()];
+         writeJson(mcpPath, mcp);
+       }
+     }
+@@ -827,11 +960,43 @@ export const ORIGIN_FILE = ".install-origin.json";
   * is what opencode and Kilo load as a plugin directory. Repointing them here means no per-harness
   * installer needs to know staging happened.
   *
@@ -9697,12 +10360,49 @@ index f6e1e1e..382813c 100644
 + * skipped when already running from the staged copy, which is what
   * makes re-running `install` cheap.
   */
++function brandStagedRuntime(c: InstallCtx): void {
++  const manifestPath = join(c.pkgRoot, "plugin.json");
++  if (!existsSync(manifestPath)) return;
++  const prefix = loadValidatedManagedConfig(process.env).toolPrefix;
++  const brand = toolBrand(prefix);
++  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
++    skills?: string;
++    mcpServers?: Record<string, { command?: unknown; args?: unknown; env?: Record<string, unknown> }>;
++    [key: string]: unknown;
++  };
++  const servers = manifest.mcpServers ?? {};
++  const bundled = (entry: { command?: unknown; args?: unknown; env?: Record<string, unknown> }): boolean =>
++    entry.command === "node" && Array.isArray(entry.args) && entry.args[0] === "${PLUGIN_ROOT}/dist/mcp-server.js" && entry.env?.HINDSIGHT_MCP_HARNESS === "dcode";
++  if (servers[brand.id] && !bundled(servers[brand.id])) throw new ToolPrefixError("native plugin MCP name collision");
++  const managed = Object.entries(servers).filter(([, entry]) => bundled(entry));
++  if (managed.length) {
++    for (const [name] of managed) delete servers[name];
++    servers[brand.id] = managed[0][1];
++    manifest.mcpServers = servers;
++  }
++  const source = join(c.pkgRoot, "skill");
++  if (existsSync(join(source, "SKILL.md"))) {
++    const target = join(c.pkgRoot, brand.skillName);
++    const owned = ownedCompanionSkills(c.pkgRoot);
++    if (existsSync(target) && !owned.includes(target)) throw new ToolPrefixError("native plugin skill name collision");
++    cpSync(source, target, { recursive: true });
++    writeFileSync(join(target, "SKILL.md"), renderCompanionSkill(readFileSync(join(source, "SKILL.md"), "utf8"), prefix));
++    for (const path of owned) if (path !== target) rmSync(path, { recursive: true, force: true });
++    manifest.skills = `./${brand.skillName}`;
++  }
++  writeJson(manifestPath, manifest);
++}
++
  function stageRuntime(c: InstallCtx): InstallCtx {
-@@ -845,7 +916,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+   const target = runtimeDir(c.home);
+   // Compared through realpath: re-running the STAGED installer must not reach the copy below, which
+@@ -844,8 +1009,13 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+       return a === b;
      }
    };
-   if (same(c.pkgRoot, target)) return c;
+-  if (same(c.pkgRoot, target)) return c;
 -  if (!existsSync(join(c.dist, "installer.js"))) return c;
++  if (same(c.pkgRoot, target)) { brandStagedRuntime(c); return c; }
 +  if (!existsSync(join(c.dist, "installer.js"))) throw new Error("runtime unavailable");
 +  // cpSync preserves source links. Reject them before they can enter the installed runtime or
 +  // companion skill, where a later overwrite could follow them outside the transaction scope.
@@ -9712,9 +10412,14 @@ index f6e1e1e..382813c 100644
    try {
      // Replaced wholesale rather than merged: a stale entry point left behind by an older version
      // would still be reachable from a host config that references it by name.
-@@ -878,243 +954,8 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+@@ -876,245 +1046,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+       JSON.stringify({ source: c.pkgRoot, stagedAt: new Date().toISOString() })
+     );
      c.log?.(`runtime staged at ${target}`);
-     return { ...c, pkgRoot: target, dist: join(target, "dist") };
+-    return { ...c, pkgRoot: target, dist: join(target, "dist") };
++    const staged = { ...c, pkgRoot: target, dist: join(target, "dist") };
++  brandStagedRuntime(staged);
++  return staged;
    } catch (error) {
 -    // A failed copy must not wire hooks at a half-written directory.
 -    c.log?.(`could not stage the runtime at ${target}: ${String(error)}`);
@@ -9958,7 +10663,114 @@ index f6e1e1e..382813c 100644
    }
  }
  
-@@ -1413,7 +1254,7 @@ const grok: HarnessInstaller = {
+@@ -1144,7 +1081,7 @@ const devin: HarnessInstaller = {
+     const mcp = readJson(mcpPath);
+     mcp.mcpServers = {
+       ...(mcp.mcpServers ?? {}),
+-      hindsight: mcpServerEntry(c.dist, "devin-cli"),
++      [registrationName()]: mcpServerEntry(c.dist, "devin-cli"),
+     };
+     writeJson(mcpPath, mcp);
+     c.log?.(`devin-cli: hooks merged into ${configPath}, MCP into ${mcpPath}`);
+@@ -1162,8 +1099,8 @@ const devin: HarnessInstaller = {
+     const mcpPath = join(c.home, ".config", "devin", "mcp_config.json");
+     if (existsSync(mcpPath)) {
+       const mcp = readJson(mcpPath);
+-      if (mcp.mcpServers?.hindsight) {
+-        delete mcp.mcpServers.hindsight;
++      if (mcp.mcpServers?.[registrationName()]) {
++        delete mcp.mcpServers[registrationName()];
+         writeJson(mcpPath, mcp);
+       }
+     }
+@@ -1184,7 +1121,7 @@ const cursor: HarnessInstaller = {
+     const mcp = readJson(mcpPath);
+     mcp.mcpServers = {
+       ...(mcp.mcpServers ?? {}),
+-      hindsight: mcpServerEntry(c.dist, "cursor-cli"),
++      [registrationName()]: mcpServerEntry(c.dist, "cursor-cli"),
+     };
+     writeJson(mcpPath, mcp);
+     c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
+@@ -1203,8 +1140,8 @@ const cursor: HarnessInstaller = {
+     const mcpPath = join(c.home, ".cursor", "mcp.json");
+     if (existsSync(mcpPath)) {
+       const mcp = readJson(mcpPath);
+-      if (mcp.mcpServers?.hindsight) {
+-        delete mcp.mcpServers.hindsight;
++      if (mcp.mcpServers?.[registrationName()]) {
++        delete mcp.mcpServers[registrationName()];
+         writeJson(mcpPath, mcp);
+       }
+     }
+@@ -1226,7 +1163,7 @@ const copilot: HarnessInstaller = {
+     const mcp = readJson(mcpPath);
+     mcp.mcpServers = {
+       ...(mcp.mcpServers ?? {}),
+-      hindsight: mcpServerEntry(c.dist, "copilot-cli"),
++      [registrationName()]: mcpServerEntry(c.dist, "copilot-cli"),
+     };
+     writeJson(mcpPath, mcp);
+     installSkill(c, "copilot-cli");
+@@ -1239,8 +1176,8 @@ const copilot: HarnessInstaller = {
+     const mcpPath = join(c.home, ".copilot", "mcp-config.json");
+     if (existsSync(mcpPath)) {
+       const mcp = readJson(mcpPath);
+-      if (mcp.mcpServers?.hindsight) {
+-        delete mcp.mcpServers.hindsight;
++      if (mcp.mcpServers?.[registrationName()]) {
++        delete mcp.mcpServers[registrationName()];
+         writeJson(mcpPath, mcp);
+       }
+     }
+@@ -1286,7 +1223,7 @@ function hasUnmarkedGrokEntries(text: string): boolean {
+   const cfg = parseGrokToml(text);
+   if (!cfg)
+     return /\[\s*mcp_servers\s*\.\s*hindsight\s*[.\]]/.test(text) || GROK_HOOK_SCRIPT_RE.test(text);
+-  if (cfg.mcp_servers && "hindsight" in cfg.mcp_servers) return true;
++  if (Object.values(cfg.mcp_servers ?? {}).some(entry => belongsToHarness(entry, "grok-build"))) return true;
+   return Object.values(cfg.hooks ?? {}).some((entries) =>
+     (entries ?? []).some((entry) =>
+       (entry?.hooks ?? []).some(
+@@ -1323,7 +1260,7 @@ function stripUnmarkedGrokEntries(toml: string): string {
+     s.lines.slice(1).some((l) => /^\s*[^#\s]/.test(l));
+ 
+   const drop = sections.map((s) => {
+-    if (/^\[mcp_servers\.hindsight(\.|\])/.test(s.header)) return true;
++    // MCP tables are removed separately only after command-based ownership validation.
+     if (/^\[\[hooks\..+\.hooks\]\]$/.test(s.header)) return isOurs(s);
+     return false;
+   });
+@@ -1359,13 +1296,16 @@ const grok: HarnessInstaller = {
+     // REPLACE any previous block rather than skipping when one exists. Skipping made this
+     // install-once-only: after the package moved, a re-install silently left the old (now dead)
+     // paths in place, which is exactly the case `install` is meant to repair.
++    const parsed = parseGrokToml(existing);
++    if (parsed?.mcp_servers?.[registrationName()] && !belongsToHarness(parsed.mcp_servers[registrationName()], "grok-build")) throw new ToolPrefixError("unrelated MCP registration name collision");
+     const stripped = existing.replace(GROK_BLOCK_RE, "\n");
+     // Entries an older release wrote WITHOUT the markers must go too: TOML forbids redefining a
+     // table, so appending on top of them leaves a file Grok cannot parse — it then reports "No MCP
+     // servers configured" and every MCP server, ours included, silently stops working.
+-    const withoutOurs = hasUnmarkedGrokEntries(stripped)
+-      ? stripUnmarkedGrokEntries(stripped)
+-      : stripped;
++    const strippedMcp = stripOwnedMcpToml(stripped, "grok-build");
++    const withoutOurs = hasUnmarkedGrokEntries(strippedMcp)
++      ? stripUnmarkedGrokEntries(strippedMcp)
++      : strippedMcp;
+     // Grok executes this shell command verbatim. Quote the absolute script path so a globally
+     // installed package still works when its installation directory contains spaces.
+     const command = (entry: string) => JSON.stringify(`node "${join(c.dist, entry)}"`);
+@@ -1375,7 +1315,7 @@ const grok: HarnessInstaller = {
+       `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = \"command\"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
+       `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = \"command\"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
+       `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
+-      `[mcp_servers.hindsight]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
++      `[mcp_servers.${registrationName()}]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
+       `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
+     const next = `${withoutOurs.replace(/\n*$/, "\n")}${block}`;
+     // Never hand Grok a config it cannot parse: one bad table takes down every MCP server it has.
+@@ -1413,7 +1353,7 @@ const grok: HarnessInstaller = {
  
  const CLINE_HOOK_MARKER = "HINDSIGHT_CODING_AGENTS_CLINE";
  const CLINE_OLD_HOOK_EVENTS = ["TaskStart", "UserPromptSubmit", "TaskComplete"];
@@ -9967,7 +10779,16 @@ index f6e1e1e..382813c 100644
  
  /** Remove only wrappers from the short-lived file-hook implementation. Cline file hooks cannot
   * mutate a prompt; keeping them would falsely imply that old installs still inject memory. */
-@@ -1451,6 +1292,7 @@ const cline: HarnessInstaller = {
+@@ -1442,7 +1382,7 @@ const cline: HarnessInstaller = {
+     const mcp = readJson(mcpPath);
+     mcp.mcpServers = {
+       ...(mcp.mcpServers ?? {}),
+-      hindsight: mcpServerEntry(c.dist, "cline-cli"),
++      [registrationName()]: mcpServerEntry(c.dist, "cline-cli"),
+     };
+     writeJson(mcpPath, mcp);
+     installSkill(c, "cline-cli");
+@@ -1451,6 +1391,7 @@ const cline: HarnessInstaller = {
          ? "cline-cli: native plugin + MCP + skill installed"
          : `cline-cli: MCP + skill installed; run: cline plugin install --force "${c.pkgRoot}"`
      );
@@ -9975,7 +10796,18 @@ index f6e1e1e..382813c 100644
    },
    uninstall(c) {
      removeLegacyClineHooks(c);
-@@ -1602,7 +1444,7 @@ function dshHome(c: InstallCtx): string {
+@@ -1460,8 +1401,8 @@ const cline: HarnessInstaller = {
+     const mcpPath = join(c.home, ".cline", "data", "settings", "cline_mcp_settings.json");
+     if (existsSync(mcpPath)) {
+       const mcp = readJson(mcpPath);
+-      if (mcp.mcpServers?.hindsight) {
+-        delete mcp.mcpServers.hindsight;
++      if (mcp.mcpServers?.[registrationName()]) {
++        delete mcp.mcpServers[registrationName()];
+         writeJson(mcpPath, mcp);
+       }
+     }
+@@ -1602,7 +1543,7 @@ function dshHome(c: InstallCtx): string {
   * DeepSeek Harness — a native Cordis plugin, wired through the HOME-level patch layer
   * (`$DSH_HOME/cordis.patch.yml`), which every profile composes after its bundles.
   *
@@ -9984,7 +10816,32 @@ index f6e1e1e..382813c 100644
   * pnpm-installs the package into ONE profile and picks up the `dsh.bundle.patch` this package
   * ships. That is the right route for a published install and is what the docs recommend, but it
   * needs pnpm, a network, and a repeat per profile — so the installer takes the path that always
-@@ -1685,11 +1527,13 @@ const qwen: HarnessInstaller = {
+@@ -1625,7 +1566,7 @@ const dsh: HarnessInstaller = {
+     const block =
+       `${DSH_MARKER_START}\n` +
+       `- insert:\n` +
+-      `    - id: hindsight\n` +
++      `    - id: ${registrationName()}\n` +
+       `      name: ${JSON.stringify(entry)}\n` +
+       `${DSH_MARKER_END}\n`;
+     if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
+@@ -1670,7 +1611,7 @@ const qwen: HarnessInstaller = {
+     const mcp = c.qwenMcp ?? defaultQwenMcp;
+     // Same rationale as claude-code: `qwen mcp add` refuses a name that already exists, so a
+     // re-install could never repoint a stale server. Remove first (a no-op when absent).
+-    mcp(["mcp", "remove", "hindsight"]);
++    for (const name of nativeRegistrationNames(c, "qwen-code")) mcp(["mcp", "remove", name]);
+     if (
+       mcp([
+         "mcp",
+@@ -1679,17 +1620,19 @@ const qwen: HarnessInstaller = {
+         "user",
+         "-e",
+         "HINDSIGHT_MCP_HARNESS=qwen-code",
+-        "hindsight",
++        registrationName(),
+         "node",
+         join(c.dist, "mcp-server.js"),
        ])
      ) {
        c.log?.("qwen-code: MCP server registered (qwen mcp add, user scope)");
@@ -9992,13 +10849,98 @@ index f6e1e1e..382813c 100644
      } else {
        c.log?.(
          `qwen-code: could not run \`qwen mcp add\` — register the tools manually:\n` +
-           `  qwen mcp add -s user -e HINDSIGHT_MCP_HARNESS=qwen-code hindsight node "${join(c.dist, "mcp-server.js")}"`
+-          `  qwen mcp add -s user -e HINDSIGHT_MCP_HARNESS=qwen-code hindsight node "${join(c.dist, "mcp-server.js")}"`
++          `  qwen mcp add -s user -e HINDSIGHT_MCP_HARNESS=qwen-code ${registrationName()} node "${join(c.dist, "mcp-server.js")}"`
        );
 +      return false;
      }
    },
    uninstall(c) {
-@@ -1903,7 +1747,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
+@@ -1703,7 +1646,7 @@ const qwen: HarnessInstaller = {
+       }
+     }
+     const mcp = c.qwenMcp ?? defaultQwenMcp;
+-    mcp(["mcp", "remove", "hindsight"]);
++    for (const name of nativeRegistrationNames(c, "qwen-code")) mcp(["mcp", "remove", name]);
+     uninstallSkill(c, "qwen-code");
+     c.log?.("qwen-code: hooks + MCP registration + skill removed");
+   },
+@@ -1736,10 +1679,10 @@ const factoryDroid: HarnessInstaller = {
+   detect: (c) => onPath("droid") || existsSync(join(c.home, ".factory")),
+   preflight(c) {
+     const mcpPath = join(c.home, ".factory", "mcp.json");
+-    const existing = readJson(mcpPath).mcpServers?.hindsight;
++    const existing = readJson(mcpPath).mcpServers?.[registrationName()];
+     if (existing && !isOurMcpEntry(existing)) {
+       return (
+-        `${mcpPath} already contains a user-managed MCP server named "hindsight". ` +
++        `${mcpPath} already contains a user-managed MCP server named "${registrationName()}". ` +
+         "Rename or remove that entry, then re-run install."
+       );
+     }
+@@ -1763,7 +1706,7 @@ const factoryDroid: HarnessInstaller = {
+     const mcpPath = join(c.home, ".factory", "mcp.json");
+     const mcp = readJson(mcpPath);
+     mcp.mcpServers = mcp.mcpServers ?? {};
+-    mcp.mcpServers.hindsight = mcpServerEntry(c.dist, "factory-droid");
++    mcp.mcpServers[registrationName()] = mcpServerEntry(c.dist, "factory-droid");
+     writeJson(mcpPath, mcp);
+     c.log?.(`factory-droid: MCP server registered in ${mcpPath}`);
+   },
+@@ -1778,8 +1721,8 @@ const factoryDroid: HarnessInstaller = {
+     const mcpPath = join(c.home, ".factory", "mcp.json");
+     if (existsSync(mcpPath)) {
+       const mcp = readJson(mcpPath);
+-      if (isOurMcpEntry(mcp.mcpServers?.hindsight)) {
+-        delete mcp.mcpServers.hindsight;
++      if (isOurMcpEntry(mcp.mcpServers?.[registrationName()])) {
++        delete mcp.mcpServers[registrationName()];
+         if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
+         else rmSync(mcpPath);
+       }
+@@ -1805,7 +1748,7 @@ const factoryDroid: HarnessInstaller = {
+  *
+  * MCP and the companion skill land in the same config/home, so ZCode gets the full surface:
+  *
+- * - `mcp.servers.hindsight` runs the same stdio `dist/mcp-server.js` as every other host, tagged
++ * - `mcp.servers[registrationName()]` runs the same stdio `dist/mcp-server.js` as every other host, tagged
+  *   `HINDSIGHT_MCP_HARNESS=zcode`. ZCode's schema is `{type, command, args?, cwd?, env?}` and its
+  *   loader infers `type: "stdio"` from a `command`, so the shared `mcpServerEntry` drops straight
+  *   in. A same-named foreign server blocks install instead of being overwritten.
+@@ -1820,10 +1763,10 @@ const zcode: HarnessInstaller = {
+   detect: (c) => onPath("zcode") || existsSync(join(c.home, ".zcode")),
+   preflight(c) {
+     const configPath = zcodeConfigPath(c);
+-    const existing = readJson(configPath).mcp?.servers?.hindsight;
++    const existing = readJson(configPath).mcp?.servers?.[registrationName()];
+     if (existing && !isOurMcpEntry(existing)) {
+       return (
+-        `${configPath} already contains a user-managed MCP server named "hindsight". ` +
++        `${configPath} already contains a user-managed MCP server named "${registrationName()}". ` +
+         "Rename or remove that entry, then re-run install."
+       );
+     }
+@@ -1838,7 +1781,7 @@ const zcode: HarnessInstaller = {
+     mergeHarnessHooks(hooks.events, "zcode", c.dist);
+     config.mcp = config.mcp ?? {};
+     config.mcp.servers = config.mcp.servers ?? {};
+-    config.mcp.servers.hindsight = mcpServerEntry(c.dist, "zcode");
++    config.mcp.servers[registrationName()] = mcpServerEntry(c.dist, "zcode");
+     writeJson(configPath, config);
+     c.log?.(`zcode: hooks + MCP server merged into ${configPath}`);
+     installSkill(c, "zcode");
+@@ -1847,8 +1790,8 @@ const zcode: HarnessInstaller = {
+     const configPath = zcodeConfigPath(c);
+     if (existsSync(configPath)) {
+       const config = readJson(configPath);
+-      if (isOurMcpEntry(config.mcp?.servers?.hindsight)) {
+-        delete config.mcp.servers.hindsight;
++      if (isOurMcpEntry(config.mcp?.servers?.[registrationName()])) {
++        delete config.mcp.servers[registrationName()];
+         if (!Object.keys(config.mcp.servers).length) delete config.mcp;
+       }
+       const hooks = config.hooks;
+@@ -1903,7 +1846,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
   */
  function importConversations(harness: string, ctx: InstallCtx): void {
    const repo = process.cwd();
@@ -10007,7 +10949,7 @@ index f6e1e1e..382813c 100644
    if (!found.supported) {
      ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
      return;
-@@ -1927,141 +1771,159 @@ function importConversations(harness: string, ctx: InstallCtx): void {
+@@ -1927,141 +1870,180 @@ function importConversations(harness: string, ctx: InstallCtx): void {
        `this runs extraction and may take a while`
    );
    try {
@@ -10047,7 +10989,10 @@ index f6e1e1e..382813c 100644
 +      const path = join(ctx.home, file);
 +      paths.push(path, `${path}.hindsight-backup`);
 +    }
-+    if (SKILL_DIRS[name]) paths.push(join(skillsBaseFor(ctx, name), "hindsight-coding-agent"));
++    if (SKILL_DIRS[name]) {
++      const base = skillsBaseFor(ctx, name);
++      paths.push(join(base, toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).skillName), ...ownedCompanionSkills(base));
++    }
 +    if (name === "dsh") {
 +      const path = join(dshHome(ctx), "cordis.patch.yml");
 +      paths.push(path, `${path}.hindsight-backup`);
@@ -10103,7 +11048,7 @@ index f6e1e1e..382813c 100644
 +  if (args.some((arg) => /^--(?:api-url|api-token|server)(?:=|$)/.test(arg))) return fail();
    if (command === "stats") {
 -    ctx.log?.(formatUsageReport(readUsage()));
-+    ctxIn.log?.(formatUsageReport(readUsage()));
++    ctxIn.log?.(renderBrandText(formatUsageReport(readUsage()), toolBrand(process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined).prefix));
      return 0;
    }
 -  // Everything we write into a host's config is an ABSOLUTE path into this package. Run straight
@@ -10221,6 +11166,11 @@ index f6e1e1e..382813c 100644
 -      ctx.log?.(`\n❌ ${t.name}: ${problem}`);
 -      blocked.add(t.name);
 +    const paths = mutationPaths(ctx, targets.map((target) => target.name));
++    for (const target of targets) {
++      for (const path of mutationPaths(ctx, [target.name])) {
++        if (/\.jsonc?$/.test(path)) managedJsonRegistrations(path, target.name, ctx);
++      }
+     }
 +    if (command !== "uninstall") {
 +      for (const path of paths) {
 +        if (/\.jsonc?$/.test(path) && existsSync(path)) {
@@ -10231,19 +11181,32 @@ index f6e1e1e..382813c 100644
 +        const path = join(ctx.home, ".codex/config.toml");
 +        codexMcpBlock(ctx.dist, existsSync(path) ? readFileSync(path, "utf8") : "");
 +      }
-     }
++    }
++    for (const target of targets) {
++      if (command !== "uninstall" && SKILL_DIRS[target.name]) {
++        const base = skillsBaseFor(ctx, target.name);
++        const desired = join(base, toolBrand(loadValidatedManagedConfig(process.env).toolPrefix).skillName);
++        if (existsSync(desired) && !ownedCompanionSkills(base).includes(desired)) throw new ToolPrefixError("unrelated skill name collision; choose another toolPrefix or explicitly migrate this user-owned skill");
++      }
++    }
 +    transaction = new InstallTransaction(paths);
 +    if (command !== "uninstall") ctx = stageRuntime(ctx);
++    for (const target of targets) {
++      for (const path of mutationPaths(ctx, [target.name])) {
++        if (/\.jsonc?$/.test(path)) managedJsonRegistrations(path, target.name, ctx, true);
++      }
++    }
 +    if (command === "update") messages.push("runtime updated");
-+    else for (const target of targets) {
-+      if (target[command === "install" ? "install" : "uninstall"](ctx) === false) throw new Error("adapter failed");
++    for (const target of targets) {
++      if (target[command === "uninstall" ? "uninstall" : "install"](ctx) === false) throw new Error("adapter failed");
 +    }
 +    transaction.commit();
-+  } catch {
++  } catch (error) {
 +    try { transaction?.rollback(); } catch {
 +      ctxIn.log?.("installation failed; rollback incomplete; recovery snapshots retained");
 +      return 1;
 +    }
++    if (error instanceof ToolPrefixError) { ctxIn.log?.(error.message); return 1; }
 +    return fail();
    }
 -  const runnable = targets.filter((t) => !blocked.has(t.name));
@@ -10281,7 +11244,15 @@ index f6e1e1e..382813c 100644
    return 0;
  }
  
-@@ -2097,7 +1959,7 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2093,11 +2075,15 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+     command: process.argv[2],
+     version,
+     harnessNames: INSTALLERS.map((i) => i.name),
++    toolPrefix: (() => {
++      try { return process.env.HINDSIGHT_ROUTER_CONFIG ? loadValidatedManagedConfig(process.env).toolPrefix : undefined; }
++      catch { return undefined; }
++    })(),
+     // configureServer's messages render as their own "server" group, but don't count as an agent.
      auxNames: ["server"],
      configPath: process.env.HINDSIGHT_CONFIG || undefined,
    });
@@ -10290,7 +11261,7 @@ index f6e1e1e..382813c 100644
    const code = run(process.argv.slice(2), {
      home: homedir(),
      pkgRoot,
-@@ -2106,11 +1968,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2106,11 +2092,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      // tty.isatty, NOT process.stdin.isTTY: the process.stdin getter initializes the stdin TTY
      // stream, which puts fd 0 in non-blocking mode and breaks readLineSync (see there).
      interactive: Boolean(isatty(0) && isatty(1)),
@@ -10333,10 +11304,18 @@ index c1cabed..bb9c512 100644
    });
  
 diff --git a/src/mcp-server.ts b/src/mcp-server.ts
-index 1917baf..152a9c6 100644
+index 1917baf..0e68f9b 100644
 --- a/src/mcp-server.ts
 +++ b/src/mcp-server.ts
-@@ -38,6 +38,7 @@ export function selectTools(
+@@ -9,6 +9,7 @@
+  * differs). MCP servers launch with the project dir as cwd; the env override is an optional
+  * escape hatch (not currently set by the plugin).
+  */
++import { toolBrand, DEFAULT_TOOL_PREFIX, assertUniqueToolNames, ToolPrefixError } from "@memory-router/shared/tool-prefix";
+ import { fileURLToPath } from "node:url";
+ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+@@ -38,6 +39,7 @@ export function selectTools(
      ? []
      : buildKnowledgeTools(client, bankId, {
          repoDir: cwd,
@@ -10344,7 +11323,7 @@ index 1917baf..152a9c6 100644
          harness,
          pageTrigger: buildPageTrigger(cfg),
          reflectTimeoutMs: cfg.reflectToolTimeoutMs,
-@@ -62,7 +63,7 @@ export function resolveHarness(env: NodeJS.ProcessEnv = process.env): string {
+@@ -62,7 +64,7 @@ export function resolveHarness(env: NodeJS.ProcessEnv = process.env): string {
        "HINDSIGHT_MCP_HARNESS is not set. Every coding agent launches this same mcp-server.js, so " +
          "only that variable identifies the caller — it decides the harness:<id> stamp on everything " +
          "ingested and which bank this session resolves. Re-run `npx " +
@@ -10353,7 +11332,20 @@ index 1917baf..152a9c6 100644
          "before the installer set it."
      );
    }
-@@ -106,9 +107,9 @@ async function main() {
+@@ -76,8 +78,10 @@ export function resolveHarness(env: NodeJS.ProcessEnv = process.env): string {
+  * without first checking the initialize capabilities. Advertising an empty, queryable tool list
+  * keeps that privacy boundary intact while preventing one optional probe from failing startup.
+  */
+-export function buildMcpServer(tools: ToolSpec[]): McpServer {
+-  const server = new McpServer({ name: "hindsight", version: "0.1.0" });
++export function buildMcpServer(tools: ToolSpec[], prefix = DEFAULT_TOOL_PREFIX): McpServer {
++  assertUniqueToolNames(tools);
++  if (tools.some(tool => !tool.name.startsWith(toolBrand(prefix).prefix))) throw new ToolPrefixError("inconsistent MCP identity/tool prefix");
++  const server = new McpServer({ name: toolBrand(prefix).id, version: "0.1.0" });
+   if (tools.length === 0) {
+     server.server.registerCapabilities({ tools: { listChanged: false } });
+     server.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
+@@ -106,9 +110,9 @@ async function main() {
    // Mirrors that harness's hooks: it selects the config `harnesses.<name>` section and feeds the
    // `{harness}` bank template, so both routes into a repo land in ONE bank.
    const harness = resolveHarness();
@@ -10362,7 +11354,7 @@ index 1917baf..152a9c6 100644
 -  const server = buildMcpServer(selectTools(cfg, client, bankId, { cwd, harness }));
 +  const memory = resolveHostMemory(harness, cwd);
 +  const tools = memory.disabled ? [] : selectTools(memory.cfg, memory.client, memory.bankId, { cwd, harness });
-+  const server = buildMcpServer(tools);
++  const server = buildMcpServer(tools, memory.cfg.toolPrefix);
  
    await server.connect(new StdioServerTransport());
  }
@@ -10414,7 +11406,7 @@ index b964792..b8fa73f 100644
 +  ]
  }
 diff --git a/vitest.config.ts b/vitest.config.ts
-index 68a1104..2162d0c 100644
+index 68a1104..32b0b66 100644
 --- a/vitest.config.ts
 +++ b/vitest.config.ts
 @@ -1,21 +1,5 @@
@@ -10439,5 +11431,5 @@ index 68a1104..2162d0c 100644
 -    },
 -  },
 +  resolve: { alias: { "@memory-router": new URL("../../../src", import.meta.url).pathname } },
-+  test: { include: ["src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
++  test: { include: ["src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
  });

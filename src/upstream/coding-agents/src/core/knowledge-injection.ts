@@ -1,4 +1,4 @@
-import { DEFAULT_TOOL_PREFIX, renderToolText } from "@memory-router/shared/tool-prefix";
+import { DEFAULT_TOOL_PREFIX, renderBrandText } from "@memory-router/shared/tool-prefix";
 export interface PageRef {
   id: string;
   title: string;
@@ -102,13 +102,13 @@ export interface ToolGuideOpts {
 }
 
 function toolGuide(opts?: ToolGuideOpts): string {
-  return renderToolText((opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE, opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
+  return (opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE;
 }
 
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */
 export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): string {
-  const body = pages.length ? renderToolText(indexLine(pages), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX) : EMPTY_STATE;
-  return (
+  const body = pages.length ? indexLine(pages) : EMPTY_STATE;
+  return renderBrandText((
     "<hindsight_knowledge>\n" +
     "This repository has a Hindsight memory + knowledge base (curated, continuously-updated pages plus the raw " +
     "memory behind them). The tools below are registered, but you must actually CALL them at the right moments:\n" +
@@ -119,7 +119,7 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): 
     `${body}\n` +
     "This tool guide and the page list are re-injected for you periodically as things change.\n" +
     "</hindsight_knowledge>"
-  );
+  ), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
 }
 
 /**
@@ -129,12 +129,12 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): 
  * which tools exist and WHEN to call each is unconditional.
  */
 export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): string {
-  const rosterBlock = pages.length ? `${renderToolText(indexLine(pages), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX)}\n` : "";
-  return (
+  const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
+  return renderBrandText((
     "<hindsight_knowledge_refresh>\n" +
     rosterBlock +
     "Reminder — this repo's Hindsight tools are available; call them at the right moments:\n" +
     `${toolGuide(opts)}\n` +
     "</hindsight_knowledge_refresh>"
-  );
+  ), opts?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
 }
