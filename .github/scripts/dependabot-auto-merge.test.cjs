@@ -96,6 +96,7 @@ test("reads upstream multiline output and rejects missing/truncated data", () =>
 const validationRun = {
   id: 100,
   run_attempt: 1,
+  run_started_at: "2026-10-14T05:00:00Z",
   updated_at: "2026-10-14T05:10:00Z",
   head_sha: pull.head.sha,
   head_branch: pull.head.ref,
@@ -288,6 +289,7 @@ for (const status of ["queued", "in_progress", "completed"]) {
         {
           ...validationRun,
           run_attempt: 2,
+          run_started_at: "2026-10-14T06:00:00Z",
           updated_at: "2026-10-14T06:05:00Z",
           status,
           conclusion: status === "completed" ? "failure" : null,
@@ -312,14 +314,46 @@ test("a later successful execution supersedes an earlier failed execution regard
   const h = harness({
     validationRuns: [
       { ...validationRun, id: 101, conclusion: "failure" },
-      { ...validationRun, run_attempt: 2, updated_at: "2026-10-14T06:05:00Z" },
+      { ...validationRun, run_attempt: 2, run_started_at: "2026-10-14T06:00:00Z", updated_at: "2026-10-14T06:05:00Z" },
     ],
   });
   await run(h.options);
   assert.equal(h.commands.length, 1);
   assert.equal(h.requests.find((r) => r.endpoint === "jobs").input.run_id, 100);
 });
-test("ambiguous timestamps cannot hide a failing execution", async () => {
+for (const conclusion of ["failure", "success"]) {
+  test(`an older slow pass cannot hide a newer fast failure (${conclusion})`, async () => {
+    const h = harness({
+      validationRuns: [
+        {
+          ...validationRun,
+          run_started_at: "2026-10-14T06:00:00Z",
+          updated_at: "2026-10-14T06:10:00Z",
+        },
+        {
+          ...validationRun,
+          id: 101,
+          event: "workflow_dispatch",
+          run_started_at: "2026-10-14T06:05:00Z",
+          updated_at: "2026-10-14T06:06:00Z",
+          conclusion,
+        },
+      ],
+    });
+    const paginate = h.options.github.paginate;
+    h.options.github.paginate = async (endpoint, input) => {
+      if (endpoint.name === "jobs" && input.run_id === 101) {
+        return validationJobs.map((job) =>
+          job.name === "quality / release combination" ? { ...job, conclusion: "failure" } : job,
+        );
+      }
+      return paginate(endpoint, input);
+    };
+    await run(h.options);
+    assert.deepEqual(h.commands, []);
+  });
+}
+test("ambiguous start timestamps cannot hide a failing execution", async () => {
   const h = harness({
     validationRuns: [
       { ...validationRun, id: 101 },
@@ -330,11 +364,11 @@ test("ambiguous timestamps cannot hide a failing execution", async () => {
   assert.deepEqual(h.commands, []);
 });
 for (const advisoryConclusion of ["success", "failure"]) {
-  test(`tied successful workflow timestamps block auto-merge even with advisory job ${advisoryConclusion}`, async () => {
+  test(`tied workflow start timestamps block auto-merge even with advisory job ${advisoryConclusion}`, async () => {
     const h = harness({
       validationRuns: [
         { ...validationRun, id: 101 },
-        { ...validationRun, run_attempt: 2 },
+        { ...validationRun, run_attempt: 2, updated_at: "2026-10-14T05:20:00Z" },
       ],
     });
     const paginate = h.options.github.paginate;
@@ -354,9 +388,9 @@ for (const advisoryConclusion of ["success", "failure"]) {
     );
   });
 }
-test("missing or invalid execution timestamps block auto-merge", async () => {
-  for (const updated_at of [undefined, "invalid"]) {
-    const h = harness({ validationRuns: [{ ...validationRun, updated_at }] });
+test("missing or invalid execution start timestamps block auto-merge", async () => {
+  for (const run_started_at of [undefined, "invalid"]) {
+    const h = harness({ validationRuns: [{ ...validationRun, run_started_at }] });
     await run(h.options);
     assert.deepEqual(h.commands, []);
   }
@@ -364,7 +398,14 @@ test("missing or invalid execution timestamps block auto-merge", async () => {
 test("successful recovery uses latest jobs and cannot reuse jobs from an older attempt", async () => {
   const h = harness({
     validationRuns: [
-      { ...validationRun, id: 101, run_attempt: 2, event: "workflow_dispatch", updated_at: "2026-10-14T06:05:00Z" },
+      {
+        ...validationRun,
+        id: 101,
+        run_attempt: 2,
+        event: "workflow_dispatch",
+        run_started_at: "2026-10-14T06:00:00Z",
+        updated_at: "2026-10-14T06:05:00Z",
+      },
       validationRun,
     ],
   });
@@ -388,6 +429,7 @@ for (const afterValidationLookup of [
   [{ ...validationRun, run_attempt: 2 }],
   [{ ...validationRun, status: "in_progress", conclusion: null }],
   [{ ...validationRun, updated_at: "2026-10-14T06:05:00Z" }],
+  [{ ...validationRun, run_started_at: "2026-10-14T06:00:00Z" }],
   [validationRun, { ...validationRun, id: 99, run_attempt: 2, status: "queued", conclusion: null }],
 ]) {
   test(`validation changing during job lookup prevents auto-merge (${JSON.stringify(afterValidationLookup)})`, async () => {

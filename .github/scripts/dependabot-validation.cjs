@@ -30,12 +30,12 @@ async function latestValidation(github, repo, pull) {
       run.head_branch === pull.head.ref &&
       ["pull_request", "workflow_dispatch"].includes(run.event),
   );
-  if (applicable.some((run) => run.status !== "completed" || !Number.isFinite(Date.parse(run.updated_at)))) {
+  if (applicable.some((run) => run.status !== "completed" || !Number.isFinite(Date.parse(run.run_started_at)))) {
     return undefined;
   }
-  // Reruns retain their run ID; updated_at identifies the latest execution.
-  applicable.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
-  if (applicable.length > 1 && Date.parse(applicable[0].updated_at) === Date.parse(applicable[1].updated_at)) {
+  // Reruns retain their run ID; order attempts by start, not completion time.
+  applicable.sort((a, b) => Date.parse(b.run_started_at) - Date.parse(a.run_started_at));
+  if (applicable.length > 1 && Date.parse(applicable[0].run_started_at) === Date.parse(applicable[1].run_started_at)) {
     return { ambiguous: true };
   }
   return applicable[0];
@@ -44,7 +44,7 @@ async function latestValidation(github, repo, pull) {
 async function validationEligibility(github, context, pull) {
   const run = await latestValidation(github, context.repo, pull);
   if (run?.ambiguous) {
-    return "Latest PR validation executions have tied update timestamps; run validation again before auto-merge";
+    return "Latest PR validation executions have tied start timestamps; run validation again before auto-merge";
   }
   if (run?.status !== "completed" || run.conclusion !== "success") {
     return "Waiting for successful PR validation at the current head";
@@ -68,6 +68,7 @@ async function validationEligibility(github, context, pull) {
     !current ||
     current.id !== run.id ||
     current.run_attempt !== run.run_attempt ||
+    current.run_started_at !== run.run_started_at ||
     current.updated_at !== run.updated_at ||
     current.status !== "completed" ||
     current.conclusion !== "success"
