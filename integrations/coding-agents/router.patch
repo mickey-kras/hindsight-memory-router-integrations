@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..e9ded80
+index 0000000..c82db1b
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,27 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -11,6 +11,7 @@ index 0000000..e9ded80
 +- All HTTP requests use the shared bank/operation guard. Bank listing intersects router-visible banks with configured IDs.
 +- Recall/reflect fan out through the shared coordinator. Other reads remain explicitly bank-addressed.
 +- 401/403 are terminal; upstream credential retry is replaced by runtime environment resolution on each request.
++- Optional human mode resolves a short-lived session from native OS secure storage on every request. Browser login uses the router's loopback OIDC/PKCE exchange; sign-out revokes and deletes the session. Persistent application credentials remain separate.
 +- Redirects and raw server error bodies are blocked. Automatic upstream replacement and installer token migration are disabled.
 +- Transcript parsing, provenance tags, retain payloads, hooks, and harness adapters retain upstream behavior.
 +- Manual document ingestion uses the shared exact-title hash identity. Legacy IDs remain untouched; see the root README migration note.
@@ -1415,10 +1416,10 @@ diff --git a/package-lock.json b/npm-shrinkwrap.json
 similarity index 84%
 rename from package-lock.json
 rename to npm-shrinkwrap.json
-index a34aa43..41b7ace 100644
+index a34aa43..01b49e0 100644
 --- a/package-lock.json
 +++ b/npm-shrinkwrap.json
-@@ -1,18 +1,17 @@
+@@ -1,18 +1,18 @@
  {
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.6.1",
@@ -1436,6 +1437,7 @@ index a34aa43..41b7ace 100644
 -        "@modelcontextprotocol/sdk": "^1.29.0",
 -        "@vectorize-io/hindsight-all": "^0.8.6",
 +        "@modelcontextprotocol/sdk": "^1.32.1",
++        "@napi-rs/keyring": "2.1.1",
          "jsonc-parser": "^3.3.1",
 -        "smol-toml": "^1.8.0",
 -        "zod": "^4.4.3"
@@ -1444,7 +1446,7 @@ index a34aa43..41b7ace 100644
        },
        "bin": {
          "hindsight-antigravity-hook": "dist/antigravity-hook.js",
-@@ -44,13 +43,13 @@
+@@ -44,13 +44,13 @@
          "hindsight-zcode-stop-hook": "dist/zcode-stop-hook.js"
        },
        "devDependencies": {
@@ -1462,7 +1464,7 @@ index a34aa43..41b7ace 100644
        }
      },
      "node_modules/@ai-sdk/provider": {
-@@ -213,18 +212,18 @@
+@@ -213,18 +213,18 @@
        }
      },
      "node_modules/@aws-sdk/core": {
@@ -1489,7 +1491,7 @@ index a34aa43..41b7ace 100644
          "bowser": "^2.11.0",
          "tslib": "^2.6.2"
        },
-@@ -233,16 +232,16 @@
+@@ -233,16 +233,16 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-cognito-identity": {
@@ -1513,7 +1515,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -250,16 +249,16 @@
+@@ -250,16 +250,16 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-env": {
@@ -1537,7 +1539,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -267,18 +266,18 @@
+@@ -267,18 +267,18 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-http": {
@@ -1565,7 +1567,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -286,24 +285,24 @@
+@@ -286,24 +286,24 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-ini": {
@@ -1605,7 +1607,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -311,17 +310,17 @@
+@@ -311,17 +311,17 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-login": {
@@ -1631,7 +1633,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -329,22 +328,22 @@
+@@ -329,22 +329,22 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-node": {
@@ -1667,7 +1669,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -352,16 +351,16 @@
+@@ -352,16 +352,16 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-process": {
@@ -1691,7 +1693,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -369,18 +368,18 @@
+@@ -369,18 +369,18 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-sso": {
@@ -1719,7 +1721,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -388,17 +387,17 @@
+@@ -388,17 +388,17 @@
        }
      },
      "node_modules/@aws-sdk/credential-provider-web-identity": {
@@ -1745,7 +1747,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -435,19 +434,19 @@
+@@ -435,19 +435,19 @@
        }
      },
      "node_modules/@aws-sdk/nested-clients": {
@@ -1775,7 +1777,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -455,15 +454,15 @@
+@@ -455,15 +455,15 @@
        }
      },
      "node_modules/@aws-sdk/signature-v4-multi-region": {
@@ -1797,7 +1799,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -471,17 +470,17 @@
+@@ -471,17 +471,17 @@
        }
      },
      "node_modules/@aws-sdk/token-providers": {
@@ -1823,7 +1825,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -489,13 +488,13 @@
+@@ -489,13 +489,13 @@
        }
      },
      "node_modules/@aws-sdk/types": {
@@ -1841,7 +1843,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -516,13 +515,13 @@
+@@ -516,13 +516,13 @@
        }
      },
      "node_modules/@aws-sdk/xml-builder": {
@@ -1859,7 +1861,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -1063,9 +1062,9 @@
+@@ -1063,9 +1063,9 @@
        }
      },
      "node_modules/@jridgewell/sourcemap-codec": {
@@ -1872,7 +1874,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT"
      },
-@@ -1081,12 +1080,12 @@
+@@ -1081,12 +1081,12 @@
        }
      },
      "node_modules/@modelcontextprotocol/sdk": {
@@ -1889,7 +1891,233 @@ index a34aa43..41b7ace 100644
          "ajv": "^8.17.1",
          "ajv-formats": "^3.0.1",
          "content-type": "^1.0.5",
-@@ -1221,16 +1220,6 @@
+@@ -1204,6 +1204,225 @@
+         "win32"
+       ]
+     },
++    "node_modules/@napi-rs/keyring": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring/-/keyring-2.1.1.tgz",
++      "integrity": "sha512-7HUq8FHgW/O4s8ESvkxngTC9tOR/IyktdR0ral2VD0C8HDZk86FwPAH4qZyerKwS1DhJ6AhoebIsxcyw+Lbt1Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 10"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Brooooooklyn"
++      },
++      "optionalDependencies": {
++        "@napi-rs/keyring-darwin-arm64": "2.1.1",
++        "@napi-rs/keyring-darwin-x64": "2.1.1",
++        "@napi-rs/keyring-freebsd-x64": "2.1.1",
++        "@napi-rs/keyring-linux-arm-gnueabihf": "2.1.1",
++        "@napi-rs/keyring-linux-arm64-gnu": "2.1.1",
++        "@napi-rs/keyring-linux-arm64-musl": "2.1.1",
++        "@napi-rs/keyring-linux-riscv64-gnu": "2.1.1",
++        "@napi-rs/keyring-linux-x64-gnu": "2.1.1",
++        "@napi-rs/keyring-linux-x64-musl": "2.1.1",
++        "@napi-rs/keyring-win32-arm64-msvc": "2.1.1",
++        "@napi-rs/keyring-win32-ia32-msvc": "2.1.1",
++        "@napi-rs/keyring-win32-x64-msvc": "2.1.1"
++      }
++    },
++    "node_modules/@napi-rs/keyring-darwin-arm64": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-darwin-arm64/-/keyring-darwin-arm64-2.1.1.tgz",
++      "integrity": "sha512-H6uxAztj6GSDwnh/1JDHCtAqWvBTr+0+FGwOOw+rY568z7vFOqrJTTboePFuAnJSO7kNvq+yuyXJ9B5Ueco4yA==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-darwin-x64": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-darwin-x64/-/keyring-darwin-x64-2.1.1.tgz",
++      "integrity": "sha512-RcHBNnOIzqliNU8Z0jc71bPs/PRn4IIO02XE6DV3HxVFAHo4CooNXDySCL+jbHhObLlSy9yynRn+wq5k+IAmRw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-freebsd-x64": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-freebsd-x64/-/keyring-freebsd-x64-2.1.1.tgz",
++      "integrity": "sha512-IrM8IKBZKQzETI1BlvSpT6lRzC9eTIQ5TgUwcbQSiQTuXTEXAAHHvBYkoHicN2b2uqgAfO3dwN382CGRw0Ownw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-linux-arm-gnueabihf": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-linux-arm-gnueabihf/-/keyring-linux-arm-gnueabihf-2.1.1.tgz",
++      "integrity": "sha512-KMld1c9TRucQYV/qasA5jS/VZWCpxMOeHflrciOAsfhiVQ8VfA77grlhGD0kiWtz5e+2M6kYLH9iFmQhPROkGw==",
++      "cpu": [
++        "arm"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-linux-arm64-gnu": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-linux-arm64-gnu/-/keyring-linux-arm64-gnu-2.1.1.tgz",
++      "integrity": "sha512-AcMk+ZDP8H20Ml5vaTuSh/Ibh5vU4lrAavS2tjoJ7EJJBLDYssONINWrvVgy43SfzntgQVDBcU5GlMI+z5IMFA==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-linux-arm64-musl": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-linux-arm64-musl/-/keyring-linux-arm64-musl-2.1.1.tgz",
++      "integrity": "sha512-wUHecqT9SMUaQCsJO6vtFEsMcfskspXf6+J0AtKsnK8/GnAAb4hf2FHtwp2ZUOecOk1kTW3LPhU5LwTMJ1LLeA==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-linux-riscv64-gnu": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-linux-riscv64-gnu/-/keyring-linux-riscv64-gnu-2.1.1.tgz",
++      "integrity": "sha512-hrfvuY0zxrpJOa4k/LzWkrB/R/nXnniz/I2V39X5pWgxKJ1iZBQI03/wT8OI7BwSv9czSh5LLeX/o5D5ywRHBg==",
++      "cpu": [
++        "riscv64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-linux-x64-gnu": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-linux-x64-gnu/-/keyring-linux-x64-gnu-2.1.1.tgz",
++      "integrity": "sha512-NHfMyYyu6laqRBzgfsB0zN12l+z5gz6xQqmLDT8ijevMMOc9ICcVo2GUJCPSX5WvRBgzui91D4R4QG0tahMurw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-linux-x64-musl": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-linux-x64-musl/-/keyring-linux-x64-musl-2.1.1.tgz",
++      "integrity": "sha512-5E2pO2zqOv+HJr2YorAUYmqItv8ts2oa+BccxZ07/I7x3XvxqwZGtRbkp4wM8psv7phhIfgy+0kZ/ItBsGiDhg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-win32-arm64-msvc": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-win32-arm64-msvc/-/keyring-win32-arm64-msvc-2.1.1.tgz",
++      "integrity": "sha512-gn+Xg3oZmyC/pMIU0HTCyrIsncn2/u47H3JRQ8WKfPgS0KDCytcf2kuCCSShtNETSE5V8Zc18ymgIW5UrOQ5OA==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-win32-ia32-msvc": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-win32-ia32-msvc/-/keyring-win32-ia32-msvc-2.1.1.tgz",
++      "integrity": "sha512-DeMQnalb+ueYjskBBUjwv0b9xuN9vhs/vi2H4q/crERfDWgmqu77rGZOW4Bi9kDc7Za3t29yeZctEBZzjAtXuA==",
++      "cpu": [
++        "ia32"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
++    "node_modules/@napi-rs/keyring-win32-x64-msvc": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/@napi-rs/keyring-win32-x64-msvc/-/keyring-win32-x64-msvc-2.1.1.tgz",
++      "integrity": "sha512-DjRshMlsMdEyZTNpqfQYj60kDrCZLkl4y80U3w5WJQIj7ypToj02+A/hfJw/g68wzbSZ6uXhklyITQ1DABZAUg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">= 10"
++      }
++    },
+     "node_modules/@npmcli/agent": {
+       "version": "4.0.2",
+       "resolved": "https://registry.npmjs.org/@npmcli/agent/-/agent-4.0.2.tgz",
+@@ -1221,16 +1440,6 @@
          "node": "^20.17.0 || >=22.9.0"
        }
      },
@@ -1906,7 +2134,7 @@ index a34aa43..41b7ace 100644
      "node_modules/@npmcli/arborist": {
        "version": "9.4.0",
        "resolved": "https://registry.npmjs.org/@npmcli/arborist/-/arborist-9.4.0.tgz",
-@@ -1279,55 +1268,6 @@
+@@ -1279,55 +1488,6 @@
          "node": "^20.17.0 || >=22.9.0"
        }
      },
@@ -1962,7 +2190,7 @@ index a34aa43..41b7ace 100644
      "node_modules/@npmcli/config": {
        "version": "10.8.1",
        "resolved": "https://registry.npmjs.org/@npmcli/config/-/config-10.8.1.tgz",
-@@ -1411,16 +1351,6 @@
+@@ -1411,16 +1571,6 @@
          "node": ">=20"
        }
      },
@@ -1979,10 +2207,42 @@ index a34aa43..41b7ace 100644
      "node_modules/@npmcli/git/node_modules/which": {
        "version": "6.0.1",
        "resolved": "https://registry.npmjs.org/which/-/which-6.0.1.tgz",
-@@ -1470,90 +1400,6 @@
-         "node": "^20.17.0 || >=22.9.0"
+@@ -1438,120 +1588,36 @@
        }
      },
+     "node_modules/@npmcli/installed-package-contents": {
+-      "version": "4.0.0",
+-      "resolved": "https://registry.npmjs.org/@npmcli/installed-package-contents/-/installed-package-contents-4.0.0.tgz",
+-      "integrity": "sha512-yNyAdkBxB72gtZ4GrwXCM0ZUedo9nIbOMKfGjt6Cu6DXf0p8y1PViZAKDC8q8kv/fufx0WTjRBdSlyrvnP7hmA==",
+-      "dev": true,
+-      "license": "ISC",
+-      "dependencies": {
+-        "npm-bundled": "^5.0.0",
+-        "npm-normalize-package-bin": "^5.0.0"
+-      },
+-      "bin": {
+-        "installed-package-contents": "bin/index.js"
+-      },
+-      "engines": {
+-        "node": "^20.17.0 || >=22.9.0"
+-      }
+-    },
+-    "node_modules/@npmcli/map-workspaces": {
+-      "version": "5.0.3",
+-      "resolved": "https://registry.npmjs.org/@npmcli/map-workspaces/-/map-workspaces-5.0.3.tgz",
+-      "integrity": "sha512-o2grssXo1e774E5OtEwwrgoszYRh0lqkJH+Pb9r78UcqdGJRDRfhpM8DvZPjzNLLNYeD/rNbjOKM3Ss5UABROw==",
+-      "dev": true,
+-      "license": "ISC",
+-      "dependencies": {
+-        "@npmcli/name-from-folder": "^4.0.0",
+-        "@npmcli/package-json": "^7.0.0",
+-        "glob": "^13.0.0",
+-        "minimatch": "^10.0.3"
+-      },
+-      "engines": {
+-        "node": "^20.17.0 || >=22.9.0"
+-      }
+-    },
 -    "node_modules/@npmcli/map-workspaces/node_modules/balanced-match": {
 -      "version": "4.0.4",
 -      "resolved": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz",
@@ -2038,39 +2298,57 @@ index a34aa43..41b7ace 100644
 -      "version": "10.2.6",
 -      "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.6.tgz",
 -      "integrity": "sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==",
--      "dev": true,
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/@npmcli/installed-package-contents/-/installed-package-contents-4.0.0.tgz",
++      "integrity": "sha512-yNyAdkBxB72gtZ4GrwXCM0ZUedo9nIbOMKfGjt6Cu6DXf0p8y1PViZAKDC8q8kv/fufx0WTjRBdSlyrvnP7hmA==",
+       "dev": true,
 -      "license": "BlueOak-1.0.0",
--      "dependencies": {
++      "license": "ISC",
+       "dependencies": {
 -        "brace-expansion": "^5.0.8"
--      },
++        "npm-bundled": "^5.0.0",
++        "npm-normalize-package-bin": "^5.0.0"
+       },
 -      "engines": {
 -        "node": "18 || 20 || >=22"
--      },
++      "bin": {
++        "installed-package-contents": "bin/index.js"
+       },
 -      "funding": {
 -        "url": "https://github.com/sponsors/isaacs"
--      }
--    },
++      "engines": {
++        "node": "^20.17.0 || >=22.9.0"
+       }
+     },
 -    "node_modules/@npmcli/map-workspaces/node_modules/path-scurry": {
 -      "version": "2.0.2",
 -      "resolved": "https://registry.npmjs.org/path-scurry/-/path-scurry-2.0.2.tgz",
 -      "integrity": "sha512-3O/iVVsJAPsOnpwWIeD+d6z/7PmqApyQePUtCndjatj/9I5LylHvt5qluFaBT3I5h3r1ejfR056c+FCv+NnNXg==",
--      "dev": true,
++    "node_modules/@npmcli/map-workspaces": {
++      "version": "5.0.3",
++      "resolved": "https://registry.npmjs.org/@npmcli/map-workspaces/-/map-workspaces-5.0.3.tgz",
++      "integrity": "sha512-o2grssXo1e774E5OtEwwrgoszYRh0lqkJH+Pb9r78UcqdGJRDRfhpM8DvZPjzNLLNYeD/rNbjOKM3Ss5UABROw==",
+       "dev": true,
 -      "license": "BlueOak-1.0.0",
--      "dependencies": {
++      "license": "ISC",
+       "dependencies": {
 -        "lru-cache": "^11.0.0",
 -        "minipass": "^7.1.2"
--      },
--      "engines": {
++        "@npmcli/name-from-folder": "^4.0.0",
++        "@npmcli/package-json": "^7.0.0",
++        "glob": "^13.0.0",
++        "minimatch": "^10.0.3"
+       },
+       "engines": {
 -        "node": "18 || 20 || >=22"
 -      },
 -      "funding": {
 -        "url": "https://github.com/sponsors/isaacs"
--      }
--    },
++        "node": "^20.17.0 || >=22.9.0"
+       }
+     },
      "node_modules/@npmcli/metavuln-calculator": {
-       "version": "9.0.3",
-       "resolved": "https://registry.npmjs.org/@npmcli/metavuln-calculator/-/metavuln-calculator-9.0.3.tgz",
-@@ -1610,90 +1456,6 @@
+@@ -1610,90 +1676,6 @@
          "node": "^20.17.0 || >=22.9.0"
        }
      },
@@ -2161,7 +2439,7 @@ index a34aa43..41b7ace 100644
      "node_modules/@npmcli/promise-spawn": {
        "version": "9.0.1",
        "resolved": "https://registry.npmjs.org/@npmcli/promise-spawn/-/promise-spawn-9.0.1.tgz",
-@@ -1774,14 +1536,14 @@
+@@ -1774,14 +1756,14 @@
        }
      },
      "node_modules/@opencode-ai/plugin": {
@@ -2180,7 +2458,7 @@ index a34aa43..41b7ace 100644
          "effect": "4.0.0-beta.83",
          "zod": "4.1.8"
        },
-@@ -1813,9 +1575,9 @@
+@@ -1813,9 +1795,9 @@
        }
      },
      "node_modules/@opencode-ai/sdk": {
@@ -2193,7 +2471,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "dependencies": {
-@@ -1823,14 +1585,14 @@
+@@ -1823,14 +1805,14 @@
        }
      },
      "node_modules/@opencode/ai": {
@@ -2212,7 +2490,7 @@ index a34aa43..41b7ace 100644
          "@smithy/eventstream-codec": "4.2.14",
          "@smithy/util-utf8": "4.2.2",
          "aws4fetch": "1.0.20",
-@@ -1850,26 +1612,26 @@
+@@ -1850,26 +1832,26 @@
        }
      },
      "node_modules/@opencode/plugin": {
@@ -2250,7 +2528,7 @@ index a34aa43..41b7ace 100644
          "solid-js": ">=1.9.0"
        },
        "peerDependenciesMeta": {
-@@ -1888,14 +1650,14 @@
+@@ -1888,14 +1870,14 @@
        }
      },
      "node_modules/@opencode/plugin/node_modules/@opencode/client": {
@@ -2270,7 +2548,7 @@ index a34aa43..41b7ace 100644
        },
        "peerDependencies": {
          "effect": "4.0.0-rc.112",
-@@ -1932,13 +1694,13 @@
+@@ -1932,13 +1914,13 @@
        }
      },
      "node_modules/@opencode/protocol": {
@@ -2288,7 +2566,7 @@ index a34aa43..41b7ace 100644
          "effect": "4.0.0-rc.112"
        }
      },
-@@ -1954,9 +1716,9 @@
+@@ -1954,9 +1936,9 @@
        }
      },
      "node_modules/@opencode/schema": {
@@ -2301,7 +2579,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "dependencies": {
-@@ -1976,9 +1738,9 @@
+@@ -1976,9 +1958,9 @@
        }
      },
      "node_modules/@opencode/util": {
@@ -2314,7 +2592,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "dependencies": {
-@@ -1988,16 +1750,21 @@
+@@ -1988,16 +1970,21 @@
          "@npmcli/arborist": "9.4.0",
          "@npmcli/config": "10.8.1",
          "@opentelemetry/api": "1.9.0",
@@ -2340,7 +2618,7 @@ index a34aa43..41b7ace 100644
          "pacote": "21.5.1"
        }
      },
-@@ -2085,29 +1852,6 @@
+@@ -2085,29 +2072,6 @@
          "effect": "^4.0.0-rc.112"
        }
      },
@@ -2370,7 +2648,7 @@ index a34aa43..41b7ace 100644
      "node_modules/@opencode/util/node_modules/effect": {
        "version": "4.0.0-rc.112",
        "resolved": "https://registry.npmjs.org/effect/-/effect-4.0.0-rc.112.tgz",
-@@ -2119,91 +1863,30 @@
+@@ -2119,71 +2083,10 @@
          "msgpackr": "^2.0.5"
        }
      },
@@ -2378,38 +2656,27 @@ index a34aa43..41b7ace 100644
 -      "version": "13.0.5",
 -      "resolved": "https://registry.npmjs.org/glob/-/glob-13.0.5.tgz",
 -      "integrity": "sha512-BzXxZg24Ibra1pbQ/zE7Kys4Ua1ks7Bn6pKLkVPZ9FZe4JQS6/Q7ef3LG1H+k7lUf5l4T3PLSyYyYJVYUvfgTw==",
-+    "node_modules/@opencode/util/node_modules/undici": {
-+      "version": "8.11.2",
-+      "resolved": "https://registry.npmjs.org/undici/-/undici-8.11.2.tgz",
-+      "integrity": "sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==",
-       "dev": true,
+-      "dev": true,
 -      "license": "BlueOak-1.0.0",
 -      "dependencies": {
 -        "minimatch": "^10.2.1",
 -        "minipass": "^7.1.2",
 -        "path-scurry": "^2.0.0"
 -      },
-+      "license": "MIT",
-       "engines": {
+-      "engines": {
 -        "node": "20 || >=22"
 -      },
 -      "funding": {
 -        "url": "https://github.com/sponsors/isaacs"
-+        "node": ">=22.19.0"
-       }
-     },
+-      }
+-    },
 -    "node_modules/@opencode/util/node_modules/lru-cache": {
 -      "version": "11.5.2",
 -      "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.2.tgz",
 -      "integrity": "sha512-4pfM1Ff0x50o0tQwb5ucw/RzNyD0/YJME6IVcStalZuMWxdt3sR3huStTtxz4PUmvZfRguvDejasvQ2kifR11g==",
-+    "node_modules/@opentelemetry/api": {
-+      "version": "1.9.0",
-+      "resolved": "https://registry.npmjs.org/@opentelemetry/api/-/api-1.9.0.tgz",
-+      "integrity": "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==",
-       "dev": true,
+-      "dev": true,
 -      "license": "BlueOak-1.0.0",
-+      "license": "Apache-2.0",
-       "engines": {
+-      "engines": {
 -        "node": "20 || >=22"
 -      }
 -    },
@@ -2446,25 +2713,17 @@ index a34aa43..41b7ace 100644
 -        "url": "https://github.com/sponsors/isaacs"
 -      }
 -    },
--    "node_modules/@opencode/util/node_modules/undici": {
+     "node_modules/@opencode/util/node_modules/undici": {
 -      "version": "8.10.2",
 -      "resolved": "https://registry.npmjs.org/undici/-/undici-8.10.2.tgz",
 -      "integrity": "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==",
--      "dev": true,
--      "license": "MIT",
--      "engines": {
--        "node": ">=22.19.0"
--      }
--    },
--    "node_modules/@opentelemetry/api": {
--      "version": "1.9.0",
--      "resolved": "https://registry.npmjs.org/@opentelemetry/api/-/api-1.9.0.tgz",
--      "integrity": "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==",
--      "dev": true,
--      "license": "Apache-2.0",
--      "engines": {
--        "node": ">=8.0.0"
-+        "node": ">=8.0.0"
++      "version": "8.11.2",
++      "resolved": "https://registry.npmjs.org/undici/-/undici-8.11.2.tgz",
++      "integrity": "sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+@@ -2201,9 +2104,9 @@
        }
      },
      "node_modules/@opentelemetry/api-logs": {
@@ -2477,7 +2736,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "Apache-2.0",
        "dependencies": {
-@@ -2214,9 +1897,9 @@
+@@ -2214,9 +2117,9 @@
        }
      },
      "node_modules/@opentelemetry/context-async-hooks": {
@@ -2490,7 +2749,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "Apache-2.0",
        "engines": {
-@@ -2227,9 +1910,9 @@
+@@ -2227,9 +2130,9 @@
        }
      },
      "node_modules/@opentelemetry/core": {
@@ -2503,7 +2762,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "Apache-2.0",
        "dependencies": {
-@@ -2243,17 +1926,17 @@
+@@ -2243,17 +2146,17 @@
        }
      },
      "node_modules/@opentelemetry/exporter-trace-otlp-http": {
@@ -2529,7 +2788,7 @@ index a34aa43..41b7ace 100644
        },
        "engines": {
          "node": "^18.19.0 || >=20.6.0"
-@@ -2263,14 +1946,14 @@
+@@ -2263,14 +2166,14 @@
        }
      },
      "node_modules/@opentelemetry/otlp-exporter-base": {
@@ -2549,7 +2808,7 @@ index a34aa43..41b7ace 100644
        },
        "engines": {
          "node": "^18.19.0 || >=20.6.0"
-@@ -2280,19 +1963,18 @@
+@@ -2280,19 +2183,18 @@
        }
      },
      "node_modules/@opentelemetry/otlp-transformer": {
@@ -2578,7 +2837,7 @@ index a34aa43..41b7ace 100644
        },
        "engines": {
          "node": "^18.19.0 || >=20.6.0"
-@@ -2302,13 +1984,13 @@
+@@ -2302,13 +2204,13 @@
        }
      },
      "node_modules/@opentelemetry/resources": {
@@ -2596,7 +2855,7 @@ index a34aa43..41b7ace 100644
          "@opentelemetry/semantic-conventions": "^1.29.0"
        },
        "engines": {
-@@ -2319,15 +2001,15 @@
+@@ -2319,15 +2221,15 @@
        }
      },
      "node_modules/@opentelemetry/sdk-logs": {
@@ -2618,7 +2877,7 @@ index a34aa43..41b7ace 100644
          "@opentelemetry/semantic-conventions": "^1.29.0"
        },
        "engines": {
-@@ -2338,14 +2020,14 @@
+@@ -2338,14 +2240,14 @@
        }
      },
      "node_modules/@opentelemetry/sdk-metrics": {
@@ -2638,7 +2897,7 @@ index a34aa43..41b7ace 100644
        },
        "engines": {
          "node": "^18.19.0 || >=20.6.0"
-@@ -2355,14 +2037,14 @@
+@@ -2355,14 +2257,14 @@
        }
      },
      "node_modules/@opentelemetry/sdk-trace-base": {
@@ -2658,7 +2917,7 @@ index a34aa43..41b7ace 100644
          "@opentelemetry/semantic-conventions": "^1.29.0"
        },
        "engines": {
-@@ -2373,15 +2055,15 @@
+@@ -2373,15 +2275,15 @@
        }
      },
      "node_modules/@opentelemetry/sdk-trace-node": {
@@ -2680,7 +2939,7 @@ index a34aa43..41b7ace 100644
        },
        "engines": {
          "node": "^18.19.0 || >=20.6.0"
-@@ -2411,76 +2093,10 @@
+@@ -2411,76 +2313,10 @@
          "node": ">=14"
        }
      },
@@ -2760,7 +3019,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "peer": true,
-@@ -2488,19 +2104,16 @@
+@@ -2488,19 +2324,16 @@
          "node": ">= 20.0.0"
        },
        "peerDependencies": {
@@ -2784,7 +3043,7 @@ index a34aa43..41b7ace 100644
        "engines": {
          "node": ">= 20.0.0"
        },
-@@ -2518,9 +2131,9 @@
+@@ -2518,9 +2351,9 @@
        }
      },
      "node_modules/@redis/json": {
@@ -2797,7 +3056,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "peer": true,
-@@ -2528,13 +2141,13 @@
+@@ -2528,13 +2361,13 @@
          "node": ">= 20.0.0"
        },
        "peerDependencies": {
@@ -2815,7 +3074,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "peer": true,
-@@ -2542,13 +2155,13 @@
+@@ -2542,13 +2375,13 @@
          "node": ">= 20.0.0"
        },
        "peerDependencies": {
@@ -2833,7 +3092,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "peer": true,
-@@ -2556,7 +2169,7 @@
+@@ -2556,7 +2389,7 @@
          "node": ">= 20.0.0"
        },
        "peerDependencies": {
@@ -2842,7 +3101,7 @@ index a34aa43..41b7ace 100644
        }
      },
      "node_modules/@rollup/rollup-android-arm-eabi": {
-@@ -2990,13 +2603,13 @@
+@@ -2990,13 +2823,13 @@
        }
      },
      "node_modules/@smithy/core": {
@@ -2860,7 +3119,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -3078,14 +2691,14 @@
+@@ -3078,14 +2911,14 @@
        }
      },
      "node_modules/@smithy/signature-v4": {
@@ -2880,7 +3139,7 @@ index a34aa43..41b7ace 100644
          "tslib": "^2.6.2"
        },
        "engines": {
-@@ -3093,9 +2706,9 @@
+@@ -3093,9 +2926,9 @@
        }
      },
      "node_modules/@smithy/types": {
@@ -2893,10 +3152,24 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "Apache-2.0",
        "dependencies": {
-@@ -3178,45 +2791,6 @@
-         "node": "^20.17.0 || >=22.9.0"
+@@ -3164,57 +2997,18 @@
+         "node": "^16.14.0 || >=18.0.0"
        }
      },
+-    "node_modules/@tufjs/models": {
+-      "version": "4.1.0",
+-      "resolved": "https://registry.npmjs.org/@tufjs/models/-/models-4.1.0.tgz",
+-      "integrity": "sha512-Y8cK9aggNRsqJVaKUlEYs4s7CvQ1b1ta2DVPyAimb0I2qhzjNk+A+mxvll/klL0RlfuIUei8BF7YWiua4kQqww==",
+-      "dev": true,
+-      "license": "MIT",
+-      "dependencies": {
+-        "@tufjs/canonical-json": "2.0.0",
+-        "minimatch": "^10.1.1"
+-      },
+-      "engines": {
+-        "node": "^20.17.0 || >=22.9.0"
+-      }
+-    },
 -    "node_modules/@tufjs/models/node_modules/balanced-match": {
 -      "version": "4.0.4",
 -      "resolved": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz",
@@ -2924,22 +3197,28 @@ index a34aa43..41b7ace 100644
 -      "version": "10.2.6",
 -      "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.6.tgz",
 -      "integrity": "sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==",
--      "dev": true,
++    "node_modules/@tufjs/models": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/@tufjs/models/-/models-4.1.0.tgz",
++      "integrity": "sha512-Y8cK9aggNRsqJVaKUlEYs4s7CvQ1b1ta2DVPyAimb0I2qhzjNk+A+mxvll/klL0RlfuIUei8BF7YWiua4kQqww==",
+       "dev": true,
 -      "license": "BlueOak-1.0.0",
--      "dependencies": {
++      "license": "MIT",
+       "dependencies": {
 -        "brace-expansion": "^5.0.8"
--      },
--      "engines": {
++        "@tufjs/canonical-json": "2.0.0",
++        "minimatch": "^10.1.1"
+       },
+       "engines": {
 -        "node": "18 || 20 || >=22"
 -      },
 -      "funding": {
 -        "url": "https://github.com/sponsors/isaacs"
--      }
--    },
++        "node": "^20.17.0 || >=22.9.0"
+       }
+     },
      "node_modules/@types/chai": {
-       "version": "5.2.3",
-       "resolved": "https://registry.npmjs.org/@types/chai/-/chai-5.2.3.tgz",
-@@ -3243,62 +2817,36 @@
+@@ -3243,62 +3037,36 @@
        "license": "MIT"
      },
      "node_modules/@types/node": {
@@ -3015,7 +3294,7 @@ index a34aa43..41b7ace 100644
        },
        "funding": {
          "url": "https://opencollective.com/vitest"
-@@ -3316,70 +2864,22 @@
+@@ -3316,70 +3084,22 @@
          }
        }
      },
@@ -3023,13 +3302,9 @@ index a34aa43..41b7ace 100644
 -      "version": "4.1.11",
 -      "resolved": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.11.tgz",
 -      "integrity": "sha512-yiZzPbGTS9Sr/JpFl8zHrcIkAofNbFV6k21vIgQN/cY/oxZeXhJv5sc/MBJ5jFKWmWs+oJHw0UXLZjmf931+Vw==",
-+    "node_modules/@vitest/mocker/node_modules/magic-string": {
-+      "version": "1.4.2",
-+      "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-1.4.2.tgz",
-+      "integrity": "sha512-vG+rjFRj1PqdIBozIxAGMjPlOhaVe+GXpbttY/iSK7rGcJRMlwNJO7dcUwmUqkymsFLJiNGI06t4D7Fr7yRC9g==",
-       "dev": true,
-       "license": "MIT",
-       "dependencies": {
+-      "dev": true,
+-      "license": "MIT",
+-      "dependencies": {
 -        "tinyrainbow": "^3.1.0"
 -      },
 -      "funding": {
@@ -3054,9 +3329,13 @@ index a34aa43..41b7ace 100644
 -      "version": "4.1.11",
 -      "resolved": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.11.tgz",
 -      "integrity": "sha512-pN7ikn1ON7h8ee4gIAp4AzyK+zBtJPzVbqOgu5LCEh4VaJVbPQcgYQYJIMGQPXVeJJq1fnfazis7a5pFNPahog==",
--      "dev": true,
--      "license": "MIT",
--      "dependencies": {
++    "node_modules/@vitest/mocker/node_modules/magic-string": {
++      "version": "1.4.2",
++      "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-1.4.2.tgz",
++      "integrity": "sha512-vG+rjFRj1PqdIBozIxAGMjPlOhaVe+GXpbttY/iSK7rGcJRMlwNJO7dcUwmUqkymsFLJiNGI06t4D7Fr7yRC9g==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
 -        "@vitest/pretty-format": "4.1.11",
 -        "@vitest/utils": "4.1.11",
 -        "magic-string": "^0.30.21",
@@ -3094,7 +3373,7 @@ index a34aa43..41b7ace 100644
        "funding": {
          "url": "https://opencollective.com/vitest"
        }
-@@ -3464,9 +2964,9 @@
+@@ -3464,9 +3184,9 @@
        }
      },
      "node_modules/ansi-regex": {
@@ -3107,7 +3386,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "engines": {
-@@ -3514,11 +3014,14 @@
+@@ -3514,11 +3234,14 @@
        "license": "MIT"
      },
      "node_modules/balanced-match": {
@@ -3126,7 +3405,7 @@ index a34aa43..41b7ace 100644
      },
      "node_modules/base64-js": {
        "version": "1.5.1",
-@@ -3613,13 +3116,16 @@
+@@ -3613,13 +3336,16 @@
        "license": "MIT"
      },
      "node_modules/brace-expansion": {
@@ -3147,7 +3426,7 @@ index a34aa43..41b7ace 100644
        }
      },
      "node_modules/buffer-equal-constant-time": {
-@@ -3629,6 +3135,22 @@
+@@ -3629,6 +3355,22 @@
        "dev": true,
        "license": "BSD-3-Clause"
      },
@@ -3170,7 +3449,7 @@ index a34aa43..41b7ace 100644
      "node_modules/bundle-require": {
        "version": "5.1.0",
        "resolved": "https://registry.npmjs.org/bundle-require/-/bundle-require-5.1.0.tgz",
-@@ -3686,90 +3208,6 @@
+@@ -3686,90 +3428,6 @@
          "node": "^20.17.0 || >=22.9.0"
        }
      },
@@ -3261,7 +3540,7 @@ index a34aa43..41b7ace 100644
      "node_modules/call-bind-apply-helpers": {
        "version": "1.0.2",
        "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
-@@ -3851,17 +3289,6 @@
+@@ -3851,17 +3509,6 @@
          "node": ">=8"
        }
      },
@@ -3279,7 +3558,7 @@ index a34aa43..41b7ace 100644
      "node_modules/cmd-shim": {
        "version": "8.0.0",
        "resolved": "https://registry.npmjs.org/cmd-shim/-/cmd-shim-8.0.0.tgz",
-@@ -3951,13 +3378,6 @@
+@@ -3951,13 +3598,6 @@
          "node": ">= 0.6"
        }
      },
@@ -3293,7 +3572,7 @@ index a34aa43..41b7ace 100644
      "node_modules/cookie": {
        "version": "0.7.2",
        "resolved": "https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz",
-@@ -4047,6 +3467,49 @@
+@@ -4047,6 +3687,49 @@
          }
        }
      },
@@ -3343,7 +3622,7 @@ index a34aa43..41b7ace 100644
      "node_modules/depd": {
        "version": "2.0.0",
        "resolved": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
-@@ -4390,9 +3853,9 @@
+@@ -4390,9 +4073,9 @@
        "license": "MIT"
      },
      "node_modules/fast-uri": {
@@ -3356,7 +3635,7 @@ index a34aa43..41b7ace 100644
        "funding": [
          {
            "type": "github",
-@@ -4666,22 +4129,18 @@
+@@ -4666,22 +4349,18 @@
        }
      },
      "node_modules/glob": {
@@ -3387,7 +3666,7 @@ index a34aa43..41b7ace 100644
        },
        "funding": {
          "url": "https://github.com/sponsors/isaacs"
-@@ -4795,20 +4254,10 @@
+@@ -4795,20 +4474,10 @@
          "node": "^20.17.0 || >=22.9.0"
        }
      },
@@ -3411,7 +3690,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "BSD-2-Clause"
      },
-@@ -4889,45 +4338,6 @@
+@@ -4889,45 +4558,6 @@
          "node": "^20.17.0 || >=22.9.0"
        }
      },
@@ -3457,7 +3736,7 @@ index a34aa43..41b7ace 100644
      "node_modules/inherits": {
        "version": "2.0.4",
        "resolved": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
-@@ -4945,9 +4355,9 @@
+@@ -4945,9 +4575,9 @@
        }
      },
      "node_modules/ip-address": {
@@ -3470,7 +3749,7 @@ index a34aa43..41b7ace 100644
        "license": "MIT",
        "engines": {
          "node": ">= 12"
-@@ -4959,7 +4369,23 @@
+@@ -4959,7 +4589,23 @@
        "integrity": "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==",
        "license": "MIT",
        "engines": {
@@ -3495,7 +3774,7 @@ index a34aa43..41b7ace 100644
        }
      },
      "node_modules/is-fullwidth-code-point": {
-@@ -4972,12 +4398,60 @@
+@@ -4972,12 +4618,60 @@
          "node": ">=8"
        }
      },
@@ -3556,7 +3835,7 @@ index a34aa43..41b7ace 100644
      "node_modules/isexe": {
        "version": "2.0.0",
        "resolved": "https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz",
-@@ -5158,19 +4632,15 @@
+@@ -5158,19 +4852,15 @@
          "node": "^12.20.0 || ^14.13.1 || >=16.0.0"
        }
      },
@@ -3583,7 +3862,7 @@ index a34aa43..41b7ace 100644
      },
      "node_modules/magic-string": {
        "version": "0.30.21",
-@@ -5282,16 +4752,16 @@
+@@ -5282,16 +4972,16 @@
        }
      },
      "node_modules/minimatch": {
@@ -3606,7 +3885,7 @@ index a34aa43..41b7ace 100644
        },
        "funding": {
          "url": "https://github.com/sponsors/isaacs"
-@@ -5513,6 +4983,7 @@
+@@ -5513,6 +5203,7 @@
          }
        ],
        "license": "MIT",
@@ -3614,7 +3893,7 @@ index a34aa43..41b7ace 100644
        "bin": {
          "nanoid": "bin/nanoid.cjs"
        },
-@@ -5776,9 +5247,9 @@
+@@ -5776,9 +5467,9 @@
        }
      },
      "node_modules/obug": {
@@ -3627,7 +3906,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "funding": [
          "https://github.com/sponsors/sxzz",
-@@ -5810,6 +5281,27 @@
+@@ -5810,6 +5501,27 @@
          "wrappy": "1"
        }
      },
@@ -3655,7 +3934,7 @@ index a34aa43..41b7ace 100644
      "node_modules/p-map": {
        "version": "7.0.8",
        "resolved": "https://registry.npmjs.org/p-map/-/p-map-7.0.8.tgz",
-@@ -5896,17 +5388,17 @@
+@@ -5896,17 +5608,17 @@
        }
      },
      "node_modules/path-scurry": {
@@ -3679,7 +3958,7 @@ index a34aa43..41b7ace 100644
        },
        "funding": {
          "url": "https://github.com/sponsors/isaacs"
-@@ -5937,9 +5429,9 @@
+@@ -5937,9 +5649,9 @@
        "license": "ISC"
      },
      "node_modules/picomatch": {
@@ -3692,7 +3971,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "engines": {
-@@ -6000,6 +5492,7 @@
+@@ -6000,6 +5712,7 @@
          }
        ],
        "license": "MIT",
@@ -3700,7 +3979,7 @@ index a34aa43..41b7ace 100644
        "dependencies": {
          "nanoid": "^3.3.17",
          "picocolors": "^1.1.1",
-@@ -6066,6 +5559,19 @@
+@@ -6066,6 +5779,19 @@
          "node": ">=4"
        }
      },
@@ -3720,7 +3999,7 @@ index a34aa43..41b7ace 100644
      "node_modules/proc-log": {
        "version": "6.1.0",
        "resolved": "https://registry.npmjs.org/proc-log/-/proc-log-6.1.0.tgz",
-@@ -6106,34 +5612,10 @@
+@@ -6106,34 +5832,10 @@
          "url": "https://github.com/sponsors/isaacs"
        }
      },
@@ -3758,7 +4037,7 @@ index a34aa43..41b7ace 100644
        "license": "MIT",
        "dependencies": {
          "forwarded": "0.2.0",
-@@ -6141,6 +5623,10 @@
+@@ -6141,6 +5843,10 @@
        },
        "engines": {
          "node": ">= 0.10"
@@ -3769,7 +4048,7 @@ index a34aa43..41b7ace 100644
        }
      },
      "node_modules/pure-rand": {
-@@ -6229,18 +5715,18 @@
+@@ -6229,18 +5935,18 @@
        }
      },
      "node_modules/redis": {
@@ -3796,7 +4075,7 @@ index a34aa43..41b7ace 100644
        },
        "engines": {
          "node": ">= 20.0.0"
-@@ -6281,6 +5767,85 @@
+@@ -6281,6 +5987,85 @@
          "url": "https://github.com/sponsors/isaacs"
        }
      },
@@ -3882,7 +4161,7 @@ index a34aa43..41b7ace 100644
      "node_modules/rollup": {
        "version": "4.62.2",
        "resolved": "https://registry.npmjs.org/rollup/-/rollup-4.62.2.tgz",
-@@ -6342,6 +5907,19 @@
+@@ -6342,6 +6127,19 @@
          "node": ">= 18"
        }
      },
@@ -3902,7 +4181,7 @@ index a34aa43..41b7ace 100644
      "node_modules/safe-buffer": {
        "version": "5.2.1",
        "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz",
-@@ -6526,13 +6104,6 @@
+@@ -6526,13 +6324,6 @@
          "url": "https://github.com/sponsors/ljharb"
        }
      },
@@ -3916,7 +4195,7 @@ index a34aa43..41b7ace 100644
      "node_modules/signal-exit": {
        "version": "4.1.0",
        "resolved": "https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz",
-@@ -6576,9 +6147,9 @@
+@@ -6576,9 +6367,9 @@
        }
      },
      "node_modules/smol-toml": {
@@ -3929,7 +4208,7 @@ index a34aa43..41b7ace 100644
        "license": "BSD-3-Clause",
        "engines": {
          "node": ">= 18"
-@@ -6628,11 +6199,12 @@
+@@ -6628,11 +6419,12 @@
        }
      },
      "node_modules/source-map-js": {
@@ -3945,7 +4224,7 @@ index a34aa43..41b7ace 100644
        "engines": {
          "node": ">=0.10.0"
        }
-@@ -6656,9 +6228,9 @@
+@@ -6656,9 +6448,9 @@
        }
      },
      "node_modules/spdx-license-ids": {
@@ -3958,7 +4237,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "CC0-1.0"
      },
-@@ -6675,13 +6247,6 @@
+@@ -6675,13 +6467,6 @@
          "node": "^20.17.0 || >=22.9.0"
        }
      },
@@ -3972,7 +4251,7 @@ index a34aa43..41b7ace 100644
      "node_modules/statuses": {
        "version": "2.0.2",
        "resolved": "https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz",
-@@ -6866,11 +6431,14 @@
+@@ -6866,11 +6651,14 @@
        }
      },
      "node_modules/tinybench": {
@@ -3991,7 +4270,7 @@ index a34aa43..41b7ace 100644
      },
      "node_modules/tinyexec": {
        "version": "0.3.2",
-@@ -6896,16 +6464,6 @@
+@@ -6896,16 +6684,6 @@
          "url": "https://github.com/sponsors/SuperchupuDev"
        }
      },
@@ -4008,7 +4287,7 @@ index a34aa43..41b7ace 100644
      "node_modules/toidentifier": {
        "version": "1.0.1",
        "resolved": "https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz",
-@@ -7080,9 +6638,9 @@
+@@ -7080,9 +6858,9 @@
        "license": "MIT"
      },
      "node_modules/undici": {
@@ -4021,7 +4300,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "engines": {
-@@ -7090,9 +6648,9 @@
+@@ -7090,9 +6868,9 @@
        }
      },
      "node_modules/undici-types": {
@@ -4034,7 +4313,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT"
      },
-@@ -7151,6 +6709,7 @@
+@@ -7151,6 +6929,7 @@
        "integrity": "sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==",
        "dev": true,
        "license": "MIT",
@@ -4042,7 +4321,7 @@ index a34aa43..41b7ace 100644
        "dependencies": {
          "esbuild": "^0.25.0",
          "fdir": "^6.4.4",
-@@ -7221,38 +6780,31 @@
+@@ -7221,38 +7000,31 @@
        }
      },
      "node_modules/vitest": {
@@ -4101,7 +4380,7 @@ index a34aa43..41b7ace 100644
        },
        "funding": {
          "url": "https://opencollective.com/vitest"
-@@ -7260,16 +6812,16 @@
+@@ -7260,16 +7032,16 @@
        "peerDependencies": {
          "@edge-runtime/vm": "*",
          "@opentelemetry/api": "^1.9.0",
@@ -4126,7 +4405,7 @@ index a34aa43..41b7ace 100644
        },
        "peerDependenciesMeta": {
          "@edge-runtime/vm": {
-@@ -7310,10 +6862,20 @@
+@@ -7310,10 +7082,20 @@
          }
        }
      },
@@ -4150,7 +4429,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "engines": {
-@@ -7356,20 +6918,16 @@
+@@ -7356,20 +7138,16 @@
        }
      },
      "node_modules/why-is-node-running": {
@@ -4175,7 +4454,7 @@ index a34aa43..41b7ace 100644
        }
      },
      "node_modules/wrap-ansi": {
-@@ -7490,9 +7048,9 @@
+@@ -7490,9 +7268,9 @@
        }
      },
      "node_modules/ws": {
@@ -4188,7 +4467,7 @@ index a34aa43..41b7ace 100644
        "dev": true,
        "license": "MIT",
        "engines": {
-@@ -7511,6 +7069,23 @@
+@@ -7511,6 +7289,23 @@
          }
        }
      },
@@ -4212,7 +4491,7 @@ index a34aa43..41b7ace 100644
      "node_modules/yallist": {
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz",
-@@ -7538,9 +7113,9 @@
+@@ -7538,9 +7333,9 @@
        }
      },
      "node_modules/zod": {
@@ -4226,10 +4505,10 @@ index a34aa43..41b7ace 100644
        "funding": {
          "url": "https://github.com/sponsors/colinhacks"
 diff --git a/package.json b/package.json
-index 8f04e41..d934aa9 100644
+index 8f04e41..fbe4826 100644
 --- a/package.json
 +++ b/package.json
-@@ -1,12 +1,12 @@
+@@ -1,10 +1,10 @@
  {
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.6.1",
@@ -4242,11 +4521,8 @@ index 8f04e41..d934aa9 100644
 +    "url": "https://github.com/mickey-kras/hindsight-memory-router-integrations.git",
 +    "directory": "src/upstream/coding-agents"
    },
--  "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, …), with automatic background ingestion (no setup CLI).",
-+  "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, \u2026), with automatic background ingestion (no setup CLI).",
+   "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, …), with automatic background ingestion (no setup CLI).",
    "type": "module",
-   "main": "dist/index.js",
-   "types": "dist/index.d.ts",
 @@ -55,7 +55,10 @@
      "index.js",
      "cordis.patch.yml",
@@ -4259,7 +4535,7 @@ index 8f04e41..d934aa9 100644
    ],
    "dsh": {
      "bundle": {
-@@ -76,33 +79,32 @@
+@@ -76,33 +79,33 @@
    },
    "scripts": {
      "build": "tsup",
@@ -4276,6 +4552,7 @@ index 8f04e41..d934aa9 100644
 -    "@modelcontextprotocol/sdk": "^1.29.0",
 -    "@vectorize-io/hindsight-all": "^0.8.6",
 +    "@modelcontextprotocol/sdk": "^1.32.1",
++    "@napi-rs/keyring": "2.1.1",
      "jsonc-parser": "^3.3.1",
 -    "smol-toml": "^1.8.0",
 -    "zod": "^4.4.3"
@@ -4286,9 +4563,9 @@ index 8f04e41..d934aa9 100644
 -    "@opencode-ai/plugin": "^1.18.9",
 -    "@opencode/plugin": "^2.0.3",
 +    "@opencode-ai/plugin": "^1.18.35",
-+    "@opencode/plugin": "^2.0.24",
      "@opencode-ai/sdk": "^1.18.9",
 -    "@types/node": "^26.1.0",
++    "@opencode/plugin": "^2.0.24",
 +    "@types/node": "22.20.5",
      "tsup": "^8.3.0",
      "typescript": "^5.6.0",
@@ -10943,7 +11220,7 @@ index 80d85af..01b0184 100644
    });
  });
 diff --git a/src/installer.ts b/src/installer.ts
-index f6e1e1e..dbf015f 100644
+index f6e1e1e..198f207 100644
 --- a/src/installer.ts
 +++ b/src/installer.ts
 @@ -1,10 +1,10 @@
@@ -10960,7 +11237,7 @@ index f6e1e1e..dbf015f 100644
   *
   *   opencode     add this package to `plugin` in ~/.config/opencode/opencode.json
   *   claude-code  3 hooks in ~/.claude/settings.json + `claude mcp add` (user scope)
-@@ -30,21 +30,27 @@ import {
+@@ -30,21 +30,29 @@ import {
    mkdirSync,
    mkdtempSync,
    readFileSync,
@@ -10978,9 +11255,11 @@ index f6e1e1e..dbf015f 100644
 -import { parse as parseToml } from "smol-toml";
 +import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 +import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-+import { TOKEN_FORMAT_PATTERN } from "@memory-router/shared/patterns";
 +import { requireBank } from "@memory-router/shared/bank-access";
 +import { managedBank, harnessTransport } from "@memory-router/coding-agents/runtime";
++import { runHumanAuth } from "@memory-router/coding-agents/human-login";
++import { HumanLoginRequiredError } from "@memory-router/coding-agents/human-session";
++import { stageNativeKeychain } from "./native-storage";
 +import { assertUnlinkedTree, InstallTransaction } from "./install-transaction";
 +import { loadManagedConfig, loadValidatedManagedConfig } from "@memory-router/shared/managed-config";
 +import { ENV_KEYS } from "./core/config";
@@ -10993,7 +11272,7 @@ index f6e1e1e..dbf015f 100644
  import { SKILL_DIRS } from "./core/skill-dirs";
  import { formatUsageReport, readUsage } from "./core/usage";
  import { createInstallerUi, type SelectOption } from "./install-ui";
-@@ -54,7 +60,7 @@ import { createInstallerUi, type SelectOption } from "./install-ui";
+@@ -54,7 +62,7 @@ import { createInstallerUi, type SelectOption } from "./install-ui";
   * `uninstall` removes exactly what we added.
   *
   * It must appear in the package path under BOTH layouts: npm
@@ -11002,7 +11281,7 @@ index f6e1e1e..dbf015f 100644
   * (`hindsight-integrations/coding-agents/...`). The old value was the full package name, which the
   * repo path stopped containing when the directory dropped its `hindsight-` prefix — silently
   * breaking dedupe-on-reinstall and uninstall for anyone running from a checkout.
-@@ -74,6 +80,7 @@ export interface InstallCtx {
+@@ -74,6 +82,7 @@ export interface InstallCtx {
    dist: string; // built entry points
    /** Runs `claude mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
    claudeMcp?: (args: string[]) => boolean;
@@ -11010,7 +11289,7 @@ index f6e1e1e..dbf015f 100644
    /** Runs `qwen mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
    qwenMcp?: (args: string[]) => boolean;
    /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
-@@ -122,17 +129,11 @@ function readJson(path: string): Record<string, any> {
+@@ -122,17 +131,11 @@ function readJson(path: string): Record<string, any> {
   * to understand must never be overwritten with just our own key: the caller aborts instead.
   */
  export function parseJsonc(text: string): Record<string, any> | null {
@@ -11033,7 +11312,7 @@ index f6e1e1e..dbf015f 100644
  }
  
  function writeJson(path: string, value: unknown): void {
-@@ -234,10 +235,61 @@ function isOurMcpEntry(entry: unknown): boolean {
+@@ -234,10 +237,61 @@ function isOurMcpEntry(entry: unknown): boolean {
    return (
      parts.at(-1) === "mcp-server.js" &&
      parts.at(-2) === "dist" &&
@@ -11096,7 +11375,7 @@ index f6e1e1e..dbf015f 100644
  /** Install/uninstall consume the same lifecycle declaration as the runtime entrypoints. Keeping
   * event names and command files here would allow a host to run a different lifecycle than it installs. */
  function mergeHarnessHooks(
-@@ -291,17 +343,20 @@ function installSkill(c: InstallCtx, harness: string): void {
+@@ -291,17 +345,20 @@ function installSkill(c: InstallCtx, harness: string): void {
    const src = join(c.pkgRoot, "skill");
    if (!existsSync(join(src, "SKILL.md"))) return;
    const skillsBase = skillsBaseFor(c, harness);
@@ -11122,7 +11401,7 @@ index f6e1e1e..dbf015f 100644
  }
  
  // ── per-harness adapters ────────────────────────────────────────────────────────
-@@ -375,14 +430,14 @@ function runDcodePlugin(args: string[]): boolean {
+@@ -375,14 +432,14 @@ function runDcodePlugin(args: string[]): boolean {
   * Consequences worth knowing: installing either harness wires the other one too (the MARKER filter
   * keeps that idempotent), and uninstalling either removes the shared entry.
   */
@@ -11139,7 +11418,7 @@ index f6e1e1e..dbf015f 100644
      }
      cfg = parsed;
    }
-@@ -519,7 +574,7 @@ const kilo: HarnessInstaller = {
+@@ -519,7 +576,7 @@ const kilo: HarnessInstaller = {
        const parsed = parseJsonc(readFileSync(path, "utf8"));
        if (!parsed) {
          c.log?.(`kilo: SKIPPED — could not parse ${path}; add the plugin entry manually`);
@@ -11148,7 +11427,7 @@ index f6e1e1e..dbf015f 100644
        }
        cfg = parsed;
      }
-@@ -561,14 +616,14 @@ const claudeCode: HarnessInstaller = {
+@@ -561,14 +618,14 @@ const claudeCode: HarnessInstaller = {
      // Code reported "Failed to connect — Connection closed" with the hindsight_* tools dead.
      // Remove first (a no-op when absent) so the add always lands, matching how every other host
      // wiring is replaced rather than skipped.
@@ -11165,7 +11444,7 @@ index f6e1e1e..dbf015f 100644
          "--env",
          "HINDSIGHT_MCP_HARNESS=claude-code",
          "--",
-@@ -577,11 +632,13 @@ const claudeCode: HarnessInstaller = {
+@@ -577,11 +634,13 @@ const claudeCode: HarnessInstaller = {
        ])
      ) {
        c.log?.("claude-code: MCP server registered (claude mcp add, user scope)");
@@ -11180,7 +11459,7 @@ index f6e1e1e..dbf015f 100644
      }
    },
    uninstall(c) {
-@@ -595,7 +652,7 @@ const claudeCode: HarnessInstaller = {
+@@ -595,7 +654,7 @@ const claudeCode: HarnessInstaller = {
        }
      }
      const mcp = c.claudeMcp ?? defaultClaudeMcp;
@@ -11189,7 +11468,7 @@ index f6e1e1e..dbf015f 100644
      uninstallSkill(c, "claude-code");
      c.log?.("claude-code: hooks + MCP registration + skill removed");
    },
-@@ -614,31 +671,113 @@ function defaultClaudeMcp(args: string[]): boolean {
+@@ -614,31 +673,142 @@ function defaultClaudeMcp(args: string[]): boolean {
   * Our `[mcp_servers.hindsight]` table (plus any sub-table of it): the header line through to the
   * next table header or EOF. Shared by install — which REPLACES the block — and uninstall.
   */
@@ -11208,6 +11487,8 @@ index f6e1e1e..dbf015f 100644
 +  "HINDSIGHT_LOG_FILE",
 +  ...Object.values(ENV_KEYS).filter((name) => name !== ENV_KEYS.apiToken),
 +];
++const CODEX_AUTH_MODE = "HINDSIGHT_ROUTER_AUTH_MODE";
++const CODEX_TOKEN_ENV = "HINDSIGHT_ROUTER_TOKEN_ENV";
 +
 +type CodexEnvVar = string | { name: string; source?: "local" | "remote" };
 +
@@ -11269,25 +11550,52 @@ index f6e1e1e..dbf015f 100644
 +    realpathSync(env.HINDSIGHT_ROUTER_CONFIG) !== realpathSync(process.env.HINDSIGHT_ROUTER_CONFIG ?? "")) {
 +    throw new Error("codex: retained managed configuration conflicts with installer provisioning");
 +  }
-+  let tokenEnv: string;
++  let tokenEnv: string | undefined;
 +  try {
 +    tokenEnv = loadManagedConfig({ ...process.env, ...env }, "codex").principal.tokenEnv;
 +  } catch {
 +    throw new Error("codex: set HINDSIGHT_ROUTER_CONFIG to a valid managed config with a codex principal");
 +  }
-+  if (Object.hasOwn(env, tokenEnv)) {
++  if (tokenEnv && Object.hasOwn(env, tokenEnv)) {
 +    throw new Error(`codex: export ${tokenEnv} in the host environment and remove its literal MCP env value`);
 +  }
-+  const inheritedNames = new Set(envVars.map((entry) => typeof entry === "string" ? entry : entry.name));
-+  const requiredNames = [...new Set([...CODEX_ENV_VARS, tokenEnv])];
++  const mode = env[CODEX_AUTH_MODE];
++  const oldTokenEnv = env[CODEX_TOKEN_ENV];
++  const reserved = new Set([...CODEX_ENV_VARS, "HINDSIGHT_MCP_HARNESS", CODEX_AUTH_MODE, CODEX_TOKEN_ENV]);
++  if ((mode !== undefined && mode !== "persistent" && mode !== "human") ||
++    (oldTokenEnv !== undefined && (!/^[A-Z_][A-Z0-9_]*$/.test(oldTokenEnv) || reserved.has(oldTokenEnv))) ||
++    (mode === "persistent" ? oldTokenEnv === undefined : oldTokenEnv !== undefined) ||
++    (tokenEnv !== undefined && reserved.has(tokenEnv))) {
++    throw new ToolPrefixError("codex: invalid managed authentication metadata; review the MCP environment before reinstalling");
++  }
++  const fixedBindings = new Set(["HINDSIGHT_ROUTER_CONFIG", "HINDSIGHT_MCP_HARNESS"]);
++  const unknownLegacyEnvironment = mode === undefined && (
++    envVars.some((entry) => { const name = typeof entry === "string" ? entry : entry.name; return !fixedBindings.has(name) && name !== tokenEnv; }) ||
++    Object.keys(env).some((name) => !fixedBindings.has(name))
++  );
++  if (tokenEnv === undefined && unknownLegacyEnvironment) {
++    throw new ToolPrefixError("codex: legacy credential bindings are unknown; review and remove extra MCP env_vars and env entries before human login installation, then restore noncredential settings");
++  }
++  const retainedEnv = { ...env };
++  if (oldTokenEnv && oldTokenEnv !== tokenEnv) delete retainedEnv[oldTokenEnv];
++  delete retainedEnv[CODEX_AUTH_MODE];
++  delete retainedEnv[CODEX_TOKEN_ENV];
++  delete retainedEnv.HINDSIGHT_MCP_HARNESS;
++  if (!unknownLegacyEnvironment) {
++    retainedEnv[CODEX_AUTH_MODE] = tokenEnv ? "persistent" : "human";
++    if (tokenEnv) retainedEnv[CODEX_TOKEN_ENV] = tokenEnv;
++  }
++  const retainedVars = envVars.filter((entry) => !oldTokenEnv || oldTokenEnv === tokenEnv || (typeof entry === "string" ? entry : entry.name) !== oldTokenEnv);
++  const inheritedNames = new Set(retainedVars.map((entry) => typeof entry === "string" ? entry : entry.name));
++  const requiredNames = tokenEnv ? [...new Set([...CODEX_ENV_VARS, tokenEnv])] : ["HINDSIGHT_ROUTER_CONFIG"];
 +  return stringifyToml({
 +    mcp_servers: {
 +      [name]: {
 +        ...previous,
 +        command: "node",
 +        args: [join(dist, "mcp-server.js")],
-+        env_vars: [...envVars, ...requiredNames.filter((name) => !inheritedNames.has(name))],
-+        env: { ...env, HINDSIGHT_MCP_HARNESS: "codex" },
++        env_vars: [...retainedVars, ...requiredNames.filter((name) => !inheritedNames.has(name))],
++        env: { ...retainedEnv, HINDSIGHT_MCP_HARNESS: "codex" },
 +      },
 +    },
 +  }).trimEnd();
@@ -11318,7 +11626,7 @@ index f6e1e1e..dbf015f 100644
      const additions: string[] = [];
      // Codex ≥ 0.145 deprecates `codex_hooks` for `[features].hooks`; accept either as "already
      // enabled", write the modern name for new installs.
-@@ -651,8 +790,15 @@ const codex: HarnessInstaller = {
+@@ -651,8 +821,15 @@ const codex: HarnessInstaller = {
          additions.push("[features]\nhooks = true");
        }
      }
@@ -11335,7 +11643,7 @@ index f6e1e1e..dbf015f 100644
      if (next !== existing) {
        if (existsSync(tomlPath) && !existsSync(`${tomlPath}.hindsight-backup`)) {
          copyFileSync(tomlPath, `${tomlPath}.hindsight-backup`);
-@@ -676,7 +822,7 @@ const codex: HarnessInstaller = {
+@@ -676,7 +853,7 @@ const codex: HarnessInstaller = {
      const tomlPath = join(c.home, ".codex", "config.toml");
      if (existsSync(tomlPath)) {
        const toml = readFileSync(tomlPath, "utf8");
@@ -11344,7 +11652,7 @@ index f6e1e1e..dbf015f 100644
        if (cleaned !== toml) writeFileSync(tomlPath, cleaned);
      }
      c.log?.(
-@@ -716,7 +862,7 @@ const antigravity: HarnessInstaller = {
+@@ -716,7 +893,7 @@ const antigravity: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11353,7 +11661,7 @@ index f6e1e1e..dbf015f 100644
      };
      writeJson(mcpPath, mcp);
      const settingsPath = join(c.home, ".gemini", "antigravity-cli", "settings.json");
-@@ -761,8 +907,7 @@ const antigravity: HarnessInstaller = {
+@@ -761,8 +938,7 @@ const antigravity: HarnessInstaller = {
      const mcpPath = join(c.home, ".gemini", "config", "mcp_config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -11363,7 +11671,7 @@ index f6e1e1e..dbf015f 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -827,11 +972,43 @@ export const ORIGIN_FILE = ".install-origin.json";
+@@ -827,11 +1003,43 @@ export const ORIGIN_FILE = ".install-origin.json";
   * is what opencode and Kilo load as a plugin directory. Repointing them here means no per-harness
   * installer needs to know staging happened.
   *
@@ -11410,7 +11718,7 @@ index f6e1e1e..dbf015f 100644
  function stageRuntime(c: InstallCtx): InstallCtx {
    const target = runtimeDir(c.home);
    // Compared through realpath: re-running the STAGED installer must not reach the copy below, which
-@@ -844,8 +1021,13 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+@@ -844,14 +1052,23 @@ function stageRuntime(c: InstallCtx): InstallCtx {
        return a === b;
      }
    };
@@ -11426,7 +11734,17 @@ index f6e1e1e..dbf015f 100644
    try {
      // Replaced wholesale rather than merged: a stale entry point left behind by an older version
      // would still be reachable from a host config that references it by name.
-@@ -876,245 +1058,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
+     rmSync(join(target, "dist"), { recursive: true, force: true });
+     mkdirSync(target, { recursive: true });
+     cpSync(c.dist, join(target, "dist"), { recursive: true });
++    const needsNativeStorage = Object.values(loadValidatedManagedConfig(process.env).principals).some((principal) => principal.human);
++    if (!stageNativeKeychain(c.pkgRoot, target, needsNativeStorage)) {
++      c.log?.("Native secure storage is not installed; human login requires reinstalling from a verified package with native support.");
++    }
+     const skill = join(c.pkgRoot, "skill");
+     if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
+     const pkgJson = join(c.pkgRoot, "package.json");
+@@ -876,245 +1093,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
        JSON.stringify({ source: c.pkgRoot, stagedAt: new Date().toISOString() })
      );
      c.log?.(`runtime staged at ${target}`);
@@ -11677,7 +11995,7 @@ index f6e1e1e..dbf015f 100644
    }
  }
  
-@@ -1144,7 +1093,7 @@ const devin: HarnessInstaller = {
+@@ -1144,7 +1128,7 @@ const devin: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11686,7 +12004,7 @@ index f6e1e1e..dbf015f 100644
      };
      writeJson(mcpPath, mcp);
      c.log?.(`devin-cli: hooks merged into ${configPath}, MCP into ${mcpPath}`);
-@@ -1162,8 +1111,7 @@ const devin: HarnessInstaller = {
+@@ -1162,8 +1146,7 @@ const devin: HarnessInstaller = {
      const mcpPath = join(c.home, ".config", "devin", "mcp_config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -11696,7 +12014,7 @@ index f6e1e1e..dbf015f 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1184,7 +1132,7 @@ const cursor: HarnessInstaller = {
+@@ -1184,7 +1167,7 @@ const cursor: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11705,7 +12023,7 @@ index f6e1e1e..dbf015f 100644
      };
      writeJson(mcpPath, mcp);
      c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
-@@ -1203,8 +1151,7 @@ const cursor: HarnessInstaller = {
+@@ -1203,8 +1186,7 @@ const cursor: HarnessInstaller = {
      const mcpPath = join(c.home, ".cursor", "mcp.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -11715,7 +12033,7 @@ index f6e1e1e..dbf015f 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1226,7 +1173,7 @@ const copilot: HarnessInstaller = {
+@@ -1226,7 +1208,7 @@ const copilot: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11724,7 +12042,7 @@ index f6e1e1e..dbf015f 100644
      };
      writeJson(mcpPath, mcp);
      installSkill(c, "copilot-cli");
-@@ -1239,8 +1186,7 @@ const copilot: HarnessInstaller = {
+@@ -1239,8 +1221,7 @@ const copilot: HarnessInstaller = {
      const mcpPath = join(c.home, ".copilot", "mcp-config.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -11734,7 +12052,7 @@ index f6e1e1e..dbf015f 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1286,7 +1232,7 @@ function hasUnmarkedGrokEntries(text: string): boolean {
+@@ -1286,7 +1267,7 @@ function hasUnmarkedGrokEntries(text: string): boolean {
    const cfg = parseGrokToml(text);
    if (!cfg)
      return /\[\s*mcp_servers\s*\.\s*hindsight\s*[.\]]/.test(text) || GROK_HOOK_SCRIPT_RE.test(text);
@@ -11743,7 +12061,7 @@ index f6e1e1e..dbf015f 100644
    return Object.values(cfg.hooks ?? {}).some((entries) =>
      (entries ?? []).some((entry) =>
        (entry?.hooks ?? []).some(
-@@ -1323,7 +1269,7 @@ function stripUnmarkedGrokEntries(toml: string): string {
+@@ -1323,7 +1304,7 @@ function stripUnmarkedGrokEntries(toml: string): string {
      s.lines.slice(1).some((l) => /^\s*[^#\s]/.test(l));
  
    const drop = sections.map((s) => {
@@ -11752,7 +12070,7 @@ index f6e1e1e..dbf015f 100644
      if (/^\[\[hooks\..+\.hooks\]\]$/.test(s.header)) return isOurs(s);
      return false;
    });
-@@ -1359,13 +1305,16 @@ const grok: HarnessInstaller = {
+@@ -1359,13 +1340,16 @@ const grok: HarnessInstaller = {
      // REPLACE any previous block rather than skipping when one exists. Skipping made this
      // install-once-only: after the package moved, a re-install silently left the old (now dead)
      // paths in place, which is exactly the case `install` is meant to repair.
@@ -11772,7 +12090,7 @@ index f6e1e1e..dbf015f 100644
      // Grok executes this shell command verbatim. Quote the absolute script path so a globally
      // installed package still works when its installation directory contains spaces.
      const command = (entry: string) => JSON.stringify(`node "${join(c.dist, entry)}"`);
-@@ -1375,7 +1324,7 @@ const grok: HarnessInstaller = {
+@@ -1375,7 +1359,7 @@ const grok: HarnessInstaller = {
        `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = \"command\"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
        `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = \"command\"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
        `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
@@ -11781,7 +12099,7 @@ index f6e1e1e..dbf015f 100644
        `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
      const next = `${withoutOurs.replace(/\n*$/, "\n")}${block}`;
      // Never hand Grok a config it cannot parse: one bad table takes down every MCP server it has.
-@@ -1397,7 +1346,10 @@ const grok: HarnessInstaller = {
+@@ -1397,7 +1381,10 @@ const grok: HarnessInstaller = {
      const path = join(c.home, ".grok", "config.toml");
      if (existsSync(path)) {
        const existing = readFileSync(path, "utf8");
@@ -11793,7 +12111,7 @@ index f6e1e1e..dbf015f 100644
        const cleaned = hasUnmarkedGrokEntries(stripped)
          ? stripUnmarkedGrokEntries(stripped)
          : stripped;
-@@ -1413,7 +1365,7 @@ const grok: HarnessInstaller = {
+@@ -1413,7 +1400,7 @@ const grok: HarnessInstaller = {
  
  const CLINE_HOOK_MARKER = "HINDSIGHT_CODING_AGENTS_CLINE";
  const CLINE_OLD_HOOK_EVENTS = ["TaskStart", "UserPromptSubmit", "TaskComplete"];
@@ -11802,7 +12120,7 @@ index f6e1e1e..dbf015f 100644
  
  /** Remove only wrappers from the short-lived file-hook implementation. Cline file hooks cannot
   * mutate a prompt; keeping them would falsely imply that old installs still inject memory. */
-@@ -1442,7 +1394,7 @@ const cline: HarnessInstaller = {
+@@ -1442,7 +1429,7 @@ const cline: HarnessInstaller = {
      const mcp = readJson(mcpPath);
      mcp.mcpServers = {
        ...(mcp.mcpServers ?? {}),
@@ -11811,7 +12129,7 @@ index f6e1e1e..dbf015f 100644
      };
      writeJson(mcpPath, mcp);
      installSkill(c, "cline-cli");
-@@ -1451,6 +1403,7 @@ const cline: HarnessInstaller = {
+@@ -1451,6 +1438,7 @@ const cline: HarnessInstaller = {
          ? "cline-cli: native plugin + MCP + skill installed"
          : `cline-cli: MCP + skill installed; run: cline plugin install --force "${c.pkgRoot}"`
      );
@@ -11819,7 +12137,7 @@ index f6e1e1e..dbf015f 100644
    },
    uninstall(c) {
      removeLegacyClineHooks(c);
-@@ -1460,8 +1413,7 @@ const cline: HarnessInstaller = {
+@@ -1460,8 +1448,7 @@ const cline: HarnessInstaller = {
      const mcpPath = join(c.home, ".cline", "data", "settings", "cline_mcp_settings.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -11829,7 +12147,7 @@ index f6e1e1e..dbf015f 100644
          writeJson(mcpPath, mcp);
        }
      }
-@@ -1602,7 +1554,7 @@ function dshHome(c: InstallCtx): string {
+@@ -1602,7 +1589,7 @@ function dshHome(c: InstallCtx): string {
   * DeepSeek Harness — a native Cordis plugin, wired through the HOME-level patch layer
   * (`$DSH_HOME/cordis.patch.yml`), which every profile composes after its bundles.
   *
@@ -11838,7 +12156,7 @@ index f6e1e1e..dbf015f 100644
   * pnpm-installs the package into ONE profile and picks up the `dsh.bundle.patch` this package
   * ships. That is the right route for a published install and is what the docs recommend, but it
   * needs pnpm, a network, and a repeat per profile — so the installer takes the path that always
-@@ -1625,7 +1577,7 @@ const dsh: HarnessInstaller = {
+@@ -1625,7 +1612,7 @@ const dsh: HarnessInstaller = {
      const block =
        `${DSH_MARKER_START}\n` +
        `- insert:\n` +
@@ -11847,7 +12165,7 @@ index f6e1e1e..dbf015f 100644
        `      name: ${JSON.stringify(entry)}\n` +
        `${DSH_MARKER_END}\n`;
      if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
-@@ -1670,7 +1622,7 @@ const qwen: HarnessInstaller = {
+@@ -1670,7 +1657,7 @@ const qwen: HarnessInstaller = {
      const mcp = c.qwenMcp ?? defaultQwenMcp;
      // Same rationale as claude-code: `qwen mcp add` refuses a name that already exists, so a
      // re-install could never repoint a stale server. Remove first (a no-op when absent).
@@ -11856,7 +12174,7 @@ index f6e1e1e..dbf015f 100644
      if (
        mcp([
          "mcp",
-@@ -1679,17 +1631,19 @@ const qwen: HarnessInstaller = {
+@@ -1679,17 +1666,19 @@ const qwen: HarnessInstaller = {
          "user",
          "-e",
          "HINDSIGHT_MCP_HARNESS=qwen-code",
@@ -11878,7 +12196,7 @@ index f6e1e1e..dbf015f 100644
      }
    },
    uninstall(c) {
-@@ -1703,7 +1657,7 @@ const qwen: HarnessInstaller = {
+@@ -1703,7 +1692,7 @@ const qwen: HarnessInstaller = {
        }
      }
      const mcp = c.qwenMcp ?? defaultQwenMcp;
@@ -11887,7 +12205,7 @@ index f6e1e1e..dbf015f 100644
      uninstallSkill(c, "qwen-code");
      c.log?.("qwen-code: hooks + MCP registration + skill removed");
    },
-@@ -1736,10 +1690,10 @@ const factoryDroid: HarnessInstaller = {
+@@ -1736,10 +1725,10 @@ const factoryDroid: HarnessInstaller = {
    detect: (c) => onPath("droid") || existsSync(join(c.home, ".factory")),
    preflight(c) {
      const mcpPath = join(c.home, ".factory", "mcp.json");
@@ -11900,7 +12218,7 @@ index f6e1e1e..dbf015f 100644
          "Rename or remove that entry, then re-run install."
        );
      }
-@@ -1763,7 +1717,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1763,7 +1752,7 @@ const factoryDroid: HarnessInstaller = {
      const mcpPath = join(c.home, ".factory", "mcp.json");
      const mcp = readJson(mcpPath);
      mcp.mcpServers = mcp.mcpServers ?? {};
@@ -11909,7 +12227,7 @@ index f6e1e1e..dbf015f 100644
      writeJson(mcpPath, mcp);
      c.log?.(`factory-droid: MCP server registered in ${mcpPath}`);
    },
-@@ -1778,8 +1732,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1778,8 +1767,7 @@ const factoryDroid: HarnessInstaller = {
      const mcpPath = join(c.home, ".factory", "mcp.json");
      if (existsSync(mcpPath)) {
        const mcp = readJson(mcpPath);
@@ -11919,7 +12237,7 @@ index f6e1e1e..dbf015f 100644
          if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
          else rmSync(mcpPath);
        }
-@@ -1805,7 +1758,7 @@ const factoryDroid: HarnessInstaller = {
+@@ -1805,7 +1793,7 @@ const factoryDroid: HarnessInstaller = {
   *
   * MCP and the companion skill land in the same config/home, so ZCode gets the full surface:
   *
@@ -11928,7 +12246,7 @@ index f6e1e1e..dbf015f 100644
   *   `HINDSIGHT_MCP_HARNESS=zcode`. ZCode's schema is `{type, command, args?, cwd?, env?}` and its
   *   loader infers `type: "stdio"` from a `command`, so the shared `mcpServerEntry` drops straight
   *   in. A same-named foreign server blocks install instead of being overwritten.
-@@ -1820,10 +1773,10 @@ const zcode: HarnessInstaller = {
+@@ -1820,10 +1808,10 @@ const zcode: HarnessInstaller = {
    detect: (c) => onPath("zcode") || existsSync(join(c.home, ".zcode")),
    preflight(c) {
      const configPath = zcodeConfigPath(c);
@@ -11941,7 +12259,7 @@ index f6e1e1e..dbf015f 100644
          "Rename or remove that entry, then re-run install."
        );
      }
-@@ -1838,7 +1791,7 @@ const zcode: HarnessInstaller = {
+@@ -1838,7 +1826,7 @@ const zcode: HarnessInstaller = {
      mergeHarnessHooks(hooks.events, "zcode", c.dist);
      config.mcp = config.mcp ?? {};
      config.mcp.servers = config.mcp.servers ?? {};
@@ -11950,7 +12268,7 @@ index f6e1e1e..dbf015f 100644
      writeJson(configPath, config);
      c.log?.(`zcode: hooks + MCP server merged into ${configPath}`);
      installSkill(c, "zcode");
-@@ -1847,8 +1800,7 @@ const zcode: HarnessInstaller = {
+@@ -1847,8 +1835,7 @@ const zcode: HarnessInstaller = {
      const configPath = zcodeConfigPath(c);
      if (existsSync(configPath)) {
        const config = readJson(configPath);
@@ -11960,7 +12278,7 @@ index f6e1e1e..dbf015f 100644
          if (!Object.keys(config.mcp.servers).length) delete config.mcp;
        }
        const hooks = config.hooks;
-@@ -1903,7 +1855,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
+@@ -1903,7 +1890,7 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
   */
  function importConversations(harness: string, ctx: InstallCtx): void {
    const repo = process.cwd();
@@ -11969,7 +12287,7 @@ index f6e1e1e..dbf015f 100644
    if (!found.supported) {
      ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
      return;
-@@ -1927,141 +1879,183 @@ function importConversations(harness: string, ctx: InstallCtx): void {
+@@ -1927,141 +1914,182 @@ function importConversations(harness: string, ctx: InstallCtx): void {
        `this runs extraction and may take a while`
    );
    try {
@@ -12036,8 +12354,6 @@ index f6e1e1e..dbf015f 100644
 +function validateProvisioning(targets: HarnessInstaller[]): void {
 +  for (const target of targets) {
 +    const { principal } = loadManagedConfig(process.env, target.name);
-+    const token = process.env[principal.tokenEnv];
-+    if (!token || !TOKEN_FORMAT_PATTERN.test(token)) throw new Error("credential unavailable");
 +    harnessTransport(target.name);
 +    for (const [path, bank] of Object.entries(principal.mapPathToBank ?? {})) {
 +      if (!isAbsolute(path)) throw new Error("invalid project mapping");
@@ -12110,7 +12426,7 @@ index f6e1e1e..dbf015f 100644
 -        `  agents/CI: without a TTY nothing ever prompts — pass --server (and --api-url/--api-token) to choose`
 -    );
 +  if (!["install", "uninstall", "update"].includes(command)) {
-+    ctxIn.log?.("usage: hindsight-coding-agents install [harness...|all] [--import-conversations] | uninstall <harness...|all> | update | stats");
++    ctxIn.log?.("usage: hindsight-coding-agents login|sign-out [harness] | install [harness...|all] [--import-conversations] | uninstall <harness...|all> | update | stats");
      return command ? 1 : 0;
    }
 +  if (args.some((arg) => arg.startsWith("--") && arg !== "--import-conversations")) return fail();
@@ -12230,6 +12546,7 @@ index f6e1e1e..dbf015f 100644
 +      return 1;
 +    }
 +    if (error instanceof ToolPrefixError) { ctxIn.log?.(error.message); return 1; }
++    if (error instanceof HumanLoginRequiredError) { ctxIn.log?.(error.message); return 1; }
 +    return fail();
    }
 -  const runnable = targets.filter((t) => !blocked.has(t.name));
@@ -12267,7 +12584,7 @@ index f6e1e1e..dbf015f 100644
    return 0;
  }
  
-@@ -2093,11 +2087,15 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+@@ -2093,12 +2121,18 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      command: process.argv[2],
      version,
      harnessNames: INSTALLERS.map((i) => i.name),
@@ -12280,11 +12597,15 @@ index f6e1e1e..dbf015f 100644
      configPath: process.env.HINDSIGHT_CONFIG || undefined,
    });
 -  ui.intro();
+-  const code = run(process.argv.slice(2), {
 +  const messages: string[] = [];
-   const code = run(process.argv.slice(2), {
++  const code = ["login", "sign-out"].includes(process.argv[2])
++    ? await runHumanAuth(process.argv.slice(2), (message) => messages.push(message), Boolean(isatty(0) && isatty(1)))
++    : run(process.argv.slice(2), {
      home: homedir(),
      pkgRoot,
-@@ -2106,11 +2104,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
+     dist,
+@@ -2106,11 +2140,17 @@ if (isMain || mainPath?.endsWith("installer.js")) {
      // tty.isatty, NOT process.stdin.isTTY: the process.stdin getter initializes the stdin TTY
      // stream, which puts fd 0 in non-blocking mode and breaks readLineSync (see there).
      interactive: Boolean(isatty(0) && isatty(1)),
@@ -12398,6 +12719,50 @@ index 1917baf..76aa564 100644
      process.exit(1);
    });
  }
+diff --git a/src/native-storage.ts b/src/native-storage.ts
+new file mode 100644
+index 0000000..f465d99
+--- /dev/null
++++ b/src/native-storage.ts
+@@ -0,0 +1,38 @@
++import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
++import { createRequire } from "node:module";
++import { dirname, join } from "node:path";
++import { assertUnlinkedTree } from "./install-transaction";
++
++export function stageNativeKeychain(sourceRoot: string, targetRoot: string, required = true): boolean {
++  const require = createRequire(join(sourceRoot, "package.json"));
++  let packagePath: string;
++  try { packagePath = require.resolve("@napi-rs/keyring/package.json"); } catch (error) {
++    if (!required && (error as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND") return false;
++    throw error;
++  }
++  const manifest = JSON.parse(readFileSync(packagePath, "utf8")) as {
++    version: string; optionalDependencies: Record<string, string>;
++  };
++  const packages = new Map<string, string>([["@napi-rs/keyring", dirname(packagePath)]]);
++  for (const [name, version] of Object.entries(manifest.optionalDependencies)) {
++    if (!/^@napi-rs\/keyring-[a-z0-9-]+$/.test(name) || version !== manifest.version) throw new Error("invalid keychain package");
++    let path: string;
++    try { path = require.resolve(`${name}/package.json`); } catch (error) {
++      if ((error as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND") continue;
++      throw error;
++    }
++    if ((JSON.parse(readFileSync(path, "utf8")) as { version: string }).version !== manifest.version) throw new Error("invalid keychain version");
++    packages.set(name, dirname(path));
++  }
++  for (const path of packages.values()) assertUnlinkedTree(path);
++  if (packages.size < 2) {
++    if (!required) return false;
++    throw new Error("native keychain unavailable");
++  }
++  const scope = join(targetRoot, "node_modules", "@napi-rs");
++  if (existsSync(scope)) assertUnlinkedTree(scope);
++  rmSync(scope, { recursive: true, force: true });
++  mkdirSync(scope, { recursive: true });
++  for (const [name, path] of packages) cpSync(path, join(targetRoot, "node_modules", name), { recursive: true });
++  return true;
++}
 diff --git a/src/status.ts b/src/status.ts
 index 48f7002..fccfc5d 100644
 --- a/src/status.ts

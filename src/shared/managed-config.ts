@@ -4,7 +4,8 @@ import { AccessDeniedError, type BankAccess, visibleBanks } from "./bank-access.
 import { validatedToolPrefix } from "./tool-prefix.js";
 
 export interface ManagedPrincipal extends BankAccess {
-  tokenEnv: string;
+  tokenEnv?: string;
+  human?: { credentialRef: string };
   source?: string;
   mapPathToBank?: Record<string, string>;
 }
@@ -25,7 +26,19 @@ export interface ManagedRouterConfig {
 const TOKEN_ENV_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
 function validatedPrincipal(configured: ManagedPrincipal): ManagedPrincipal {
-  if (!TOKEN_ENV_PATTERN.test(configured.tokenEnv) || "token" in configured || "apiToken" in configured) {
+  const human = configured.human;
+  if (
+    (human === undefined
+      ? typeof configured.tokenEnv !== "string" || !TOKEN_ENV_PATTERN.test(configured.tokenEnv)
+      : typeof human !== "object" ||
+        human === null ||
+        Object.keys(human).length !== 1 ||
+        typeof human.credentialRef !== "string" ||
+        !/^[A-Za-z0-9._-]{1,64}$/.test(human.credentialRef) ||
+        Object.hasOwn(configured, "tokenEnv")) ||
+    "token" in configured ||
+    "apiToken" in configured
+  ) {
     throw new AccessDeniedError();
   }
   if (configured.source !== undefined && (typeof configured.source !== "string" || configured.source.trim() === "")) {

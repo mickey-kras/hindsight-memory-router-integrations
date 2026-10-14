@@ -48,6 +48,8 @@ npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-
 
 Keep the same managed environment when launching the harness. [Coding-agent setup](integrations/coding-agents/README.md) includes the pinned release URL command and agent prompt.
 
+For people using coding agents, optional [browser login](integrations/coding-agents/README.md#human-login) stores a short-lived credential in OS secure storage. Hosted applications can continue using persistent principals.
+
 For Codex, export `HINDSIGHT_ROUTER_CONFIG` before running the installer so it can allowlist the required environment variables. Unmapped projects, unknown harnesses and missing secrets fail closed. Do not overwrite this installation with upstream's `npx` installer.
 
 ## Documentation

@@ -62,14 +62,14 @@ npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-
 
 The operator sets `HINDSIGHT_ROUTER_CONFIG` to an absolute managed JSON path and provisions each principal's named token environment variable before installation. Run from a mapped project directory. Bare `install` selects `HINDSIGHT_MCP_HARNESS` when supplied, otherwise one unambiguous configured and detected harness (or the sole configured harness before first setup). Ambiguous identity fails closed; explicit `install codex`, another supported harness, or `install all` remains available.
 
-Every selected principal, credential, path mapping, current project and adapter prerequisite is checked before runtime staging or host changes. Missing or invalid provisioning prints one sanitized failure line and exits nonzero. No secret is prompted for or written to a harness configuration. `--api-url`, `--api-token` and `--server` are refused in both separate and inline forms. Human sign-in is unsupported pending Memory Router's managed authorization support (#477).
+Every selected principal, credential, path mapping, current project and adapter prerequisite is checked before runtime staging or host changes. Missing or invalid provisioning prints one sanitized failure line and exits nonzero. No secret is prompted for or written to a harness configuration. `--api-url`, `--api-token` and `--server` are refused in both separate and inline forms. Optional [human login](#human-login) uses Memory Router's managed OIDC authorization and OS secure storage.
 
 Installation copies the runtime to a stable path, preserves the native hooks, plugins, companion skills and background ingestion, and restores the previous runtime, host files and native plugin registries if a mutation fails. The transaction snapshots only affected configuration, skills and plugin storage, excluding session history. Symlinked mutation paths are refused before changes. Reinstalling replaces this integration's entries and preserves other settings. `--import-conversations` is an explicit opt-in backfill of the current project's local history after installation commits.
 
 For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installing. The installer adds that variable,
 the `codex` principal's `tokenEnv` name, and optional coding-agent settings to MCP `env_vars`.
 Export the token when launching Codex; its value is never written to TOML.
-Reinstall after changing `tokenEnv`. Existing allowlist entries, timeouts, and environment overrides are preserved.
+Reinstall after changing `tokenEnv`. Known prior managed token bindings are removed when replaced; other allowlist entries, timeouts, and environment overrides are preserved.
 Remove any literal managed token from the MCP `env` table before reinstalling.
 
 ## Project and bank rules
@@ -118,3 +118,46 @@ skills and registrations survive; a collision at the desired name fails closed. 
 reject stale managed skill namespaces until explicit reinstall. Uninstall removes owned prior
 namespaces even if the operator has since changed the prefix. This never changes bank mapping,
 router authorization, credential sources or the behavior of the retained upstream operations.
+
+## Human login
+
+Requires Memory Router's optional human OIDC flow and an operator mapping from the authenticated identity to banks/scopes. Use a public native OIDC client with a registered loopback redirect. Router authentication stays authoritative; local project mappings cannot expand access.
+
+Replace a coding principal's `tokenEnv` with an opaque secure-storage reference:
+
+```json
+{
+  "routerUrl": "https://router.example.test",
+  "principals": {
+    "codex": {
+      "human": { "credentialRef": "interactive" },
+      "writeBank": "project-example",
+      "additionalReadBanks": [],
+      "mapPathToBank": { "/absolute/path/project": "project-example" }
+    }
+  }
+}
+```
+
+Set `HINDSIGHT_ROUTER_CONFIG` to that operator-managed file, then run the verified package's installer interactively:
+
+```sh
+hindsight-coding-agents login codex
+hindsight-coding-agents install codex
+```
+
+Login opens the browser and receives the authorization code on `127.0.0.1` at a temporary port. The code, PKCE verifier and OIDC tokens never enter configuration. The router-issued credential is bound to the exact HTTPS router base URL, including any path prefix, and the server-selected principal. Harness identity still selects its fixed local project mapping.
+
+Supported secure stores are macOS Keychain, Windows Credential Manager and Linux Secret Service. Linux requires an unlocked session keyring; headless systems without it cannot use human login. No plaintext file, environment token or Linux kernel-keyring fallback is provided. Native dependencies are staged with the installed runtime and do not require package lifecycle scripts.
+
+New installations preserve an available native secure-storage dependency even in application mode, so a later human login can run from the staged installer after the source package cache disappears. Application mode remains available when the platform has no native dependency. Older staged runtimes that lack native support cannot repair themselves: reinstall from a fresh verified package while still in application mode, then configure human mode and log in. The installer does not download dependencies or replace secure storage with a file. Missing human credentials or native support stops installation before host changes.
+
+Sessions last at most one hour. Expired, revoked, missing or locked credentials stop requests; run `login` again explicitly. There is no automatic refresh or fallback to `mr_*` application credentials. Do not combine `human` and `tokenEnv`. Restart a harness if it has disabled its client after an authorization failure.
+
+New Codex registrations record their authentication mode and managed token variable name as non-secret ownership metadata. Switching a marked application registration to human mode removes that exact token allowlist entry and any matching literal override, while preserving other settings. Older unmarked registrations cannot distinguish former token variables from optional settings, including standard names such as `HINDSIGHT_LOG_FILE`. Human mode automatically allows only `HINDSIGHT_ROUTER_CONFIG`; its harness identity is fixed. Human installation stops before changes when other unmarked environment entries exist: review and remove them from the owned MCP `env_vars` and `env` tables, reinstall, then restore only noncredential settings. The installer never guesses which user entries to delete.
+
+```sh
+hindsight-coding-agents sign-out codex
+```
+
+Sign-out deletes the local credential even when router revocation cannot be confirmed and reports that limitation. Such a session remains valid until expiry or operator revocation. Router sign-out does not sign out of the identity provider. Harnesses deliberately configured with the same router and credential reference share a session; sign-out affects all of them.

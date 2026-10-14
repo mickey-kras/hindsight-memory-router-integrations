@@ -40,9 +40,11 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import { TOKEN_FORMAT_PATTERN } from "@memory-router/shared/patterns";
 import { requireBank } from "@memory-router/shared/bank-access";
 import { managedBank, harnessTransport } from "@memory-router/coding-agents/runtime";
+import { runHumanAuth } from "@memory-router/coding-agents/human-login";
+import { HumanLoginRequiredError } from "@memory-router/coding-agents/human-session";
+import { stageNativeKeychain } from "./native-storage";
 import { assertUnlinkedTree, InstallTransaction } from "./install-transaction";
 import { loadManagedConfig, loadValidatedManagedConfig } from "@memory-router/shared/managed-config";
 import { ENV_KEYS } from "./core/config";
@@ -681,6 +683,8 @@ const CODEX_ENV_VARS = [
   "HINDSIGHT_LOG_FILE",
   ...Object.values(ENV_KEYS).filter((name) => name !== ENV_KEYS.apiToken),
 ];
+const CODEX_AUTH_MODE = "HINDSIGHT_ROUTER_AUTH_MODE";
+const CODEX_TOKEN_ENV = "HINDSIGHT_ROUTER_TOKEN_ENV";
 
 type CodexEnvVar = string | { name: string; source?: "local" | "remote" };
 
@@ -742,25 +746,52 @@ function codexMcpBlock(dist: string, existing: string): string {
     realpathSync(env.HINDSIGHT_ROUTER_CONFIG) !== realpathSync(process.env.HINDSIGHT_ROUTER_CONFIG ?? "")) {
     throw new Error("codex: retained managed configuration conflicts with installer provisioning");
   }
-  let tokenEnv: string;
+  let tokenEnv: string | undefined;
   try {
     tokenEnv = loadManagedConfig({ ...process.env, ...env }, "codex").principal.tokenEnv;
   } catch {
     throw new Error("codex: set HINDSIGHT_ROUTER_CONFIG to a valid managed config with a codex principal");
   }
-  if (Object.hasOwn(env, tokenEnv)) {
+  if (tokenEnv && Object.hasOwn(env, tokenEnv)) {
     throw new Error(`codex: export ${tokenEnv} in the host environment and remove its literal MCP env value`);
   }
-  const inheritedNames = new Set(envVars.map((entry) => typeof entry === "string" ? entry : entry.name));
-  const requiredNames = [...new Set([...CODEX_ENV_VARS, tokenEnv])];
+  const mode = env[CODEX_AUTH_MODE];
+  const oldTokenEnv = env[CODEX_TOKEN_ENV];
+  const reserved = new Set([...CODEX_ENV_VARS, "HINDSIGHT_MCP_HARNESS", CODEX_AUTH_MODE, CODEX_TOKEN_ENV]);
+  if ((mode !== undefined && mode !== "persistent" && mode !== "human") ||
+    (oldTokenEnv !== undefined && (!/^[A-Z_][A-Z0-9_]*$/.test(oldTokenEnv) || reserved.has(oldTokenEnv))) ||
+    (mode === "persistent" ? oldTokenEnv === undefined : oldTokenEnv !== undefined) ||
+    (tokenEnv !== undefined && reserved.has(tokenEnv))) {
+    throw new ToolPrefixError("codex: invalid managed authentication metadata; review the MCP environment before reinstalling");
+  }
+  const fixedBindings = new Set(["HINDSIGHT_ROUTER_CONFIG", "HINDSIGHT_MCP_HARNESS"]);
+  const unknownLegacyEnvironment = mode === undefined && (
+    envVars.some((entry) => { const name = typeof entry === "string" ? entry : entry.name; return !fixedBindings.has(name) && name !== tokenEnv; }) ||
+    Object.keys(env).some((name) => !fixedBindings.has(name))
+  );
+  if (tokenEnv === undefined && unknownLegacyEnvironment) {
+    throw new ToolPrefixError("codex: legacy credential bindings are unknown; review and remove extra MCP env_vars and env entries before human login installation, then restore noncredential settings");
+  }
+  const retainedEnv = { ...env };
+  if (oldTokenEnv && oldTokenEnv !== tokenEnv) delete retainedEnv[oldTokenEnv];
+  delete retainedEnv[CODEX_AUTH_MODE];
+  delete retainedEnv[CODEX_TOKEN_ENV];
+  delete retainedEnv.HINDSIGHT_MCP_HARNESS;
+  if (!unknownLegacyEnvironment) {
+    retainedEnv[CODEX_AUTH_MODE] = tokenEnv ? "persistent" : "human";
+    if (tokenEnv) retainedEnv[CODEX_TOKEN_ENV] = tokenEnv;
+  }
+  const retainedVars = envVars.filter((entry) => !oldTokenEnv || oldTokenEnv === tokenEnv || (typeof entry === "string" ? entry : entry.name) !== oldTokenEnv);
+  const inheritedNames = new Set(retainedVars.map((entry) => typeof entry === "string" ? entry : entry.name));
+  const requiredNames = tokenEnv ? [...new Set([...CODEX_ENV_VARS, tokenEnv])] : ["HINDSIGHT_ROUTER_CONFIG"];
   return stringifyToml({
     mcp_servers: {
       [name]: {
         ...previous,
         command: "node",
         args: [join(dist, "mcp-server.js")],
-        env_vars: [...envVars, ...requiredNames.filter((name) => !inheritedNames.has(name))],
-        env: { ...env, HINDSIGHT_MCP_HARNESS: "codex" },
+        env_vars: [...retainedVars, ...requiredNames.filter((name) => !inheritedNames.has(name))],
+        env: { ...retainedEnv, HINDSIGHT_MCP_HARNESS: "codex" },
       },
     },
   }).trimEnd();
@@ -1034,6 +1065,10 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     rmSync(join(target, "dist"), { recursive: true, force: true });
     mkdirSync(target, { recursive: true });
     cpSync(c.dist, join(target, "dist"), { recursive: true });
+    const needsNativeStorage = Object.values(loadValidatedManagedConfig(process.env).principals).some((principal) => principal.human);
+    if (!stageNativeKeychain(c.pkgRoot, target, needsNativeStorage)) {
+      c.log?.("Native secure storage is not installed; human login requires reinstalling from a verified package with native support.");
+    }
     const skill = join(c.pkgRoot, "skill");
     if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
     const pkgJson = join(c.pkgRoot, "package.json");
@@ -1940,8 +1975,6 @@ function mutationPaths(ctx: InstallCtx, names: string[], includeDesiredSkill = t
 function validateProvisioning(targets: HarnessInstaller[]): void {
   for (const target of targets) {
     const { principal } = loadManagedConfig(process.env, target.name);
-    const token = process.env[principal.tokenEnv];
-    if (!token || !TOKEN_FORMAT_PATTERN.test(token)) throw new Error("credential unavailable");
     harnessTransport(target.name);
     for (const [path, bank] of Object.entries(principal.mapPathToBank ?? {})) {
       if (!isAbsolute(path)) throw new Error("invalid project mapping");
@@ -1967,7 +2000,7 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
     return 0;
   }
   if (!["install", "uninstall", "update"].includes(command)) {
-    ctxIn.log?.("usage: hindsight-coding-agents install [harness...|all] [--import-conversations] | uninstall <harness...|all> | update | stats");
+    ctxIn.log?.("usage: hindsight-coding-agents login|sign-out [harness] | install [harness...|all] [--import-conversations] | uninstall <harness...|all> | update | stats");
     return command ? 1 : 0;
   }
   if (args.some((arg) => arg.startsWith("--") && arg !== "--import-conversations")) return fail();
@@ -2049,6 +2082,7 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
       return 1;
     }
     if (error instanceof ToolPrefixError) { ctxIn.log?.(error.message); return 1; }
+    if (error instanceof HumanLoginRequiredError) { ctxIn.log?.(error.message); return 1; }
     return fail();
   }
   for (const message of messages) ctxIn.log?.(message);
@@ -2096,7 +2130,9 @@ if (isMain || mainPath?.endsWith("installer.js")) {
     configPath: process.env.HINDSIGHT_CONFIG || undefined,
   });
   const messages: string[] = [];
-  const code = run(process.argv.slice(2), {
+  const code = ["login", "sign-out"].includes(process.argv[2])
+    ? await runHumanAuth(process.argv.slice(2), (message) => messages.push(message), Boolean(isatty(0) && isatty(1)))
+    : run(process.argv.slice(2), {
     home: homedir(),
     pkgRoot,
     dist,

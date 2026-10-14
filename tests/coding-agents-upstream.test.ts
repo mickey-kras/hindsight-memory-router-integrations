@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,6 +13,7 @@ import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/know
 import { readSessionCache, writeSessionCache } from "../src/upstream/coding-agents/src/core/session-cache";
 import { run as install, parseJsonc } from "../src/upstream/coding-agents/src/installer";
 import { selectTools } from "../src/upstream/coding-agents/src/mcp-server";
+import { stageNativeKeychain } from "../src/upstream/coding-agents/src/native-storage";
 
 const dirs: string[] = [];
 const token = `mr_codex_${"b".repeat(64)}`;
@@ -40,7 +41,7 @@ function codingAgentsPackage() {
   // packages/ is gitignored; pack the tarball from source on demand.
   if (!cachedPackage) {
     const source = new URL("../src/upstream/coding-agents", import.meta.url).pathname;
-    execFileSync("npm", ["run", "build", "--silent"], { cwd: source });
+    execFileSync("npm", ["run", "build", "--prefix", source, "--silent"], { cwd: source });
     // Not tracked in `dirs`: the cache must survive afterEach cleanup.
     const dir = mkdtempSync(join(tmpdir(), "coding-agents-pack-"));
     process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
@@ -837,6 +838,301 @@ it("passes the selected harness to conversation import and its retry command", (
   dirs.push(dirname(input));
   expect(JSON.parse(readFileSync(input, "utf8"))).toHaveLength(1);
   expect(log.mock.calls.map(([line]) => line).join("\n")).toContain('--harness "codex"');
+});
+
+vi.mock("../src/coding-agents/human-session.js", async (original) => {
+  const actual = await original<typeof import("../src/coding-agents/human-session.js")>();
+  return {
+    ...actual,
+    readHumanSession: () => ({ token: `mrh_${"a".repeat(32)}_${"b".repeat(64)}`, principal_id: "human-example" }),
+  };
+});
+const directories: string[] = [];
+const packageRoot = new URL("../src/upstream/coding-agents", import.meta.url).pathname;
+function temporary(): string {
+  const path = mkdtempSync(join(tmpdir(), "human-install-"));
+  directories.push(path);
+  return path;
+}
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+it("stages native prebuilt dependency without npm lifecycle scripts or source-cache dependence", () => {
+  const source = temporary();
+  const staged = temporary();
+  writeFileSync(join(source, "package.json"), "{}");
+  stageNativeKeychain(packageRoot, source);
+  stageNativeKeychain(source, staged);
+  rmSync(source, { recursive: true, force: true });
+  const result = execFileSync(
+    process.execPath,
+    [
+      "-e",
+      `
+    const {Entry} = require(${JSON.stringify(join(staged, "node_modules/@napi-rs/keyring"))});
+    if (typeof Entry !== 'function') process.exit(2);
+    if (process.platform === 'linux') {
+      try { new Entry('synthetic-test','synthetic-user',{linux:{store:'secret-service'}}).getPassword(); process.exit(3); }
+      catch { process.stdout.write('secure-store-unavailable'); }
+    }
+  `,
+    ],
+    { encoding: "utf8", env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-human-auth-test" } },
+  );
+  if (process.platform === "linux") expect(result).toBe("secure-store-unavailable");
+});
+
+it("installs human-mode Codex without a token environment name and keeps native runtime with staged installer", () => {
+  const home = temporary();
+  const configPath = join(home, "managed.json");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      routerUrl: "https://router.example.test",
+      principals: {
+        codex: {
+          human: { credentialRef: "person" },
+          writeBank: "private",
+          mapPathToBank: { [process.cwd()]: "private" },
+        },
+      },
+    }),
+  );
+  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", configPath);
+  vi.stubEnv("HINDSIGHT_MCP_HARNESS", "codex");
+  const messages: string[] = [];
+  const ctx = {
+    home,
+    pkgRoot: packageRoot,
+    dist: join(packageRoot, "dist"),
+    log: (message: string) => messages.push(message),
+  };
+  expect(install(["install", "codex"], ctx)).toBe(0);
+  const registration = readFileSync(join(home, ".codex/config.toml"), "utf8");
+  expect(registration).toContain("HINDSIGHT_ROUTER_CONFIG");
+  expect(registration).not.toContain("tokenEnv");
+  expect(registration).not.toContain("mrh_");
+  expect(messages.join()).not.toContain("human-example");
+  const native = join(home, ".hindsight/coding-agents/node_modules/@napi-rs/keyring/index.js");
+  expect(existsSync(native)).toBe(true);
+  const staged = join(home, ".hindsight/coding-agents");
+  expect(install(["install", "codex"], { ...ctx, pkgRoot: staged, dist: join(staged, "dist") })).toBe(0);
+  expect(readFileSync(join(home, ".codex/config.toml"), "utf8")).toBe(registration);
+  rmSync(configPath);
+  expect(install(["uninstall", "codex"], { ...ctx, pkgRoot: staged, dist: join(staged, "dist") })).toBe(0);
+  expect(readFileSync(join(home, ".codex/config.toml"), "utf8")).not.toContain("mcp_servers.hindsight");
+  expect(existsSync(join(home, ".agents/skills/hindsight-coding-agent"))).toBe(false);
+});
+
+it("keeps native support through a staged application-to-human migration after source cache removal", () => {
+  const home = temporary();
+  const source = temporary();
+  cpSync(join(packageRoot, "dist"), join(source, "dist"), { recursive: true });
+  cpSync(join(packageRoot, "package.json"), join(source, "package.json"));
+  stageNativeKeychain(packageRoot, source);
+  authMigrationConfig(home, false);
+  expect(install(["install", "codex"], { home, pkgRoot: source, dist: join(source, "dist") })).toBe(0);
+  rmSync(source, { recursive: true, force: true });
+  const staged = join(home, ".hindsight/coding-agents");
+  const loadNative = () =>
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `
+    const requireNative = require("node:module").createRequire(${JSON.stringify(join(staged, "package.json"))});
+    const { Entry } = requireNative("@napi-rs/keyring");
+    if (typeof Entry !== "function") throw new Error("native module missing");
+    process.stdout.write("native-ready");
+  `,
+      ],
+      { encoding: "utf8" },
+    );
+  expect(loadNative()).toBe("native-ready");
+  authMigrationConfig(home, true);
+  expect(install(["install", "codex"], { home, pkgRoot: staged, dist: join(staged, "dist") })).toBe(0);
+  expect(loadNative()).toBe("native-ready");
+  const current = parseToml(readFileSync(join(home, ".codex/config.toml"), "utf8")).mcp_servers.hindsight;
+  expect(current.env.HINDSIGHT_ROUTER_AUTH_MODE).toBe("human");
+  expect(current.env_vars).not.toContain("OLD_CODEX_TOKEN");
+});
+
+it("fails before host changes for an older staged runtime without native support and explains recovery", () => {
+  const home = temporary();
+  authMigrationConfig(home, true);
+  const staged = join(home, ".hindsight/coding-agents");
+  cpSync(join(packageRoot, "dist"), join(staged, "dist"), { recursive: true });
+  cpSync(join(packageRoot, "package.json"), join(staged, "package.json"));
+  mkdirSync(join(home, ".codex"));
+  const path = join(home, ".codex/config.toml");
+  const previous = ownedCodexRegistration(home);
+  writeFileSync(path, previous);
+  const result = spawnSync(process.execPath, [join(staged, "dist/installer.js"), "install", "codex"], {
+    env: { ...process.env, HOME: home },
+    encoding: "utf8",
+  });
+  expect(result.status).toBe(1);
+  expect(result.stdout + result.stderr).toContain("reinstall from a verified package");
+  expect(readFileSync(path, "utf8")).toBe(previous);
+  expect(existsSync(`${path}.hindsight-backup`)).toBe(false);
+  expect(existsSync(join(staged, "node_modules"))).toBe(false);
+});
+
+it("allows absent optional native packages without swallowing invalid package metadata", () => {
+  const source = temporary();
+  const staged = temporary();
+  expect(stageNativeKeychain(source, staged, false)).toBe(false);
+  const home = temporary();
+  authMigrationConfig(home, false);
+  cpSync(join(packageRoot, "dist"), join(source, "dist"), { recursive: true });
+  cpSync(join(packageRoot, "package.json"), join(source, "package.json"));
+  const log = vi.fn();
+  expect(install(["install", "codex"], { home, pkgRoot: source, dist: join(source, "dist"), log })).toBe(0);
+  expect(log.mock.calls.flat().join()).toContain("human login requires reinstalling from a verified package");
+  expect(existsSync(join(home, ".hindsight/coding-agents/node_modules"))).toBe(false);
+  const module = join(source, "node_modules/@napi-rs/keyring");
+  mkdirSync(module, { recursive: true });
+  writeFileSync(join(module, "package.json"), JSON.stringify({ version: "2.1.1", optionalDependencies: {} }));
+  expect(stageNativeKeychain(source, staged, false)).toBe(false);
+  writeFileSync(
+    join(module, "package.json"),
+    JSON.stringify({ version: "2.1.1", optionalDependencies: { "untrusted-module": "2.1.1" } }),
+  );
+  expect(() => stageNativeKeychain(source, staged, false)).toThrow("invalid keychain package");
+  expect(existsSync(join(staged, "node_modules"))).toBe(false);
+});
+
+it("rejects missing native dependency before replacing managed runtime", () => {
+  const staged = temporary();
+  mkdirSync(join(staged, "node_modules/@napi-rs"), { recursive: true });
+  writeFileSync(join(staged, "node_modules/@napi-rs/owned"), "original");
+  expect(() => stageNativeKeychain(temporary(), staged)).toThrow();
+  expect(readFileSync(join(staged, "node_modules/@napi-rs/owned"), "utf8")).toBe("original");
+});
+
+function authMigrationConfig(home: string, human: boolean): void {
+  const path = join(home, "managed.json");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      routerUrl: "https://router.example.test",
+      principals: {
+        codex: {
+          ...(human ? { human: { credentialRef: "person" } } : { tokenEnv: "OLD_CODEX_TOKEN" }),
+          writeBank: "private",
+          mapPathToBank: { [process.cwd()]: "private" },
+        },
+      },
+    }),
+  );
+  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", path);
+  vi.stubEnv("HINDSIGHT_MCP_HARNESS", "codex");
+  vi.stubEnv("OLD_CODEX_TOKEN", token);
+}
+
+it("removes the owned application binding on human migration and preserves user environment settings", () => {
+  const home = temporary();
+  authMigrationConfig(home, false);
+  const ctx = { home, pkgRoot: packageRoot, dist: join(packageRoot, "dist") };
+  expect(install(["install", "codex"], ctx)).toBe(0);
+  const path = join(home, ".codex/config.toml");
+  const old = readFileSync(path, "utf8");
+  const previous = parseToml(old).mcp_servers.hindsight;
+  expect(previous.env.HINDSIGHT_ROUTER_AUTH_MODE).toBe("persistent");
+  expect(previous.env.HINDSIGHT_ROUTER_TOKEN_ENV).toBe("OLD_CODEX_TOKEN");
+  writeFileSync(
+    path,
+    old.replace("env_vars = [", 'env_vars = ["USER_APPROVED_ENV", ') +
+      `\nOLD_CODEX_TOKEN = ${JSON.stringify(token)}\nUSER_SETTING = "preserved"\n`,
+  );
+  authMigrationConfig(home, true);
+  expect(install(["install", "codex"], ctx)).toBe(0);
+  const current = readFileSync(path, "utf8");
+  const installed = parseToml(current).mcp_servers.hindsight;
+  expect(current).not.toContain("OLD_CODEX_TOKEN");
+  expect(current).not.toContain(token);
+  expect(installed.env).not.toHaveProperty("HINDSIGHT_ROUTER_TOKEN_ENV");
+  expect(installed.env.HINDSIGHT_ROUTER_AUTH_MODE).toBe("human");
+  expect(installed.env.USER_SETTING).toBe("preserved");
+  expect(installed.env_vars).toContain("USER_APPROVED_ENV");
+  expect(install(["install", "codex"], ctx)).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(current);
+});
+
+it("rejects ambiguous unmarked human migration before changes and preserves unknown user settings", () => {
+  const home = temporary();
+  authMigrationConfig(home, true);
+  mkdirSync(join(home, ".codex"));
+  const path = join(home, ".codex/config.toml");
+  const old = `${ownedCodexRegistration(home)}env_vars = ["OLD_CODEX_TOKEN", "USER_APPROVED_ENV"]\n\n[mcp_servers.hindsight.env]\nUSER_SETTING = "preserved"\n`;
+  writeFileSync(path, old);
+  const log = vi.fn();
+  expect(install(["install", "codex"], { home, pkgRoot: packageRoot, dist: join(packageRoot, "dist"), log })).toBe(1);
+  expect(log.mock.calls.flat().join()).toContain("legacy credential bindings are unknown");
+  expect(log.mock.calls.flat().join()).not.toContain(token);
+  expect(readFileSync(path, "utf8")).toBe(old);
+  expect(existsSync(join(home, ".hindsight"))).toBe(false);
+  expect(existsSync(`${path}.hindsight-backup`)).toBe(false);
+});
+
+it.each([
+  'env_vars = ["HINDSIGHT_LOG_FILE"]\n',
+  'env_vars = [{ name = "HINDSIGHT_DIAG_FILE", source = "local" }]\n',
+  `[mcp_servers.hindsight.env]\nHINDSIGHT_LOG_FILE = ${JSON.stringify(token)}\n`,
+])("rejects reserved legacy credential bindings before writes %#", (environment) => {
+  const home = temporary();
+  authMigrationConfig(home, true);
+  mkdirSync(join(home, ".codex"));
+  const path = join(home, ".codex/config.toml");
+  const old = ownedCodexRegistration(home) + environment;
+  writeFileSync(path, old);
+  const log = vi.fn();
+  const ctx = { home, pkgRoot: packageRoot, dist: join(packageRoot, "dist"), log };
+  expect(install(["install", "codex"], ctx)).toBe(1);
+  expect(log.mock.calls.flat().join()).toContain("legacy credential bindings are unknown");
+  expect(log.mock.calls.flat().join()).not.toContain(token);
+  expect(readFileSync(path, "utf8")).toBe(old);
+  expect(existsSync(join(home, ".hindsight"))).toBe(false);
+  expect(existsSync(`${path}.hindsight-backup`)).toBe(false);
+  writeFileSync(path, ownedCodexRegistration(home));
+  expect(install(["install", "codex"], ctx)).toBe(0);
+  const installed = parseToml(readFileSync(path, "utf8")).mcp_servers.hindsight;
+  expect(installed.env_vars).toEqual(["HINDSIGHT_ROUTER_CONFIG"]);
+  expect(installed.env).not.toHaveProperty("HINDSIGHT_LOG_FILE");
+});
+
+it("keeps ambiguous reserved legacy bindings unmarked through application reinstall", () => {
+  const home = temporary();
+  authMigrationConfig(home, false);
+  mkdirSync(join(home, ".codex"));
+  const path = join(home, ".codex/config.toml");
+  writeFileSync(path, `${ownedCodexRegistration(home)}env_vars = ["HINDSIGHT_LOG_FILE"]\n`);
+  const ctx = { home, pkgRoot: packageRoot, dist: join(packageRoot, "dist") };
+  expect(install(["install", "codex"], ctx)).toBe(0);
+  const previous = readFileSync(path, "utf8");
+  expect(parseToml(previous).mcp_servers.hindsight.env).not.toHaveProperty("HINDSIGHT_ROUTER_AUTH_MODE");
+  authMigrationConfig(home, true);
+  expect(install(["install", "codex"], ctx)).toBe(1);
+  expect(readFileSync(path, "utf8")).toBe(previous);
+});
+
+it.each([
+  'HINDSIGHT_ROUTER_AUTH_MODE = "other"',
+  'HINDSIGHT_ROUTER_AUTH_MODE = "persistent"\nHINDSIGHT_ROUTER_TOKEN_ENV = "HINDSIGHT_ROUTER_CONFIG"',
+  'HINDSIGHT_ROUTER_AUTH_MODE = "persistent"\nHINDSIGHT_ROUTER_TOKEN_ENV = 42',
+  'HINDSIGHT_ROUTER_AUTH_MODE = "human"\nHINDSIGHT_ROUTER_TOKEN_ENV = "OLD_CODEX_TOKEN"',
+])("rejects invalid owned credential metadata %# before changes", (metadata) => {
+  const home = temporary();
+  authMigrationConfig(home, true);
+  mkdirSync(join(home, ".codex"));
+  const path = join(home, ".codex/config.toml");
+  const old = `${ownedCodexRegistration(home)}\n[mcp_servers.hindsight.env]\n${metadata}\n`;
+  writeFileSync(path, old);
+  expect(install(["install", "codex"], { home, pkgRoot: packageRoot, dist: join(packageRoot, "dist") })).toBe(1);
+  expect(readFileSync(path, "utf8")).toBe(old);
+  expect(existsSync(join(home, ".hindsight"))).toBe(false);
 });
 
 it.each([undefined, "abc_"])("brands the packaged manual seed CLI for %s", (prefix) => {

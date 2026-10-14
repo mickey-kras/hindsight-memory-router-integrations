@@ -5,6 +5,7 @@
 - All HTTP requests use the shared bank/operation guard. Bank listing intersects router-visible banks with configured IDs.
 - Recall/reflect fan out through the shared coordinator. Other reads remain explicitly bank-addressed.
 - 401/403 are terminal; upstream credential retry is replaced by runtime environment resolution on each request.
+- Optional human mode resolves a short-lived session from native OS secure storage on every request. Browser login uses the router's loopback OIDC/PKCE exchange; sign-out revokes and deletes the session. Persistent application credentials remain separate.
 - Redirects and raw server error bodies are blocked. Automatic upstream replacement and installer token migration are disabled.
 - Transcript parsing, provenance tags, retain payloads, hooks, and harness adapters retain upstream behavior.
 - Manual document ingestion uses the shared exact-title hash identity. Legacy IDs remain untouched; see the root README migration note.
