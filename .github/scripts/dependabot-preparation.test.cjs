@@ -1175,18 +1175,27 @@ test("refresh prepares Docker digests without semver metadata but never queues u
   assert.equal(h.state.dispatches.at(-1).workflow_id, "pr-validation.yml");
 });
 
-test("trusted policy accepts reviewed preparation files and rejects every mutated implementation", () => {
+test("trusted policy enforces source contracts while allowing benign implementation edits", () => {
   const { readFileSync } = require("node:fs");
   const root = resolve(__dirname, "../..");
-  const files = [
-    ".github/scripts/dependabot-auto-merge.cjs",
-    ".github/scripts/dependabot-preparation.cjs",
-    ".github/scripts/dependabot-validation.cjs",
-    ".github/scripts/refresh-dependency-artifacts.cjs",
-    ".github/scripts/docker-provenance.cjs",
-    ".github/workflows/dependabot-preparation.yml",
-  ];
-  const directory = mkdtempSync(join(tmpdir(), "preparation-policy-"));
+  const mutations = {
+    ".github/scripts/docker-provenance.cjs": ["function dockerProvenance(", "function renamedDockerProvenance("],
+    ".github/scripts/dependabot-auto-merge.cjs": ["const MINIMUM_SCORE = 75;", "const MINIMUM_SCORE = 0;"],
+    ".github/scripts/dependency-files.cjs": ["function validateChecksums(", "function renamedValidateChecksums("],
+    ".github/scripts/dependabot-preparation.cjs": ["expectedHeadOid: payload.head,", "expectedHeadOid: undefined,"],
+    ".github/scripts/refresh-dependency-artifacts.cjs": [
+      'run("git", ["merge-base", "--is-ancestor", base, head]);',
+      'run("git", ["merge-base", base, head]);',
+    ],
+    ".github/scripts/dependabot-validation.cjs": ["context.sha !== current.base.sha ||", "false ||"],
+    ".github/scripts/verify-prepared-policy.py": [
+      'if not run.startswith(prefix) or not run.endswith("POLICY_SOURCE\\n"):',
+      "if False:",
+    ],
+  };
+  const workflow = ".github/workflows/dependabot-preparation.yml";
+  const files = [...Object.keys(mutations), workflow];
+  const directory = mkdtempSync(join(tmpdir(), "preparation-contracts-"));
   try {
     for (const path of files) {
       mkdirSync(join(directory, path, ".."), { recursive: true });
@@ -1196,25 +1205,63 @@ test("trusted policy accepts reviewed preparation files and rejects every mutate
       head_sha: head,
       author_association: "OWNER",
       author_login: "owner",
-      "files.json": JSON.stringify(files.map((filename) => ({ filename, status: "modified" }))),
     }))
       writeFileSync(join(directory, name), value);
+    const setFiles = (entries = files.map((filename) => ({ filename, status: "modified" }))) =>
+      writeFileSync(join(directory, "files.json"), JSON.stringify(entries));
     const check = () =>
       execFileSync("python3", [join(root, ".github/scripts/verify-prepared-policy.py"), directory], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       });
+    setFiles();
     assert.match(check(), /Policy guard passed/);
-    for (const path of files) {
+    for (const [path, [before, after]] of Object.entries(mutations)) {
       const original = readFileSync(join(directory, path), "utf8");
-      const changed = path.endsWith(".cjs")
-        ? `${original}\n// unreviewed change\n`
-        : original.replace("core.setOutput('base',", "core.warning('base',");
-      assert.notEqual(changed, original);
-      writeFileSync(join(directory, path), changed);
-      assert.throws(check, /Command failed/);
+      writeFileSync(
+        join(directory, path),
+        `${original}\n${path.endsWith(".py") ? "#" : "//"} benign maintenance comment\n`,
+      );
+      assert.match(check(), /Policy guard passed/);
+      assert.ok(original.includes(before), path);
+      writeFileSync(join(directory, path), original.replace(before, before.replaceAll(" ", "  ")));
+      assert.match(check(), /Policy guard passed/);
+      writeFileSync(join(directory, path), original.replace(before, after));
+      assert.throws(check, /Command failed/, path);
       writeFileSync(join(directory, path), original);
+      for (const status of ["removed", "renamed"]) {
+        setFiles([{ filename: status === "renamed" ? `${path}.renamed` : path, previous_filename: path, status }]);
+        assert.throws(check, /Command failed/, `${path} ${status}`);
+      }
+      setFiles();
     }
+    const originalWorkflow = readFileSync(join(directory, workflow), "utf8");
+    writeFileSync(
+      join(directory, workflow),
+      originalWorkflow.replace("core.setOutput('base',", "core.warning('base',"),
+    );
+    assert.throws(check, /Command failed/);
+    writeFileSync(join(directory, workflow), originalWorkflow);
+    for (const association of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+      writeFileSync(join(directory, "author_association"), association);
+      assert.match(check(), /Policy guard passed/);
+    }
+    for (const [association, login] of [
+      ["NONE", "outside"],
+      ["NONE", "dependabot[bot]"],
+      ["OWNER", "dependabot[bot]"],
+    ]) {
+      writeFileSync(join(directory, "author_association"), association);
+      writeFileSync(join(directory, "author_login"), login);
+      assert.throws(check, /Command failed/);
+    }
+    writeFileSync(join(directory, "author_association"), "NONE");
+    writeFileSync(join(directory, "author_login"), "dependabot[bot]");
+    setFiles([{ filename: "src/upstream/coding-agents/npm-shrinkwrap.json", status: "modified" }]);
+    assert.match(check(), /Policy guard passed/);
+    setFiles([{ filename: workflow, status: "modified" }]);
+    writeFileSync(join(directory, workflow), originalWorkflow.replace(/@[0-9a-f]{40}/, `@${"a".repeat(40)}`));
+    assert.match(check(), /Policy guard passed/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
