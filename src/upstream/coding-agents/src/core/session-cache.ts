@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, renameSync, rmSync } from "node:fs";
+import { constants, readdirSync, renameSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { readPrivateFile, sessionStateFile, writePrivateFileAtomic, withPrivateFile } from "./private-state";
 import type { PageRef } from "./knowledge-injection";
 import type { RetainCursor, RetainCursorStore } from "./retain-cursor";
@@ -53,37 +54,69 @@ function pendingContextFile(harness: string, sessionId: string): string {
   return sessionStateFile(harness, sessionId, ".pending");
 }
 
-/** Add a block to the session's pending context. A block already waiting is not added again, so a
- *  session that goes several turns without a tool call is not handed the same roster N times. */
-export function stashPendingContext(harness: string, sessionId: string, context: string): void {
-  const path = pendingContextFile(harness, sessionId);
-  let existing = "";
+const PENDING_CONTEXT_BATCH_SIZE = 64;
+
+function pendingContextFiles(harness: string, sessionId: string): string[] {
+  const legacy = pendingContextFile(harness, sessionId);
+  const name = basename(legacy);
   try {
-    existing = readPrivateFile(path);
+    return readdirSync(dirname(legacy)).filter((entry) =>
+      entry === name || (entry.startsWith(`${name}.`) &&
+        /^\d{16}-\d{20}-[a-f0-9-]{36}\.block$/.test(entry.slice(name.length + 1)))
+    ).sort().map((entry) => join(dirname(legacy), entry));
   } catch {
-    /* nothing pending yet */
+    return [];
   }
-  if (existing.includes(context)) return;
+}
+
+// Never merge a prior publication: another hook may already have consumed it.
+export function stashPendingContext(harness: string, sessionId: string, context: string): void {
+  if (!context) return;
+  for (const path of pendingContextFiles(harness, sessionId).slice(0, PENDING_CONTEXT_BATCH_SIZE)) {
+    try {
+      if (readPrivateFile(path).includes(context)) return;
+    } catch {
+      // A consumer may have claimed this block already.
+    }
+  }
+  const id = `${Date.now().toString().padStart(16, "0")}-${process.hrtime.bigint().toString().padStart(20, "0")}-${randomUUID()}`;
   try {
-    writePrivateFileAtomic(path, existing ? `${existing}\n\n${context}` : context);
+    writePrivateFileAtomic(`${pendingContextFile(harness, sessionId)}.${id}.block`, context);
   } catch {
     /* best-effort, like the session cache */
   }
 }
 
-/** Claim and clear the session's pending context. The rename is the claim: tool hooks can run in
- *  parallel, and only the one whose rename succeeds delivers the block. */
-export function takePendingContext(harness: string, sessionId: string): string | undefined {
-  const path = pendingContextFile(harness, sessionId);
+export function hasPendingContext(harness: string, sessionId: string): boolean {
+  return pendingContextFiles(harness, sessionId).slice(0, PENDING_CONTEXT_BATCH_SIZE).some((path) => {
+    try {
+      return Boolean(readPrivateFile(path));
+    } catch {
+      return false;
+    }
+  });
+}
+
+function claimPendingContext(path: string, read: boolean): string | undefined {
   const claimed = `${path}.${randomUUID()}.claim`;
   try {
     withPrivateFile(path, constants.O_RDONLY, () => renameSync(path, claimed));
-    return readPrivateFile(claimed) || undefined;
+    return read ? readPrivateFile(claimed) || undefined : undefined;
   } catch {
     return undefined;
   } finally {
     rmSync(claimed, { force: true });
   }
+}
+
+export function takePendingContext(harness: string, sessionId: string): string | undefined {
+  const blocks = pendingContextFiles(harness, sessionId).slice(0, PENDING_CONTEXT_BATCH_SIZE)
+    .map((path) => claimPendingContext(path, true)).filter((block): block is string => Boolean(block));
+  return blocks.length ? blocks.join("\n\n") : undefined;
+}
+
+export function discardPendingContext(harness: string, sessionId: string): void {
+  for (const path of pendingContextFiles(harness, sessionId)) claimPendingContext(path, false);
 }
 
 /** The session root's own file, deliberately NOT the shared session cache — see sessionRootDir. */

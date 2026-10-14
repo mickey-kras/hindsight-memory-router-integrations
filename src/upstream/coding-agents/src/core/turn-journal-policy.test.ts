@@ -1,3 +1,5 @@
+import { managedReadScope } from "@memory-router/coding-agents/runtime";
+import { pendingContextKey, stashPendingContext } from "./session-cache";
 import { runSessionStartHook } from "./session-start";
 import * as humanSession from "@memory-router/coding-agents/human-session";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -223,6 +225,9 @@ describe("one-time tool-hook handoff authorization", () => {
     input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
     await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
     expect(out).not.toHaveBeenCalled();
+    vi.mocked(globalThis.fetch).mockResolvedValue(Response.json({ items: [] }));
+    await runHook(hook, clients().makePrompt);
+    expect(out).not.toHaveBeenCalled();
   });
 
   it("refuses a handoff when an additional read bank is removed from managed scope", async () => {
@@ -237,7 +242,7 @@ describe("one-time tool-hook handoff authorization", () => {
     expect(out).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });
-  it.each([401, 403, 404])("reauthorizes additional banks and refuses server revocation HTTP %s", async (status) => {
+  it.each([401, 403])("reauthorizes additional banks and refuses server revocation HTTP %s", async (status) => {
     await runHook(hook, clients().makePrompt);
     const out = vi.mocked(process.stdout.write); out.mockClear();
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async url =>
@@ -253,6 +258,148 @@ describe("one-time tool-hook handoff authorization", () => {
     await runHook(hook, clients().makePrompt);
     expect(fetch).not.toHaveBeenCalled(); // failure consumed the handoff
   });
+  function pending(context = "ORIGINAL_MEMORY") {
+    const scope = managedReadScope("zcode", approved);
+    stashPendingContext("zcode", pendingContextKey(scope.endpoint, scope.bankId, approved, sessionId, scope), context);
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+  }
+
+  it.each(["A", "B"])("accepts an authorized missing backend bank %s and still probes all banks", async (missing) => {
+    pending();
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async url =>
+      String(url).includes(`/banks/${missing}/`) ? new Response(null, { status: 404 }) : Response.json({ items: [] }));
+    await runHook(hook, clients().makePrompt);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://router.example.test/v1/default/banks/A/documents?limit=1",
+      "https://router.example.test/v1/default/banks/B/documents?limit=1",
+    ]);
+    expect(vi.mocked(process.stdout.write).mock.calls.flat().join()).toContain("ORIGINAL_MEMORY");
+    vi.mocked(process.stdout.write).mockClear();
+    await runHook(hook, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  it.each([503, 429, "timeout", "network"])("preserves pending memory after %s for a later successful tool event", async (failure) => {
+    pending();
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async url => {
+      if (!String(url).includes("/banks/B/")) return Response.json({ items: [] });
+      if (failure === "timeout") throw new DOMException("deadline", "TimeoutError");
+      if (failure === "network") throw new TypeError("connection closed");
+      return new Response(null, { status: failure as number });
+    });
+    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    fetch.mockResolvedValue(Response.json({ items: [] }));
+    await runHook(hook, clients().makePrompt);
+    expect(vi.mocked(process.stdout.write).mock.calls.flat().join()).toContain("ORIGINAL_MEMORY");
+    vi.mocked(process.stdout.write).mockClear();
+    await runHook(hook, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  it.each([200, 503])("preserves new context produced while a probe returning %s is pending", async (status) => {
+    pending();
+    let release!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => { release = resolve; });
+    const fetch = vi.spyOn(globalThis, "fetch").mockReturnValueOnce(response);
+    const attempt = runHook(hook, clients().makePrompt);
+    pending("NEW_MEMORY");
+    fetch.mockResolvedValue(Response.json({ items: [] }));
+    release(new Response(null, { status }));
+    if (status === 503) {
+      await expect(attempt).rejects.toThrow();
+      expect(process.stdout.write).not.toHaveBeenCalled();
+      await runHook(hook, clients().makePrompt);
+    } else {
+      await attempt;
+    }
+    expect(JSON.parse(String(vi.mocked(process.stdout.write).mock.calls[0][0])).deliveredContext)
+      .toBe("ORIGINAL_MEMORY\n\nNEW_MEMORY");
+  });
+
+  it("lets concurrent successful tool events deliver a block only once", async () => {
+    pending();
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      await ready;
+      return Response.json({ items: [] });
+    });
+    const first = runHook(hook, clients().makePrompt);
+    const second = runHook(hook, clients().makePrompt);
+    release();
+    await Promise.all([first, second]);
+    expect(process.stdout.write).toHaveBeenCalledOnce();
+    expect(vi.mocked(process.stdout.write).mock.calls.flat().join()).toContain("ORIGINAL_MEMORY");
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("discards pending memory before an overlapping successful probe can deliver it after denial", async () => {
+    pending();
+    const responses: ((response: Response) => void)[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      if (responses.length < 2) return new Promise<Response>((resolve) => { responses.push(resolve); });
+      return Response.json({ items: [] });
+    });
+    const denied = expect(runHook(hook, clients().makePrompt)).rejects.toThrow("memory access denied");
+    const allowed = runHook(hook, clients().makePrompt);
+    responses[0](new Response(null, { status: 403 }));
+    await denied;
+    responses[1](Response.json({ items: [] }));
+    await allowed;
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  it("keeps transiently deferred context bound to its original human principal", async () => {
+    const config = JSON.parse(readFileSync(managedPath, "utf8"));
+    delete config.principals.zcode.tokenEnv;
+    config.principals.zcode.human = { credentialRef: "person" };
+    writeFileSync(managedPath, JSON.stringify(config));
+    let principal = "human-first";
+    vi.spyOn(humanSession, "readHumanSession").mockImplementation(() => ({
+      token: `mrh_${"a".repeat(32)}_${"b".repeat(64)}`, principal_id: principal,
+      expires_at: Math.floor(Date.now() / 1000) + 300, routerUrl: config.routerUrl,
+    }));
+    pending();
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
+    principal = "human-second";
+    fetch.mockClear();
+    fetch.mockResolvedValue(Response.json({ items: [] }));
+    await runHook(hook, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    principal = "human-first";
+    await runHook(hook, clients().makePrompt);
+    expect(vi.mocked(process.stdout.write).mock.calls.flat().join()).toContain("ORIGINAL_MEMORY");
+  });
+
+  it.each(["endpoint", "mapping", "scope", "workspace", "session"])("does not move pending memory to a new %s after a transient failure", async (change) => {
+    pending();
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+    await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
+    const original = readFileSync(managedPath, "utf8");
+    const config = JSON.parse(original);
+    if (change === "endpoint") config.routerUrl = "https://router.moved.test";
+    else if (change === "mapping") config.principals.zcode.mapPathToBank[approved] = "B";
+    else if (change === "scope") config.principals.zcode.additionalReadBanks = ["A"];
+    else if (change === "workspace") {
+      const nested = join(approved, "nested");
+      mkdirSync(nested);
+      input.stdin = JSON.stringify({ session_id: sessionId, cwd: nested, tool: true });
+    } else input.stdin = JSON.stringify({ session_id: "another-session", cwd: approved, tool: true });
+    writeFileSync(managedPath, JSON.stringify(config));
+    fetch.mockClear();
+    fetch.mockResolvedValue(Response.json({ items: [] }));
+    await runHook(hook, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    writeFileSync(managedPath, original);
+    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
+    await runHook(hook, clients().makePrompt);
+    expect(vi.mocked(process.stdout.write).mock.calls.flat().join()).toContain("ORIGINAL_MEMORY");
+  });
+
   it("binds the handoff to the actual human principal without storing its identifier or token", async () => {
     const config = JSON.parse(readFileSync(managedPath, "utf8"));
     delete config.principals.zcode.tokenEnv;
@@ -293,19 +440,28 @@ describe("one-time tool-hook handoff authorization", () => {
     input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
     await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
     expect(out).not.toHaveBeenCalled();
+    principal = "human-first";
+    vi.mocked(globalThis.fetch).mockResolvedValue(Response.json({ items: [] }));
+    await runHook(hook, clients().makePrompt);
+    expect(out).not.toHaveBeenCalled();
   });
-  it.each(["endpoint", "mapping"])("rejects a changed %s during awaited bank grant probes", async (change) => {
+  it.each(["endpoint", "mapping", "scope"])("rejects a changed %s during awaited bank grant probes", async (change) => {
     await runHook(hook, clients().makePrompt);
     const out = vi.mocked(process.stdout.write); out.mockClear();
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       const config = JSON.parse(readFileSync(managedPath, "utf8"));
       if (change === "endpoint") config.routerUrl = "https://router.moved.test";
-      else config.principals.zcode.mapPathToBank[approved] = "B";
+      else if (change === "mapping") config.principals.zcode.mapPathToBank[approved] = "B";
+      else config.principals.zcode.additionalReadBanks = ["A"];
       writeFileSync(managedPath, JSON.stringify(config));
       return Response.json({ items: [] });
     });
     input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
     await expect(runHook(hook, clients().makePrompt)).rejects.toThrow();
+    expect(out).not.toHaveBeenCalled();
+    authorize();
+    vi.mocked(globalThis.fetch).mockResolvedValue(Response.json({ items: [] }));
+    await runHook(hook, clients().makePrompt);
     expect(out).not.toHaveBeenCalled();
   });
   it.each(["endpoint", "mapping"])("refuses to stash context when its %s changes during the producing read", async (change) => {
@@ -317,7 +473,7 @@ describe("one-time tool-hook handoff authorization", () => {
       return [];
     } });
     await expect(runHook(hook, makeClient)).rejects.toThrow();
-    expect(readdirSync(root, { recursive: true }).some(name => String(name).endsWith(".pending"))).toBe(false);
+    expect(readdirSync(root, { recursive: true }).some(name => /\.pending(?:\.|$)/.test(String(name)))).toBe(false);
   });
   it.each(["endpoint", "mapping"])("does not stash SessionStart context after an awaited %s switch", async (change) => {
     configure({ codebaseSurvey: false });
@@ -329,7 +485,7 @@ describe("one-time tool-hook handoff authorization", () => {
       return [];
     } });
     await runSessionStartHook({ ...HOOK_HARNESSES.zcode.sessionStart, deferContextToToolHook: true }, makeClient);
-    expect(readdirSync(root, { recursive: true }).some(name => String(name).endsWith(".pending"))).toBe(false);
+    expect(readdirSync(root, { recursive: true }).some(name => /\.pending(?:\.|$)/.test(String(name)))).toBe(false);
     expect(vi.mocked(process.stdout.write)).not.toHaveBeenCalled();
   });
   it("cannot hand old bank memory to a newly mapped bank", async () => {

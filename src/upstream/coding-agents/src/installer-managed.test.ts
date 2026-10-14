@@ -3,7 +3,7 @@ import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { InstallTransaction } from "./install-transaction";
-import { traecodeUserDataDir } from "./core/traecode-mcp";
+import { traecodeUserDataDir, traecodeWorkspaceStorageDir } from "./core/traecode-mcp";
 import { INSTALLERS, parseJsonc, run, type InstallCtx } from "./installer";
 import * as humanSession from "@memory-router/coding-agents/human-session";
 
@@ -438,6 +438,137 @@ it("rejects the unsupported Trae global-setting flag without writing any install
   const before = snapshot(ctx.home);
   expect(run(["install", "traecode", "--enable-workspace-mcp"], ctx)).toBe(1);
   expect(snapshot(ctx.home)).toEqual(before);
+});
+
+describe("Trae sandbox grant ownership", () => {
+  function prepare(prefix?: string) {
+    provision(["traecode", "claude-code"], { mapPathToBank: { [root]: "A" } });
+    vi.spyOn(process, "cwd").mockReturnValue(root);
+    put(join(ctx.dist, "mcp-server.js"), "runtime");
+    const config = join(root, "router.json");
+    put(config, JSON.stringify({ ...JSON.parse(readFileSync(config, "utf8")), ...(prefix ? { toolPrefix: prefix } : {}) }));
+    return {
+      config,
+      sandbox: join(ctx.home, ".trae-cn/sandbox.json"),
+      state: join(ctx.home, ".hindsight/coding-agents/traecode-sandbox-grants.json"),
+      grants: [join(ctx.home, ".hindsight"), traecodeWorkspaceStorageDir(ctx.home)],
+    };
+  }
+
+  it.each(["unset", "missing", "invalid", "no-principal"].flatMap(config => [undefined, "abc_"].map(prefix => ({ config, prefix }))))(
+    "uninstalls owned user state with $config provisioning and prefix $prefix", ({ config, prefix }) => {
+      const paths = prepare(prefix);
+      expect(run(["install", "traecode"], ctx)).toBe(0);
+      const userMcp = join(traecodeUserDataDir(ctx.home), "User/mcp.json");
+      const foreign = { command: "foreign" };
+      put(userMcp, JSON.stringify({ inputs: ["keep"], mcpServers: {
+        [prefix ? "abc" : "hindsight"]: { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: "traecode" } }, foreign,
+      } }));
+      if (config === "unset") vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", "");
+      if (config === "missing") rmSync(paths.config);
+      if (config === "invalid") put(paths.config, "{invalid");
+      if (config === "no-principal") put(paths.config, JSON.stringify({ routerUrl: "https://router.example", principals: {} }));
+      vi.stubEnv("TEST_MEMORY_TOKEN", "");
+      expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+      expect(existsSync(join(ctx.home, ".trae-cn/hooks.json"))).toBe(false);
+      expect(JSON.parse(readFileSync(userMcp, "utf8"))).toEqual({ inputs: ["keep"], mcpServers: { foreign } });
+      expect(JSON.parse(readFileSync(paths.sandbox, "utf8")).filesystem.readWrite).toEqual([]);
+      expect(existsSync(paths.state)).toBe(false);
+      expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+    },
+  );
+
+  it.each([0, 1, 2])("preserves %s pre-existing sandbox grants through reinstall and update", (preexisting) => {
+    const paths = prepare();
+    const original = [...paths.grants.slice(0, preexisting), "/user-owned"];
+    put(paths.sandbox, JSON.stringify({ filesystem: { readWrite: original }, unrelated: true }));
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(run(["update"], ctx)).toBe(0);
+    expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+    expect(JSON.parse(readFileSync(paths.sandbox, "utf8"))).toEqual({ filesystem: { readWrite: original }, unrelated: true });
+  });
+
+  it("preserves ambiguous legacy grants without an ownership record", () => {
+    const paths = prepare();
+    put(paths.sandbox, JSON.stringify({ filesystem: { readWrite: paths.grants } }));
+    expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+    expect(JSON.parse(readFileSync(paths.sandbox, "utf8")).filesystem.readWrite).toEqual(paths.grants);
+  });
+
+  it.each([false, true])("rolls back sandbox and ownership record after a later adapter fails, installed: %s", (installed) => {
+    const paths = prepare();
+    if (installed) expect(run(["install", "traecode"], ctx)).toBe(0);
+    else put(paths.sandbox, JSON.stringify({ filesystem: { readWrite: ["/user-owned"] } }));
+    const before = snapshot(ctx.home);
+    const later = vi.spyOn(INSTALLERS.find(installer => installer.name === "claude-code")!, "install").mockImplementation(() => { throw new Error("later adapter failed"); });
+    expect(run(["install", "traecode", "claude-code"], ctx)).toBe(1);
+    expect(later).toHaveBeenCalledOnce();
+    expect(snapshot(ctx.home)).toEqual(before);
+  });
+
+  it.each(["symlink", "hardlink"].flatMap(kind => ["install", "uninstall"].map(command => ({ kind, command }))))(
+    "refuses $kind ownership state on $command before mutation", ({ kind, command }) => {
+      const paths = prepare();
+      expect(run(["install", "traecode"], ctx)).toBe(0);
+      const external = join(root, "external-ownership.json");
+      put(external, readFileSync(paths.state, "utf8"));
+      rmSync(paths.state);
+      if (kind === "symlink") symlinkSync(external, paths.state); else linkSync(external, paths.state);
+      const before = snapshot(ctx.home);
+      const original = readFileSync(external, "utf8");
+      expect(run([command, "traecode"], ctx)).toBe(1);
+      expect(snapshot(ctx.home)).toEqual(before);
+      expect(readFileSync(external, "utf8")).toBe(original);
+    },
+  );
+
+  it.each(["install", "uninstall"] as const)("keeps %s repo mutations inside the initial transaction scope", (command) => {
+    const paths = prepare();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    const laterRepo = join(root, "later-repo");
+    mkdirSync(laterRepo);
+    const laterMcp = join(laterRepo, ".trae/mcp.json");
+    const original = JSON.stringify({ mcpServers: { hindsight: { command: "node", args: [join(ctx.home, ".hindsight/coding-agents/dist/mcp-server.js")], env: { HINDSIGHT_MCP_HARNESS: "traecode" } } } });
+    put(laterMcp, original);
+    const adapter = INSTALLERS.find(installer => installer.name === "claude-code")!;
+    vi.spyOn(adapter, command).mockImplementation(() => {
+      const config = JSON.parse(readFileSync(paths.config, "utf8"));
+      config.principals.traecode.mapPathToBank[laterRepo] = "A";
+      put(paths.config, JSON.stringify(config));
+    });
+    expect(run([command, "claude-code", "traecode"], ctx)).toBe(0);
+    expect(readFileSync(laterMcp, "utf8")).toBe(original);
+  });
+
+  it.each([undefined, "abc_"])("keeps the initial Trae edition's skill inside rollback with prefix %s", (prefix) => {
+    prepare(prefix);
+    mkdirSync(join(ctx.home, ".trae"));
+    const before = snapshot(ctx.home);
+    const first = INSTALLERS.find(installer => installer.name === "claude-code")!;
+    vi.spyOn(first, "install").mockImplementation(() => { mkdirSync(join(ctx.home, ".trae-cn")); });
+    const later = INSTALLERS.find(installer => installer.name === "workbuddy")!;
+    provision(["traecode", "claude-code", "workbuddy"], { mapPathToBank: { [root]: "A" } });
+    if (prefix) {
+      const config = join(root, "router.json");
+      put(config, JSON.stringify({ ...JSON.parse(readFileSync(config, "utf8")), toolPrefix: prefix }));
+    }
+    let observed: { originalSkill: boolean; changedEditionSkills: boolean } | undefined;
+    const failLater = vi.spyOn(later, "install").mockImplementation(() => {
+      observed = {
+        originalSkill: existsSync(join(ctx.home, ".trae/skills", prefix ? "abc-coding-agent" : "hindsight-coding-agent", "SKILL.md")),
+        changedEditionSkills: existsSync(join(ctx.home, ".trae-cn/skills")),
+      };
+      throw new Error("later adapter failed");
+    });
+    expect(run(["install", "claude-code", "traecode", "workbuddy"], ctx)).toBe(1);
+    expect(failLater).toHaveBeenCalledOnce();
+    expect(observed).toEqual({ originalSkill: true, changedEditionSkills: false });
+    expect(existsSync(join(ctx.home, ".trae-cn/skills"))).toBe(false);
+    expect(readdirSync(join(ctx.home, ".trae-cn"))).toEqual([]);
+    rmSync(join(ctx.home, ".trae-cn"), { recursive: true });
+    expect(snapshot(ctx.home)).toEqual(before);
+  });
 });
 
 it.each([

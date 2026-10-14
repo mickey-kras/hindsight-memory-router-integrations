@@ -50,6 +50,8 @@ import {
   sessionRootDir,
   stashPendingContext,
   pendingContextKey,
+  hasPendingContext,
+  discardPendingContext,
   takePendingContext,
   writeSessionCache,
   type SessionCache,
@@ -475,19 +477,23 @@ export async function runHook(
     if (!sessionId) return;
     const scope = managedReadScope(cfg.routerHarness, cwd);
     const key = pendingContextKey(scope.endpoint, scope.bankId, cwd, sessionId, scope);
-    // Claim before probing: an authorization failure discards this one-time handoff permanently.
-    const pending = takePendingContext(spec.harness, key);
-    if (!pending) return;
-    // Aggregated memory can contain any readable bank. Reauthorize the entire bound scope,
-    // including additional banks, and reject principal/scope changes during these probes.
-    for (const bank of scope.banks) {
-      const response = await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"));
-      if (!response.ok) throw new AccessDeniedError();
+    if (!hasPendingContext(spec.harness, key)) return;
+    try {
+      // Aggregated memory can contain any readable bank. A guarded GET 404 means the authorized
+      // backend bank is missing; transport authorization failures still discard this handoff.
+      for (const bank of scope.banks) {
+        await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"));
+      }
+      const current = managedReadScope(cfg.routerHarness, cwd);
+      if (scope.transport.authorizationIdentity() !== scope.identity ||
+          pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key) throw new AccessDeniedError();
+    } catch (error) {
+      if (error instanceof AccessDeniedError) discardPendingContext(spec.harness, key);
+      throw error;
     }
-    const current = managedReadScope(cfg.routerHarness, cwd);
-    if (scope.transport.authorizationIdentity() !== scope.identity ||
-        pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key) throw new AccessDeniedError();
-    process.stdout.write(JSON.stringify(spec.toolHook.emit(pending)));
+    // Transient failures leave publications untouched; each successful claim delivers its block once.
+    const pending = takePendingContext(spec.harness, key);
+    if (pending) process.stdout.write(JSON.stringify(spec.toolHook.emit(pending)));
     return;
   }
   if (

@@ -53,6 +53,7 @@ import { importLocalHistory } from "./core/history";
 import { type LlmChoice } from "./core/daemon";
 import { readLegacyEndpoint } from "./core/legacy";
 import { ownedCompanionSkills } from "./core/skill-sync";
+import { readPrivateFile, writePrivateFileAtomic } from "./core/private-state";
 
 import { SKILL_DIRS, resolveSkillDirs, traecodeDotDirName } from "./core/skill-dirs";
 import {
@@ -92,6 +93,7 @@ export interface InstallCtx {
   /** Runs `claude mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
   claudeMcp?: (args: string[]) => boolean;
   ownedMcpNames?: Record<string, string[]>;
+  traecodePaths?: { repos: string[]; hooks: string; sandbox: string; mcp: string; storage: string; skills: string };
   /** Runs `qwen mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
   qwenMcp?: (args: string[]) => boolean;
   /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
@@ -366,6 +368,7 @@ function stripHarnessHooks(hooks: Record<string, any>, harness: HookHarnessName)
 /** This host's skills directory, from the map core/skill-sync.ts also reads — see SKILL_DIRS for
  *  why the two sides must not keep separate copies of these paths. */
 function skillsBaseFor(c: InstallCtx, harness: string): string {
+  if (harness === "traecode" && c.traecodePaths) return c.traecodePaths.skills;
   const parts = resolveSkillDirs(harness, c.home);
   if (!parts) throw new Error(`${harness} installs a skill but names no directory in SKILL_DIRS`);
   return join(c.home, ...parts);
@@ -2022,7 +2025,24 @@ const zcode: HarnessInstaller = {
  * names (see traecodeDotDirName / traecodeUserDataDir).
  */
 const traecodeMcpPath = (c: InstallCtx): string =>
-  join(traecodeUserDataDir(c.home), "User", "mcp.json");
+  c.traecodePaths?.mcp ?? join(traecodeUserDataDir(c.home), "User", "mcp.json");
+
+function traecodeRepos(required: boolean): string[] {
+  try { return Object.keys(loadManagedConfig(process.env, "traecode").principal.mapPathToBank ?? {}).sort(); }
+  catch (error) { if (required) throw error; return []; }
+}
+
+const traecodeSandboxOwnershipPath = (c: InstallCtx): string => join(runtimeDir(c.home), "traecode-sandbox-grants.json");
+
+function traecodeSandboxGrants(c: InstallCtx, sandboxPath: string): string[] {
+  let raw: string;
+  try { raw = readPrivateFile(traecodeSandboxOwnershipPath(c)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  const state = JSON.parse(raw);
+  if (!state || typeof state !== "object" || typeof state.sandboxPath !== "string" || !Array.isArray(state.added) || state.added.some((path: unknown) => typeof path !== "string"))
+    throw new Error("invalid sandbox ownership state");
+  return state.sandboxPath === sandboxPath ? state.added : [];
+}
 
 /** Remove OUR stale user-level MCP entry from `<userData>/User/mcp.json` (see the harness docs
  *  for why it must not exist), leaving foreign entries and the rest of the document alone, and
@@ -2080,7 +2100,7 @@ const traecode: HarnessInstaller = {
   name: "traecode",
   detect: (c) => existsSync(join(c.home, traecodeDotDirName(c.home))) || onPath("trae"),
   install(c) {
-    const hooksPath = join(c.home, traecodeDotDirName(c.home), "hooks.json");
+    const hooksPath = c.traecodePaths?.hooks ?? join(c.home, traecodeDotDirName(c.home), "hooks.json");
     const doc = readJson(hooksPath);
     doc.version = doc.version ?? 1;
     const hooks = (doc.hooks = doc.hooks ?? {});
@@ -2105,20 +2125,23 @@ const traecode: HarnessInstaller = {
     // silently (exit 0, zero effect) and the only workaround would be running hooks unsandboxed.
     // The per-window storage DBs get the same treatment: the SessionStart hook seeds the
     // workspace's MCP enable switch there (core/traecode-mcp.ts).
-    const sandboxPath = join(c.home, traecodeDotDirName(c.home), "sandbox.json");
+    const sandboxPath = c.traecodePaths?.sandbox ?? join(c.home, traecodeDotDirName(c.home), "sandbox.json");
     const sandbox = readJson(sandboxPath);
     const fsRules = (sandbox.filesystem = sandbox.filesystem ?? {});
     const readWrite = (fsRules.readWrite = fsRules.readWrite ?? []);
-    const needed = [join(c.home, ".hindsight"), traecodeWorkspaceStorageDir(c.home)];
+    const needed = [join(c.home, ".hindsight"), c.traecodePaths?.storage ?? traecodeWorkspaceStorageDir(c.home)];
+    const added = traecodeSandboxGrants(c, sandboxPath);
     let sandboxChanged = false;
     for (const dir of needed) {
       if (!readWrite.includes(dir)) {
         readWrite.push(dir);
+        if (!added.includes(dir)) added.push(dir);
         sandboxChanged = true;
       }
     }
     if (sandboxChanged) {
       writeJson(sandboxPath, sandbox);
+      writePrivateFileAtomic(traecodeSandboxOwnershipPath(c), JSON.stringify({ sandboxPath, added }) + "\n");
       c.log?.(`traecode: sandbox readWrite rules added (${needed.join(", ")})`);
     }
 
@@ -2128,8 +2151,7 @@ const traecode: HarnessInstaller = {
     // sandbox.json rules targeting Trae's own storage, so on stock installs both hook writes
     // fail — the installer runs unsandboxed and lands them. Because the hook checks before
     // writing, a pre-seeded repo turns every later session into a read-only no-op.
-    const { principal } = loadManagedConfig(process.env, "traecode");
-    const repos = Object.keys(principal.mapPathToBank ?? {}).sort();
+    const repos = c.traecodePaths?.repos ?? traecodeRepos(true);
     if (repos.length) {
       const written: string[] = [];
       const current: string[] = [];
@@ -2170,7 +2192,7 @@ const traecode: HarnessInstaller = {
     ensureTraecodeWorkspaceMcpGate(c);
   },
   uninstall(c) {
-    const hooksPath = join(c.home, traecodeDotDirName(c.home), "hooks.json");
+    const hooksPath = c.traecodePaths?.hooks ?? join(c.home, traecodeDotDirName(c.home), "hooks.json");
     if (existsSync(hooksPath)) {
       const doc = readJson(hooksPath);
       if (doc.hooks) {
@@ -2189,20 +2211,19 @@ const traecode: HarnessInstaller = {
     // opted-in repo's .trae/mcp.json, deleting the file when nothing remains in it. Foreign
     // servers and foreign "hindsight" entries are never touched — same ownership check as the
     // hook's. Missing repos skip silently; the storage sweep below still catches their switches.
-    const { principal } = loadManagedConfig(process.env, "traecode");
-    const repoEntries = Object.keys(principal.mapPathToBank ?? {}).sort();
+    const repoEntries = c.traecodePaths?.repos ?? traecodeRepos(false);
     const cleaned = repoEntries.filter((repo) =>
       removeTraecodeWorkspaceMcpEntry(repo, { home: c.home })
     );
     if (cleaned.length) {
       c.log?.(`traecode: per-repo MCP registration removed from:\n  ${cleaned.join("\n  ")}`);
     }
-    const sandboxPath = join(c.home, traecodeDotDirName(c.home), "sandbox.json");
+    const sandboxPath = c.traecodePaths?.sandbox ?? join(c.home, traecodeDotDirName(c.home), "sandbox.json");
     if (existsSync(sandboxPath)) {
       const sandbox = readJson(sandboxPath);
       const readWrite = sandbox.filesystem?.readWrite;
       if (Array.isArray(readWrite)) {
-        const ours = [join(c.home, ".hindsight"), traecodeWorkspaceStorageDir(c.home)];
+        const ours = traecodeSandboxGrants(c, sandboxPath);
         const filtered = readWrite.filter((p: string) => !ours.includes(p));
         if (filtered.length !== readWrite.length) {
           sandbox.filesystem.readWrite = filtered;
@@ -2210,6 +2231,7 @@ const traecode: HarnessInstaller = {
         }
       }
     }
+    rmSync(traecodeSandboxOwnershipPath(c), { force: true });
     // The per-workspace enable switches the installer/hook seeded — an uninstall leaves no storage behind.
     // Workspace enable switches remain user-managed.
     uninstallSkill(c, "traecode");
@@ -2406,10 +2428,9 @@ function mutationPaths(ctx: InstallCtx, names: string[], includeDesiredSkill = t
       for (const file of ["config.toml", "mcp.json"]) paths.push(join(home, file), `${join(home, file)}.hindsight-backup`);
     }
     if (name === "traecode") {
-      const { principal } = loadManagedConfig(process.env, "traecode");
-      for (const path of [join(ctx.home, traecodeDotDirName(ctx.home), "hooks.json"), join(ctx.home, traecodeDotDirName(ctx.home), "sandbox.json"), traecodeMcpPath(ctx)])
+      for (const path of [ctx.traecodePaths?.hooks ?? join(ctx.home, traecodeDotDirName(ctx.home), "hooks.json"), ctx.traecodePaths?.sandbox ?? join(ctx.home, traecodeDotDirName(ctx.home), "sandbox.json"), traecodeMcpPath(ctx)])
         paths.push(path, `${path}.hindsight-backup`);
-      for (const repo of Object.keys(principal.mapPathToBank ?? {})) paths.push(join(repo, ".trae/mcp.json"), join(repo, ".gitignore"));
+      for (const repo of ctx.traecodePaths?.repos ?? traecodeRepos(includeDesiredSkill)) paths.push(join(repo, ".trae/mcp.json"), join(repo, ".gitignore"));
     }
     if (name === "dsh") {
       const path = join(dshHome(ctx), "cordis.patch.yml");
@@ -2509,6 +2530,13 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
       for (const target of targets) {
         if (target.preflight?.(ctx)) return fail();
       }
+    }
+    if (targets.some(target => target.name === "traecode")) {
+      const dotDir = join(ctx.home, traecodeDotDirName(ctx.home));
+      ctx.traecodePaths = {
+        repos: traecodeRepos(command !== "uninstall"), hooks: join(dotDir, "hooks.json"), sandbox: join(dotDir, "sandbox.json"),
+        mcp: join(traecodeUserDataDir(ctx.home), "User/mcp.json"), storage: traecodeWorkspaceStorageDir(ctx.home), skills: join(dotDir, "skills"),
+      };
     }
     const paths = mutationPaths(ctx, targets.map((target) => target.name), command !== "uninstall");
     for (const target of targets) {

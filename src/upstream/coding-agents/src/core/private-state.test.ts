@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { readPrivateFile, sessionStateFile, writePrivateFileAtomic } from "./private-state";
-import { fileCursorStore, sessionCacheFile, writeSessionCache, stashPendingContext, takePendingContext } from "./session-cache";
+import { fileCursorStore, sessionCacheFile, writeSessionCache, stashPendingContext, hasPendingContext, takePendingContext, discardPendingContext } from "./session-cache";
 import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
 
 vi.mock("node:fs", async (original) => ({ ...await original<typeof fs>() }));
@@ -184,24 +186,145 @@ describe.skipIf(process.platform === "win32")("private session state", () => {
 
 
 describe.skipIf(process.platform === "win32")("Grok one-time private context handoff", () => {
+  it("does not replay a consumed block or lose distinct concurrent process publications", async () => {
+    const root = temporaryDirectory();
+    const children: ReturnType<typeof spawn>[] = [];
+    const exits: Promise<void>[] = [];
+    vi.stubEnv("TMPDIR", root);
+    try {
+      for (const file of ["private-state", "session-cache"]) {
+        const source = fs.readFileSync(new URL(`./${file}.ts`, import.meta.url), "utf8")
+          .replace('from "./private-state"', 'from "./private-state.mjs"');
+        fs.writeFileSync(join(root, `${file}.mjs`), transpileModule(source, {
+          compilerOptions: { module: ModuleKind.ESNext, target: ScriptTarget.ES2022 },
+        }).outputText);
+      }
+      const script = join(root, "worker.mjs");
+      fs.writeFileSync(script, `
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import { pathToFileURL } from "node:url";
+const fs = createRequire(import.meta.url)("node:fs");
+const [mode, modulePath, ready, release, result, context] = process.argv.slice(2);
+const wait = () => {
+  fs.writeFileSync(ready, "ready");
+  while (!fs.existsSync(release)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+};
+if (mode === "produce") {
+  const read = fs.readFileSync;
+  let paused = false;
+  fs.readFileSync = (...args) => {
+    const value = read(...args);
+    if (typeof args[0] === "number" && !paused) { paused = true; wait(); }
+    return value;
+  };
+  syncBuiltinESMExports();
+}
+const cache = await import(pathToFileURL(modulePath).href);
+if (mode === "produce") cache.stashPendingContext("process-race", "session", context);
+else { wait(); fs.writeFileSync(result, JSON.stringify(cache.takePendingContext("process-race", "session") ?? null)); }
+`);
+      const start = (mode: string, id: string, context = "") => {
+        const ready = join(root, `${id}.ready`);
+        const release = join(root, `${id}.release`);
+        const result = join(root, `${id}.result`);
+        const child = spawn(process.execPath, [script, mode, join(root, "session-cache.mjs"), ready, release, result, context], {
+          env: { ...process.env }, stdio: ["ignore", "pipe", "pipe"],
+        });
+        children.push(child);
+        let stderr = "";
+        child.stderr?.on("data", (chunk) => { stderr += chunk; });
+        const exited = new Promise<void>((resolve, reject) => {
+          child.once("error", reject);
+          child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(stderr || `child exit ${code}`)));
+        });
+        exits.push(exited);
+        void exited.catch(() => {});
+        return { ready, release, result, exited };
+      };
+      const waitFor = async (...paths: string[]) => {
+        const deadline = Date.now() + 5000;
+        while (!paths.every((path) => fs.existsSync(path))) {
+          if (Date.now() > deadline) throw new Error("child did not reach the filesystem barrier");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      };
+      stashPendingContext("process-race", "session", "FIRST_BLOCK");
+      const producers = [start("produce", "producer-b", "SECOND_BLOCK"), start("produce", "producer-c", "THIRD_BLOCK")];
+      await waitFor(...producers.map((child) => child.ready));
+      expect(takePendingContext("process-race", "session")).toBe("FIRST_BLOCK");
+      for (const child of producers) fs.writeFileSync(child.release, "go");
+      await Promise.all(producers.map((child) => child.exited));
+      const consumers = [start("consume", "consumer-one"), start("consume", "consumer-two")];
+      await waitFor(...consumers.map((child) => child.ready));
+      for (const child of consumers) fs.writeFileSync(child.release, "go");
+      await Promise.all(consumers.map((child) => child.exited));
+      const delivered = consumers.flatMap((child) => {
+        const content = JSON.parse(fs.readFileSync(child.result, "utf8")) as string | null;
+        return content ? content.split("\n\n") : [];
+      });
+      expect(delivered.sort()).toEqual(["SECOND_BLOCK", "THIRD_BLOCK"]);
+      expect(takePendingContext("process-race", "session")).toBeUndefined();
+      expect(fs.readdirSync(dirname(sessionStateFile("process-race", "session", ".pending")))).toEqual([]);
+    } finally {
+      for (const child of children) if (child.exitCode === null) child.kill();
+      await Promise.allSettled(exits);
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("uses private state, deduplicates the pending block and consumes it once", () => {
     const name = harness();
     stashPendingContext(name, "session", "PRIVATE_MEMORY");
     stashPendingContext(name, "session", "PRIVATE_MEMORY");
-    const file = sessionStateFile(name, "session", ".pending");
+    const directory = dirname(sessionStateFile(name, "session", ".pending"));
+    const file = join(directory, fs.readdirSync(directory)[0]);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.statSync(dirname(file)).mode & 0o777).toBe(0o700);
+    expect(hasPendingContext(name, "session")).toBe(true);
+    expect(hasPendingContext(name, "session")).toBe(true);
     expect(takePendingContext(name, "session")).toBe("PRIVATE_MEMORY");
+    expect(hasPendingContext(name, "session")).toBe(false);
     expect(takePendingContext(name, "session")).toBeUndefined();
     expect(fs.readdirSync(dirname(file))).toEqual([]);
   });
-  it.each(["symlink", "hardlink"])("refuses %s pending memory without changing its target", (kind) => {
+  it("accepts the legacy pending file without copying it into a new publication", () => {
+    const name = harness();
+    const legacy = sessionStateFile(name, "session", ".pending");
+    writePrivateFileAtomic(legacy, "LEGACY_MEMORY");
+    stashPendingContext(name, "session", "NEW_MEMORY");
+    expect(takePendingContext(name, "session")?.split("\n\n")).toEqual(["LEGACY_MEMORY", "NEW_MEMORY"]);
+    expect(takePendingContext(name, "session")).toBeUndefined();
+  });
+
+  it("drains a large handoff in finite batches without losing blocks, and discards the whole scope", () => {
+    const name = harness();
+    const expected = Array.from({ length: 70 }, (_, index) => `BLOCK_${index}_END`);
+    for (const context of expected) stashPendingContext(name, "session", context);
+    const delivered: string[] = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const context = takePendingContext(name, "session");
+      if (context) delivered.push(...context.split("\n\n"));
+    }
+    expect(delivered).toEqual(expected);
+    expect(hasPendingContext(name, "session")).toBe(false);
+    for (const context of expected) stashPendingContext(name, "session", context);
+    discardPendingContext(name, "session");
+    expect(hasPendingContext(name, "session")).toBe(false);
+    expect(takePendingContext(name, "session")).toBeUndefined();
+  });
+
+  it.each([
+    ["symlink", "legacy"], ["hardlink", "legacy"],
+    ["symlink", "block"], ["hardlink", "block"],
+  ])("refuses %s %s pending memory without changing its target", (kind, layout) => {
     const name = harness();
     const target = join(temporaryDirectory(), "target");
     fs.writeFileSync(target, "PRIVATE_EXTERNAL_MEMORY");
-    const file = sessionStateFile(name, "session", ".pending");
+    const suffix = layout === "legacy" ? ".pending" : ".pending.1234567890123456-12345678901234567890-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.block";
+    const file = sessionStateFile(name, "session", suffix);
     fs.mkdirSync(dirname(file), { recursive: true });
     if (kind === "symlink") fs.symlinkSync(target, file); else fs.linkSync(target, file);
+    expect(hasPendingContext(name, "session")).toBe(false);
     expect(takePendingContext(name, "session")).toBeUndefined();
     stashPendingContext(name, "session", "replacement");
     expect(fs.readFileSync(target, "utf8")).toBe("PRIVATE_EXTERNAL_MEMORY");
