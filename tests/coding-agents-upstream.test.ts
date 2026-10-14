@@ -1000,6 +1000,47 @@ it("rejects ambiguous unmarked human migration before changes and preserves unkn
 });
 
 it.each([
+  'env_vars = ["HINDSIGHT_LOG_FILE"]\n',
+  'env_vars = [{ name = "HINDSIGHT_DIAG_FILE", source = "local" }]\n',
+  `[mcp_servers.hindsight.env]\nHINDSIGHT_LOG_FILE = ${JSON.stringify(token)}\n`,
+])("rejects reserved legacy credential bindings before writes %#", (environment) => {
+  const home = temporary();
+  authMigrationConfig(home, true);
+  mkdirSync(join(home, ".codex"));
+  const path = join(home, ".codex/config.toml");
+  const old = ownedCodexRegistration(home) + environment;
+  writeFileSync(path, old);
+  const log = vi.fn();
+  const ctx = { home, pkgRoot: packageRoot, dist: join(packageRoot, "dist"), log };
+  expect(install(["install", "codex"], ctx)).toBe(1);
+  expect(log.mock.calls.flat().join()).toContain("legacy credential bindings are unknown");
+  expect(log.mock.calls.flat().join()).not.toContain(token);
+  expect(readFileSync(path, "utf8")).toBe(old);
+  expect(existsSync(join(home, ".hindsight"))).toBe(false);
+  expect(existsSync(`${path}.hindsight-backup`)).toBe(false);
+  writeFileSync(path, ownedCodexRegistration(home));
+  expect(install(["install", "codex"], ctx)).toBe(0);
+  const installed = parseToml(readFileSync(path, "utf8")).mcp_servers.hindsight;
+  expect(installed.env_vars).toEqual(["HINDSIGHT_ROUTER_CONFIG"]);
+  expect(installed.env).not.toHaveProperty("HINDSIGHT_LOG_FILE");
+});
+
+it("keeps ambiguous reserved legacy bindings unmarked through application reinstall", () => {
+  const home = temporary();
+  authMigrationConfig(home, false);
+  mkdirSync(join(home, ".codex"));
+  const path = join(home, ".codex/config.toml");
+  writeFileSync(path, `${ownedCodexRegistration(home)}env_vars = ["HINDSIGHT_LOG_FILE"]\n`);
+  const ctx = { home, pkgRoot: packageRoot, dist: join(packageRoot, "dist") };
+  expect(install(["install", "codex"], ctx)).toBe(0);
+  const previous = readFileSync(path, "utf8");
+  expect(parseToml(previous).mcp_servers.hindsight.env).not.toHaveProperty("HINDSIGHT_ROUTER_AUTH_MODE");
+  authMigrationConfig(home, true);
+  expect(install(["install", "codex"], ctx)).toBe(1);
+  expect(readFileSync(path, "utf8")).toBe(previous);
+});
+
+it.each([
   'HINDSIGHT_ROUTER_AUTH_MODE = "other"',
   'HINDSIGHT_ROUTER_AUTH_MODE = "persistent"\nHINDSIGHT_ROUTER_TOKEN_ENV = "HINDSIGHT_ROUTER_CONFIG"',
   'HINDSIGHT_ROUTER_AUTH_MODE = "persistent"\nHINDSIGHT_ROUTER_TOKEN_ENV = 42',

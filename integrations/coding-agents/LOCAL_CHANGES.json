@@ -77,7 +77,7 @@
   "src/installer-branding.test.ts": "3a1018ef2f467a9cbdf9e99d799d9c40a6ed8d615bae3c36ced29d0e5ad99af8",
   "src/installer-managed.test.ts": "a3cdf6df2b1b50f1a2f164708061b95ec97859a193b4d26311cfcad95b843479",
   "src/installer.test.ts": "c83d6e21c7eebe98ef9289cc892279556996ee8de32fbe2236ae4d5825ac09fc",
-  "src/installer.ts": "49f1619605139883e3611c747e4493ebfb3238498e541fffe4ecda6b4f6480e5",
+  "src/installer.ts": "e5c4174029f52e36f8532aaa12d908d6c461abd66f4fae9fc424230f7d32c986",
   "src/mcp-server.test.ts": "e576f47d577a89954aabf9f7b68e7b4419c77b6ec91e9b1ef295867b4482cf9f",
   "src/mcp-server.ts": "e389245e76d66e46d5e7857b2e26a4b39cb65c710f7e82ad5a8dd36a5800757b",
   "src/native-storage.ts": "bdcfbc8e81baf3f6a61e80906878763ea94b6b038ede394fc03966bc3b0a97f0",

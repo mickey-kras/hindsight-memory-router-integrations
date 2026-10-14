@@ -764,9 +764,10 @@ function codexMcpBlock(dist: string, existing: string): string {
     (tokenEnv !== undefined && reserved.has(tokenEnv))) {
     throw new ToolPrefixError("codex: invalid managed authentication metadata; review the MCP environment before reinstalling");
   }
+  const fixedBindings = new Set(["HINDSIGHT_ROUTER_CONFIG", "HINDSIGHT_MCP_HARNESS"]);
   const unknownLegacyEnvironment = mode === undefined && (
-    envVars.some((entry) => { const name = typeof entry === "string" ? entry : entry.name; return !reserved.has(name) && name !== tokenEnv; }) ||
-    Object.keys(env).some((name) => !reserved.has(name))
+    envVars.some((entry) => { const name = typeof entry === "string" ? entry : entry.name; return !fixedBindings.has(name) && name !== tokenEnv; }) ||
+    Object.keys(env).some((name) => !fixedBindings.has(name))
   );
   if (tokenEnv === undefined && unknownLegacyEnvironment) {
     throw new ToolPrefixError("codex: legacy credential bindings are unknown; review and remove extra MCP env_vars and env entries before human login installation, then restore noncredential settings");
@@ -782,7 +783,7 @@ function codexMcpBlock(dist: string, existing: string): string {
   }
   const retainedVars = envVars.filter((entry) => !oldTokenEnv || oldTokenEnv === tokenEnv || (typeof entry === "string" ? entry : entry.name) !== oldTokenEnv);
   const inheritedNames = new Set(retainedVars.map((entry) => typeof entry === "string" ? entry : entry.name));
-  const requiredNames = [...new Set([...CODEX_ENV_VARS, ...(tokenEnv ? [tokenEnv] : [])])];
+  const requiredNames = tokenEnv ? [...new Set([...CODEX_ENV_VARS, tokenEnv])] : ["HINDSIGHT_ROUTER_CONFIG"];
   return stringifyToml({
     mcp_servers: {
       [name]: {
