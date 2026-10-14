@@ -218,6 +218,34 @@ describe("readUsage", () => {
 
 
 describe("managed tool namespace usage", () => {
+  it.each([
+    ["search_", "search_knowledge_pages"],
+    ["read_", "read_knowledge_page"],
+  ])("preserves historical names when %s overlaps a tool suffix", (prefix, suffix) => {
+    const canonical = `hindsight_${suffix}`;
+    const turns = [
+      t("user", "question"),
+      t("action", `${canonical} {}`),
+      t("action", `mcp__hindsight__${canonical} {}`),
+      t("action", `hindsight.${canonical} {}`),
+      t("action", `${prefix}${suffix} {}`),
+      t("action", `mcp__hindsight__${prefix}${suffix} {}`),
+      t("action", `hindsight.${prefix}${suffix} {}`),
+      t("action", `other_${prefix}${suffix} {}`),
+      t("assistant", "From Hindsight memory: evidence"),
+    ];
+    expect(summarizeTurns(turns, prefix)).toEqual([
+      { turn: 1, calls: Array(6).fill(canonical), credited: true },
+    ]);
+    recordUsage({
+      harness: "codex", sessionId: "overlap", bankId: "bank", toolPrefix: prefix,
+      cursors: memoryUsageCursorStore(), lastTurnComplete: true, turns,
+    });
+    expect(readUsage()[0]).toMatchObject({
+      calls: 6, turnsWithRetrieval: 1, creditedTurnsWithRetrieval: 1, byTool: { [canonical]: 6 },
+    });
+  });
+
   it("normalizes bare, host-prefixed and historical retrieval names", () => {
     expect(summarizeTurns([
       t("user", "question"),

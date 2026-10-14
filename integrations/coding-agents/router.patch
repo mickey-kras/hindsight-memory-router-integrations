@@ -8439,16 +8439,44 @@ index a871d70..9d4c9b2 100644
    for (const line of body.split("\n")) {
      const trimmed = line.trim();
 diff --git a/src/core/usage.test.ts b/src/core/usage.test.ts
-index da0d378..5b17e67 100644
+index da0d378..575b6fb 100644
 --- a/src/core/usage.test.ts
 +++ b/src/core/usage.test.ts
-@@ -215,3 +215,30 @@ describe("readUsage", () => {
+@@ -215,3 +215,58 @@ describe("readUsage", () => {
      );
    });
  });
 +
 +
 +describe("managed tool namespace usage", () => {
++  it.each([
++    ["search_", "search_knowledge_pages"],
++    ["read_", "read_knowledge_page"],
++  ])("preserves historical names when %s overlaps a tool suffix", (prefix, suffix) => {
++    const canonical = `hindsight_${suffix}`;
++    const turns = [
++      t("user", "question"),
++      t("action", `${canonical} {}`),
++      t("action", `mcp__hindsight__${canonical} {}`),
++      t("action", `hindsight.${canonical} {}`),
++      t("action", `${prefix}${suffix} {}`),
++      t("action", `mcp__hindsight__${prefix}${suffix} {}`),
++      t("action", `hindsight.${prefix}${suffix} {}`),
++      t("action", `other_${prefix}${suffix} {}`),
++      t("assistant", "From Hindsight memory: evidence"),
++    ];
++    expect(summarizeTurns(turns, prefix)).toEqual([
++      { turn: 1, calls: Array(6).fill(canonical), credited: true },
++    ]);
++    recordUsage({
++      harness: "codex", sessionId: "overlap", bankId: "bank", toolPrefix: prefix,
++      cursors: memoryUsageCursorStore(), lastTurnComplete: true, turns,
++    });
++    expect(readUsage()[0]).toMatchObject({
++      calls: 6, turnsWithRetrieval: 1, creditedTurnsWithRetrieval: 1, byTool: { [canonical]: 6 },
++    });
++  });
++
 +  it("normalizes bare, host-prefixed and historical retrieval names", () => {
 +    expect(summarizeTurns([
 +      t("user", "question"),
@@ -8474,7 +8502,7 @@ index da0d378..5b17e67 100644
 +  });
 +});
 diff --git a/src/core/usage.ts b/src/core/usage.ts
-index b8d33d1..a721e3b 100644
+index b8d33d1..be840f9 100644
 --- a/src/core/usage.ts
 +++ b/src/core/usage.ts
 @@ -19,6 +19,7 @@
@@ -8496,7 +8524,7 @@ index b8d33d1..a721e3b 100644
 +// Store canonical names so historical default records and custom namespaces aggregate together.
 +function canonicalToolName(hostName: string, prefix: string): string | undefined {
 +  for (const namespace of new Set([validatedToolPrefix(prefix), DEFAULT_TOOL_PREFIX])) {
-+    const match = hostName.match(new RegExp(namespace + "((?:[a-z]+_)*[a-z]+)$"));
++    const match = hostName.match(new RegExp("(?:^|__|\\.)" + namespace + "((?:[a-z]+_)*[a-z]+)$"));
 +    if (match) return DEFAULT_TOOL_PREFIX + match[1];
 +  }
 +  return undefined;

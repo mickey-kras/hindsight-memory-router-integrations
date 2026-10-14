@@ -31,7 +31,7 @@ export function usageFilePath(): string {
 // Store canonical names so historical default records and custom namespaces aggregate together.
 function canonicalToolName(hostName: string, prefix: string): string | undefined {
   for (const namespace of new Set([validatedToolPrefix(prefix), DEFAULT_TOOL_PREFIX])) {
-    const match = hostName.match(new RegExp(namespace + "((?:[a-z]+_)*[a-z]+)$"));
+    const match = hostName.match(new RegExp("(?:^|__|\\.)" + namespace + "((?:[a-z]+_)*[a-z]+)$"));
     if (match) return DEFAULT_TOOL_PREFIX + match[1];
   }
   return undefined;

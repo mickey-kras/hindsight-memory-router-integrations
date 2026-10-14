@@ -1,7 +1,3 @@
-import { createPluginEntry } from "../src/upstream/coding-agents/src/harness/plugin-entry";
-import { opencodeAdapter } from "../src/upstream/coding-agents/src/harness/opencode";
-import { RuntimeCore } from "../src/upstream/coding-agents/src/core/runtime";
-import { loadConfig } from "../src/upstream/coding-agents/src/core/config";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,11 +6,15 @@ import { loadMcpStack } from "../src/mcp/managed-config.js";
 import { buildTools } from "../src/mcp/tools.js";
 import { loadManagedConfig } from "../src/shared/managed-config.js";
 import { renderToolText } from "../src/shared/tool-prefix.js";
+import { loadConfig } from "../src/upstream/coding-agents/src/core/config";
 import { HindsightClient } from "../src/upstream/coding-agents/src/core/hindsight";
 import { buildSystemInjection, formatPageFallback } from "../src/upstream/coding-agents/src/core/inject";
 import { buildKnowledgePreamble, buildRosterRefresh } from "../src/upstream/coding-agents/src/core/knowledge-injection";
 import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/knowledge-tools";
+import { RuntimeCore } from "../src/upstream/coding-agents/src/core/runtime";
 import { readPackagedSkill, syncCompanionSkill } from "../src/upstream/coding-agents/src/core/skill-sync";
+import { opencodeAdapter } from "../src/upstream/coding-agents/src/harness/opencode";
+import { createPluginEntry } from "../src/upstream/coding-agents/src/harness/plugin-entry";
 
 const dirs: string[] = [];
 afterEach(() => {
