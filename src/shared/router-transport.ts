@@ -76,14 +76,19 @@ export class RouterTransport {
   readonly access: BankAccess;
   readonly #token: () => string | undefined;
   readonly #send: typeof fetch;
-  readonly #principalId?: string;
+  readonly #principalId?: string | (() => string);
+  readonly #tokenPattern: RegExp;
+  readonly #unauthorizedError: () => AccessDeniedError;
   #deniedToken: string | undefined;
+  #deniedError: AccessDeniedError | undefined;
 
   constructor(options: {
     routerUrl: string;
     access: BankAccess;
     token: () => string | undefined;
-    principalId?: string;
+    principalId?: string | (() => string);
+    tokenPattern?: RegExp;
+    unauthorizedError?: () => AccessDeniedError;
     fetch?: typeof fetch;
   }) {
     this.baseUrl = validateRouterUrl(options.routerUrl);
@@ -95,6 +100,8 @@ export class RouterTransport {
     });
     visibleBanks(this.access);
     this.#principalId = options.principalId;
+    this.#tokenPattern = options.tokenPattern ?? TOKEN_FORMAT_PATTERN;
+    this.#unauthorizedError = options.unauthorizedError ?? (() => new AccessDeniedError());
     this.#token = options.token;
     this.#send = options.fetch ?? ((input, init) => fetch(input, init));
     this.credential();
@@ -111,8 +118,12 @@ export class RouterTransport {
 
   assertAuthorized(): void {
     const token = this.#token();
-    if (!token || !TOKEN_FORMAT_PATTERN.test(token) || this.#deniedToken === token) throw new AccessDeniedError();
-    if (this.#deniedToken !== undefined) this.#deniedToken = undefined;
+    if (!token || !this.#tokenPattern.test(token)) throw new AccessDeniedError();
+    if (this.#deniedToken === token) throw this.#deniedError ?? new AccessDeniedError();
+    if (this.#deniedToken !== undefined) {
+      this.#deniedToken = undefined;
+      this.#deniedError = undefined;
+    }
   }
 
   private credential(): string {
@@ -136,7 +147,8 @@ export class RouterTransport {
     const response = await this.send(url, init, token);
     if (response.status === 401 || response.status === 403) {
       this.#deniedToken = token;
-      throw new AccessDeniedError();
+      this.#deniedError = response.status === 401 ? this.#unauthorizedError() : new AccessDeniedError();
+      throw this.#deniedError;
     }
     // Never expose server error bodies, which may echo credentials or bank existence.
     if (!response.ok && (response.status !== 404 || method !== "GET")) {
@@ -159,7 +171,12 @@ export class RouterTransport {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
-          ...(this.#principalId ? { "x-memory-router-agent": this.#principalId } : {}),
+          ...(this.#principalId
+            ? {
+                "x-memory-router-agent":
+                  typeof this.#principalId === "string" ? this.#principalId : this.#principalId(),
+              }
+            : {}),
         },
         signal: init.signal ?? AbortSignal.timeout(15_000),
       });

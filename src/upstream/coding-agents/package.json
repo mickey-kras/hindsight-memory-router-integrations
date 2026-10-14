@@ -6,7 +6,7 @@
     "url": "https://github.com/mickey-kras/hindsight-memory-router-integrations.git",
     "directory": "src/upstream/coding-agents"
   },
-  "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, \u2026), with automatic background ingestion (no setup CLI).",
+  "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, …), with automatic background ingestion (no setup CLI).",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -84,14 +84,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@napi-rs/keyring": "2.1.1",
     "jsonc-parser": "^3.3.1",
     "smol-toml": "^1.9.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.35",
-    "@opencode/plugin": "^2.0.24",
     "@opencode-ai/sdk": "^1.18.9",
+    "@opencode/plugin": "^2.0.24",
     "@types/node": "22.20.5",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",

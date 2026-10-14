@@ -3,14 +3,33 @@ import { isAbsolute, resolve, sep } from "node:path";
 import { AccessDeniedError, requireBank } from "../shared/bank-access.js";
 import { loadManagedConfig } from "../shared/managed-config.js";
 import { RouterTransport } from "../shared/router-transport.js";
+import { HUMAN_TOKEN_PATTERN, HumanLoginRequiredError, humanRouterUrl, readHumanSession } from "./human-session.js";
 
 export function harnessTransport(harness: string | undefined): RouterTransport {
   const { config, principal } = loadManagedConfig(process.env, harness);
+  if (principal.human) {
+    const routerUrl = humanRouterUrl(config.routerUrl);
+    const reference = principal.human.credentialRef;
+    let session = readHumanSession(routerUrl, reference);
+    return new RouterTransport({
+      routerUrl,
+      access: principal,
+      principalId: () => session.principal_id,
+      tokenPattern: HUMAN_TOKEN_PATTERN,
+      unauthorizedError: () => new HumanLoginRequiredError(),
+      token: () => {
+        session = readHumanSession(routerUrl, reference);
+        return session.token;
+      },
+    });
+  }
+  const tokenEnv = principal.tokenEnv;
+  if (!tokenEnv) throw new AccessDeniedError();
   return new RouterTransport({
     routerUrl: config.routerUrl,
     access: principal,
     principalId: harness,
-    token: () => process.env[principal.tokenEnv],
+    token: () => process.env[tokenEnv],
   });
 }
 
