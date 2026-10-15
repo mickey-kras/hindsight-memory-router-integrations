@@ -305,12 +305,13 @@ export class RuntimeCore {
    */
   async onSessionIdle(sessionId: string): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
-    if (!sessionId || !this.fetchTranscript) return;
-    const st = this.stateFor(sessionId);
+    if (!sessionId) return;
+    const st = this.fetchTranscript ? this.stateFor(sessionId) : this.sessionState.get(sessionId);
     if (!st) return;
     const generation = st.generation;
     st.busy++;
     try {
+      if (!this.fetchTranscript) return;
       let turns: TransportTurn[];
       try {
         turns = await this.fetchTranscript(sessionId);

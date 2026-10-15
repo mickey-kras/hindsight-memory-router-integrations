@@ -4,6 +4,9 @@ import type { HindsightClient } from "./hindsight";
 import { MAX_RUNTIME_SESSIONS, RuntimeCore } from "./runtime";
 import { createClineHooks } from "../cline";
 import { createPiHooks } from "../harness/pi-extension";
+import * as hostClient from "./host-client";
+import { createPluginEntry } from "../harness/plugin-entry";
+import type { OcMessage } from "./transcript-opencode";
 import { opencodeAdapter } from "../harness/opencode";
 import { diag } from "./diag";
 import { wireOpencode2Runtime } from "../harness/opencode2";
@@ -30,7 +33,7 @@ function fixture() {
   async function fill(): Promise<void> {
     for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await complete(`filler-${i}`);
   }
-  return { core, retain, turns, complete, fill, fail: (value: boolean) => { fail = value; } };
+  return { core, client, retain, turns, complete, fill, fail: (value: boolean) => { fail = value; } };
 }
 
 describe("bounded runtime lifecycle", () => {
@@ -159,6 +162,56 @@ describe("bounded runtime lifecycle", () => {
     await f.core.flush();
     await f.fill();
     expect(f.core.hasSession("fetching")).toBe(true);
+  });
+
+  it("admits new sessions when the plugin host omits its optional transcript API", async () => {
+    const f = fixture();
+    vi.spyOn(hostClient, "resolveHostMemory").mockReturnValue({ disabled: false, cfg: resolveConfig({}), bankId: "bank", client: f.client });
+    vi.spyOn(RuntimeCore.prototype, "toolSpecs").mockReturnValue([]);
+    const sources = vi.spyOn(RuntimeCore.prototype, "setTranscriptSource");
+    const cores: RuntimeCore[] = [];
+    vi.spyOn(RuntimeCore.prototype, "seedIfCold").mockImplementation(async function(this: RuntimeCore) { cores.push(this); });
+    const entry = createPluginEntry("opencode");
+    const hooks = await entry({ directory: "/repo", client: {} } as unknown as Parameters<typeof entry>[0]) as unknown as {
+      "chat.message": (input: { sessionID: string }, output: { parts: { type: string; text: string }[] }) => Promise<void>;
+      "experimental.chat.messages.transform": (input: unknown, output: { messages: OcMessage[] }) => Promise<void>;
+      "experimental.chat.system.transform": (input: { sessionID: string }, output: { system: string[] }) => Promise<void>;
+      event: (input: { event: { type: string; properties: { sessionID: string } } }) => Promise<void>;
+    };
+    expect(sources).not.toHaveBeenCalled();
+    expect(cores).toHaveLength(1);
+    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) {
+      const sessionID = `no-transcript-api-${i}`;
+      await hooks["chat.message"]({ sessionID }, { parts: [{ type: "text", text: "prompt" }] });
+      await hooks["experimental.chat.messages.transform"]({}, { messages: [{ info: { role: "user", sessionID }, parts: [{ type: "text", text: "prompt" }] }] });
+      await hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
+      await cores[0].flush();
+    }
+    await hooks["chat.message"]({ sessionID: "next-session" }, { parts: [{ type: "text", text: "prompt" }] });
+    const output = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]({ sessionID: "next-session" }, output);
+    expect(output.system.join("\n")).toContain("private memory");
+    expect(f.retain).toHaveBeenCalledTimes(MAX_RUNTIME_SESSIONS);
+  });
+
+  it.each(["in-flight", "pending"])("preserves %s writes when idle has no transcript source", async (mode) => {
+    const f = fixture();
+    let release: (() => void) | undefined;
+    if (mode === "in-flight") f.retain.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    else { await f.complete("pinned"); f.fail(true); }
+    await f.core.onPrompt("pinned", "prompt");
+    await f.core.onTranscript("pinned", [...f.turns, { role: "user", content: "buffered turn" }], false);
+    if (mode === "pending") { await f.core.flush(); f.fail(false); }
+    else await vi.waitFor(() => expect(release).toBeDefined());
+    try {
+      await f.core.onSessionIdle("pinned");
+      for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onPrompt(`other-${i}`, "prompt");
+      expect(f.core.hasSession("pinned")).toBe(true);
+      expect(f.core.hasSession(`other-${MAX_RUNTIME_SESSIONS - 1}`)).toBe(false);
+    } finally {
+      release?.();
+      await f.core.flush();
+    }
   });
 
   it("admits new sessions after completed sessions fail to fetch their transcripts", async () => {

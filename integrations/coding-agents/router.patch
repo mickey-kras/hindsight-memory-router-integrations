@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..4981e26
+index 0000000..0870544
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,46 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -13,7 +13,7 @@ index 0000000..4981e26
 +- 401/403 are terminal; upstream credential retry is replaced by runtime environment resolution on each request.
 +- Optional human mode resolves a short-lived session from native OS secure storage on every request. Browser login uses the router's loopback OIDC/PKCE exchange; sign-out revokes and deletes the session. Persistent application credentials remain separate.
 +- Redirects and raw server error bodies are blocked. Automatic upstream replacement and installer token migration are disabled.
-+- Transcript parsing, provenance tags, retain payloads, hooks, and harness adapters retain upstream behavior.
++- Upstream transcript parsing, provenance tags, retain payloads, hooks and harness adapters remain the baseline, with deliberate routing, privacy, installer and reliability adaptations. This is not a claim of identical behavior; the changes and source hashes below define the maintained differences.
 +- Manual document ingestion uses the shared exact-title hash identity. Legacy IDs remain untouched; see the root README migration note.
 +- `src/core/inject.ts` rewords the reflect rendering rules to "commit, PR and issue ids": the upstream "commit/PR/issue" slash token trips the Memory Router encoded-payload request scan, which rejects the reflect query with 422 suspicious_content.
 +
@@ -23,12 +23,13 @@ index 0000000..4981e26
 +
 +Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back. Local usage can read existing host transcripts, but journal-only hosts capture prompts and replies only when session retention is enabled and the principal can write the resolved bank.
 +Session state uses per-user private directories (0700 on POSIX), regular files (0600), and exclusive atomic temporary files. Owned legacy directories are secured and migrated; symlinks, hard links, and foreign-owned paths are rejected.
-+Memory content is not reused from session caches; lifecycle flags remain cached. Authorization failures disable that client until restart.
++Memory content is not reused from session caches; lifecycle flags remain cached. A denied application-token value remains blocked until it changes; human credentials require explicit login after expiry or denial.
 +
 +Reliability fixes use explicit sorting, global replacements, Node ANSI stripping, optional arguments, and non-empty installer regex matches. Transcript escape decoding retains UTF-16 surrogate behavior.
 +
-+Dependency security overrides (`package.json` `overrides`, applied to `npm-shrinkwrap.json`):
-+- `@opentelemetry/core` is forced to `>=2.8.0 <3.0.0`, scoped under `@opencode/plugin`, fixing GHSA-8988-4f7v-96qf (unbounded memory allocation in W3C Baggage propagation, moderate, `<=2.7.x` affected). `@opencode/plugin`/`@opencode/util` pin the vulnerable 2.6.1 line (`fixAvailable: false` even at the latest release), so an npm override is the only remediation. The remaining flagged packages (`exporter-trace-otlp-http`, `otlp-exporter-base`, `otlp-transformer`, `resources`, `sdk-logs`, `sdk-metrics`, `sdk-trace-base`, `sdk-trace-node`) are vulnerable only transitively through `core` and are cleared by this single override; the override is nested under `@opencode/plugin` because that subtree is the sole OpenTelemetry consumer.
++Dependencies are classified by their package declarations; bundling does not make declared runtime dependencies development-only. Direct runtime dependencies are `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml` and `zod`. Development dependencies are `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript` and `vitest`.
++
++The complete override inventory is `@opencode/plugin > @opentelemetry/core` (`>=2.8.0 <3.0.0`), `esbuild` (`>=0.25.0 <1.0.0`), `fast-uri` (`>=3.1.6 <4.0.0`), `hono` (`>=4.13.7 <5.0.0`), `http-cache-semantics` (`4.3.0`), `ip-address` (`>=10.5.1 <11.0.0`), `postcss` (`>=8.5.23 <9.0.0`) and `vite` (`>=6.4.3 <7.0.0`). These ranges constrain the dependency graph; exact resolved versions are in `npm-shrinkwrap.json`. Reassess compatibility and advisories when updating, rather than assuming these overrides are permanently required or sufficient.
 +
 +Survey admission is scoped to the managed router URL, principal and bank. Tokens never enter lease keys; credential rotation keeps the same lease. Normal config cannot override the managed principal. No CodeQL suppression is used.
 +
@@ -79,10 +80,10 @@ index 0000000..f572d61
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
 diff --git a/README.md b/README.md
-index 05f6ace..743f96a 100644
+index 05f6ace..282fb28 100644
 --- a/README.md
 +++ b/README.md
-@@ -1,1226 +1,54 @@
+@@ -1,1226 +1,58 @@
 -# hindsight-coding-agents
 +# Coding agents
  
@@ -1305,19 +1306,26 @@ index 05f6ace..743f96a 100644
 -with no findings retries automatically), and the extraction operations still in flight.
 -
 -### Resetting a repo's memory
--
--Delete its bank on the server. The bank is the **only** state this integration keeps, so the next
--session in that repo is a true first open — seed and survey run again from scratch. There are no
--client-side files to clean up.
--
--### Marker documents you may notice
 +Resolve each named environment variable through the deployment's secret manager before launching that harness.
 +Give each harness only its own token. Never put token values in JSON, arguments, or this repository.
 +Create matching per-principal + bank + scope grants in Memory Router first.
  
+-Delete its bank on the server. The bank is the **only** state this integration keeps, so the next
+-session in that repo is a true first open — seed and survey run again from scratch. There are no
+-client-side files to clean up.
++**client routing != authorization; Memory Router grants are authoritative**
+ 
+-### Marker documents you may notice
++Install the verified release coding-agents tarball and run its `hindsight-coding-agents install` command.
++The upstream harness hooks, plugin entrypoints, transcript readers, and background ingestion remain packaged.
++Install from this artifact; do not run upstream's `npx` installer over it.
+ 
 -Two document ids exist for the machinery's own bookkeeping. Both are safe to ignore and safe to
 -delete:
-+**client routing != authorization; Memory Router grants are authoritative**
++Only explicit managed path mappings opt a project in. Child directories inherit their mapping.
++Use the principal's write bank in mappings for writable projects; map an assigned read bank for a read-only principal.
++Unmapped paths, unknown harnesses, and missing secrets fail closed. No dynamic repository banks.
++Upstream normal config may tune prompts and ingestion, but cannot change identity, credentials, endpoint, or grants. `banks.<id>.bank` and path-level bank renames are ignored; change the operator-managed `mapPathToBank` and matching server grants instead.
  
 -- `survey-baseline:<sha>` — reads "🛰️ researching…" while a codebase survey runs and flips to
 -  "✅ completed" once its findings land. It is retained under the `survey` strategy, whose marker
@@ -1325,15 +1333,10 @@ index 05f6ace..743f96a 100644
 -  (`surveyRefreshCommits`) and `surveyBaseline` in sync status.
 -- `gitlog:<repo>` — the aggregated commit-message seed document, re-upserted rather than duplicated
 -  when the seed runs again.
-+Install the committed coding-agents tarball and run its `hindsight-coding-agents install` command.
-+The upstream harness hooks, plugin entrypoints, transcript readers, and background ingestion remain packaged.
-+Install from this artifact; do not run upstream's `npx` installer over it.
++Legacy managed JSON keys `recallTimeoutMs`, `recallMaxTokens`, `retainQueueFlushIntervalMs`, `queueMaxAgeMs`, `queueMaxItems`, `queueMaxBytes` and `queueDir` are accepted and validated for compatibility but have no effect in coding agents. Remove them when migrating; tune retrieval in normal coding-agent config. There is no OpenClaw-style durable outage queue or replay timer here; ingestion uses the upstream retry/cursor mechanisms. Managed `queueMaxAgeMs` accepts `-1` or a positive integer and rejects `0`, unlike OpenClaw.
  
 -### When memory seems to be missing
-+Only explicit managed path mappings opt a project in. Child directories inherit their mapping.
-+Use the principal's write bank in mappings for writable projects; map an assigned read bank for a read-only principal.
-+Unmapped paths, unknown harnesses, and missing secrets fail closed. No dynamic repository banks.
-+Upstream normal config may tune prompts and ingestion, but cannot change identity, credentials, endpoint, or grants.
++`pageRefreshEveryTurns` (and `HINDSIGHT_PAGE_REFRESH_EVERY_TURNS`) does not reduce hook page-list reads: memory-bearing page lists are deliberately omitted from session caches, so each prompt hook fetches freshly authorized pages. The setting still controls how often the roster/tool guide is injected, not how often it is fetched; omission or `0` means every turn (`1`). It does not configure persistent-plugin refresh behavior. Do not restore cached memory content to implement a cadence.
  
 -Failures never break the agent: a reflect, page fetch or retain that fails degrades to an ordinary
 -memoryless turn and is recorded in the logs. "No memory" is therefore a log question — check the
@@ -1341,7 +1344,7 @@ index 05f6ace..743f96a 100644
 -was already running when the plugin was installed has no SessionStart behind it; its first prompt
 -after the install self-heals.
 +Recall and reflect read the assigned union, with a 4,096-token shared budget.
-+Recall has a 15-second deadline; reflect uses the upstream caller's timeout.
++Recall/reflect use the caller's configured deadline: automatic retrieval uses `injectTimeoutMs` (7,000 ms), automatic reflect uses `reflectTimeoutMs` (20,000 ms), and the reflect tool uses `reflectToolTimeoutMs` (when omitted, the greater of 330,000 ms and the configured `reflectTimeoutMs`; an explicit positive tool timeout can be lower). Generic requests without a caller signal default to 15 seconds. Raising a hook deadline also requires enough time in the host hook configuration.
 +Transient failures return partial results with a diagnostic. Any 401/403 discards all results.
 +Other bank/config/page reads use an explicit assigned bank; mutations cannot target additional read banks.
  
@@ -7346,7 +7349,7 @@ index 8d60c72..a6c4bb1 100644
    };
    /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */
 diff --git a/src/core/config.ts b/src/core/config.ts
-index fe2f5b4..c60adc5 100644
+index fe2f5b4..3c8aa5d 100644
 --- a/src/core/config.ts
 +++ b/src/core/config.ts
 @@ -1,3 +1,5 @@
@@ -7374,7 +7377,43 @@ index fe2f5b4..c60adc5 100644
    apiToken?: string; // bearer token (optional)
    /** Daemon mode: port the local daemon listens on (default 9077).
     *  NOT 8888 — that is the conventional port for a server you run yourself, and a daemon must
-@@ -302,9 +299,10 @@ export interface RawConfig {
+@@ -153,7 +150,7 @@ export interface RawConfig {
+    *  `hindsight_search_knowledge_pages` results. It adds to the built-in text, never replaces it,
+    *  so the plugin's call triggers and crediting rule keep up with releases (#4791). */
+   toolGuideExtra?: string;
+-  pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 1; 0 also means 1)
++  pageRefreshEveryTurns?: number; // hook roster injection cadence (default/0 = 1); page lists are fetched fresh every prompt
+   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
+    *  page this plugin creates (the seeded taxonomy and each captured initiative):
+    *    "cron" (default)         — refresh on `pageTriggerCron` only, and only when actually stale
+@@ -280,31 +277,30 @@ export interface RawConfig {
+    *  scopes literally. Anything else falls back to the default. */
+   observationScopes?: ObservationScopes;
+   /** Per-harness overrides of any of the fields above, keyed by harness name ("opencode",
+-   *  "claude-code", ...). Lets one config file give each agent its own bank/settings. */
++   *  "claude-code", ...). Tunes behavior per harness; managed routing is reapplied. */
+   harnesses?: Record<string, Omit<RawConfig, "harnesses">>;
+   /** Per-BANK overrides, applied AFTER bank resolution — the per-repo opt-in/out surface, keyed
+    *  by the RESOLVED bank id (run a session once or check the banner to see it). Any behavioral
+-   *  field, plus `bank` to RENAME the destination (single hop: the section is selected by the
+-   *  resolved id, the rename is literal — several ids may converge on one shared bank).
++   *  field may be tuned; `bank` is accepted for compatibility but cannot rename the destination.
+    *  Bank-resolution fields (bankId/template/map/...) are ignored here. Example:
+    *    "banks": { "coding-agent::secret-client": { "disabled": true },
+-   *               "coding-agent::old-name": { "bank": "team::shared" },
+    *               "coding-agent::big-mono": { "gitIngest": "full", "retainSessions": false } } */
+   banks?: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
+   /** Per-DIRECTORY overrides, keyed by absolute path prefix (`~` allowed; longest prefix wins;
+    *  a linked worktree uses its main checkout's entry). Applied after bank resolution and before
+-   *  the `banks.<id>` section, so one entry can send every repo under a directory to another
+-   *  server or tenant while each repo keeps its own bank. Bank-resolution fields are ignored here,
++   *  the `banks.<id>` section. Managed endpoint, identity and bank settings are reapplied;
++   *  normal config cannot select another server or tenant. Bank-resolution fields are ignored here,
+    *  as in `banks`. Example:
+-   *    "paths": { "~/work/client-x": { "apiToken": "client-x-key" } } */
++   *    "paths": { "~/work/client-x": { "retainSessions": false } } */
+   paths?: Record<string, Omit<RawConfig, "banks" | "harnesses" | "paths">>;
+ }
  
  /** Fully-resolved config: every field present. */
  export interface Config {
@@ -7387,7 +7426,7 @@ index fe2f5b4..c60adc5 100644
    apiUrl: string;
    apiToken?: string;
    apiPort: number;
-@@ -589,18 +587,13 @@ function resolveAutoInject(raw: RawConfig): AutoInject {
+@@ -589,18 +585,13 @@ function resolveAutoInject(raw: RawConfig): AutoInject {
  export function resolveConfig(raw: RawConfig = {}): Config {
    const serverMode = ["cloud", "self-hosted", "daemon"].includes(raw.serverMode as string)
      ? (raw.serverMode as "cloud" | "self-hosted" | "daemon")
@@ -7409,7 +7448,22 @@ index fe2f5b4..c60adc5 100644
      apiToken: raw.apiToken || undefined,
      apiPort,
      daemonIdleTimeout: raw.daemonIdleTimeout,
-@@ -752,7 +745,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
+@@ -717,13 +708,7 @@ function mergeRaw(a: RawConfig, b: RawConfig): RawConfig {
+   };
+ }
+ 
+-/**
+- * Keys a PROJECT-LOCAL (untrusted, repo-supplied) config may NOT set. These control where the user's
+- * credential + prompts/transcripts are sent (`apiUrl`, `apiToken`) or remap banks globally
+- * (`mapPathToBank`, which "overrides everything"). A repo can still set its own per-repo bank via
+- * `bankId`/`bankIdTemplate` — just not the network endpoint, token, or global path→bank map. The
+- * user-global config is trusted and unrestricted.
+- */
++/** Load normal behavioral settings; operator-managed identity, endpoint and path mappings remain authoritative. */
+ export interface LoadOptions {
+   /** Which harness is asking ("opencode", "claude-code", ...) — applies its `harnesses.<name>` overrides. */
+   harness?: string;
+@@ -752,7 +737,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
   * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
   * does not survive flattening into one env var. They stay file-only.
   */
@@ -7418,7 +7472,7 @@ index fe2f5b4..c60adc5 100644
    serverMode: "HINDSIGHT_SERVER_MODE",
    apiUrl: "HINDSIGHT_API_URL",
    apiToken: "HINDSIGHT_API_TOKEN",
-@@ -871,7 +864,10 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
+@@ -871,7 +856,10 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
    // "opencode", whose silent default misfiled every other harness's background seed into an
    // `opencode::<project>` bank (#3247). An explicit `harness:` in the config file still wins.
    if (!raw.harness && o.harness) raw.harness = o.harness;
@@ -7430,7 +7484,7 @@ index fe2f5b4..c60adc5 100644
  }
  
  /** Bank-resolution fields are meaningless inside a `banks.<id>` section (they can't change the id
-@@ -886,7 +882,7 @@ const BANK_OVERRIDE_EXCLUDED = [
+@@ -886,7 +874,7 @@ const BANK_OVERRIDE_EXCLUDED = [
    // only ever arrive too late to matter — strip them rather than let them read as effective.
    "optInOnly",
    "optInPaths",
@@ -7439,7 +7493,7 @@ index fe2f5b4..c60adc5 100644
  ] as const;
  
  /**
-@@ -905,7 +901,7 @@ export function applyBankConfig(
+@@ -905,21 +893,20 @@ export function applyBankConfig(
    // adding a second thing eight call sites must remember — and that gate is known to stop the run
    // before anything creates a bank.
    if (directory !== undefined && !isOptedIn(cfg, directory))
@@ -7447,17 +7501,19 @@ index fe2f5b4..c60adc5 100644
 +    return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness), disabled: true }, bankId: resolvedId };
    const byPath = directory === undefined ? undefined : pathSection(cfg, cfg.paths, directory);
    if (byPath) {
-     // A path entry never renames the bank: only `banks.<id>` may, below.
-@@ -913,13 +909,13 @@ export function applyBankConfig(
+-    // A path entry never renames the bank: only `banks.<id>` may, below.
++    // Ordinary path and bank overrides cannot rename the managed bank.
+     const { bank: _rename, ...rest } = overrideFields(byPath);
      cfg = { ...cfg, ...resolvePartial(cfg, rest as RawConfig) };
    }
    const section = cfg.banks[resolvedId];
 -  if (!section) return { cfg, bankId: resolvedId };
 +  if (!section) return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness) }, bankId: resolvedId };
    const safe = overrideFields(section);
-   // `bank` renames the destination — single hop, selected by the ORIGINAL resolved id (the
-   // target's own banks section, if any, is deliberately NOT consulted: no chaining).
+-  // `bank` renames the destination — single hop, selected by the ORIGINAL resolved id (the
+-  // target's own banks section, if any, is deliberately NOT consulted: no chaining).
 -  const bankId = typeof safe.bank === "string" && safe.bank ? (safe.bank as string) : resolvedId;
++  // Preserve the operator-managed bank; legacy rename inputs are ignored.
 +  const bankId = resolvedId;
    delete safe.bank;
 -  return { cfg: { ...cfg, ...resolvePartial(cfg, safe as RawConfig) }, bankId };
@@ -11309,16 +11365,19 @@ index 0000000..53f119e
 +});
 diff --git a/src/core/runtime-lifecycle.test.ts b/src/core/runtime-lifecycle.test.ts
 new file mode 100644
-index 0000000..76eee23
+index 0000000..8d68189
 --- /dev/null
 +++ b/src/core/runtime-lifecycle.test.ts
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,292 @@
 +import { afterEach, describe, expect, it, vi } from "vitest";
 +import { resolveConfig } from "./config";
 +import type { HindsightClient } from "./hindsight";
 +import { MAX_RUNTIME_SESSIONS, RuntimeCore } from "./runtime";
 +import { createClineHooks } from "../cline";
 +import { createPiHooks } from "../harness/pi-extension";
++import * as hostClient from "./host-client";
++import { createPluginEntry } from "../harness/plugin-entry";
++import type { OcMessage } from "./transcript-opencode";
 +import { opencodeAdapter } from "../harness/opencode";
 +import { diag } from "./diag";
 +import { wireOpencode2Runtime } from "../harness/opencode2";
@@ -11345,7 +11404,7 @@ index 0000000..76eee23
 +  async function fill(): Promise<void> {
 +    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await complete(`filler-${i}`);
 +  }
-+  return { core, retain, turns, complete, fill, fail: (value: boolean) => { fail = value; } };
++  return { core, client, retain, turns, complete, fill, fail: (value: boolean) => { fail = value; } };
 +}
 +
 +describe("bounded runtime lifecycle", () => {
@@ -11476,6 +11535,56 @@ index 0000000..76eee23
 +    expect(f.core.hasSession("fetching")).toBe(true);
 +  });
 +
++  it("admits new sessions when the plugin host omits its optional transcript API", async () => {
++    const f = fixture();
++    vi.spyOn(hostClient, "resolveHostMemory").mockReturnValue({ disabled: false, cfg: resolveConfig({}), bankId: "bank", client: f.client });
++    vi.spyOn(RuntimeCore.prototype, "toolSpecs").mockReturnValue([]);
++    const sources = vi.spyOn(RuntimeCore.prototype, "setTranscriptSource");
++    const cores: RuntimeCore[] = [];
++    vi.spyOn(RuntimeCore.prototype, "seedIfCold").mockImplementation(async function(this: RuntimeCore) { cores.push(this); });
++    const entry = createPluginEntry("opencode");
++    const hooks = await entry({ directory: "/repo", client: {} } as unknown as Parameters<typeof entry>[0]) as unknown as {
++      "chat.message": (input: { sessionID: string }, output: { parts: { type: string; text: string }[] }) => Promise<void>;
++      "experimental.chat.messages.transform": (input: unknown, output: { messages: OcMessage[] }) => Promise<void>;
++      "experimental.chat.system.transform": (input: { sessionID: string }, output: { system: string[] }) => Promise<void>;
++      event: (input: { event: { type: string; properties: { sessionID: string } } }) => Promise<void>;
++    };
++    expect(sources).not.toHaveBeenCalled();
++    expect(cores).toHaveLength(1);
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) {
++      const sessionID = `no-transcript-api-${i}`;
++      await hooks["chat.message"]({ sessionID }, { parts: [{ type: "text", text: "prompt" }] });
++      await hooks["experimental.chat.messages.transform"]({}, { messages: [{ info: { role: "user", sessionID }, parts: [{ type: "text", text: "prompt" }] }] });
++      await hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
++      await cores[0].flush();
++    }
++    await hooks["chat.message"]({ sessionID: "next-session" }, { parts: [{ type: "text", text: "prompt" }] });
++    const output = { system: [] as string[] };
++    await hooks["experimental.chat.system.transform"]({ sessionID: "next-session" }, output);
++    expect(output.system.join("\n")).toContain("private memory");
++    expect(f.retain).toHaveBeenCalledTimes(MAX_RUNTIME_SESSIONS);
++  });
++
++  it.each(["in-flight", "pending"])("preserves %s writes when idle has no transcript source", async (mode) => {
++    const f = fixture();
++    let release: (() => void) | undefined;
++    if (mode === "in-flight") f.retain.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
++    else { await f.complete("pinned"); f.fail(true); }
++    await f.core.onPrompt("pinned", "prompt");
++    await f.core.onTranscript("pinned", [...f.turns, { role: "user", content: "buffered turn" }], false);
++    if (mode === "pending") { await f.core.flush(); f.fail(false); }
++    else await vi.waitFor(() => expect(release).toBeDefined());
++    try {
++      await f.core.onSessionIdle("pinned");
++      for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onPrompt(`other-${i}`, "prompt");
++      expect(f.core.hasSession("pinned")).toBe(true);
++      expect(f.core.hasSession(`other-${MAX_RUNTIME_SESSIONS - 1}`)).toBe(false);
++    } finally {
++      release?.();
++      await f.core.flush();
++    }
++  });
++
 +  it("admits new sessions after completed sessions fail to fetch their transcripts", async () => {
 +    const f = fixture();
 +    f.core.setTranscriptSource(async () => { throw new Error("host unavailable"); });
@@ -11553,7 +11662,7 @@ index 0000000..76eee23
 +  });
 +});
 diff --git a/src/core/runtime.ts b/src/core/runtime.ts
-index a2c1afe..6f77af8 100644
+index a2c1afe..bdbe377 100644
 --- a/src/core/runtime.ts
 +++ b/src/core/runtime.ts
 @@ -1,3 +1,5 @@
@@ -11753,12 +11862,14 @@ index a2c1afe..6f77af8 100644
    }
  
    /**
-@@ -269,25 +306,36 @@ export class RuntimeCore {
+@@ -268,26 +305,38 @@ export class RuntimeCore {
+    */
    async onSessionIdle(sessionId: string): Promise<void> {
      if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
-     if (!sessionId || !this.fetchTranscript) return;
+-    if (!sessionId || !this.fetchTranscript) return;
 -    let turns: TransportTurn[];
-+    const st = this.stateFor(sessionId);
++    if (!sessionId) return;
++    const st = this.fetchTranscript ? this.stateFor(sessionId) : this.sessionState.get(sessionId);
 +    if (!st) return;
 +    const generation = st.generation;
 +    st.busy++;
@@ -11770,6 +11881,7 @@ index a2c1afe..6f77af8 100644
 -        session: sessionId,
 -      });
 -      return;
++      if (!this.fetchTranscript) return;
 +      let turns: TransportTurn[];
 +      try {
 +        turns = await this.fetchTranscript(sessionId);
@@ -11807,7 +11919,7 @@ index a2c1afe..6f77af8 100644
    }
  
    private recordUsage(sessionId: string, turns: TransportTurn[], lastTurnComplete: boolean): void {
-@@ -295,6 +343,7 @@ export class RuntimeCore {
+@@ -295,6 +344,7 @@ export class RuntimeCore {
        harness: this.harness,
        sessionId,
        bankId: this.bankId,
@@ -11815,7 +11927,7 @@ index a2c1afe..6f77af8 100644
        turns,
        cursors: this.usageCursors,
        lastTurnComplete,
-@@ -305,15 +354,66 @@ export class RuntimeCore {
+@@ -305,15 +355,66 @@ export class RuntimeCore {
      });
    }
  
@@ -11888,7 +12000,7 @@ index a2c1afe..6f77af8 100644
      return st;
    }
  
-@@ -339,10 +439,11 @@ export class RuntimeCore {
+@@ -339,10 +440,11 @@ export class RuntimeCore {
    private retain(
      sessionId: string,
      turns: TransportTurn[],
@@ -11901,7 +12013,7 @@ index a2c1afe..6f77af8 100644
      // Daemon mode: the write path is the last chance to get a daemon up — the Stop-hook role, for
      // hosts that have no Stop hook. A daemon that died mid-session would otherwise take the whole
      // exchange with it. The wait sits INSIDE the fire-and-forget chain, so
-@@ -351,7 +452,7 @@ export class RuntimeCore {
+@@ -351,7 +453,7 @@ export class RuntimeCore {
      // daemon produces the same `retain_failed` diagnostic as an unreachable Cloud server.
      const write = ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_RETAIN_MS })
        .then(() =>
@@ -11910,7 +12022,7 @@ index a2c1afe..6f77af8 100644
            cursors: this.cursors,
            stamp: buildRetainStamp(this.cfg, {
              directory: this.projectDir,
-@@ -361,23 +462,29 @@ export class RuntimeCore {
+@@ -361,23 +463,29 @@ export class RuntimeCore {
            }),
          })
        )
