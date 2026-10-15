@@ -1,6 +1,7 @@
 import type { RouterClient } from "./authenticated-client-factory.js";
-import { type RecallItem, recallItemText, formatRecallItem } from "./recall-item.js";
+import { formatRecallItem, type RecallItem, recallItemText } from "./recall-item.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
+import { RouterRequestError } from "./router-transport.js";
 
 export type { RecallItem } from "./recall-item.js";
 
@@ -61,6 +62,23 @@ interface BankRecallResult {
 interface BankItem {
   bank: string;
   item: RecallItem;
+}
+
+function validateRecallResults(response: unknown): RecallItem[] {
+  if (typeof response !== "object" || response === null || Array.isArray(response)) {
+    throw new RouterRequestError(502);
+  }
+  const results: unknown = "results" in response ? response.results : undefined;
+  if (results === undefined) return [];
+  if (
+    !Array.isArray(results) ||
+    !results.every(
+      (item: unknown): item is RecallItem => typeof item === "object" && item !== null && !Array.isArray(item),
+    )
+  ) {
+    throw new RouterRequestError(502);
+  }
+  return results;
 }
 
 function mergeSettledResults(
@@ -146,7 +164,7 @@ export class RecallCoordinator {
         const timeout = timeoutAfter(remaining, controller);
         try {
           const response = await Promise.race([call, timeout.promise]);
-          return { bank, results: (response.results ?? []) as RecallItem[] };
+          return { bank, results: validateRecallResults(response) };
         } finally {
           clearTimeout(timeout.timer);
         }

@@ -264,6 +264,15 @@ export class RetainQueue {
       closeSync(fd);
     }
     const content = result.bytes;
+    // Adjacent corrupt records share a range: even millions of blank lines
+    // need one range. Only intervening valid records can increase this list.
+    const ranges: number[] = [];
+    let corruptBytes = 0;
+    const preserveRange = (start: number, end: number): void => {
+      if (ranges.at(-1) === start) ranges[ranges.length - 1] = end;
+      else ranges.push(start, end);
+      corruptBytes += end - start;
+    };
     for (let start = 0; start < content.length; ) {
       const newline = content.indexOf(10, start);
       const end = newline < 0 ? content.length : newline + 1;
@@ -275,10 +284,12 @@ export class RetainQueue {
         first++;
       if (first === end) {
         result.counts.malformedJson++;
+        preserveRange(start, end);
         start = end;
         continue;
       }
       const raw = content.subarray(start, end);
+      const recordStart = start;
       start = end;
       let item: unknown;
       try {
@@ -286,19 +297,28 @@ export class RetainQueue {
         item = JSON.parse(raw.toString("utf8"));
       } catch {
         result.counts.malformedJson++;
+        preserveRange(recordStart, end);
         continue;
       }
       if (isQueuedRetain(item)) result.items.push(item);
-      else result.counts.invalidShape++;
+      else {
+        result.counts.invalidShape++;
+        preserveRange(recordStart, end);
+      }
+    }
+    result.bytes = Buffer.alloc(corruptBytes);
+    let offset = 0;
+    for (let index = 0; index < ranges.length; index += 2) {
+      offset += content.copy(result.bytes, offset, ranges[index], ranges[index + 1]);
     }
     return result;
   }
 
   private preserveCorruptRecords(contents: QueueContents): void {
     if (contents.counts.malformedJson + contents.counts.invalidShape === 0) return;
-    // Keep original order and duplicate occurrences in one snapshot per source
-    // inode/generation. A retry after an append extends that snapshot, rather
-    // than duplicating already recovered bytes in a second artifact.
+    // Keep only corrupt bytes, their order and duplicate occurrences in one
+    // snapshot per source inode/generation. A retry after an append extends
+    // that snapshot rather than duplicating bytes in a second artifact.
     const recoveryDir = `${this.filePath}.recovery`;
     mkdirSync(recoveryDir, { recursive: true, mode: 0o700 });
     if (!lstatSync(recoveryDir).isDirectory()) throw new Error("retain recovery path must be a directory");

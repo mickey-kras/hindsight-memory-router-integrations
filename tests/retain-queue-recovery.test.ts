@@ -71,7 +71,7 @@ describe("retain queue corrupt-record recovery", () => {
     { name: "attempt increment", run: (queue) => queue.incrementReplayAttempts("second"), ids: ["first", "second"] },
     { name: "age cleanup", run: (queue) => queue.cleanup(), ids: ["second"] },
   ];
-  it.each(mutations)("preserves exact corrupt bytes before $name", ({ run, ids }) => {
+  it.each(mutations)("preserves only exact corrupt bytes before $name", ({ run, ids }) => {
     const bad = Buffer.from("not-json\r\nnot-json\r\n[]\n");
     const invalidUtf8 = Buffer.from([0xff, 0x0a]);
     const tail = Buffer.from('{"torn":"private');
@@ -85,14 +85,15 @@ describe("retain queue corrupt-record recovery", () => {
         tail,
       ]),
     );
-    const original = readFileSync(filePath);
     const onCorruption = vi.fn();
     const queue = new RetainQueue({ filePath, maxAgeMs: 60_000, onCorruption });
 
     expect(queue.peek().map((queued) => queued.id)).toEqual(["first", "second"]);
     run(queue);
 
-    expect(recoveries()).toEqual([original]);
+    expect(recoveries()).toEqual([Buffer.concat([bad, invalidUtf8, tail])]);
+    expect(recoveries()[0].includes("private first")).toBe(false);
+    expect(recoveries()[0].includes("private second")).toBe(false);
     expect(queue.peek().map((queued) => queued.id)).toEqual(ids);
     expect(queue.peek().find((queued) => queued.id === "second")).toMatchObject({
       documentId: "document",
@@ -146,7 +147,7 @@ describe("retain queue corrupt-record recovery", () => {
     const queue = new RetainQueue({ filePath });
     expect(queue.peek().map((queued) => queued.id)).toEqual(["valid"]);
     queue.remove("valid");
-    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(recoveries()).toEqual([Buffer.from(raw)]);
     expect(() => readFileSync(filePath)).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 
@@ -160,18 +161,17 @@ describe("retain queue corrupt-record recovery", () => {
     });
     expect(() => new RetainQueue({ filePath }).ensureOperationId("first", "operation")).toThrow("write failed");
     expect(readFileSync(filePath, "utf8")).toBe(original);
-    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(recoveries()).toEqual([Buffer.from("broken\nbroken\n")]);
 
     vi.mocked(renameSync).mockReset();
     appendFileSync(filePath, line(item("later", { operationId: "later-operation" })));
-    const extended = readFileSync(filePath);
     const restarted = new RetainQueue({ filePath });
     restarted.ensureOperationId("first", "operation");
     expect(restarted.peek().map(({ id, operationId }) => ({ id, operationId }))).toEqual([
       { id: "first", operationId: "operation" },
       { id: "later", operationId: "later-operation" },
     ]);
-    expect(recoveries()).toEqual([extended]);
+    expect(recoveries()).toEqual([Buffer.from("broken\nbroken\n")]);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -199,7 +199,7 @@ describe("retain queue corrupt-record recovery", () => {
       expect(readFileSync(filePath, "utf8")).toBe(original);
       const restarted = new RetainQueue({ filePath });
       restarted.ensureOperationId("first", "operation");
-      expect(recoveries()).toEqual([Buffer.from(original)]);
+      expect(recoveries()).toEqual([Buffer.from("broken\nbroken\n")]);
       expect(restarted.peek()[0].operationId).toBe("operation");
     },
   );
@@ -217,7 +217,7 @@ describe("retain queue corrupt-record recovery", () => {
       expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("sync failed");
       expect(readFileSync(filePath, "utf8")).toBe(original);
       new RetainQueue({ filePath }).removeMany([]);
-      expect(recoveries()).toEqual([Buffer.from(original)]);
+      expect(recoveries()).toEqual([Buffer.from("broken\n")]);
     },
   );
 
@@ -269,20 +269,20 @@ describe("retain queue corrupt-record recovery", () => {
       actualFs.renameSync(source, destination);
     });
     expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("active rewrite failed");
-    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(recoveries()).toEqual([Buffer.from("bad-A\nbad-A\n")]);
 
     appendFileSync(filePath, "bad-B\n");
     vi.mocked(renameSync).mockImplementation(() => {
       throw new Error("archive replacement failed");
     });
     expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("archive replacement failed");
-    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(recoveries()).toEqual([Buffer.from("bad-A\nbad-A\n")]);
     expect(readFileSync(filePath, "utf8")).toBe(`${original}bad-B\n`);
     expect(readdirSync(join(`${filePath}.recovery`, "pending"))).toHaveLength(0);
 
     vi.mocked(renameSync).mockReset();
     new RetainQueue({ filePath }).ensureOperationId("first", "operation");
-    expect(recoveries()).toEqual([Buffer.from(`${original}bad-B\n`)]);
+    expect(recoveries()).toEqual([Buffer.from("bad-A\nbad-A\nbad-B\n")]);
     expect(new RetainQueue({ filePath }).peek()[0].operationId).toBe("operation");
   });
 
@@ -292,10 +292,9 @@ describe("retain queue corrupt-record recovery", () => {
     const queue = new RetainQueue({ filePath });
     queue.ensureOperationId("first", "operation");
     appendFileSync(filePath, "bad-B\n");
-    const next = readFileSync(filePath);
     queue.removeMany([]);
     expect(recoveries()).toHaveLength(2);
-    expect(recoveries()).toEqual(expect.arrayContaining([Buffer.from(original), next]));
+    expect(recoveries()).toEqual(expect.arrayContaining([Buffer.from("bad-A\n"), Buffer.from("bad-B\n")]));
   });
 
   it.skipIf(process.platform === "win32")(
@@ -338,7 +337,7 @@ describe("retain queue corrupt-record recovery", () => {
           }),
         ).toThrow(expect.objectContaining({ signal: "SIGKILL" }));
         expect(readFileSync(filePath, "utf8")).toBe(`${original}bad-B\n`);
-        expect(recoveries()).toEqual([Buffer.from(original)]);
+        expect(recoveries()).toEqual([Buffer.from("bad-A\n")]);
         expect(
           readdirSync(pending, { withFileTypes: true }).filter(
             (entry) => entry.isFile() && entry.name.startsWith("retain-"),
@@ -346,7 +345,7 @@ describe("retain queue corrupt-record recovery", () => {
         ).toHaveLength(1);
       }
       await new RetainQueueStorage(directory).transaction(() => new RetainQueue({ filePath }).removeMany([]));
-      expect(recoveries()).toEqual([Buffer.from(`${original}bad-B\n`)]);
+      expect(recoveries()).toEqual([Buffer.from("bad-A\nbad-B\n")]);
       expect(readdirSync(pending).sort()).toEqual([unrelated, symlink].sort());
       expect(readFileSync(join(pending, unrelated), "utf8")).toBe("unrelated");
       expect(new RetainQueue({ filePath }).peek()[0].id).toBe("first");
@@ -361,31 +360,40 @@ describe("retain queue corrupt-record recovery", () => {
     const queue = new RetainQueue({ filePath });
     queue.removeMany([]);
     expect(queue.peek()[0].id).toBe("first");
-    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(recoveries()).toEqual([Buffer.from("broken\n")]);
     expect(vi.mocked(openSync).mock.calls.some(([, flags]) => flags === "wx")).toBe(true);
   });
 
-  it("recovers millions of empty records within a bounded child heap", () => {
-    const bytes = Buffer.alloc(4 * 1024 * 1024, 10);
-    writeFileSync(filePath, bytes);
-    const source = `
+  it.each(["empty records", "alternating valid and corrupt records"])(
+    "recovers %s within a bounded child heap",
+    (scenario) => {
+      const alternating = scenario === "alternating valid and corrupt records";
+      const count = 32_768;
+      const bytes = alternating
+        ? Buffer.from(`${line(item("valid"))}\n`.repeat(count))
+        : Buffer.alloc(4 * 1024 * 1024, 10);
+      const corrupt = alternating ? Buffer.alloc(count, 10) : bytes;
+      writeFileSync(filePath, bytes);
+      const source = `
       import { RetainQueue } from ${JSON.stringify(new URL("../src/upstream/src/retain-queue.ts", import.meta.url).href)};
       const queue = new RetainQueue({ filePath: ${JSON.stringify(filePath)}, maxReadBytes: 16 * 1024 * 1024 });
-      if (queue.peek().length !== 0) throw new Error("invalid records replayed");
+      if (queue.peek().length !== ${alternating ? 50 : 0}) throw new Error("unexpected replayable records");
       queue.removeMany([]);
+      if (queue.size() !== ${alternating ? count : 0}) throw new Error("valid records lost");
     `;
-    execFileSync(
-      process.execPath,
-      ["--max-old-space-size=128", "--experimental-transform-types", "--input-type=module", "-e", source],
-      {
-        stdio: "pipe",
-        timeout: 10_000,
-      },
-    );
-    const saved = recoveries();
-    expect(saved).toHaveLength(1);
-    expect(saved[0].equals(bytes)).toBe(true);
-  });
+      execFileSync(
+        process.execPath,
+        ["--max-old-space-size=128", "--experimental-transform-types", "--input-type=module", "-e", source],
+        {
+          stdio: "pipe",
+          timeout: 10_000,
+        },
+      );
+      const saved = recoveries();
+      expect(saved).toHaveLength(1);
+      expect(saved[0].equals(corrupt)).toBe(true);
+    },
+  );
 
   it("flushes writable file handles without directory opens under Windows constraints", async () => {
     const original = `${line(item("first"))}broken\n`;
@@ -411,7 +419,7 @@ describe("retain queue corrupt-record recovery", () => {
     } finally {
       Object.defineProperty(process, "platform", { value: platform });
     }
-    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(recoveries()).toEqual([Buffer.from("broken\n")]);
     expect(new RetainQueue({ filePath }).peek()[0].id).toBe("first");
   });
 });
