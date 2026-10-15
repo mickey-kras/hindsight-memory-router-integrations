@@ -22,7 +22,9 @@
   changes require manual review. Preparation does not run Docker. Missing
   semver metadata does not block this checksum repair; auto-merge still
   requires the normal update metadata and compatibility score.
-- npm updates regenerate provenance and package hash pins in a read-only build;
+- npm updates use npm 11.19.1, matching CI and release packaging. Preparation
+  verifies the selected version before changing inputs or generating hashes.
+  Updates regenerate provenance and package hash pins in a read-only build;
   tarballs are rebuilt from source by CI and byte-compared against the pins,
   never committed.
   A separate job commits only generated files and
