@@ -8,16 +8,11 @@
  * Zero runtime dependencies; uses only Node built-ins.
  */
 
-import {
-  readFileSync,
-  writeFileSync,
-  appendFileSync,
-  existsSync,
-  renameSync,
-  unlinkSync,
-  statSync,
-} from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import {
+  isMissingQueueFile, openPrivateQueueFile, removePrivateQueueFile, writePrivateQueueFile,
+} from "../../shared/private-queue-files.js";
 
 /** The subset of a retain payload the queue needs to persist and replay. */
 export interface QueuedRetainPayload {
@@ -84,7 +79,12 @@ export class RetainQueue {
     };
     const serialized = JSON.stringify(item) + "\n";
     this.options.capacity?.assertAppend(Buffer.byteLength(serialized));
-    appendFileSync(this.filePath, serialized, { encoding: "utf8", mode: 0o600 });
+    const fd = openPrivateQueueFile(this.filePath, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
+    try {
+      appendFileSync(fd, serialized, "utf8");
+    } finally {
+      closeSync(fd);
+    }
     this.options.capacity?.didAppend(this.filePath);
     if (this.cachedSize !== undefined) this.cachedSize++;
   }
@@ -156,11 +156,22 @@ export class RetainQueue {
   }
 
   private readAll(): QueuedRetain[] {
-    if (!existsSync(this.filePath)) return [];
-    if (this.options.maxReadBytes !== undefined && statSync(this.filePath).size > this.options.maxReadBytes) {
-      throw new RangeError("retain queue exceeds configured byte limit; increase the limit to replay this legacy backlog");
+    let fd: number;
+    try {
+      fd = openPrivateQueueFile(this.filePath, constants.O_RDONLY);
+    } catch (error) {
+      if (isMissingQueueFile(error)) return [];
+      throw error;
     }
-    const content = readFileSync(this.filePath, "utf8").trim();
+    let content: string;
+    try {
+      if (this.options.maxReadBytes !== undefined && fstatSync(fd).size > this.options.maxReadBytes) {
+        throw new RangeError("retain queue exceeds configured byte limit; increase the limit to replay this legacy backlog");
+      }
+      content = readFileSync(fd, "utf8").trim();
+    } finally {
+      closeSync(fd);
+    }
     if (!content) return [];
     const items: QueuedRetain[] = [];
     for (const line of content.split("\n")) {
@@ -176,20 +187,11 @@ export class RetainQueue {
   /** Atomically rewrite the file with the given items. */
   private writeAll(items: QueuedRetain[]): void {
     if (items.length === 0) {
-      try {
-        unlinkSync(this.filePath);
-      } catch {
-        /* already gone */
-      }
+      removePrivateQueueFile(this.filePath);
       this.cachedSize = 0;
       return;
     }
-    const tmpPath = this.filePath + ".tmp";
-    writeFileSync(tmpPath, items.map((i) => JSON.stringify(i)).join("\n") + "\n", {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    renameSync(tmpPath, this.filePath);
+    writePrivateQueueFile(this.filePath, items.map((i) => JSON.stringify(i)).join("\n") + "\n");
     this.cachedSize = items.length;
   }
 }

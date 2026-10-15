@@ -51,3 +51,12 @@ via the host logger (`info` level) with `at`, `principal`, `op`, `bankId`, `outc
 `errorClass` on failure. Memory content, transcripts, and page titles are never logged.
 
 Package versions vary by release. [Release instructions](RELEASING.md) describe source builds, SHA-256 pins and Nix hashes.
+
+Durable retain queues require Linux or macOS. Queue directories must be owned by
+this user, with trusted parent directories (root/user-owned and not writable by
+other users, except sticky directories such as `/tmp`). Existing owned queue
+directories and singly linked regular queue/lock files are tightened to `0700`
+and `0600` before use. Symlinks, hardlinks, foreign-owned paths and unsupported
+platforms fail explicitly. Rewrites use exclusive random temporary files and
+atomic rename; lock files retain their OS-owned lock inodes. This protects
+against other OS users planting paths, not arbitrary code running as this user.

@@ -1,7 +1,8 @@
-import { closeSync, openSync, readdirSync, readSync, statSync, unlinkSync } from "node:fs";
+import { closeSync, constants, fstatSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { tryLock } from "fs-native-extensions";
+import { openPrivateQueueFile, removePrivateQueueFile } from "./private-queue-files.js";
 
 export const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
 export const QUEUE_FILE_SUFFIX = ".jsonl";
@@ -32,15 +33,20 @@ interface QueueUsage {
 }
 
 function fileSignature(filePath: string): { signature: string; bytes: number } {
-  const info = statSync(filePath, { bigint: true });
-  return {
-    signature: `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`,
-    bytes: Number(info.size),
-  };
+  const fd = openPrivateQueueFile(filePath, constants.O_RDONLY);
+  try {
+    const info = fstatSync(fd, { bigint: true });
+    return {
+      signature: `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`,
+      bytes: Number(info.size),
+    };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function countRecords(filePath: string): number {
-  const fd = openSync(filePath, "r");
+  const fd = openPrivateQueueFile(filePath, constants.O_RDONLY);
   const buffer = Buffer.alloc(64 * 1024);
   let count = 0;
   let lastByte = 10;
@@ -72,7 +78,10 @@ export class RetainQueueStorage {
   }
 
   async transaction<T>(action: () => T): Promise<T> {
-    const fd = openSync(join(this.directory, ".retain-queue.lock"), "a", 0o600);
+    const fd = openPrivateQueueFile(
+      join(this.directory, ".retain-queue.lock"),
+      constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
+    );
     try {
       let attempt = 0;
       while (!tryLock(fd)) {
@@ -81,8 +90,8 @@ export class RetainQueueStorage {
         attempt++;
       }
       for (const name of readdirSync(this.directory)) {
-        if (name.startsWith(QUEUE_FILE_PREFIX) && name.endsWith(`${QUEUE_FILE_SUFFIX}.tmp`)) {
-          unlinkSync(join(this.directory, name));
+        if (name.startsWith(QUEUE_FILE_PREFIX) && name.includes(`${QUEUE_FILE_SUFFIX}.`) && name.endsWith(".tmp")) {
+          removePrivateQueueFile(join(this.directory, name));
         }
       }
       return action();
@@ -92,7 +101,10 @@ export class RetainQueueStorage {
   }
 
   async replay<T>(action: () => Promise<T>): Promise<T | undefined> {
-    const fd = openSync(join(this.directory, ".retain-replay.lock"), "a", 0o600);
+    const fd = openPrivateQueueFile(
+      join(this.directory, ".retain-replay.lock"),
+      constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
+    );
     try {
       if (!tryLock(fd)) return undefined;
       return await action();
