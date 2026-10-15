@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { buildSessionStartContext } from "./session-start";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -313,6 +315,69 @@ it.each([false, true])("reapplies read-only managed policy after path tuning wit
   expect(startSurvey).not.toHaveBeenCalled();
   expect(send).toHaveBeenCalledOnce();
   expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
+});
+
+it("initializes a cold Node dispatcher on its first guarded request without replacing it", () => {
+  const directory = mkdtempSync(join(tmpdir(), "router-cold-dispatcher-"));
+  try {
+    writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    for (const file of ["router-transport", "bank-access", "patterns", "router-url"]) {
+      const source = readFileSync(new URL(`../../../../shared/${file}.ts`, import.meta.url), "utf8");
+      writeFileSync(
+        join(directory, `${file}.js`),
+        transpileModule(source, {
+          compilerOptions: { module: ModuleKind.ESNext, target: ScriptTarget.ES2022 },
+        }).outputText,
+      );
+    }
+    const output = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+import { pathToFileURL } from "node:url";
+const symbol = Symbol.for("undici.globalDispatcher.1");
+const cold = globalThis[symbol] === undefined;
+const { RouterTransport } = await import(pathToFileURL(process.argv[1]).href);
+const signal = new AbortController().signal;
+let observed;
+let host;
+const transport = new RouterTransport({
+  routerUrl: "https://router.test", access: { writeBank: "A", additionalReadBanks: [] },
+  token: () => "mr_test_" + "a".repeat(64),
+  fetch: async (_url, init) => {
+    host = globalThis[symbol];
+    observed = {
+      cold, initialized: host !== undefined, signalPreserved: init.signal === signal,
+      composedWhenSupported: (init.dispatcher !== undefined) === (typeof host?.compose === "function"),
+      redirect: init.redirect,
+    };
+    return new Response(null, { status: 200 });
+  },
+});
+await transport.request(transport.bankUrl("A", "/documents"), { signal });
+console.log(JSON.stringify({ ...observed, hostPreserved: globalThis[symbol] === host }));
+`,
+        join(directory, "router-transport.js"),
+      ],
+      {
+        env: { ...process.env, NODE_OPTIONS: "", NODE_USE_ENV_PROXY: "" },
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(JSON.parse(output)).toEqual({
+      cold: true,
+      initialized: true,
+      signalPreserved: true,
+      composedWhenSupported: true,
+      redirect: "error",
+      hostPreserved: true,
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 it.each([310_000, 350_000])("lets the 330s managed reflect deadline govern a response after %sms through Node fetch", async (delay) => {

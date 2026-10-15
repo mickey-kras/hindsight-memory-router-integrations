@@ -57,7 +57,11 @@ export function managedReadScope(harness: string | undefined, directory: string,
     workspace,
     bankId,
     identity: transport.authorizationIdentity(),
-    banks: visibleBanks(transport.access).sort(),
+    banks: visibleBanks(transport.access).sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    }),
   };
 }
 

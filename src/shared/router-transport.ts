@@ -77,7 +77,7 @@ const GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
 // Preserve the host's proxy dispatcher while letting AbortSignal own deadlines beyond 300s.
 function signalOnlyDispatcher(): unknown {
   // Headers initializes Node's otherwise lazy global dispatcher.
-  void globalThis.Headers;
+  Reflect.get(globalThis, "Headers");
   const d = (globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] as
     | { compose?: (interceptor: unknown) => unknown }
     | undefined;
