@@ -33,7 +33,6 @@ function unavailable(error: unknown): null {
   return null;
 }
 
-/** Wait for a positively observed idle bank; unavailable probes remain unknown. */
 export async function waitForSettlement(
   client: Pick<StatusClient, "activeOperations">,
   log: (message: string) => void,
