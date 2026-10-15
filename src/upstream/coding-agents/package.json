@@ -35,9 +35,21 @@
     "hindsight-zcode-hook": "dist/zcode-hook.js",
     "hindsight-zcode-sessionstart-hook": "dist/zcode-sessionstart-hook.js",
     "hindsight-zcode-stop-hook": "dist/zcode-stop-hook.js",
+    "hindsight-traecode-hook": "dist/traecode-hook.js",
+    "hindsight-traecode-sessionstart-hook": "dist/traecode-sessionstart-hook.js",
+    "hindsight-traecode-stop-hook": "dist/traecode-stop-hook.js",
+    "hindsight-workbuddy-hook": "dist/workbuddy-hook.js",
+    "hindsight-workbuddy-sessionstart-hook": "dist/workbuddy-sessionstart-hook.js",
+    "hindsight-workbuddy-stop-hook": "dist/workbuddy-stop-hook.js",
+    "hindsight-codebuddy-hook": "dist/codebuddy-hook.js",
+    "hindsight-codebuddy-sessionstart-hook": "dist/codebuddy-sessionstart-hook.js",
+    "hindsight-codebuddy-stop-hook": "dist/codebuddy-stop-hook.js",
     "hindsight-droid-hook": "dist/droid-hook.js",
     "hindsight-droid-sessionstart-hook": "dist/droid-sessionstart-hook.js",
-    "hindsight-droid-stop-hook": "dist/droid-stop-hook.js"
+    "hindsight-droid-stop-hook": "dist/droid-stop-hook.js",
+    "hindsight-kimi-hook": "dist/kimi-hook.js",
+    "hindsight-kimi-sessionstart-hook": "dist/kimi-sessionstart-hook.js",
+    "hindsight-kimi-stop-hook": "dist/kimi-stop-hook.js"
   },
   "exports": {
     ".": {
@@ -106,7 +118,7 @@
     "fast-uri": ">=3.1.6 <4.0.0",
     "hono": ">=4.13.7 <5.0.0",
     "http-cache-semantics": "4.3.0",
-    "ip-address": ">=10.3.1 <11.0.0",
+    "ip-address": ">=10.5.1 <11.0.0",
     "postcss": ">=8.5.23 <9.0.0",
     "vite": ">=6.4.3 <7.0.0"
   }

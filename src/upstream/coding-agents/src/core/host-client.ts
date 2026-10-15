@@ -15,7 +15,7 @@
  * can rotate under them.
  */
 import { applyBankConfig, loadConfig, type Config } from "./config";
-import { deriveBankIdOrSkip } from "./bank";
+import { bankProjectName, deriveBankIdOrSkip } from "./bank";
 import { HindsightClient } from "./hindsight";
 
 /** A host's resolved memory: the config for THIS workspace, the bank it resolved to, and a client
@@ -30,7 +30,7 @@ export type HostMemory = {
 export function resolveHostConfig(
   harness: string,
   directory: string
-): { cfg: Config; bankId: string } {
+): { cfg: Config; bankId: string; project?: string } {
   const cfg0 = loadConfig({ harness });
   // A globally disabled plugin stops HERE, before bank derivation: `disabled` exists to be a
   // zero-overhead baseline — the same agent with no memory — not merely a silent one. Callers
@@ -40,11 +40,15 @@ export function resolveHostConfig(
   // An unidentifiable repository takes the same exit: no bank id is safer than a guessed one, and
   // `disabled` is the signal every caller already handles (#3950).
   if (bankId === null) return { cfg: { ...cfg0, disabled: true }, bankId: "" };
-  return applyBankConfig(cfg0, bankId, directory);
+  const resolved = applyBankConfig(cfg0, bankId, directory);
+  // The repository the bank is ABOUT, for page scoping — the same rule as deepen.ts: only a bank
+  // that is this repo's, not one a `banks.<id>.bank` rename points several repos at (#4490).
+  const project = resolved.bankId === bankId ? bankProjectName(resolved.cfg, directory) : undefined;
+  return { ...resolved, project };
 }
 
 export function resolveHostMemory(harness: string, directory: string): HostMemory {
-  const { cfg, bankId } = resolveHostConfig(harness, directory);
+  const { cfg, bankId, project } = resolveHostConfig(harness, directory);
   if (cfg.disabled) return { disabled: true, cfg, bankId, client: null };
   return {
     disabled: false,
@@ -55,6 +59,8 @@ export function resolveHostMemory(harness: string, directory: string): HostMemor
       apiUrl: cfg.apiUrl,
       apiToken: cfg.apiToken,
       bank: bankId,
+      // Names the repo in the initiative pages this host captures, as the seeded pages do.
+      project,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,
       pageSearchLimit: cfg.pageSearchLimit,

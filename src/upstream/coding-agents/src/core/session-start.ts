@@ -1,4 +1,6 @@
-import { toolBrand } from "@memory-router/shared/tool-prefix";
+import { AccessDeniedError } from "@memory-router/shared/bank-access";
+import { managedReadScope } from "@memory-router/coding-agents/runtime";
+import { renderBrandText, toolBrand } from "@memory-router/shared/tool-prefix";
 /**
  * Shared `SessionStart` lifecycle: deterministically auto-seeds a cold repo's bank from its git
  * history (in the background, non-blocking), keeps warm banks deepening on every start, and
@@ -18,9 +20,10 @@ import { toolBrand } from "@memory-router/shared/tool-prefix";
  *   - throws (server unreachable)      -> no seed, no state written  (try again next session)
  *   - non-empty set (warm/pre-seeded)  -> no seed, seededAt written  (remember, skip enumerating)
  *   - empty set (cold)                 -> start the background seed, seededAt written, note added
+ * "Empty" means no git documents AND no survey-baseline marker: under `gitIngest: "none"` no git
+ * document is ever written, and the markers are what show the repo was already surveyed (#5124).
  */
-import { readFileSync } from "node:fs";
-import { gitHeadSha, hasGitHistory, commitsSince, repoNameOf } from "./git";
+import { gitHeadSha, gitLogIsCurrent, hasGitHistory, commitsSince } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
 import { startBackgroundSeed } from "./seed";
 import { maybeAutoUpdate } from "./auto-update";
@@ -31,19 +34,32 @@ import { DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import type { Config } from "./config";
 import { deriveBankIdOrSkip } from "./bank";
 import { brandWord } from "./brand";
-import { diag } from "./diag";
+import { diag, readHookEvent } from "./diag";
 import { setLogLevel } from "./log";
 import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge-injection";
 import type { ClientOpts, RetainOpts } from "./hindsight";
 import { buildRetainStamp } from "./retain-stamp";
 import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
 import { HindsightClient } from "./hindsight";
-import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-cache";
+import {
+  sessionCacheFile,
+  sessionRootDir,
+  stashPendingContext,
+  pendingContextKey,
+  writeSessionCache,
+} from "./session-cache";
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
+  readScope?(): { identity: string; banks: string[]; endpoint: string; bankId: string };
   listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
+  // Optional: lets the git note see a git-log document written at a commit HEAD is behind
+  // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
+  documentTags?(documentId: string): Promise<string[] | undefined>;
   listPages(): Promise<unknown>;
+  // Optional: whether the bank holds any document at all. Without it the first-prompt reflect is
+  // never deferred — only a confirmed-empty bank is.
+  hasDocuments?(): Promise<boolean>;
   knowledgePagesSupported?: boolean;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
   // minimal test clients omit it, and the baseline write guards on its presence.
@@ -75,8 +91,10 @@ export function buildSeedBanner(bankId: string, cold = true, gitNote?: string, p
 /**
  * One-phrase git-sync state for the banner (the syncStatus contract, condensed): whether the bank
  * is current with the repo's commits. Cheap — reuses the cold-check's doc-id set plus ONE tag query
- * (gitlog-head:<sha>, the freshness marker the deepen engine maintains). Returns undefined when
- * there's nothing meaningful to say (gitIngest off, no git, cold bank — "learning" already covers it).
+ * (gitlog-head:<sha>, the freshness marker the deepen engine maintains), and one read of that tag
+ * when HEAD is not the commit it names. Same check as the deepen engine's (gitLogIsCurrent), so the
+ * banner never promises a catch-up the engine will skip. Returns undefined when there's nothing
+ * meaningful to say (gitIngest off, no git, cold bank — "learning" already covers it).
  */
 async function gitSyncNote(args: {
   client: SeedContextClient;
@@ -89,10 +107,7 @@ async function gitSyncNote(args: {
   if (mode === "none" || cold) return undefined;
   const head = gitHeadSha(cwd);
   if (!head) return undefined;
-  const gitlogCurrent = await client
-    .listDocumentIds(`gitlog-head:${head}`, "all_strict")
-    .then((s) => s.has(`gitlog:${repoNameOf(cwd)}`))
-    .catch(() => undefined);
+  const gitlogCurrent = await gitLogIsCurrent(client, cwd, head).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
   if (gitlogCurrent === undefined) return undefined; // server hiccup: say nothing rather than guess
   if (mode === "message") return gitlogCurrent ? "git in sync" : "catching up on new commits";
   // full: deepening progress = per-commit docs vs the recent-history target
@@ -130,7 +145,18 @@ export interface SessionStartOutput {
 export interface SessionStartHookSpec {
   harness: string;
   parse(event: Record<string, unknown>): { cwd?: string; sessionId?: string };
+  /** Optional event gate, evaluated before config loading: false makes the hook a silent no-op. */
+  accept?(event: Record<string, unknown>): boolean;
   emit(output: SessionStartOutput): unknown;
+  /** The host drops SessionStart context (Grok Build, #5467): stash it for the session's first tool
+   *  hook instead — see HookSpec.toolHook. */
+  deferContextToToolHook?: boolean;
+  /** Optional per-repo host registration, run once memory is confirmed LIVE for the repo (after
+   *  bank derivation and the opt-in/`disabled` gates). Returns an optional user-facing banner
+   *  hint (registration maintenance is host business, its absence a host problem) and must never
+   *  throw. TraeCode uses this to keep `<repo>/.trae/mcp.json` registering its MCP server and to
+   *  nudge when the workspace-MCP gate hides it (core/traecode-mcp.ts). */
+  ensureMcpRegistration?: (cwd: string) => string | undefined;
 }
 
 /**
@@ -161,6 +187,7 @@ export async function buildSessionStartContext(args: {
   const t0 = Date.now();
   let cold: boolean | undefined; // undefined = not checked (autoSeed off / non-git / unreachable)
   let gitDocIds: Set<string> | undefined; // the cold-check's doc set, reused by the banner's git note
+  let bankEmpty = false; // true only when the server confirmed the bank holds no documents
   const harness = args.harness ?? "claude-code";
   const hasGit = args.hasGit ?? hasGitHistory;
   const startSeed = args.startSeed ?? startBackgroundSeed;
@@ -215,12 +242,34 @@ export async function buildSessionStartContext(args: {
         let docIds: Set<string> | undefined;
         try {
           docIds = await client.listDocumentIds("source:git", "all_strict");
-        } catch {
+        } catch (error) {
+          if (error instanceof AccessDeniedError) throw error;
           docIds = undefined; // server unreachable: transient — do nothing, try again next session
         }
 
-        cold = docIds !== undefined ? docIds.size === 0 : undefined;
+        // No git documents is not the whole story: under `gitIngest: "none"` none are ever
+        // written, so a bank an earlier session already surveyed still reads as cold and every
+        // session would launch another survey (#5124). Its survey-baseline markers say otherwise
+        // — the same evidence the warm branch below reads. An unreadable marker list keeps the
+        // git-only answer.
+        let baselines: Set<string> | undefined;
+        if (docIds?.size === 0) {
+          baselines = await client
+            .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
+            .catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
+        }
+        cold = docIds !== undefined ? docIds.size === 0 && !baselines?.size : undefined;
         gitDocIds = docIds;
+        // Only a CONFIRMED-empty bank defers the first-prompt reflect. A cold repo can sit in a
+        // bank that already holds memories (a shared bank, imported conversations), and a failed
+        // or missing probe proves nothing (#5209). Probed before the seed and the survey baseline
+        // below write their first documents.
+        if (cold === true && client.hasDocuments) {
+          bankEmpty = await client.hasDocuments().then(
+            (has) => !has,
+            (error) => { if (error instanceof AccessDeniedError) throw error; return false; }
+          );
+        }
         if (docIds !== undefined) {
           // ALWAYS fire the background deepen engine when the server is reachable — it is
           // idempotent (per-bank lock, dedup by document id) and each run does only the missing
@@ -230,9 +279,10 @@ export async function buildSessionStartContext(args: {
           // loader's harness default and misfiles this session's survey + git history into the
           // wrong bank (e.g. `opencode::<project>` for a claude-code session). See #3247.
           startSeed(cwd, { limit: cfg.seedLimit, harness });
-          // Cold iff the bank has zero source:git docs (an undefined result — server error — is
-          // NOT treated as cold; we never surveyed/noted on an unconfirmed-empty bank).
-          if (docIds.size === 0) {
+          // Cold iff the bank has zero source:git docs and no survey baseline (an undefined result
+          // — server error — is NOT treated as cold; we never surveyed/noted on an unconfirmed-empty
+          // bank).
+          if (cold) {
             if (cfg.codebaseSurvey !== false) {
               // Run the survey under the current harness's own CLI (falls back to any available agent).
               const started = await startSurvey(cwd, {
@@ -253,9 +303,11 @@ export async function buildSessionStartContext(args: {
             // HEAD as the baseline WITHOUT surveying (no surprise spend).
             const sha = resolveHeadSha(cwd);
             if (sha) {
-              const markers = await client
-                .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
-                .catch(() => new Set<string>());
+              const markers =
+                baselines ??
+                (await client
+                  .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
+                  .catch((error) => { if (error instanceof AccessDeniedError) throw error; return new Set<string>(); }));
               const counts: number[] = [];
               for (const id of markers) {
                 if (!id.startsWith(SURVEY_BASELINE_PREFIX)) continue;
@@ -267,7 +319,7 @@ export async function buildSessionStartContext(args: {
               // CLI on PATH, budget kill) — the marker alone must not suppress retries forever.
               const uploads = await client
                 .listDocumentIds("source:upload", "all_strict")
-                .catch(() => new Set<string>());
+                .catch((error) => { if (error instanceof AccessDeniedError) throw error; return new Set<string>(); });
               const findingsAbsent =
                 counts.length > 0 && !SURVEY_DOC_IDS.some((id) => uploads.has(id));
               if ((sinceLast !== null && sinceLast >= cfg.surveyRefreshCommits) || findingsAbsent) {
@@ -294,24 +346,24 @@ export async function buildSessionStartContext(args: {
     }
   }
 
-  // An actual empty roster, like a cold git-doc result, means this bank has no useful material to
-  // synthesize yet. A failed roster request is NOT evidence of that, so keep the two cases apart.
   let pages: PageRef[] = [];
-  let pageListKnown = false;
   try {
     pages = parsePageList(await client.listPages());
-    pageListKnown = true;
-  } catch {
+  } catch (error) {
+    if (error instanceof AccessDeniedError) throw error;
     if (client.knowledgePagesSupported === false) {
       diag(harness, "knowledge_pages_unavailable", { bank: bankId });
     }
-    /* fail-open preamble; preserve first-prompt reflect eligibility on a transient outage */
+    /* fail-open preamble */
   }
   const additionalContext = buildKnowledgePreamble(pages, {
     toolPrefix: cfg.toolPrefix,
     reflectOnNewGoals: cfg.autoInject !== "reflect",
+    extra: cfg.toolGuideExtra,
   });
-  const deferInitialReflect = cold === true || (pageListKnown && pages.length === 0);
+  // An empty page roster is NOT an empty bank: a bank with memories and no pages still answers a
+  // reflect (#5209), so only the confirmed-empty probe above defers it.
+  const deferInitialReflect = bankEmpty;
 
   // The banner shows on EVERY session — Hindsight's presence is part of the product, not a
   // one-time setup note. Wording tracks the bank state: cold = "learning", else "remembering";
@@ -324,7 +376,7 @@ export async function buildSessionStartContext(args: {
       gitIds: gitDocIds,
       mode: cfg.gitIngest,
       cold: cold === true,
-    }).catch(() => undefined);
+    }).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
   }
   systemMessage = buildSeedBanner(bankId, cold === true, gitNote, cfg.toolPrefix);
 
@@ -357,12 +409,9 @@ export async function runSessionStartHook(
   // throw here happens during session bootstrap, before the agent has done anything — more
   // disruptive than a failure mid-prompt — so nothing in this function may ever escape it.
   try {
-    let ev: Record<string, unknown> = {};
-    try {
-      ev = JSON.parse(readFileSync(0, "utf8")) as Record<string, unknown>;
-    } catch {
-      return; // no/invalid event: stay silent
-    }
+    const ev = readHookEvent(spec.harness);
+    if (!ev) return;
+    if (spec.accept && !spec.accept(ev)) return;
     const { harness } = spec;
     const { cwd: rawCwd, sessionId } = spec.parse(ev);
     const cwd = rawCwd || process.cwd();
@@ -387,6 +436,9 @@ export async function runSessionStartHook(
     cfg = resolved.cfg;
     const bankId = resolved.bankId;
     if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+    // Memory is live HERE — the one point where registering the host's per-repo MCP access is
+    // correct: the caller of an opt-out repo must not gain a config file it never asked for.
+    const mcpHint = spec.ensureMcpRegistration?.(cwd);
     // Daemon mode: warm it up now, before the user has typed anything. The start itself is
     // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
     // cold one keeps coming up in the background and is picked up by a later turn.
@@ -400,9 +452,23 @@ export async function runSessionStartHook(
       observationScopes: cfg.observationScopes,
     });
 
+    const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
     const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
+    // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
+    // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
+    if (mcpHint)
+      out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix)}` : renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix);
     if (out.deferInitialReflect && sessionId) {
       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
+    }
+    if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
+      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
+      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
+      const clientScope = client.readScope?.() ?? current;
+      if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
+          pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
+      stashPendingContext(harness, key, out.additionalContext);
+      out.additionalContext = undefined;
     }
     // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
     const payload = spec.emit(out);

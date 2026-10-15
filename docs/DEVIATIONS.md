@@ -2,7 +2,7 @@
 
 [Documentation](README.md) | [Repository](../README.md)
 
-Base: `vectorize-io/hindsight` OpenClaw integration `v0.13.0`.
+Base: `vectorize-io/hindsight` OpenClaw integration `v1.0.0`.
 
 | Area | Upstream | Router plugin |
 | --- | --- | --- |
@@ -19,7 +19,7 @@ Reused source: `src/upstream/src/{retain-queue,session-patterns,types}.ts`.
 
 Published dependencies:
 
-- `@vectorize-io/hindsight-client@0.9.2`
+- `@vectorize-io/hindsight-client@1.0.0`
 - `@vectorize-io/hindsight-agent-sdk@0.1.1`
 
 Not retained: dynamic bank derivation, per-user channel banks, setup/backfill CLIs, local daemon, embedded model configuration, sender-prefix parsing.
@@ -27,3 +27,7 @@ Not retained: dynamic bank derivation, per-user channel banks, setup/backfill CL
 Router revision 4 shares transport and bank checks with coding-agents. Page reads are available to read-only principals; queue replay rechecks the current write bank.
 
 Session patterns use global replacements and a literal sentinel lookup; wildcard matching is unchanged. `src/upstream/SHA256SUMS` remains the pristine upstream manifest.
+
+The Agent SDK remains 0.1.1. Its client dependency is overridden to 1.0.0 after verifying its constructor and schema factory exports. The plugin uses only the SDK tool definitions; every executor is replaced by the guarded router transport.
+
+OpenClaw's new native memory-provider registration remains outside the router-owned entrypoint; the explicit managed tools stay registered. Its ended-transcript context type is imported, while the hook retains only its supplied message payload.

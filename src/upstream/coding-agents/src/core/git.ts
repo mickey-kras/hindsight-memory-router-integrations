@@ -14,9 +14,12 @@ import { pool } from "./util";
 
 const US = "\x1f";
 const RS = "\x1e"; // record separator between commits in gitLogText
+const GITLOG_HEAD = "gitlog-head:"; // tag naming the commit the git-log document was written at
 
 function git(repo: string, ...args: string[]): string {
-  return execFileSync("git", ["-C", repo, ...args], {
+  // `log.showSignature=true` in the user's config makes `git log`/`git show` print signature
+  // checks to stdout ahead of the formatted output, which we parse as data (#5269).
+  return execFileSync("git", ["-C", repo, "-c", "log.showSignature=false", ...args], {
     encoding: "utf8",
     maxBuffer: 1 << 28,
     windowsHide: true,
@@ -48,8 +51,13 @@ export function gitHeadSha(dir: string): string | null {
  * switching to a behind-branch yields 0 and a feature branch counts only its own new commits. Returns
  * null when `sinceSha` is unknown to the repo (rebased/gc'd/foreign) or on any git error — the caller
  * treats null as "not a reachable baseline" rather than "0 new".
+ *
+ * `sinceSha` is read back from the bank (survey-baseline document ids, the git-log document's
+ * gitlog-head tag), so only a full object name reaches git: `git rev-list` parses an argument that
+ * starts with "-" as an option, and `--output=<path>..HEAD` creates that file before failing.
  */
 export function commitsSince(dir: string, sinceSha: string): number | null {
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sinceSha)) return null;
   try {
     const n = Number.parseInt(git(dir, "rev-list", "--count", `${sinceSha}..HEAD`).trim(), 10);
     return Number.isFinite(n) ? n : null;
@@ -153,19 +161,34 @@ export async function ingestGit(
 }
 
 /**
- * The last `limit` commits as an aggregated MESSAGES-ONLY block (no diffs) — one record per commit:
- * "<shortsha> <date> <author>\n<subject>\n\n<body>", newest first, separated by a divider line.
- * Thin wrapper over `git log`; empty repo (no commits) -> "".
+ * Up to the last `limit` commits as an aggregated MESSAGES-ONLY block (no diffs) — one record per
+ * commit: "<shortsha> <date> <author>\n<subject>\n\n<body>", OLDEST first, separated by a divider
+ * line. Thin wrapper over `git log`; empty repo (no commits) -> "".
+ *
+ * Built so a new commit only APPENDS to the previous text (#5003). The server's delta retain keeps
+ * every chunk whose text is unchanged at the same index, so an append re-extracts only the tail.
+ * This used to be the newest `limit` commits, newest first: every commit shifted the whole text,
+ * no chunk survived, and the entire history was re-extracted and re-consolidated each time.
+ * Flipping the order alone is not enough once the window is full — dropping the oldest commit
+ * shifts the text again — so the window's START moves in fixed steps of half the limit (counted
+ * from the root commit), and the document holds between limit/2 and `limit` commits. The history
+ * is rewritten once per step instead of once per commit. Commits that land in the middle of the
+ * date order (a merged branch, a rebase) still shift the text, which costs the full re-extraction
+ * every commit used to.
  */
 export function gitLogText(repo: string, limit: number): string {
   let raw: string;
   try {
+    const total = Number(git(repo, "rev-list", "--count", "--no-merges", "HEAD").trim());
+    const step = Math.max(1, Math.ceil(limit / 2));
+    const start = total > limit ? Math.ceil((total - limit) / step) * step : 0;
     raw = git(
       repo,
       "log",
       `-n`,
-      String(limit),
+      String(total - start),
       "--no-merges",
+      "--reverse", // applied after -n: the newest N, printed oldest first
       "--date=short",
       `--format=%h${US}%ad${US}%an${US}%s${US}%b${RS}`
     );
@@ -222,8 +245,9 @@ export async function ingestGitLog(
   const n = text.split("\n\n---\n\n").length;
   log(`[gitlog] ingesting last ${n} commit messages for ${repoName} as ONE document …`);
   try {
-    // The gitlog-head:<sha> tag makes freshness a single tag query: the deepen engine re-upserts
-    // this document (same id — replaces, never duplicates) only when HEAD has moved past it.
+    // The gitlog-head:<sha> tag records the commit this document is written at: the deepen engine
+    // re-upserts it (same id — replaces, never duplicates) only when HEAD has moved past that
+    // commit (see gitLogIsCurrent).
     const head = gitHeadSha(repo);
     const stamp = opts?.stampFor?.();
     const tags = [
@@ -231,7 +255,7 @@ export async function ingestGitLog(
         ...(stamp?.tags ?? []),
         "source:git",
         "source:git-log",
-        ...(head ? [`gitlog-head:${head}`] : []),
+        ...(head ? [`${GITLOG_HEAD}${head}`] : []),
       ]),
     ];
     await client.retain(
@@ -259,6 +283,35 @@ export async function ingestGitLog(
 }
 
 /**
+ * Whether this repository's canonical git-log document already reflects HEAD, so re-ingesting it
+ * would add no commit it lacks. One tag query answers the usual case, a document written at HEAD.
+ * Otherwise the document's gitlog-head tag names the commit it WAS written at, and it is still
+ * current when HEAD is an ancestor of that commit (`commitsSince` counts 0): re-ingesting there
+ * would only replace the log with an older one.
+ *
+ * The exact-HEAD query used to be the whole check. Every worktree of a repository writes the same
+ * `gitlog:<repoName>` document, so returning to a worktree behind the last writer (A -> B -> A)
+ * re-sent and re-extracted the whole log, although B's copy held every commit of A's (#4661). A HEAD
+ * with a commit the document lacks (new work, a worktree that diverged) still reads as stale, and so
+ * does a recorded commit this clone does not know (a same-named foreign repository, a rebase).
+ * Server errors reject: the callers decide what an unreachable server means. `documentTags` is
+ * optional so a client without it (SessionStart's minimal test clients) keeps the exact-HEAD check.
+ */
+export async function gitLogIsCurrent(
+  client: Pick<HindsightClient, "listDocumentIds"> & Partial<Pick<HindsightClient, "documentTags">>,
+  repo: string,
+  head: string
+): Promise<boolean> {
+  const canonical = `gitlog:${repoNameOf(repo)}`;
+  if ((await client.listDocumentIds(`${GITLOG_HEAD}${head}`, "all_strict")).has(canonical))
+    return true;
+  const tags = (await client.documentTags?.(canonical)) ?? [];
+  return tags.some(
+    (tag) => tag.startsWith(GITLOG_HEAD) && commitsSince(repo, tag.slice(GITLOG_HEAD.length)) === 0
+  );
+}
+
+/**
  * Ensure this repository's canonical aggregated git-log document is current.
  *
  * Older deepen versions enumerated every `source:git-log` document in the bank and deleted every
@@ -273,14 +326,7 @@ export async function syncGitLog(
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   const head = gitHeadSha(repo);
-  const canonical = `gitlog:${repoNameOf(repo)}`;
-  const current =
-    head !== null &&
-    (
-      await client
-        .listDocumentIds(`gitlog-head:${head}`, "all_strict")
-        .catch(() => new Set<string>())
-    ).has(canonical);
+  const current = head !== null && (await gitLogIsCurrent(client, repo, head).catch(() => false));
   if (current) {
     log("[gitlog] current with HEAD — skipping");
     return 0;

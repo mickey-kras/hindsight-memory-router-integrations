@@ -1,7 +1,310 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { buildRetain } from "./retain-hook";
+import { memoryUsageCursorStore } from "./usage";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
-import { ingestChats, renderSessionJsonl, retainLiveSession, type TransportTurn } from "./chat";
-import { PENDING_MAX_AGE_MS, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
+import {
+  DEFAULT_RETAIN_CONTEXT,
+  ingestChats,
+  renderSessionJsonl,
+  retainLiveSession,
+  type TransportTurn,
+} from "./chat";
+import { MAX_CURSOR_PATHS, PENDING_MAX_AGE_MS, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
+import { log } from "./log";
+
+function rolloutFixture(appendSupported = true) {
+  const dir = mkdtempSync(join(tmpdir(), "cumulative-rollouts-"));
+  const cursors = memoryCursorStore();
+  const usageCursors = memoryUsageCursorStore();
+  const documents = new Map<string, string[]>();
+  const applied = new Set<string>();
+  let bank = "A", failAfterCommit = false;
+  const retain = vi.fn(async (content: string, _context: string, documentId: string, _tags: string[], _strategy: string, opts: { updateMode?: string; operationId?: string } = {}) => {
+    expect(documentId).toBe("conversation:rollouts");
+    if (opts.operationId && applied.has(opts.operationId)) return;
+    const incoming = content.split("\n").map(line => JSON.parse(line)).filter(turn => turn.role !== "system").map(turn => turn.content as string);
+    documents.set(bank, opts.updateMode === "append" ? [...(documents.get(bank) ?? []), ...incoming] : incoming);
+    if (opts.operationId) applied.add(opts.operationId);
+    if (failAfterCommit) { failAfterCommit = false; throw new Error("response lost after commit"); }
+  });
+  const client = { get bank() { return bank; }, retain, supportsAppendRetain: vi.fn(async () => appendSupported),
+    bankUrl: (suffix: string) => suffix, req: vi.fn(async () => new Response('{"status":"completed"}')) };
+  const path = (name: string) => join(dir, `${name}.jsonl`);
+  const put = (name: string, texts: string[]) => writeFileSync(path(name), texts.map(content => JSON.stringify({ type: "user", message: { content }, timestamp: "2026-01-01T00:00:00Z" })).join("\n"));
+  const stop = (name: string, extra: { lastAssistantMessage?: string; readTranscript?: (path: string) => TransportTurn[] } = {}) => buildRetain({ harness: "codex", sessionId: "rollouts", transcriptPath: path(name), client, cursors, usageCursors, ...extra });
+  return { dir, cursors, client, retain, documents, path, put, stop, switchBank: (value: string) => { bank = value; }, loseResponse: () => { failAfterCommit = true; } };
+}
+
+async function withRollouts(run: (fixture: ReturnType<typeof rolloutFixture>) => Promise<void>, appendSupported = true) {
+  const fixture = rolloutFixture(appendSupported);
+  try { await run(fixture); } finally { rmSync(fixture.dir, { recursive: true, force: true }); }
+}
+
+describe("cumulative rollout retention", () => {
+  it.each([true, false])("preserves contributions and edits with append support %s", async (supported) => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]);
+      await f.stop("a"); await f.stop("b");
+      f.put("a", ["edited A1", "A2"]);
+      await f.stop("a");
+      expect(f.documents.get("A")).toEqual(["edited A1", "A2", "B1"]);
+      await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["edited A1", "A2", "B1"]);
+      expect(f.cursors.read("rollouts")?.paths).toEqual([f.path("a"), f.path("b")]);
+    }, supported);
+  });
+
+  it("deduplicates copied prefixes while retaining independent earlier-file edits", async () => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["A1", "B1"]);
+      await f.stop("a"); await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
+      f.put("a", ["edited A1", "A2"]); f.put("b", ["A1", "B1", "B2"]);
+      await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["edited A1", "A2", "B1", "B2"]);
+    });
+  });
+
+  it.each(["missing", "empty", "legacy", "copied-prefix"])("refuses unsafe %s reconstruction without changing the document or cursor", async (failure) => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", failure === "copied-prefix" ? ["A1", "B1"] : ["B1"]);
+      await f.stop("a"); await f.stop("b");
+      if (failure === "missing") rmSync(f.path("a"));
+      if (failure === "empty") f.put("a", []);
+      if (failure === "legacy") { const state = f.cursors.read("rollouts")!; f.cursors.write("rollouts", { ...state, rollouts: undefined }); }
+      if (failure === "copied-prefix") f.put("b", ["changed copied A1", "B1", "B2"]);
+      const before = structuredClone(f.cursors.read("rollouts"));
+      const writes = f.retain.mock.calls.length;
+      const warning = vi.spyOn(log, "warn");
+      try {
+        await f.stop("b");
+        expect(f.documents.get("A")).toEqual(["A1", "B1"]);
+        expect(f.retain).toHaveBeenCalledTimes(writes);
+        expect(f.cursors.read("rollouts")).toEqual(before);
+        expect(warning).toHaveBeenCalledWith("codex", "session write-back failed", expect.objectContaining({ error: expect.any(String) }));
+      } finally { warning.mockRestore(); }
+    });
+  });
+
+  it("keeps every known segment at the path cap and refuses another source", async () => {
+    await withRollouts(async f => {
+      for (let i = 0; i <= MAX_CURSOR_PATHS; i++) { f.put(String(i), [`turn ${i}`]); await f.stop(String(i)); }
+      expect(f.documents.get("A")).toEqual(Array.from({ length: MAX_CURSOR_PATHS }, (_, i) => `turn ${i}`));
+      expect(f.cursors.read("rollouts")?.rollouts).toHaveLength(MAX_CURSOR_PATHS);
+      f.put("0", ["edited first"]);
+      await f.stop("0");
+      expect(f.documents.get("A")).toEqual(["edited first", ...Array.from({ length: MAX_CURSOR_PATHS - 1 }, (_, i) => `turn ${i + 1}`)]);
+    });
+  });
+
+  it.each(["pending", "expired-pending", "dirty", "failed-operation"])("reconstructs every segment during %s recovery", async (failure) => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]);
+      await f.stop("a"); await f.stop("b");
+      if (failure === "failed-operation") f.client.req.mockResolvedValueOnce(new Response('{"status":"failed"}'));
+      else {
+        if (failure === "dirty") f.put("a", ["edited A1", "A2"]);
+        else f.put("b", ["B1", "B2"]);
+        f.retain.mockRejectedValueOnce(new Error("offline"));
+        await f.stop(failure === "dirty" ? "a" : "b");
+        if (failure === "expired-pending") {
+          const state = f.cursors.read("rollouts")!;
+          f.cursors.write("rollouts", { ...state, pending: state.pending?.map(entry => ({ ...entry, at: Date.now() - PENDING_MAX_AGE_MS - 1 })) });
+        }
+      }
+      const edited = failure === "pending" || failure === "dirty";
+      if (edited) f.put("a", ["edited A1", "A2"]);
+      await f.stop(edited ? "a" : "b");
+      expect(f.documents.get("A")).toEqual([...(edited ? ["edited A1", "A2"] : ["A1"]), "B1", ...(failure === "pending" || failure === "expired-pending" ? ["B2"] : [])]);
+      expect(f.retain.mock.calls.at(-1)?.[5]?.updateMode).toBeUndefined();
+      expect(f.cursors.read("rollouts")?.dirty).toBeFalsy();
+      expect(f.cursors.read("rollouts")?.pending).toBeUndefined();
+    });
+  });
+
+  it("replays an append whose response was lost under its original operation ID without duplicating a segment", async () => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]);
+      await f.stop("a"); await f.stop("b");
+      f.put("b", ["B1", "B2"]); f.loseResponse();
+      await f.stop("b");
+      const lost = f.retain.mock.calls.at(-1);
+      await f.stop("b");
+      expect(f.retain.mock.calls.at(-1)).toEqual(lost);
+      expect(f.documents.get("A")).toEqual(["A1", "B1", "B2"]);
+    });
+  });
+
+  it("starts the new bank from the current source without reading former-bank files", async () => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]);
+      await f.stop("a"); await f.stop("b");
+      rmSync(f.path("a")); f.switchBank("B");
+      await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
+      expect(f.documents.get("B")).toEqual(["B1"]);
+      expect(f.cursors.read("rollouts")?.paths).toEqual([f.path("b")]);
+    });
+  });
+
+  it("refuses a moving copied-prefix boundary rather than duplicating new parent turns", async () => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["A1", "B1"]);
+      await f.stop("a"); await f.stop("b");
+      f.put("a", ["A1", "A2"]); f.put("b", ["A1", "A2", "B1"]);
+      const before = structuredClone(f.cursors.read("rollouts"));
+      const writes = f.retain.mock.calls.length;
+      await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
+      expect(f.cursors.read("rollouts")).toEqual(before);
+      expect(f.retain).toHaveBeenCalledTimes(writes);
+    });
+  });
+
+  it("deduplicates a new rollout copying only the previous source and preserves first-contribution order", async () => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]); f.put("c", ["B1", "C1"]);
+      await f.stop("a"); await f.stop("b"); await f.stop("c");
+      expect(f.documents.get("A")).toEqual(["A1", "B1", "C1"]);
+      expect(f.cursors.read("rollouts")?.rollouts?.[2].copiedFrom).toBe(f.path("b"));
+      f.put("a", ["A1", "A2"]);
+      await f.stop("a");
+      expect(f.documents.get("A")).toEqual(["A1", "A2", "B1", "C1"]);
+      f.put("b", ["B1", "B2"]); f.put("c", ["B1", "B2", "C1"]);
+      const writes = f.retain.mock.calls.length;
+      await f.stop("c");
+      expect(f.retain).toHaveBeenCalledTimes(writes);
+      expect(f.documents.get("A")).toEqual(["A1", "A2", "B1", "C1"]);
+    });
+  });
+
+  it.each(["growth", "edit"])("deduplicates a fresh whole-aggregate copy after unseen earlier-source %s", async (change) => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]);
+      await f.stop("a"); await f.stop("b");
+      const currentA = change === "growth" ? ["A1", "A2"] : ["edited A1"];
+      f.put("a", currentA); f.put("c", [...currentA, "B1", "C1"]);
+      await f.stop("c");
+      expect(f.documents.get("A")).toEqual([...currentA, "B1", "C1"]);
+      expect(f.cursors.read("rollouts")?.rollouts?.[2].fromTurn).toBe(currentA.length + 1);
+      expect(f.cursors.read("rollouts")?.rollouts?.[2].copiedFrom).toBeUndefined();
+    });
+  });
+
+  it.each(["self", "later", "unknown"])("refuses a %s copied-source reference", async (kind) => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["A1", "B1"]); f.put("c", ["C1"]);
+      await f.stop("a"); await f.stop("b"); await f.stop("c");
+      const state = f.cursors.read("rollouts")!;
+      f.cursors.write("rollouts", { ...state, rollouts: state.rollouts!.map((segment, i) => i === 1 ? { ...segment, copiedFrom: f.path(kind === "self" ? "b" : kind === "later" ? "c" : "unknown") } : segment) });
+      const before = structuredClone(f.cursors.read("rollouts"));
+      await f.stop("b");
+      expect(f.retain).toHaveBeenCalledTimes(3);
+      expect(f.documents.get("A")).toEqual(["A1", "B1", "C1"]);
+      expect(f.cursors.read("rollouts")).toEqual(before);
+    });
+  });
+
+  it("retains synthesized replies until their exact content has materialized in the source", async () => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]);
+      await f.stop("a", { lastAssistantMessage: "unflushed reply" });
+      await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["A1", "unflushed reply"]);
+      expect(f.retain).toHaveBeenCalledTimes(1);
+      writeFileSync(f.path("a"), [
+        { type: "user", message: { content: "A1" }, timestamp: "2026-01-01T00:00:00Z" },
+        { type: "assistant", message: { content: "unflushed reply" }, timestamp: "2026-01-01T00:00:01Z" },
+      ].map(turn => JSON.stringify(turn)).join("\n"));
+      await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["A1", "unflushed reply", "B1"]);
+      expect(f.cursors.read("rollouts")?.rollouts?.[0].unflushed).toBeUndefined();
+    });
+  });
+
+  it("uses the supplied harness reader for synthetic sources", async () => {
+    await withRollouts(async f => {
+      const sources = new Map<string, TransportTurn[]>([[f.path("a"), [{ role: "user", content: "A1" }]], [f.path("b"), [{ role: "user", content: "B1" }]]]);
+      const readTranscript = (path: string) => sources.get(path) ?? [];
+      await f.stop("a", { readTranscript }); await f.stop("b", { readTranscript });
+      sources.get(f.path("a"))!.push({ role: "user", content: "A2" });
+      await f.stop("a", { readTranscript });
+      expect(f.documents.get("A")).toEqual(["A1", "A2", "B1"]);
+    });
+  });
+
+  it("migrates a legacy single-source cursor without losing its source", async () => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]);
+      await f.stop("a");
+      f.cursors.write("rollouts", { ...f.cursors.read("rollouts")!, rollouts: undefined });
+      await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
+    });
+  });
+
+  it.each([-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])("refuses invalid copied offset %s without mutating retained state", async (fromTurn) => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); f.put("b", ["B1"]);
+      await f.stop("a"); await f.stop("b");
+      const state = f.cursors.read("rollouts")!;
+      f.cursors.write("rollouts", { ...state, rollouts: state.rollouts!.map((entry, i) => i ? { ...entry, fromTurn } : entry) });
+      const before = structuredClone(f.cursors.read("rollouts"));
+      await f.stop("b");
+      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
+      expect(f.cursors.read("rollouts")).toEqual(before);
+      expect(f.retain).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("refuses duplicate rollout references", async () => {
+    await withRollouts(async f => {
+      f.put("a", ["A1"]); await f.stop("a");
+      const state = f.cursors.read("rollouts")!;
+      f.cursors.write("rollouts", { ...state, rollouts: [state.rollouts![0], state.rollouts![0]] });
+      await f.stop("a");
+      expect(f.retain).toHaveBeenCalledTimes(1);
+      expect(f.documents.get("A")).toEqual(["A1"]);
+    });
+  });
+
+  it("bounds multi-source reconstruction cardinality without altering the prior document", async () => {
+    await withRollouts(async f => {
+      const readTranscript = (path: string) => path === f.path("a") ? [{ role: "user", content: "A1" }] : Array.from({ length: 100_001 }, () => ({ role: "user", content: "x" }));
+      await f.stop("a", { readTranscript });
+      await f.stop("b", { readTranscript });
+      expect(f.documents.get("A")).toEqual(["A1"]);
+      expect(f.retain).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("bounds the aggregate even when every source is individually under the work limit", async () => {
+    await withRollouts(async f => {
+      const a = Array.from({ length: 60_000 }, () => ({ role: "user", content: "A" }));
+      const b = Array.from({ length: 60_000 }, () => ({ role: "user", content: "B" }));
+      const readTranscript = (path: string) => path === f.path("a") ? a : b;
+      await f.stop("a", { readTranscript }); await f.stop("b", { readTranscript });
+      expect(f.retain).toHaveBeenCalledTimes(1);
+      expect(f.documents.get("A")).toHaveLength(60_000);
+      expect(f.documents.get("A")?.every(content => content === "A")).toBe(true);
+    });
+  });
+
+  it("preserves the single-source size contract and safely refuses oversized multi-source rebuilding", async () => {
+    await withRollouts(async f => {
+      const large = "x".repeat(32 * 1024 * 1024);
+      const readTranscript = (path: string) => [{ role: "user", content: path === f.path("a") ? large : "B1" }];
+      await f.stop("a", { readTranscript });
+      expect(f.documents.get("A")?.[0].length).toBe(large.length);
+      await f.stop("b", { readTranscript });
+      expect(f.retain).toHaveBeenCalledTimes(1);
+      expect(f.documents.get("A")).toHaveLength(1);
+    });
+  });
+});
 
 describe("renderSessionJsonl", () => {
   const turns: TransportTurn[] = [
@@ -45,6 +348,28 @@ describe("renderSessionJsonl", () => {
 });
 
 describe("retainLiveSession", () => {
+  it("preserves every rollout in the cumulative document when an earlier rollout grows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "retain-rollouts-"));
+    try {
+      const a = join(dir, "a.jsonl"), b = join(dir, "b.jsonl");
+      const put = (path: string, texts: string[]) => writeFileSync(path, texts.map(content => JSON.stringify({ type: "user", message: { content }, timestamp: "2026-01-01T00:00:00Z" })).join("\n"));
+      let document: string[] = [];
+      const retain = vi.fn(async (content: string, _context: string, _documentId: string, _tags: string[], _strategy: string, opts: { updateMode?: string } = {}) => {
+        const incoming = content.split("\n").map(line => JSON.parse(line)).filter(turn => turn.role !== "system").map(turn => turn.content);
+        document = opts.updateMode === "append" ? [...document, ...incoming] : incoming;
+      });
+      const client = { bank: "A", retain, supportsAppendRetain: async () => true, bankUrl: (suffix: string) => suffix,
+        req: vi.fn(async () => new Response('{"status":"completed"}')) };
+      const cursors = memoryCursorStore();
+      const stop = (path: string) => buildRetain({ harness: "codex", sessionId: "rollouts", transcriptPath: path, client, cursors, usageCursors: memoryUsageCursorStore() });
+      put(a, ["A1"]); put(b, ["B1"]);
+      await stop(a); await stop(b);
+      expect(document).toEqual(["A1", "B1"]);
+      put(a, ["A1", "A2"]);
+      await stop(a);
+      expect(document).toEqual(["A1", "A2", "B1"]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   it("upserts the JSONL transcript under conversation:<id> with the unified conversation strategy", async () => {
     const retain = vi.fn().mockResolvedValue(undefined);
     const client = { retain } as unknown as HindsightClient;
@@ -65,7 +390,7 @@ describe("retainLiveSession", () => {
       timestamp: "2026-01-01T00:00:00Z",
     });
     expect(parsed[1]).toEqual({ role: "user", content: "hi", timestamp: "2026-01-01T00:00:00Z" });
-    expect(context).toBe("coding agent session");
+    expect(context).toBe(DEFAULT_RETAIN_CONTEXT);
     expect(documentId).toBe("conversation:s2");
     expect(tags).toEqual(["source:chat"]);
     expect(strategy).toBe("conversation");
@@ -75,6 +400,39 @@ describe("retainLiveSession", () => {
       session_id: "s2",
       ref_id: "conversation:s2",
     });
+  });
+
+  it("sends the stamp's resolved context instead of the default when one is configured", async () => {
+    // The default says nothing about authorship, so extraction can record an assistant's
+    // proposal as the user's decision. This is the path a deployment uses to state the boundary.
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+    const turns: TransportTurn[] = [
+      { role: "user", content: "hi", timestamp: "2026-01-01T00:00:00Z" },
+    ];
+    const configured = "Assistant turns are agent-generated and not the user's decisions.";
+
+    await retainLiveSession(client, "s3", turns, "2026-01-01T00:00:00Z", undefined, {
+      stamp: { tags: [], metadata: {}, context: configured },
+    });
+
+    const [, context] = retain.mock.calls[0];
+    expect(context).toBe(configured);
+  });
+
+  it("keeps the default when a stamp carries tags but no context", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+    const turns: TransportTurn[] = [
+      { role: "user", content: "hi", timestamp: "2026-01-01T00:00:00Z" },
+    ];
+
+    await retainLiveSession(client, "s4", turns, "2026-01-01T00:00:00Z", undefined, {
+      stamp: { tags: ["project:x"], metadata: {} },
+    });
+
+    const [, context] = retain.mock.calls[0];
+    expect(context).toBe(DEFAULT_RETAIN_CONTEXT);
   });
 });
 
@@ -104,6 +462,74 @@ describe("ingestChats", () => {
       ref_id: "chat:s-import",
     });
   });
+
+  it("dates a backfilled document from the session's own source timestamps, not the import clock", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+
+    const importedAt = Date.now();
+    await ingestChats(client, [
+      {
+        id: "s-hist",
+        turns: [
+          { role: "user", text: "pick the storage engine", timestamp: "2026-01-05T09:00:00Z" },
+          { role: "assistant", text: "RocksDB.", timestamp: "2026-01-05T09:00:05Z" },
+        ],
+      },
+    ]);
+
+    const [content, , , , , opts] = retain.mock.calls[0];
+    // The document/Event Date is the conversation's own first timestamp…
+    expect(opts.timestamp).toBe("2026-01-05T09:00:00Z");
+    // …and the REF-ID system turn that heads the transcript carries the same anchor.
+    expect(JSON.parse(content.split("\n")[0]) as TransportTurn).toEqual({
+      role: "system",
+      content: "REF-ID: chat:s-hist",
+      timestamp: "2026-01-05T09:00:00Z",
+    });
+    // The regression: an import in September must not date a January session to September.
+    expect(Date.parse(opts.timestamp)).toBeLessThan(importedAt - 60_000);
+  });
+
+  it("keeps the synthetic import-time anchor when no turn carries a usable timestamp", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+
+    const importedAt = Date.now();
+    await ingestChats(client, [
+      {
+        id: "s-clockless",
+        turns: [{ role: "user", text: "no clocks here", timestamp: "not-a-date" }],
+      },
+    ]);
+
+    const [, , , , , opts] = retain.mock.calls[0];
+    // Unparseable source values are ignored rather than trusted, so the stagger still applies.
+    expect(Date.parse(opts.timestamp)).toBeGreaterThanOrEqual(importedAt - 1000);
+  });
+
+  it("anchors a timestamp-less turn to the session's own clock instead of the import clock", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+
+    await ingestChats(client, [
+      {
+        id: "s-mixed",
+        turns: [
+          { role: "user", text: "dated", timestamp: "2026-01-05T09:00:00Z" },
+          { role: "action", text: "undated follow-up" },
+        ],
+      },
+    ]);
+
+    const [content] = retain.mock.calls[0];
+    const turns = content.split("\n").map((line: string) => JSON.parse(line) as TransportTurn);
+    // The dated turn keeps its source value verbatim…
+    expect(turns[1].timestamp).toBe("2026-01-05T09:00:00Z");
+    // …and the undated one sits on the SESSION's timeline, not the import's. Index 0 is the REF-ID
+    // system turn, so the action turn is index 2: fallback offset is `(j + 1)` minutes for j = 1.
+    expect(turns[2].timestamp).toBe("2026-01-05T09:02:00.000Z");
+  });
 });
 
 describe("retainLiveSession — incremental write-back", () => {
@@ -111,7 +537,7 @@ describe("retainLiveSession — incremental write-back", () => {
   const turn = (i: number): TransportTurn => ({ role: "user", content: `turn ${i}` });
   const turns = (n: number) => Array.from({ length: n }, (_, i) => turn(i));
 
-  /** Client double: `supported` is what GET /version would have told us about operation_id. */
+  /** Client double: `supported` is the combined append capability. */
   const stubClient = (supported = true) => {
     const retain = vi.fn().mockResolvedValue(undefined);
     return {
@@ -119,13 +545,47 @@ describe("retainLiveSession — incremental write-back", () => {
       client: {
         retain,
         bank: "coding-agent::repo",
-        supportsIdempotentRetain: async () => supported,
+        supportsAppendRetain: async () => supported,
       } as unknown as HindsightClient,
     };
   };
 
   const write = (client: HindsightClient, turnList: TransportTurn[], cursors: RetainCursorStore) =>
     retainLiveSession(client, "s1", turnList, "2026-01-01T00:00:00Z", "codex", { cursors });
+
+  it("replaces when an accepted write's operation later failed (#5251)", async () => {
+    const status = new Map<string, string>();
+    const { retain, client } = stubClient();
+    Object.assign(client, {
+      bankUrl: (s: string) => s,
+      req: vi.fn(async (_m: string, url: string) => {
+        const st = status.get(url.split("/").pop()!);
+        return new Response(JSON.stringify({ status: st }), { status: st ? 200 : 404 });
+      }),
+    });
+    const cursors = memoryCursorStore();
+    const opOf = (call: number) => retain.mock.calls[call][5].operationId as string;
+
+    await write(client, turns(2), cursors);
+    status.set(opOf(0), "completed");
+    await write(client, turns(3), cursors);
+    expect(retain.mock.calls[1][5].updateMode).toBe("append"); // completed: append is safe
+    expect(cursors.read("s1")?.ops).toEqual([opOf(1)]);
+
+    status.set(opOf(1), "failed"); // accepted, then extraction failed
+    await write(client, turns(4), cursors);
+    // The failed append's turn 2 is re-sent: the whole transcript, as a replace.
+    expect(retain.mock.calls[2][5].updateMode).toBeUndefined();
+    expect(retain.mock.calls[2][0]).toBe(
+      renderSessionJsonl("conversation:s1", turns(4), "2026-01-01T00:00:00Z")
+    );
+    expect(cursors.read("s1")?.ops).toEqual([opOf(2)]);
+
+    status.set(opOf(2), "pending"); // still running: tracked, append proceeds
+    await write(client, turns(5), cursors);
+    expect(retain.mock.calls[3][5].updateMode).toBe("append");
+    expect(cursors.read("s1")?.ops).toEqual([opOf(2), opOf(3)]);
+  });
 
   it("replaces on the first write, then appends only the new turns", async () => {
     const { retain, client } = stubClient();
@@ -146,6 +606,45 @@ describe("retainLiveSession — incremental write-back", () => {
       turn(4),
     ]);
     expect(second[2]).toBe("conversation:s1"); // same document id — append targets it
+  });
+
+  it("remembers a confirmed append capability, so a failed probe on a later Stop still appends (#4560)", async () => {
+    const cursors = memoryCursorStore();
+    await write(stubClient().client, turns(2), cursors);
+    // The next Stop is a fresh hook process whose capability probe times out.
+    const probe = vi.fn().mockRejectedValue(new Error("timeout"));
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const next = {
+      retain,
+      bank: "coding-agent::repo",
+      supportsAppendRetain: probe,
+    } as unknown as HindsightClient;
+    await write(next, turns(4), cursors);
+    expect(probe).not.toHaveBeenCalled();
+    expect(retain.mock.calls[0][5].updateMode).toBe("append");
+  });
+
+  it("records the probed write-back mode in the diag trail, so a dead append is visible (#5286)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-chat-diag-"));
+    vi.stubEnv("HINDSIGHT_DIAG_FILE", join(dir, "diag.jsonl"));
+    try {
+      await write(stubClient(false).client, turns(2), memoryCursorStore());
+      const events = readFileSync(join(dir, "diag.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          harness: "codex",
+          event: "retain_mode",
+          mode: "replace",
+          appendSupported: false,
+        })
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("sends a stable v5 operation_id so a resubmitted write is not applied twice", async () => {
@@ -206,6 +705,9 @@ describe("retainLiveSession — incremental write-back", () => {
       turns: 6,
       fingerprint: expect.any(String),
       bank: "coding-agent::repo",
+      appendSupported: true,
+      // Accepted but never seen to complete (this stub cannot answer a status check): kept to check.
+      ops: expect.arrayContaining([replay[5].operationId, tail[5].operationId]),
     });
   });
 
@@ -283,7 +785,7 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(cursors.read("s1")?.pending).toBeUndefined();
   });
 
-  it("never appends against a server that ignores operation_id", async () => {
+  it("never appends when append support is unavailable", async () => {
     const { retain, client } = stubClient(false);
     const cursors = memoryCursorStore();
     await write(client, turns(2), cursors);
@@ -315,7 +817,7 @@ describe("retainLiveSession — incremental write-back", () => {
     const client = {
       retain,
       bank: "b",
-      supportsIdempotentRetain: async () => true,
+      supportsAppendRetain: async () => true,
     } as unknown as HindsightClient;
     const cursors = memoryCursorStore();
 
@@ -370,7 +872,7 @@ describe("retainLiveSession — incremental write-back", () => {
     const mk = (bank: string) =>
       ({
         bank,
-        supportsIdempotentRetain: async () => true,
+        supportsAppendRetain: async () => true,
         retain: vi.fn(async (_c: string, ...rest: unknown[]) => {
           sent.push({ bank, mode: (rest[4] as { updateMode?: string }).updateMode ?? "replace" });
         }),
@@ -526,12 +1028,34 @@ describe("retainLiveSession — incremental write-back", () => {
     const client = {
       retain,
       bank: "b",
-      supportsIdempotentRetain: async () => {
+      supportsAppendRetain: async () => {
         throw new Error("unreachable");
       },
     } as unknown as HindsightClient;
     await write(client, turns(2), memoryCursorStore());
     expect(retain).toHaveBeenCalledTimes(1);
     expect(retain.mock.calls[0][5].updateMode).toBeUndefined();
+  });
+});
+
+
+describe("bank-specific append capabilities", () => {
+  it.each([false, true])("reprobes a remapped bank whose append support is %s without settling old-bank operations", async (supported) => {
+    const cursors = memoryCursorStore();
+    const a = { bank: "A", retain: vi.fn().mockResolvedValue(undefined), supportsAppendRetain: vi.fn().mockResolvedValue(true) };
+    const b = { bank: "B", retain: vi.fn().mockResolvedValue(undefined), supportsAppendRetain: vi.fn().mockResolvedValue(supported),
+      req: vi.fn().mockImplementation(async () => Response.json({ status: "completed" })), bankUrl: (suffix: string) => `https://router.test/v1/default/banks/B${suffix}` };
+    const first: TransportTurn[] = [{ role: "user", content: "one" }];
+    await retainLiveSession(a as unknown as HindsightClient, "remapped", first, "2026-01-01T00:00:00Z", undefined, { cursors });
+    const oldOps = cursors.read("remapped")?.ops ?? [];
+    await retainLiveSession(b as unknown as HindsightClient, "remapped", first, "2026-01-01T00:00:00Z", undefined, { cursors });
+    expect(b.supportsAppendRetain).toHaveBeenCalledOnce();
+    expect(b.req).not.toHaveBeenCalled();
+    expect(b.retain.mock.calls[0][5].updateMode).toBeUndefined();
+    await retainLiveSession(b as unknown as HindsightClient, "remapped", [...first, { role: "assistant", content: "two" }],
+      "2026-01-01T00:00:00Z", undefined, { cursors });
+    expect(b.retain.mock.calls[1][5].updateMode).toBe(supported ? "append" : undefined);
+    expect(b.req.mock.calls.every(([, url]) => oldOps.every(id => !String(url).endsWith(id)))).toBe(true);
+    expect(cursors.read("remapped")?.bank).toBe("B");
   });
 });

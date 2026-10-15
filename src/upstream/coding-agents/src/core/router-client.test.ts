@@ -1,3 +1,4 @@
+import { buildSessionStartContext } from "./session-start";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccessDeniedError } from "@memory-router/shared/bank-access";
 import { managedBank } from "@memory-router/coding-agents/runtime";
 import { ensureDaemon } from "./daemon";
-import { loadConfig, resolveConfig } from "./config";
+import { applyBankConfig, loadConfig, resolveConfig } from "./config";
 import { HindsightClient } from "./hindsight";
 
 let directory: string;
@@ -59,7 +60,7 @@ it("routes every document, page, seed and operation request through the configur
   expect(send.mock.calls.some(([url, init]) => String(url) === "https://router.test/v1/default/banks/A" && init?.method === "DELETE")).toBe(false);
   expect(send.mock.calls.some(([url, init]) => String(url).endsWith("/knowledge-base/pages") && init?.method === "POST")).toBe(true);
   for (const [url, init] of send.mock.calls) {
-    expect(String(url)).toMatch(/^https:\/\/router\.test\/(?:version|v1\/default\/banks\/[AB]\/)/);
+    expect(String(url)).toMatch(/^https:\/\/router\.test\/(?:(?:v1\/)?version|v1\/default\/banks\/[AB]\/)/);
     expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${credential}`);
     expect(new Headers(init?.headers).get("x-memory-router-agent")).toBe("codex");
     expect(init?.redirect).toBe("error");
@@ -151,10 +152,10 @@ it.each([{}, { manage: false }])("seeds pages without reading or modifying bank 
     expect(JSON.parse(String(init?.body))).toHaveProperty("source_query");
   }
 });
-it("preserves upstream page-capability fallback without attempting bank provisioning", async () => {
+it("keeps page capability unknown on redacted 404 without attempting bank provisioning", async () => {
   const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
   await expect(client().configureBank()).resolves.toBeUndefined();
-  expect(send).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledTimes(2);
   expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
 });
 
@@ -230,4 +231,170 @@ it.each([401, 403])("shares explicit-bank %s denial across root and sibling view
     expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${rotated}`);
     expect(new Headers(init?.headers).get("x-memory-router-agent")).toBe("codex");
   }
+});
+
+
+it("uses both guarded version routes before selecting append and honours bank document storage", async () => {
+  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+    if (String(url).endsWith("/v1/version")) return new Response(null, { status: 404 });
+    if (String(url).endsWith("/version")) return Response.json({ api_version: "1.0.0" });
+    return Response.json({ config: { store_document_text: false } });
+  });
+  await expect(client().supportsAppendRetain()).resolves.toBe(false);
+  expect(send.mock.calls.map(([url]) => String(url))).toEqual([
+    "https://router.test/v1/version", "https://router.test/version", "https://router.test/v1/default/banks/A/config",
+  ]);
+});
+it.each([401, 403])("does not try a fallback after version probe authorization failure %s", async (status) => {
+  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("SECRET_BODY", { status }));
+  const c = client();
+  await expect(c.supportsAppendRetain()).rejects.toThrow(AccessDeniedError);
+  await expect(c.hasDocuments()).rejects.toThrow(AccessDeniedError);
+  expect(send).toHaveBeenCalledOnce();
+});
+it("guards new document freshness reads and denies initiative writes to extra read banks", async () => {
+  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ items: [{ id: "gitlog:repo", tags: ["head:abc"] }], total: 1 }));
+  const c = client().forBank("B");
+  await expect(c.hasDocuments()).resolves.toBe(true);
+  await expect(c.documentTags("gitlog:repo")).resolves.toEqual(["head:abc"]);
+  await expect(c.captureInitiative({ title: "change", summary: "plan" })).rejects.toThrow(AccessDeniedError);
+  expect(send.mock.calls.every(([url, init]) => String(url).includes("/banks/B/") && init?.method === "GET")).toBe(true);
+});
+
+it.each([[400, 1], [500, 12]])("bounds guarded HTTP %s operation polling to %s calls", async (status, calls) => {
+  vi.useFakeTimers();
+  try {
+    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("SECRET_BODY", { status }));
+    const log = vi.fn();
+    const c = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A", log });
+    const drained = c.drain(["op"], "test", 120_000);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await drained;
+    expect(send).toHaveBeenCalledTimes(calls);
+    expect(log.mock.calls.flat().join()).toContain("1 done, 1 failed");
+    expect(log.mock.calls.flat().join()).not.toContain("SECRET_BODY");
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it("resets the guarded operation 5xx budget after a successful pending status", async () => {
+  vi.useFakeTimers();
+  try {
+    let calls = 0;
+    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      calls++;
+      return calls === 12 ? Response.json({ status: "pending" }) : new Response(null, { status: 500 });
+    });
+    const log = vi.fn();
+    const c = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A", log });
+    const drained = c.drain(["op"], "test", 180_000);
+    await vi.advanceTimersByTimeAsync(180_000);
+    await drained;
+    expect(send).toHaveBeenCalledTimes(24);
+    expect(log.mock.calls.flat().join()).toContain("1 done, 1 failed");
+  } finally { vi.useRealTimers(); }
+});
+
+it.each([false, true])("reapplies read-only managed policy after path tuning with banks section %s", async (withBank) => {
+  const normalPath = join(directory, "normal.json");
+  const unsafe = { manageBankConfig: true, retainSessions: true, autoSeed: true, codebaseSurvey: true, gitIngest: "full", autoUpdate: true,
+    apiUrl: "http://localhost:8888", apiToken: "unmanaged", reflectTimeoutMs: 345_000, toolGuideExtra: "project-specific guidance" };
+  writeFileSync(normalPath, JSON.stringify({ paths: { [directory]: unsafe }, ...(withBank ? { banks: { A: unsafe } } : {}) }));
+  const loaded = loadConfig({ harness: "reader", path: normalPath });
+  const applied = applyBankConfig(loaded, "A", directory).cfg;
+  expect(applied).toMatchObject({ routerHarness: "reader", apiUrl: "https://router.test", apiToken: undefined,
+    manageBankConfig: false, retainSessions: false, autoSeed: false, codebaseSurvey: false, gitIngest: "none", autoUpdate: false,
+    reflectTimeoutMs: 345_000, toolGuideExtra: "project-specific guidance" });
+  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ roots: [] }));
+  const startSeed = vi.fn();
+  const startSurvey = vi.fn();
+  await buildSessionStartContext({ cwd: directory, bankId: "A", cfg: applied, client: client("reader"), harness: "reader",
+    hasGit: () => true, startSeed, startSurvey });
+  expect(startSeed).not.toHaveBeenCalled();
+  expect(startSurvey).not.toHaveBeenCalled();
+  expect(send).toHaveBeenCalledOnce();
+  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
+});
+
+it.each([310_000, 350_000])("lets the 330s managed reflect deadline govern a response after %sms through Node fetch", async (delay) => {
+  vi.useFakeTimers();
+  void globalThis.Headers;
+  const symbol = Symbol.for("undici.globalDispatcher.1");
+  const previous = Object.getOwnPropertyDescriptor(globalThis, symbol);
+  type Handler = {
+    onConnect(abort: (reason: Error) => void): void;
+    onHeaders(status: number, headers: string[], resume: () => void, text: string): void;
+    onData(body: Buffer): void;
+    onComplete(trailers: string[]): void;
+    onError(error: Error): void;
+  };
+  type Dispatch = (options: Record<string, unknown>, handler: Handler) => boolean;
+  const options: Record<string, unknown>[] = [];
+  const aborted: boolean[] = [];
+  const dispatch: Dispatch = (opts, handler) => {
+    const index = options.push(opts) - 1;
+    const timer = setTimeout(() => {
+      handler.onHeaders(200, ["content-type", "application/json"], () => {}, "OK");
+      handler.onData(Buffer.from(JSON.stringify({ text: "late managed answer" })));
+      handler.onComplete([]);
+    }, delay);
+    handler.onConnect((error) => {
+      aborted[index] = true;
+      clearTimeout(timer);
+      handler.onError(error);
+    });
+    return true;
+  };
+  // Exercise Node's actual fetch dispatcher path, retaining the host dispatcher instead of
+  // creating an Agent or replacing its proxy settings. No network or real multi-minute wait.
+  const hostDispatcher = { compose: (intercept: (next: Dispatch) => Dispatch) => ({ dispatch: intercept(dispatch) }) };
+  Object.defineProperty(globalThis, symbol, previous ? { value: hostDispatcher } : { configurable: true, writable: true, value: hostDispatcher });
+  try {
+    const pending = client().reflect("query", { timeoutMs: 330_000 });
+    let settled = false;
+    const observed = pending.then(() => { settled = true; }, () => { settled = true; });
+    const outcome = delay < 330_000
+      ? expect(pending).resolves.toBe("late managed answer")
+      : expect(pending).rejects.toThrow("reflection unavailable for all assigned banks");
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(settled).toBe(false);
+    expect(options).toHaveLength(2);
+    expect(options.every(opts => opts.headersTimeout === 0 && opts.bodyTimeout === 0)).toBe(true);
+    await vi.advanceTimersByTimeAsync(delay < 330_000 ? 10_000 : 30_000);
+    await outcome;
+    await observed;
+    if (delay > 330_000) expect(aborted).toEqual([true, true]);
+    expect((globalThis as Record<symbol, unknown>)[symbol]).toBe(hostDispatcher);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, symbol, previous);
+    else Reflect.deleteProperty(globalThis, symbol);
+    vi.useRealTimers();
+  }
+});
+
+it.each(["initial", "baseline", "documents"])("stops SessionStart background work on terminal %s probe denial", async (point) => {
+  const startSeed = vi.fn(); const startSurvey = vi.fn().mockResolvedValue(false);
+  const denied = new AccessDeniedError();
+  const probe = {
+    listDocumentIds: vi.fn(async (tag: string) => {
+      if (point === "initial" || (point === "baseline" && tag !== "source:git")) throw denied;
+      return new Set<string>();
+    }),
+    hasDocuments: vi.fn(async () => { if (point === "documents") throw denied; return false; }),
+    listPages: vi.fn().mockResolvedValue([]),
+  };
+  await expect(buildSessionStartContext({ cwd: directory, bankId: "A", cfg: resolveConfig({ codebaseSurvey: true }),
+    client: probe, harness: "codex", hasGit: () => true, startSeed, startSurvey, headSha: () => null })).rejects.toBe(denied);
+  expect(startSeed).not.toHaveBeenCalled(); expect(startSurvey).not.toHaveBeenCalled();
+  expect(probe.listPages).not.toHaveBeenCalled();
+});
+it("preserves transient baseline/document probe fallback in SessionStart", async () => {
+  const startSeed = vi.fn(); const startSurvey = vi.fn().mockResolvedValue(false);
+  const probe = { listDocumentIds: vi.fn(async (tag: string) => {
+    if (tag !== "source:git") throw new Error("transient server outage"); return new Set<string>();
+  }), hasDocuments: vi.fn().mockRejectedValue(new Error("transient server outage")), listPages: vi.fn().mockResolvedValue([]) };
+  const output = await buildSessionStartContext({ cwd: directory, bankId: "A", cfg: resolveConfig({ codebaseSurvey: true }),
+    client: probe, harness: "codex", hasGit: () => true, startSeed, startSurvey, headSha: () => null });
+  expect(startSeed).toHaveBeenCalledOnce(); expect(startSurvey).toHaveBeenCalledOnce();
+  expect(output.deferInitialReflect).toBe(false);
 });

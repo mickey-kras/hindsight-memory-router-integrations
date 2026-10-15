@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_SEED_LIMIT } from "./seed";
-import { isOptedIn } from "./bank";
+import { isOptedIn, pathSection } from "./bank";
 import { log } from "./log";
 import {
   DEFAULT_OBSERVATION_SCOPES,
@@ -27,10 +27,14 @@ import {
 import {
   type CustomPagesConfig,
   DEFAULT_PAGE_TRIGGER_CRON,
+  DEFAULT_RETAIN_EXTRACTION_MODE,
   isHashedCron,
   PAGE_NAMES,
   type PagesConfig,
   parseHashedCron,
+  PLUGIN_GOVERNED_BANK_FIELDS,
+  RETAIN_EXTRACTION_MODES,
+  type RetainExtractionMode,
 } from "./missions";
 
 /** Default config-file path: ~/.hindsight/coding-agent.json */
@@ -108,6 +112,10 @@ export interface RawConfig {
    *  server decides when to give up, not an arbitrary client deadline (#3590). Unset, it inherits
    *  an explicitly-raised `reflectTimeoutMs` — a user who raised that meant "let reflect run". */
   reflectToolTimeoutMs?: number;
+  /** Retrieval timeout for autoInject "pages"/"recall" (default 7000), and the shared budget for
+   *  the page-search -> recall fallback after a reflect timeout/5xx. On hook harnesses, the full
+   *  reflect + fallback must fit the host's prompt-hook timeout (30s by default). */
+  injectTimeoutMs?: number;
   /** Reflect budget for the `hindsight_reflect` tool: "low" | "mid" | "high" (default "high").
    *  Drop to "mid"/"low" on a large bank where high-budget synthesis exceeds the server's wall
    *  timeout. The automatic session-start reflect is NOT affected — it always uses "low" to fit
@@ -137,7 +145,12 @@ export interface RawConfig {
    *  back empty on it: those set `{"types": ["world", "experience"]}`, or `{"types": null}` for
    *  every type. */
   recallOptions?: Record<string, unknown>;
-  pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
+  /** Your own guidance for how the agent should treat memory, added AFTER the built-in tool guide
+   *  (SessionStart and every refresh) and after the crediting note that comes back with
+   *  `hindsight_search_knowledge_pages` results. It adds to the built-in text, never replaces it,
+   *  so the plugin's call triggers and crediting rule keep up with releases (#4791). */
+  toolGuideExtra?: string;
+  pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 1; 0 also means 1)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
    *    "cron" (default)         — refresh on `pageTriggerCron` only, and only when actually stale
@@ -217,11 +230,16 @@ export interface RawConfig {
   /** Extra metadata stamped on every session write-back, e.g. {"repo": "{gitProject}"}. Same
    *  placeholders as retainTags; built-in metadata (harness attribution) wins on conflict. */
   retainMetadata?: Record<string, string>;
+  /** The `context` sent with every session write-back (default: DEFAULT_RETAIN_CONTEXT in
+   *  core/chat.ts, which names the user and the agent as the two speakers). Same placeholders as
+   *  retainTags. Extraction reads this to decide WHOSE claim a sentence is. */
+  retainContext?: string;
   /** Let the plugin shape the bank's own configuration — the retain strategies it writes under,
    *  the `knowledge` entity-label group, and (on a bank that has none) the missions (default true).
    *
-   *  Writing is strictly ADDITIVE: the plugin adds what the bank does not already define and never
-   *  overwrites an existing value, so an edit made in the control plane survives (#3927). Set false
+   *  Writing is ADDITIVE: the plugin adds what the bank does not already define and never
+   *  overwrites an existing value, so an edit made in the control plane survives (#3927) — except
+   *  the extraction mode of its own strategies, which follows `retainExtractionMode`. Set false
    *  to keep it out of the bank's configuration entirely — for a bank you shape yourself, or share
    *  with non-coding work. That bank should then define the strategies this plugin retains under
    *  (`git`, `gitlog`, `conversation`, `document`, `survey`): the server does not reject a retain
@@ -229,6 +247,29 @@ export interface RawConfig {
    *  instead — so a diff, a transcript and a survey marker all get the same generic treatment.
    *  Knowledge pages are seeded either way (see `pageTriggerType`). */
   manageBankConfig?: boolean;
+  /** How the server extracts memories from what this plugin retains — sessions, commits, documents
+   *  (default "concise"). One of "concise", "verbose", "verbatim", "chunks" (store the text with no
+   *  extraction). Every Stop writes the session back, so this is what each turn costs: "verbose"
+   *  extracts more detail at several times the tokens. Kept in sync on the plugin's own retain
+   *  strategies on every session start, so changing it reaches an existing bank too (unless
+   *  `manageBankConfig` is false). Anything else falls back to the default. */
+  retainExtractionMode?: RetainExtractionMode;
+  /** Bank-config fields of your own for the banks this plugin shapes, e.g.
+   *    {"enable_observations": false, "enable_auto_consolidation": false,
+   *     "mental_model_min_refresh_interval_seconds": 21600}
+   *  Keys are the bank-config API's own field names, passed straight through, so anything the
+   *  bank-config accepts is settable here. Written under the same rule as the rest of the
+   *  template — only where the bank does not already define the field — so a bank the plugin
+   *  creates is born with these instead of the server's defaults, while a value you set in the
+   *  control plane is never overwritten (#4725). Wins over the template on a key both name
+   *  (`enable_observations`). The fields the plugin governs itself (`retain_strategies`,
+   *  `entity_labels`, `retain_extraction_mode`) are refused with a warning: the first two are
+   *  merged per entry, the last follows `retainExtractionMode`. Ignored when `manageBankConfig`
+   *  is false.
+   *
+   *  File-only, like `recallOptions` — a nested object does not flatten into an env var. In a
+   *  `banks.<id>` section it REPLACES the global map rather than merging into it. */
+  defaultBankConfig?: Record<string, unknown>;
   /** How consolidation groups the observations this plugin's memories feed (default "shared" — one
    *  global scope per bank, so every agent working a repo builds ONE set of beliefs; see
    *  DEFAULT_OBSERVATION_SCOPES). "combined" restores the server default of one scope per distinct
@@ -247,6 +288,13 @@ export interface RawConfig {
    *               "coding-agent::old-name": { "bank": "team::shared" },
    *               "coding-agent::big-mono": { "gitIngest": "full", "retainSessions": false } } */
   banks?: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
+  /** Per-DIRECTORY overrides, keyed by absolute path prefix (`~` allowed; longest prefix wins;
+   *  a linked worktree uses its main checkout's entry). Applied after bank resolution and before
+   *  the `banks.<id>` section, so one entry can send every repo under a directory to another
+   *  server or tenant while each repo keeps its own bank. Bank-resolution fields are ignored here,
+   *  as in `banks`. Example:
+   *    "paths": { "~/work/client-x": { "apiToken": "client-x-key" } } */
+  paths?: Record<string, Omit<RawConfig, "banks" | "harnesses" | "paths">>;
 }
 
 /** Fully-resolved config: every field present. */
@@ -276,10 +324,12 @@ export interface Config {
   maxParallelRetains: number;
   reflectTimeoutMs: number;
   reflectToolTimeoutMs: number;
+  injectTimeoutMs: number;
   reflectBudget: "low" | "mid" | "high";
   autoInject: AutoInject;
   pageSearchLimit: number;
   recallOptions: Record<string, unknown>;
+  toolGuideExtra?: string;
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
@@ -294,9 +344,13 @@ export interface Config {
   gitIngest: "message" | "full" | "none";
   retainTags: string[];
   retainMetadata: Record<string, string>;
+  retainContext?: string;
   manageBankConfig: boolean;
+  retainExtractionMode: RetainExtractionMode;
+  defaultBankConfig: Record<string, unknown>;
   observationScopes: ObservationScopes;
   banks: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
+  paths: Record<string, Omit<RawConfig, "banks" | "harnesses" | "paths">>;
   logLevel: "debug" | "info" | "warn" | "error";
   autoUpdate: boolean;
 }
@@ -433,6 +487,8 @@ function resolveCustomPages(raw: RawConfig["customPages"]): CustomPagesConfig {
 export const DEFAULT_REFLECT_TIMEOUT_MS = 20_000;
 /** Default timeout for the agent-invoked `hindsight_reflect` tool — see RawConfig.reflectToolTimeoutMs. */
 export const DEFAULT_REFLECT_TOOL_TIMEOUT_MS = 330_000;
+/** Default retrieval budget for automatic injection — see RawConfig.injectTimeoutMs. */
+export const DEFAULT_INJECT_TIMEOUT_MS = 7_000;
 
 const REFLECT_BUDGETS = ["low", "mid", "high"] as const;
 
@@ -488,6 +544,32 @@ function resolveObservationScopes(raw: RawConfig["observationScopes"]): Observat
   return DEFAULT_OBSERVATION_SCOPES;
 }
 
+/**
+ * Validate `defaultBankConfig`: an object, minus the fields the plugin governs itself.
+ *
+ * Same shape rule as `recallOptions` — an array would spread into numeric keys and reach the
+ * import as garbage, so anything but a plain object contributes nothing. A governed key is dropped
+ * here, with a warning naming the setting that owns it, rather than silently in the manifest: a
+ * user who wrote `retain_strategies` there would otherwise watch it do nothing every session.
+ */
+function resolveDefaultBankConfig(raw: RawConfig["defaultBankConfig"]): Record<string, unknown> {
+  const value: unknown = raw;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (PLUGIN_GOVERNED_BANK_FIELDS.includes(key)) {
+      log.warn(
+        "config",
+        `ignoring defaultBankConfig.${key} — the plugin manages this field itself` +
+          (key === "retain_extraction_mode" ? " (set retainExtractionMode instead)" : "")
+      );
+      continue;
+    }
+    out[key] = v;
+  }
+  return out;
+}
+
 /** Apply defaults to a raw (file) config. Pure — the single place the defaults live. */
 export type AutoInject = "reflect" | "pages" | "recall" | "none";
 const AUTO_INJECT_MODES: readonly AutoInject[] = ["reflect", "pages", "recall", "none"];
@@ -532,6 +614,10 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // write sessions back by default, every harness
     manageBankConfig: raw.manageBankConfig ?? true,
+    retainExtractionMode: RETAIN_EXTRACTION_MODES.includes(raw.retainExtractionMode!)
+      ? raw.retainExtractionMode!
+      : DEFAULT_RETAIN_EXTRACTION_MODE,
+    defaultBankConfig: resolveDefaultBankConfig(raw.defaultBankConfig),
     maxParallelRetains: raw.maxParallelRetains || 10,
     reflectTimeoutMs: raw.reflectTimeoutMs || DEFAULT_REFLECT_TIMEOUT_MS,
     // Inherit an explicitly-raised reflectTimeoutMs (that is what users reaching for a longer
@@ -540,6 +626,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     reflectToolTimeoutMs:
       raw.reflectToolTimeoutMs ||
       Math.max(raw.reflectTimeoutMs || 0, DEFAULT_REFLECT_TOOL_TIMEOUT_MS),
+    injectTimeoutMs: raw.injectTimeoutMs || DEFAULT_INJECT_TIMEOUT_MS,
     reflectBudget: resolveReflectBudget(raw),
     autoInject: resolveAutoInject(raw),
     pageSearchLimit: raw.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT,
@@ -551,6 +638,10 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       !Array.isArray(raw.recallOptions)
         ? { ...raw.recallOptions }
         : {},
+    toolGuideExtra:
+      typeof raw.toolGuideExtra === "string" && raw.toolGuideExtra.trim()
+        ? raw.toolGuideExtra
+        : undefined,
     // Every turn, not every tenth. The guide is what tells the agent WHEN to reach for memory, and
     // at a cadence of 10 a normal session is told once, on turn 1, and never again. Measured over
     // 40 real Claude Code turns, moving this from 10 to 1 took searches from 15% of turns to 32.5%
@@ -574,6 +665,12 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     retainTags: Array.isArray(raw.retainTags)
       ? raw.retainTags.filter((t): t is string => typeof t === "string" && t.trim() !== "")
       : [],
+    // Undefined, not "", when unset or blank: the retain call distinguishes "not configured" (use
+    // the built-in default) from a configured value, and an empty context would strip the default.
+    retainContext:
+      typeof raw.retainContext === "string" && raw.retainContext.trim() !== ""
+        ? raw.retainContext
+        : undefined,
     retainMetadata:
       raw.retainMetadata && typeof raw.retainMetadata === "object"
         ? Object.fromEntries(
@@ -582,6 +679,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
         : {},
     observationScopes: resolveObservationScopes(raw.observationScopes),
     banks: raw.banks && typeof raw.banks === "object" ? raw.banks : {},
+    paths: raw.paths && typeof raw.paths === "object" ? raw.paths : {},
     logLevel: ["debug", "info", "warn", "error"].includes(raw.logLevel as string)
       ? (raw.logLevel as "debug" | "info" | "warn" | "error")
       : "info",
@@ -600,10 +698,16 @@ function readRaw(path: string): RawConfig {
   }
 }
 
-/** Shallow-merge b over a; `harnesses` never survives into a layer; `banks` merges by bank id. */
+/** Shallow-merge b over a; `harnesses` never survives into a layer; `banks` merges by bank id and
+ *  `paths` by prefix. */
 function mergeRaw(a: RawConfig, b: RawConfig): RawConfig {
   const { harnesses: _drop, ...flat } = b;
-  return { ...a, ...flat, banks: { ...(a.banks ?? {}), ...(b.banks ?? {}) } };
+  return {
+    ...a,
+    ...flat,
+    banks: { ...(a.banks ?? {}), ...(b.banks ?? {}) },
+    paths: { ...(a.paths ?? {}), ...(b.paths ?? {}) },
+  };
 }
 
 /**
@@ -637,7 +741,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * credential to disk.
  *
  * The map-valued settings (mapPathToBank, harnesses, banks, retainMetadata, recallOptions, pages,
- * customPages) are deliberately
+ * customPages, defaultBankConfig) are deliberately
  * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
  * does not survive flattening into one env var. They stay file-only.
  */
@@ -664,9 +768,11 @@ export const ENV_KEYS = {
   maxParallelRetains: "HINDSIGHT_MAX_PARALLEL_RETAINS",
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
   reflectToolTimeoutMs: "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",
+  injectTimeoutMs: "HINDSIGHT_INJECT_TIMEOUT_MS",
   reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
   autoInject: "HINDSIGHT_AUTO_INJECT",
   pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
+  toolGuideExtra: "HINDSIGHT_TOOL_GUIDE_EXTRA",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",
@@ -687,6 +793,7 @@ export const ENV_KEYS = {
   // a map, so it flattens cleanly; its sibling retainMetadata stays file-only for the reason above.
   retainTags: "HINDSIGHT_RETAIN_TAGS",
   manageBankConfig: "HINDSIGHT_MANAGE_BANK_CONFIG",
+  retainExtractionMode: "HINDSIGHT_RETAIN_EXTRACTION_MODE",
 } as const satisfies Partial<Record<keyof RawConfig, string>>;
 
 /** Fields parsed as booleans/numbers/comma-separated lists; everything else is taken as a string. */
@@ -709,6 +816,7 @@ const ENV_NUMBERS = new Set<keyof RawConfig>([
   "maxParallelRetains",
   "reflectTimeoutMs",
   "reflectToolTimeoutMs",
+  "injectTimeoutMs",
   "pageSearchLimit",
   "pageRefreshEveryTurns",
   "seedLimit",
@@ -793,17 +901,31 @@ export function applyBankConfig(
   // adding a second thing eight call sites must remember — and that gate is known to stop the run
   // before anything creates a bank.
   if (directory !== undefined && !isOptedIn(cfg, directory))
-    return { cfg: { ...cfg, disabled: true }, bankId: resolvedId };
+    return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness), disabled: true }, bankId: resolvedId };
+  const byPath = directory === undefined ? undefined : pathSection(cfg, cfg.paths, directory);
+  if (byPath) {
+    // A path entry never renames the bank: only `banks.<id>` may, below.
+    const { bank: _rename, ...rest } = overrideFields(byPath);
+    cfg = { ...cfg, ...resolvePartial(cfg, rest as RawConfig) };
+  }
   const section = cfg.banks[resolvedId];
-  if (!section) return { cfg, bankId: resolvedId };
-  const safe: Record<string, unknown> = { ...section };
-  for (const k of BANK_OVERRIDE_EXCLUDED) delete safe[k];
-  delete safe.banks;
+  if (!section) return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness) }, bankId: resolvedId };
+  const safe = overrideFields(section);
   // `bank` renames the destination — single hop, selected by the ORIGINAL resolved id (the
   // target's own banks section, if any, is deliberately NOT consulted: no chaining).
   const bankId = resolvedId;
   delete safe.bank;
   return { cfg: { ...cfg, ...resolvePartial(cfg, safe as RawConfig), ...managedSettings(cfg.routerHarness) }, bankId };
+}
+
+/** An override section minus what it may not set: the resolution/approval fields and the nested
+ *  maps (a section cannot carry sections of its own). */
+function overrideFields(section: object): Record<string, unknown> {
+  const safe: Record<string, unknown> = { ...section };
+  for (const k of BANK_OVERRIDE_EXCLUDED) delete safe[k];
+  delete safe.banks;
+  delete safe.paths;
+  return safe;
 }
 
 /** Resolve just the fields present in `patch`, defaulting against the CURRENT cfg (not the global
@@ -817,5 +939,18 @@ function resolvePartial(cfg: Config, patch: RawConfig): Partial<Config> {
   }
   // The legacy key resolves into a differently-named field, so the loop above can't carry it.
   if ("autoReflect" in patch && !("autoInject" in patch)) out.autoInject = full.autoInject;
+  // `apiUrl` is derived from `serverMode` + `apiPort`, so an override naming any of the three
+  // re-derives all three against the current cfg: `{ serverMode: "daemon" }` alone must also move
+  // the URL to the local daemon, and `{ apiUrl }` under a global daemon mode stays ignored.
+  if ("serverMode" in patch || "apiUrl" in patch || "apiPort" in patch) {
+    const conn = resolveConfig({
+      serverMode: patch.serverMode ?? cfg.serverMode,
+      apiPort: patch.apiPort ?? cfg.apiPort,
+      apiUrl: patch.apiUrl ?? (cfg.serverMode === "daemon" ? undefined : cfg.apiUrl),
+    });
+    out.serverMode = conn.serverMode;
+    out.apiUrl = conn.apiUrl;
+    out.apiPort = conn.apiPort;
+  }
   return out;
 }

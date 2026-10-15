@@ -1,4 +1,7 @@
-import { readPrivateFile, sessionStateFile, writePrivateFileAtomic } from "./private-state";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, readdirSync, renameSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { readPrivateFile, sessionStateFile, writePrivateFileAtomic, withPrivateFile } from "./private-state";
 import type { PageRef } from "./knowledge-injection";
 import type { RetainCursor, RetainCursorStore } from "./retain-cursor";
 import type { UsageCursorStore } from "./usage";
@@ -8,7 +11,12 @@ import type { UsageCursorStore } from "./usage";
  * bank state. */
 export interface SessionCache {
   turns?: number;
-  reflectAnswer?: string; // present (even "") = reflect already ran this session
+  reflectAnswer?: string; // present (even "") = reflect already resolved this session
+  /** How many times auto-inject has been ATTEMPTED this session — every source, not just reflect.
+   *  A failure leaves `reflectAnswer` unset so a later turn can retry; this bounds that retry (see
+   *  HOOK_INJECT_ATTEMPTS). Named for reflect like `reflectAnswer` above, whose name also predates
+   *  the other two sources. */
+  reflectAttempts?: number;
   /** SessionStart saw a new/empty bank; consume this on prompt one, then allow reflect. */
   deferInitialReflect?: boolean;
   pages?: { atTurn: number; list: PageRef[] };
@@ -21,7 +29,7 @@ export function sessionCacheFile(harness: string, sessionId: string): string {
 export function readSessionCache(cacheFile: string): SessionCache {
   try {
     const cached = JSON.parse(readPrivateFile(cacheFile)) as SessionCache;
-    return { turns: cached.turns, deferInitialReflect: cached.deferInitialReflect, reflectAnswer: cached.reflectAnswer === undefined ? undefined : "" };
+    return { turns: cached.turns, reflectAttempts: cached.reflectAttempts, deferInitialReflect: cached.deferInitialReflect, reflectAnswer: cached.reflectAnswer === undefined ? undefined : "" };
   } catch {
     return {};
   }
@@ -29,10 +37,86 @@ export function readSessionCache(cacheFile: string): SessionCache {
 
 export function writeSessionCache(cacheFile: string, cache: SessionCache): void {
   try {
-    writePrivateFileAtomic(cacheFile, JSON.stringify({ turns: cache.turns, deferInitialReflect: cache.deferInitialReflect, reflectAnswer: cache.reflectAnswer === undefined ? undefined : "" }));
+    writePrivateFileAtomic(cacheFile, JSON.stringify({ turns: cache.turns, reflectAttempts: cache.reflectAttempts, deferInitialReflect: cache.deferInitialReflect, reflectAnswer: cache.reflectAnswer === undefined ? undefined : "" }));
   } catch {
     /* session state is best-effort */
   }
+}
+
+/** Context a prompt hook could not deliver itself, waiting for the session's next tool hook (see
+ *  HookSpec.toolHook). Its own file: `buildHookOutput` rewrites the session cache every turn. */
+// Keep handoffs isolated across routing and authorization changes.
+export function pendingContextKey(endpoint: string, bank: string, cwd: string, sessionId: string, scope: { identity: string; banks: string[] }): string {
+  return createHash("sha256").update(JSON.stringify([endpoint, bank, cwd, sessionId, scope.identity, [...scope.banks].sort()])).digest("hex");
+}
+
+function pendingContextFile(harness: string, sessionId: string): string {
+  return sessionStateFile(harness, sessionId, ".pending");
+}
+
+const PENDING_CONTEXT_BATCH_SIZE = 64;
+
+function pendingContextFiles(harness: string, sessionId: string): string[] {
+  const legacy = pendingContextFile(harness, sessionId);
+  const name = basename(legacy);
+  try {
+    return readdirSync(dirname(legacy)).filter((entry) =>
+      entry === name || (entry.startsWith(`${name}.`) &&
+        /^\d{16}-\d{20}-[a-f0-9-]{36}\.block$/.test(entry.slice(name.length + 1)))
+    ).sort().map((entry) => join(dirname(legacy), entry));
+  } catch {
+    return [];
+  }
+}
+
+// Never merge a prior publication: another hook may already have consumed it.
+export function stashPendingContext(harness: string, sessionId: string, context: string): void {
+  if (!context) return;
+  for (const path of pendingContextFiles(harness, sessionId).slice(0, PENDING_CONTEXT_BATCH_SIZE)) {
+    try {
+      if (readPrivateFile(path).includes(context)) return;
+    } catch {
+      // A consumer may have claimed this block already.
+    }
+  }
+  const id = `${Date.now().toString().padStart(16, "0")}-${process.hrtime.bigint().toString().padStart(20, "0")}-${randomUUID()}`;
+  try {
+    writePrivateFileAtomic(`${pendingContextFile(harness, sessionId)}.${id}.block`, context);
+  } catch {
+    /* best-effort, like the session cache */
+  }
+}
+
+export function hasPendingContext(harness: string, sessionId: string): boolean {
+  return pendingContextFiles(harness, sessionId).slice(0, PENDING_CONTEXT_BATCH_SIZE).some((path) => {
+    try {
+      return Boolean(readPrivateFile(path));
+    } catch {
+      return false;
+    }
+  });
+}
+
+function claimPendingContext(path: string, read: boolean): string | undefined {
+  const claimed = `${path}.${randomUUID()}.claim`;
+  try {
+    withPrivateFile(path, constants.O_RDONLY, () => renameSync(path, claimed));
+    return read ? readPrivateFile(claimed) || undefined : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    rmSync(claimed, { force: true });
+  }
+}
+
+export function takePendingContext(harness: string, sessionId: string): string | undefined {
+  const blocks = pendingContextFiles(harness, sessionId).slice(0, PENDING_CONTEXT_BATCH_SIZE)
+    .map((path) => claimPendingContext(path, true)).filter((block): block is string => Boolean(block));
+  return blocks.length ? blocks.join("\n\n") : undefined;
+}
+
+export function discardPendingContext(harness: string, sessionId: string): void {
+  for (const path of pendingContextFiles(harness, sessionId)) claimPendingContext(path, false);
 }
 
 /** The session root's own file, deliberately NOT the shared session cache — see sessionRootDir. */

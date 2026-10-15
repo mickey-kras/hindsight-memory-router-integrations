@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HindsightClient } from "./hindsight";
 import {
+  commitsSince,
   gitLogNewestAuthorDate,
   gitLogText,
   ingestGitLog,
@@ -19,6 +20,10 @@ function initRepo(d: string): void {
   execFileSync("git", ["-C", d, "init", "-q"]);
   execFileSync("git", ["-C", d, "config", "user.email", "test@example.com"]);
   execFileSync("git", ["-C", d, "config", "user.name", "Test User"]);
+}
+
+function commit(d: string, message: string): void {
+  execFileSync("git", ["-C", d, "commit", "-q", "--allow-empty", "-m", message]);
 }
 
 afterEach(() => {
@@ -46,6 +51,40 @@ describe("gitLogText", () => {
   it("returns empty string for a repo with no commits", () => {
     expect(gitLogText(dir, 10)).toBe("");
   });
+
+  // #5003: the server keeps unchanged chunks only when the text before them is unchanged, so a new
+  // commit must append to the document, not shift it — including once the window is full.
+  it("appends a new commit to the previous text, stepping the window by half the limit", () => {
+    const subjects = (text: string) => text.match(/feat: c\d+/g);
+    const texts = [""];
+    for (let i = 1; i <= 9; i++) {
+      commit(dir, `feat: c${i}`);
+      texts.push(gitLogText(dir, 4));
+    }
+    expect(subjects(texts[4])).toEqual(["feat: c1", "feat: c2", "feat: c3", "feat: c4"]);
+    expect(subjects(texts[5])).toEqual(["feat: c3", "feat: c4", "feat: c5"]);
+    expect(subjects(texts[9])).toEqual(["feat: c7", "feat: c8", "feat: c9"]);
+    for (const n of [1, 2, 3, 5, 7]) {
+      expect(texts[n + 1].startsWith(`${texts[n]}\n\n---\n\n`)).toBe(true);
+    }
+  }, 30_000); // 27 git processes: slow under the parallel suite
+
+  // #5269: `log.showSignature=true` printed signature checks into the parsed output.
+  it("ignores the user's log.showSignature setting", () => {
+    const key = join(dir, "key");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", key]);
+    for (const [k, v] of [
+      ["gpg.format", "ssh"],
+      ["user.signingkey", `${key}.pub`],
+      ["commit.gpgsign", "true"],
+      ["log.showSignature", "true"],
+    ])
+      execFileSync("git", ["-C", dir, "config", k, v]);
+    commit(dir, "feat: signed");
+
+    expect(gitLogNewestAuthorDate(dir)).toMatch(/^\d{4}-\d\d-\d\dT[\d:]+[+Z-][\d:]*$/);
+    expect(gitLogText(dir, 10)).toMatch(/^[0-9a-f]+ \d{4}-\d\d-\d\d Test User\nfeat: signed$/);
+  }, 30_000);
 
   it("gitLogNewestAuthorDate returns null for a repo with no commits", () => {
     expect(gitLogNewestAuthorDate(dir)).toBeNull();
@@ -186,5 +225,97 @@ describe("syncGitLog", () => {
     expect(listDocumentIds.mock.calls[0][0]).toMatch(/^gitlog-head:/);
     expect(listDocumentIds.mock.calls[0][1]).toBe("all_strict");
     expect(retain).not.toHaveBeenCalled();
+  });
+
+  /** A bank that keeps what the git-log retain writes (document id -> tags) and answers the two
+   *  reads the freshness check makes. */
+  function bank() {
+    const docs = new Map<string, string[]>();
+    const retain = vi.fn(async (_content: string, _context: string, id: string, tags: string[]) => {
+      docs.set(id, tags);
+    });
+    const client = {
+      retain,
+      opIds: [],
+      listDocumentIds: async (tag: string) =>
+        new Set([...docs].filter(([, tags]) => tags.includes(tag)).map(([id]) => id)),
+      documentTags: async (id: string) => docs.get(id),
+    } as unknown as HindsightClient;
+    return { client, retain, docs };
+  }
+
+  it("does not re-send the log when switching back to a worktree behind the last writer (#4661)", async () => {
+    commit(dir, "feat: shared history");
+    const ahead = join(dir, "wt");
+    execFileSync("git", ["-C", dir, "worktree", "add", "-q", "-b", "feature", ahead]);
+    commit(ahead, "feat: only on the feature branch");
+    const { client, retain } = bank();
+
+    for (const worktree of [dir, ahead, dir, ahead]) {
+      await syncGitLog(client, worktree, { limit: 10 });
+    }
+
+    // Both worktrees write the one canonical document. The feature worktree's copy holds every
+    // commit the behind one would send, so only the first visit to each writes it — main re-sent
+    // it on every switch.
+    expect(retain.mock.calls.map((call) => call[2])).toEqual([
+      `gitlog:${repoNameOf(dir)}`,
+      `gitlog:${repoNameOf(dir)}`,
+    ]);
+    expect(retain.mock.calls[1][0]).toContain("feat: only on the feature branch");
+  });
+
+  it("still re-sends the log from a worktree with a commit the document lacks", async () => {
+    commit(dir, "feat: shared history");
+    const other = join(dir, "wt");
+    execFileSync("git", ["-C", dir, "worktree", "add", "-q", "-b", "feature", other]);
+    commit(other, "feat: only on the feature branch");
+    commit(dir, "fix: only on the main branch");
+    const { client, retain } = bank();
+
+    for (const worktree of [dir, other, dir]) {
+      await syncGitLog(client, worktree, { limit: 10 });
+    }
+
+    // The worktrees diverged: each log has a commit the other lacks, so every switch changes what
+    // the one document must hold.
+    expect(retain).toHaveBeenCalledTimes(3);
+    expect(retain.mock.calls[2][0]).toContain("fix: only on the main branch");
+  });
+
+  it("re-sends the log when the recorded commit is unknown to this clone", async () => {
+    commit(dir, "feat: current repo");
+    const { client, retain, docs } = bank();
+    // A same-named repository elsewhere, or a rebase that dropped the commit.
+    docs.set(`gitlog:${repoNameOf(dir)}`, ["source:git-log", `gitlog-head:${"f".repeat(40)}`]);
+
+    await syncGitLog(client, dir, { limit: 10 });
+
+    expect(retain).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("commitsSince", () => {
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "hs-commits-since-"));
+    initRepo(dir);
+  });
+
+  it("counts the commits on HEAD that a full sha lacks", () => {
+    commit(dir, "feat: one");
+    const first = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8" });
+    commit(dir, "feat: two");
+
+    expect(commitsSince(dir, first.trim())).toBe(1);
+  });
+
+  it("never hands git a value from the bank that is not a full sha", () => {
+    commit(dir, "feat: one");
+    const planted = join(dir, "planted");
+
+    // A tag or document id starting with "-" would reach `git rev-list` as an option, and
+    // `--output=<path>..HEAD` creates that file before git rejects the command.
+    expect(commitsSince(dir, `--output=${planted}`)).toBeNull();
+    expect(existsSync(`${planted}..HEAD`)).toBe(false);
   });
 });

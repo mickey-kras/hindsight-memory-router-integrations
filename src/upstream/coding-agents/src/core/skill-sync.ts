@@ -21,7 +21,7 @@ import { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SKILL_DIRS } from "./skill-dirs";
+import { resolveSkillDirs } from "./skill-dirs";
 
 /** The packaged skill dir (pkgRoot/skill): one level up from the flat `dist/` bundle, two from this
  *  file in the source tree — so the source tree resolves it too, and a test asserts on the real
@@ -38,7 +38,7 @@ export function syncCompanionSkill(
 ): void {
   const prefix = managedToolPrefix(harness);
   try {
-    const parts = SKILL_DIRS[harness];
+    const parts = resolveSkillDirs(harness, opts.home ?? homedir());
     if (!parts) return; // host without a skills DIRECTORY (opencode, opencode2 — see skill-dirs.ts)
     const src = opts.srcDir ?? packagedSkillDir();
     const srcMd = join(src, "SKILL.md");
@@ -62,19 +62,24 @@ export function syncCompanionSkill(
 
 /**
  * The packaged skill in the shape a host that registers skills IN MEMORY wants (opencode2's
- * `ctx.skill.transform`): the frontmatter `description` the host matches on, the body, and the
- * on-disk directory it came from. Read at setup, so `npm update -g` upgrades this copy too.
+ * `ctx.skill.transform`): the frontmatter `description` the host matches on, the body, and where
+ * it came from on disk. opencode v2 (2.0.16+) requires `path`, the absolute SKILL.md file, and
+ * rejects a draft without it (#4732); `location`, the directory, was the field sent before that
+ * and stays for earlier v2 hosts, so both go out. Read at setup, so `npm update -g` upgrades this
+ * copy too.
  */
 export function readPackagedSkill(
   srcDir = packagedSkillDir(),
   harness = "opencode2"
-): { location: string; description: string; content: string } | undefined {
+): { location: string; path: string; description: string; content: string } | undefined {
   const prefix = managedToolPrefix(harness);
   try {
-    const raw = renderCompanionSkill(readFileSync(join(srcDir, "SKILL.md"), "utf8"), prefix);
+    const path = join(srcDir, "SKILL.md");
+    const raw = renderCompanionSkill(readFileSync(path, "utf8"), prefix);
     const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
     return {
       location: srcDir,
+      path,
       description: frontmatter ? (/^description:\s*(.+)$/m.exec(frontmatter[1])?.[1] ?? "") : "",
       content: frontmatter ? raw.slice(frontmatter[0].length) : raw,
     };
@@ -86,7 +91,7 @@ export function readPackagedSkill(
 
 /** Refuse a stale namespace before exposing tools, even when hook housekeeping is disabled. */
 export function assertCompanionSkillPrefix(harness: string, prefix: string, home = homedir()): void {
-  const parts = SKILL_DIRS[harness];
+  const parts = resolveSkillDirs(harness, home);
   if (!parts) return;
   const base = join(home, ...parts);
   assertInstalledSkillBrand(base, prefix);

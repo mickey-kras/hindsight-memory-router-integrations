@@ -1,14 +1,35 @@
+import { AccessDeniedError } from "@memory-router/shared/bank-access";
+import { createHash } from "node:crypto";
 /**
  * Harness-agnostic chat memory: the JSON user/assistant transcript schema shared by BOTH the
  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
  * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
  */
+import { diag } from "./diag";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
-import { fingerprintTurns, planRetain, type RetainCursorStore } from "./retain-cursor";
+import {
+  advancePaths,
+  fingerprintTurns,
+  MAX_CURSOR_OPS,
+  MAX_CURSOR_PATHS,
+  planRetain,
+  type RetainCursor,
+  type RetainCursorStore,
+} from "./retain-cursor";
 import type { RetainStamp } from "./retain-stamp";
 import type { ChatSession } from "./types";
 import { uuidV5 } from "./uuid";
 import { pool, sleep } from "./util";
+
+const MAX_ROLLOUT_TURNS = 100_000;
+const MAX_ROLLOUT_CHARS = 32 * 1024 * 1024;
+const MAX_ROLLOUT_PATH_CHARS = 32 * 1024;
+
+function contentFingerprint(turns: TransportTurn[], count: number): string {
+  const hash = createHash("sha1").update(String(count));
+  for (let i = 0; i < count; i++) hash.update("\n" + JSON.stringify({ role: turns[i].role, content: turns[i].content }));
+  return hash.digest("hex");
+}
 
 export interface TransportTurn {
   role: string;
@@ -58,18 +79,26 @@ export async function ingestChats(
     async (s, i) => {
       const id = s.id || `s${i}`;
       const stamp = opts.stampFor?.(id);
-      // each turn gets an ABSOLUTE timestamp: its own if provided, else synthesized from the real clock,
-      // staggered per session + 1 min/turn to preserve ordering. List order is CHRONOLOGICAL (a later
-      // chat can amend an earlier one), so the LAST session is the newest — the previous `NOW - i*1h`
-      // inverted recency and made an amendment rank older than the decision it superseded.
+      // List order is CHRONOLOGICAL (a later chat can amend an earlier one), so the LAST session is
+      // the newest — the previous `NOW - i*1h` inverted recency and made an amendment rank older than
+      // the decision it superseded. This synthetic stagger is therefore only a FALLBACK, for a
+      // transcript that carries no clocks of its own.
       const sessBase = NOW - (sessions.length - 1 - i) * 3600000;
-      const baseIso = new Date(sessBase).toISOString();
+      // A backfilled session keeps the clock it actually happened on: when any turn carries a source
+      // timestamp, the first one dates the document (verbatim, offset included) and anchors the
+      // turns that have none. Dating it to the import made an old session surface as recent even
+      // though every turn inside it was dated correctly.
+      const sourceTs = (s.turns || [])
+        .map((t) => t.timestamp)
+        .find((v): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v)));
+      const anchorMs = sourceTs ? Date.parse(sourceTs) : sessBase;
+      const baseIso = sourceTs ?? new Date(sessBase).toISOString();
       const turns = withRefId(
         `chat:${id}`,
         (s.turns || []).map((t, j) => ({
           role: t.role,
           content: t.text,
-          timestamp: t.timestamp || new Date(sessBase + (j + 1) * 60000).toISOString(),
+          timestamp: t.timestamp || new Date(anchorMs + (j + 1) * 60000).toISOString(),
         })),
         baseIso
       );
@@ -99,14 +128,55 @@ export async function ingestChats(
   return failures;
 }
 
-/** Capability probe for the append path. Any failure answers "no": a write-back must never be lost
- *  because we couldn't work out whether the cheaper form of it was available. */
+/** Capability probe for the append path. A failed server-version probe answers "no": appending
+ *  without `operation_id` dedupe can double-write, so doubt falls back to a full replace. A failed
+ *  bank-config probe answers "yes" (see HindsightClient.supportsAppendRetain): banks store document
+ *  text by default, and only an explicit `store_document_text: false` rules append out (#4613). */
 async function supportsAppend(client: HindsightClient): Promise<boolean> {
   try {
-    return await client.supportsIdempotentRetain();
-  } catch {
+    return await client.supportsAppendRetain();
+  } catch (error) {
+    if (error instanceof AccessDeniedError) throw error;
     return false;
   }
+}
+
+/** Short: this runs on every write-back that follows an accepted one, inside a hook's budget. */
+const OP_CHECK_TIMEOUT_MS = 5_000;
+const LOST_OP_STATUSES = new Set(["failed", "cancelled", "error"]);
+
+/**
+ * Settle the cursor's accepted-but-unconfirmed operations (#5251). Returns the cursor to plan from —
+ * marked `dirty` when one of them failed, so the plan replaces and re-sends the turns it carried —
+ * and the ids still worth checking next time. Fail-open: an op whose status cannot be read stays
+ * tracked, never counts as failed.
+ */
+async function settleOps(
+  client: HindsightClient,
+  cursor: RetainCursor
+): Promise<{ cursor: RetainCursor; ops: string[] }> {
+  const ops = cursor.ops ?? [];
+  const statuses = await Promise.all(
+    ops.map(async (id) => {
+      try {
+        const r = await client.req(
+          "GET",
+          client.bankUrl(`/operations/${encodeURIComponent(id)}`),
+          undefined,
+          [],
+          OP_CHECK_TIMEOUT_MS
+        );
+        if (r.status === 404) return "not_found"; // pruned: nothing left to learn
+        return String(((await r.json()) as { status?: unknown }).status ?? "").toLowerCase();
+      } catch (error) {
+        if (error instanceof AccessDeniedError) throw error;
+        return "";
+      }
+    })
+  );
+  const lost = statuses.some((s) => LOST_OP_STATUSES.has(s));
+  const open = ops.filter((_, i) => !["completed", "not_found"].includes(statuses[i]));
+  return { cursor: lost ? { ...cursor, dirty: true } : cursor, ops: lost ? [] : open };
 }
 
 /** Retry window for a caller that did not supply one — a long-lived host with no external clock. */
@@ -187,6 +257,17 @@ function serialize(
 }
 
 /**
+ * The `context` of a session write-back when `retainContext` is unset. The second sentence keeps an
+ * agent's own "fixed"/"passes" a claim: stored as fact, a later session applied it without checking
+ * the code (#4791). It lives here rather than in the bank's retain mission because the mission is
+ * seeded once and never reaches a bank that already has one; the context rides on every write.
+ */
+export const DEFAULT_RETAIN_CONTEXT =
+  "conversation between the user and you (the coding agent): user turns are the user's words and " +
+  "decisions, assistant turns are yours. When an assistant turn says something is fixed, passes or " +
+  'works, record it as the agent\'s claim ("the agent reported X fixed"), not as an established fact.';
+
+/**
  * Live write-back: upsert a running session under a stable document_id, sending only what is new.
  *
  * Given a cursor store, a session that has already been written APPENDS the turns added since the
@@ -207,7 +288,15 @@ export async function retainLiveSession(
   turns: TransportTurn[],
   startTs: string,
   harness?: string,
-  opts: { cursors?: RetainCursorStore; stamp?: RetainStamp; retryUntil?: number } = {}
+  opts: {
+    cursors?: RetainCursorStore;
+    stamp?: RetainStamp;
+    retryUntil?: number;
+    /** The transcript file the turns came from, when there is one — see RetainCursor.paths. */
+    transcriptPath?: string;
+    readTranscript?: (path: string) => TransportTurn[];
+    sourceTurnCount?: number;
+  } = {}
 ): Promise<void> {
   const cursors = opts.cursors;
   if (!cursors)
@@ -219,11 +308,26 @@ export async function retainLiveSession(
       harness,
       opts.stamp,
       undefined,
-      opts.retryUntil
+      opts.retryUntil,
+      opts.transcriptPath,
+      opts.readTranscript,
+      opts.sourceTurnCount
     );
   // Serialised so the plan is made against the previous write-back's CONFIRMED cursor (see above).
   return serialize(cursors, sessionId, () =>
-    writeSession(client, sessionId, turns, startTs, harness, opts.stamp, cursors, opts.retryUntil)
+    writeSession(
+      client,
+      sessionId,
+      turns,
+      startTs,
+      harness,
+      opts.stamp,
+      cursors,
+      opts.retryUntil,
+      opts.transcriptPath,
+      opts.readTranscript,
+      opts.sourceTurnCount
+    )
   );
 }
 
@@ -236,13 +340,134 @@ async function writeSession(
   stamp?: RetainStamp,
   cursors?: RetainCursorStore,
   /** Absolute time this write-back may keep retrying until; the caller owns its own clock. */
-  retryUntil = Date.now() + DEFAULT_RETRY_WINDOW_MS
+  retryUntil = Date.now() + DEFAULT_RETRY_WINDOW_MS,
+  transcriptPath?: string,
+  readTranscript?: (path: string) => TransportTurn[],
+  sourceTurnCount?: number
 ): Promise<void> {
   if (!turns.length) return;
   const refId = `conversation:${sessionId}`;
-  const appendSupported = Boolean(cursors) && (await supportsAppend(client));
-  const cursor = cursors?.read(sessionId);
-  const plan = planRetain(turns, cursor, { appendSupported, bank: client.bank });
+  let cursor = cursors?.read(sessionId);
+  // Capability and accepted operations belong to the former bank, not the newly mapped bank.
+  if (cursor && cursor.bank !== client.bank) cursor = undefined;
+  let rollouts: RetainCursor["rollouts"];
+  if (transcriptPath && readTranscript) {
+    if (transcriptPath.length > MAX_ROLLOUT_PATH_CHARS || (cursor?.rollouts && (!Array.isArray(cursor.rollouts) || cursor.rollouts.length > MAX_CURSOR_PATHS)))
+      throw new Error("Invalid rollout retention state");
+    const reconstructing = (cursor?.rollouts?.map(segment => segment.path) ?? cursor?.paths ?? []).some(path => path !== transcriptPath);
+    const validateSource = (source: TransportTurn[]) => {
+      if (!reconstructing) return;
+      if (source.length > MAX_ROLLOUT_TURNS) throw new Error("Rollout reconstruction turn limit reached");
+      let chars = 0;
+      for (const turn of source) {
+        chars += JSON.stringify(turn).length;
+        if (chars > MAX_ROLLOUT_CHARS) throw new Error("Rollout reconstruction size limit reached");
+      }
+    };
+    validateSource(turns);
+    if (cursor && (!Number.isSafeInteger(cursor.turns) || cursor.turns < 0 || typeof cursor.fingerprint !== "string" || (cursor.rollouts && !cursor.rollouts.length)))
+      throw new Error("Invalid rollout retention state");
+    if (!cursor?.rollouts && (cursor?.paths?.length ?? 0) > 1)
+      throw new Error("Cannot reconstruct legacy multi-rollout retention state");
+    if (cursor && !cursor.rollouts && !cursor.paths?.length && (cursor.turns > turns.length || fingerprintTurns(turns, cursor.turns) !== cursor.fingerprint))
+      throw new Error("Cannot reconstruct legacy rollout retention state");
+    rollouts = cursor?.rollouts?.map(segment => ({ ...segment }))
+      ?? (cursor?.paths?.length ? [{ path: cursor.paths[0], fromTurn: 0, turns: cursor.turns, fingerprint: cursor.fingerprint }] : []);
+    if (rollouts.length > MAX_CURSOR_PATHS || new Set(rollouts.map(segment => segment.path)).size !== rollouts.length)
+      throw new Error("Invalid rollout retention state");
+    if (cursor?.rollouts && cursor.paths && (cursor.paths.length !== rollouts.length || cursor.paths.some((path, i) => path !== rollouts![i].path)))
+      throw new Error("Invalid rollout retention state");
+    const aggregate: TransportTurn[] = [];
+    const sourceCounts = new Map<string, number>();
+    let aggregateChars = 0;
+    const include = (source: TransportTurn[], fromTurn: number) => {
+      if (reconstructing && source.length > MAX_ROLLOUT_TURNS) throw new Error("Rollout reconstruction turn limit reached");
+      for (let i = fromTurn; i < source.length; i++) {
+        if (reconstructing) aggregateChars += JSON.stringify(source[i]).length;
+        if (reconstructing && (aggregate.length >= MAX_ROLLOUT_TURNS || aggregateChars > MAX_ROLLOUT_CHARS))
+          throw new Error("Rollout reconstruction size limit reached");
+        aggregate.push(source[i]);
+      }
+    };
+    for (const segment of rollouts) {
+      if (typeof segment.path !== "string" || segment.path.length > MAX_ROLLOUT_PATH_CHARS || typeof segment.fingerprint !== "string" || !Number.isSafeInteger(segment.fromTurn) || segment.fromTurn < 0 || !Number.isSafeInteger(segment.turns) || segment.turns < segment.fromTurn)
+        throw new Error("A contributed rollout cannot be reconstructed");
+      if (segment.copiedFrom !== undefined && (typeof segment.copiedFrom !== "string" || !segment.copiedFrom.length))
+        throw new Error("Invalid copied rollout reference");
+      const parentTurns = segment.copiedFrom ? sourceCounts.get(segment.copiedFrom) : aggregate.length;
+      if (parentTurns === undefined || (segment.copiedFrom && segment.fromTurn === 0))
+        throw new Error("Invalid copied rollout reference");
+      const source = segment.path === transcriptPath ? turns : readTranscript(segment.path);
+      if (segment.path !== transcriptPath) validateSource(source);
+      if (!source.length && segment.turns > 0) throw new Error("A contributed rollout is empty or unreadable");
+      if (segment.unflushed) {
+        const prefix = segment.unflushed;
+        if (!Number.isSafeInteger(prefix.turns) || prefix.turns < 1 || prefix.turns > source.length || contentFingerprint(source, prefix.turns) !== prefix.fingerprint)
+          throw new Error("A contributed reply has not been flushed to its rollout");
+        if (segment.path !== transcriptPath || (sourceTurnCount !== undefined && sourceTurnCount >= prefix.turns)) delete segment.unflushed;
+      }
+      if (source.length < segment.fromTurn || (segment.fromTurn > 0 && fingerprintTurns(source, segment.fromTurn) !== segment.prefix))
+        throw new Error("A copied rollout prefix changed");
+      if (segment.fromTurn > 0 && parentTurns !== segment.fromTurn &&
+        (source.length < segment.turns || fingerprintTurns(source, segment.turns) !== segment.fingerprint ||
+          segment.turns === segment.fromTurn))
+        throw new Error("A copied rollout boundary is ambiguous");
+      segment.turns = source.length;
+      segment.fingerprint = fingerprintTurns(source, source.length);
+      include(source, segment.fromTurn);
+      sourceCounts.set(segment.path, source.length);
+    }
+    if (!rollouts.some(segment => segment.path === transcriptPath)) {
+      if (rollouts.length >= MAX_CURSOR_PATHS) throw new Error("Rollout retention path limit reached");
+      let fromTurn = 0, prefix: string | undefined, copiedFrom: string | undefined;
+      const candidates = rollouts.length && cursor ? [
+        { turns: aggregate.length, fingerprint: fingerprintTurns(aggregate, aggregate.length), path: undefined },
+        { turns: cursor.turns, fingerprint: cursor.fingerprint, path: undefined },
+        ...rollouts, ...(cursor.rollouts ?? []),
+      ] : [];
+      const prefixHashes = new Map<number, string>();
+      for (const candidate of candidates) {
+        if (candidate.turns <= fromTurn || candidate.turns > turns.length) continue;
+        const hash = prefixHashes.get(candidate.turns) ?? fingerprintTurns(turns, candidate.turns);
+        prefixHashes.set(candidate.turns, hash);
+        if (hash === candidate.fingerprint) { fromTurn = candidate.turns; prefix = hash; copiedFrom = candidate.path; }
+      }
+      rollouts.push({ path: transcriptPath, fromTurn, turns: turns.length, fingerprint: fingerprintTurns(turns, turns.length), ...(fromTurn ? { prefix, ...(copiedFrom ? { copiedFrom } : {}) } : {}) });
+      include(turns, fromTurn);
+    }
+    const active = rollouts.find(segment => segment.path === transcriptPath)!;
+    if (sourceTurnCount !== undefined && sourceTurnCount < turns.length)
+      active.unflushed = { turns: turns.length, fingerprint: contentFingerprint(turns, turns.length) };
+    turns = aggregate;
+    startTs = turns[0]?.timestamp ?? startTs;
+  } else if (cursor?.rollouts || (transcriptPath && cursor?.paths?.some(path => path !== transcriptPath))) {
+    throw new Error("A transcript reader is required to preserve contributed rollouts");
+  }
+  // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
+  // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
+  // (#4560). A "no" is not remembered — the server can be upgraded mid-session.
+  const probed = Boolean(cursors) && cursor?.appendSupported !== true;
+  const appendSupported =
+    Boolean(cursors) && (cursor?.appendSupported === true || (await supportsAppend(client)));
+  // Only an append can build on a lost write; a replace already re-sends everything.
+  let ops: string[] = [];
+  if (appendSupported && cursor?.ops?.length && !cursor.dirty)
+    ({ cursor, ops } = await settleOps(client, cursor));
+  const plan = planRetain(turns, cursor, {
+    appendSupported,
+    bank: client.bank,
+    path: rollouts ? undefined : transcriptPath,
+  });
+  // Recorded whenever the probe ran, so a deployment where append never activates shows up in the
+  // diag trail instead of only as oversized retains (#5286). A cached "yes" is not re-logged.
+  if (probed) diag(harness ?? "", "retain_mode", { mode: plan.mode, appendSupported });
+  // Never forget a source that still contributes to the document.
+  const paths = rollouts ? rollouts.map(segment => segment.path) :
+    plan.mode === "replace"
+      ? transcriptPath
+        ? [transcriptPath]
+        : undefined
+      : advancePaths(cursor?.paths, transcriptPath);
   // Appends built but never confirmed. A replace rewrites the whole document from the same
   // transcript, so it SUBSUMES them; on every other path they go out first, oldest first, before
   // anything new — the document only ever grows in transcript order.
@@ -256,7 +481,10 @@ async function writeSession(
   const submit = (content: string, operationId: string, append: boolean) =>
     client.retain(
       content,
-      "coding agent session",
+      // Configured context wins. Extraction reads this to decide whose claim a sentence is, so the
+      // default names both speakers: the previous "coding agent session" said nothing about
+      // authorship and let an assistant's proposal be recorded as the user's decision.
+      stamp?.context ?? DEFAULT_RETAIN_CONTEXT,
       refId,
       // Configured tags first, built-ins last and deduped: `source:chat` and `harness:<id>` are what
       // the documents list filters and draws its agent logo from, so a template cannot displace them.
@@ -288,6 +516,14 @@ async function writeSession(
     turns: turns.length,
     fingerprint: fingerprintTurns(turns, turns.length),
     bank: client.bank,
+    ...(paths ? { paths } : {}),
+    ...(rollouts ? { rollouts } : {}),
+    ...(appendSupported ? { appendSupported: true } : {}),
+  };
+  /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */
+  const accepted = (id?: string) => {
+    if (id) ops = [...ops, id].slice(-MAX_CURSOR_OPS);
+    return ops.length ? { ...next, ops } : next;
   };
   // Still ours to retry only while the cursor holds the claim we write below.
   const stillOurs = () => {
@@ -302,12 +538,10 @@ async function writeSession(
     // same truth from the same transcript. Claim the position unconfirmed so an outcome we never
     // learn resolves to another replace rather than an append onto an unknown state.
     cursors?.write(sessionId, { ...next, dirty: true });
-    await submitWithRetry(
-      () => submit(content, opId("replace", content), false),
-      stillOurs,
-      retryUntil
-    );
-    cursors?.write(sessionId, next);
+    const operationId = opId("replace", content);
+    await submitWithRetry(() => submit(content, operationId, false), stillOurs, retryUntil);
+    ops = []; // the replace re-sends every turn, so nothing older can still lose any
+    cursors?.write(sessionId, accepted(operationId));
     return;
   }
 
@@ -326,7 +560,7 @@ async function writeSession(
   // session (#3989). Replay is safe precisely because the bytes and the operation id are unchanged:
   // a write the server DID commit collapses into that same operation instead of appending twice,
   // which is the one thing appending onto an unknown state could otherwise get wrong.
-  cursors?.write(sessionId, { ...next, pending: queue });
+  cursors?.write(sessionId, { ...accepted(), pending: queue });
   for (let i = 0; i < queue.length; i++) {
     // One request per entry, each able to burn the full 15s abort — where this used to send exactly
     // once. Never START one that cannot finish inside the caller's budget: a hook harness is killed
@@ -343,6 +577,7 @@ async function writeSession(
     // Confirmed: drop it immediately, so a failure on a LATER entry cannot resubmit it as part of
     // the next flush. Whatever is still queued when this throws is what the next flush replays.
     const remaining = queue.slice(i + 1);
-    cursors?.write(sessionId, remaining.length ? { ...next, pending: remaining } : next);
+    const done = accepted(entry.operationId);
+    cursors?.write(sessionId, remaining.length ? { ...done, pending: remaining } : done);
   }
 }

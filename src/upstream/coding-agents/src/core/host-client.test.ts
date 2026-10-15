@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,6 +47,23 @@ describe("resolveHostMemory", () => {
     expect(client.maxParallelRetains).toBe(3);
   });
 
+  // #4490: the host client named no project, so an initiative captured in a repo-owned bank was
+  // scoped to the bank id; a shared bank must still name none (it gets the shared-bank clause).
+  it("names the repo as the page subject only when the bank is that repo's", async () => {
+    const repo = join(root, "my-repo");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q", repo]);
+    writeConfig({});
+    let { resolveHostMemory } = await loadFactory();
+    const own = resolveHostMemory("dsh", repo);
+    expect(own.client!.project).toBe("my-repo");
+    expect(own.bankId).toContain("my-repo");
+
+    writeConfig({ bankId: "shared-memory" });
+    ({ resolveHostMemory } = await loadFactory());
+    expect(resolveHostMemory("dsh", repo).client!.project).toBeUndefined();
+  });
+
   it("enforces optInOnly for every host, not just the ones that remembered to pass a directory", async () => {
     // dsh called applyBankConfig WITHOUT the directory, so `optInOnly` was never enforced there:
     // an unapproved repo still got a bank and still had memories written for it.
@@ -88,7 +106,7 @@ describe("resolveHostMemory", () => {
       })
     );
 
-    await client.req("GET", "http://server/thing");
+    await client!.req("GET", "http://server/thing");
     expect(calls).toEqual(["Bearer old-key", "Bearer new-key"]);
     vi.unstubAllGlobals();
   });
@@ -107,6 +125,27 @@ describe("resolveHostMemory", () => {
     });
     const { resolveHostMemory } = await loadFactory();
     expect(resolveHostMemory("dsh", root).client?.apiToken).toBe("per-bank");
+  });
+
+  it("keeps a token re-read from reaching the old server after the config moved the directory", async () => {
+    writeConfig({ apiUrl: "http://server-a", apiToken: "key-a" });
+    const { resolveHostMemory } = await loadFactory();
+    const { client } = resolveHostMemory("dsh", root);
+
+    // The directory now points at another server: its key belongs there, not on server-a.
+    writeConfig({ apiUrl: "http://server-b", apiToken: "key-b" });
+    const calls: (string | null)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        calls.push(new Headers(init.headers).get("Authorization"));
+        return new Response("{}", { status: 401, headers: { "Content-Type": "application/json" } });
+      })
+    );
+
+    await client!.req("GET", "http://server-a/thing").catch(() => {});
+    expect(calls).toEqual(["Bearer key-a"]);
+    vi.unstubAllGlobals();
   });
 });
 

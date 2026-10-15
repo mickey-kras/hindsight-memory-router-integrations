@@ -104,3 +104,30 @@ it("returns a stable not-found result for a missing knowledge page", async () =>
     content: [{ type: "text", text: JSON.stringify({ error: "not found" }, null, 2) }],
   });
 });
+
+it("preserves guarded deadlines on hosts without a composable Undici dispatcher", async () => {
+  void globalThis.Headers;
+  const symbol = Symbol.for("undici.globalDispatcher.1");
+  const previous = Object.getOwnPropertyDescriptor(globalThis, symbol);
+  Object.defineProperty(
+    globalThis,
+    symbol,
+    previous ? { value: {} } : { configurable: true, writable: true, value: {} },
+  );
+  const send = vi.fn(async (_url: Parameters<typeof fetch>[0], _init?: RequestInit) => Response.json({ items: [] }));
+  try {
+    const transport = new RouterTransport({
+      routerUrl: "https://router.test",
+      access,
+      token: () => token,
+      fetch: send,
+    });
+    const signal = new AbortController().signal;
+    await transport.request(transport.bankUrl("A", "/documents"), { signal });
+    expect(send.mock.calls[0]?.[1]).toMatchObject({ signal, redirect: "error" });
+    expect(send.mock.calls[0]?.[1]).not.toHaveProperty("dispatcher");
+  } finally {
+    if (previous) Object.defineProperty(globalThis, symbol, previous);
+    else Reflect.deleteProperty(globalThis, symbol);
+  }
+});
