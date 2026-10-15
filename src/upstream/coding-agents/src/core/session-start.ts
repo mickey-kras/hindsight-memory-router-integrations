@@ -175,7 +175,7 @@ export async function buildSessionStartContext(args: {
   harness?: string;
   stateDir?: string;
   hasGit?: (dir: string) => boolean;
-  startSeed?: (repoDir: string, opts?: { limit?: number; harness?: string }) => void;
+  startSeed?: (repoDir: string, opts?: { limit?: number; harness?: string }) => void | Promise<boolean>;
   startSurvey?: typeof startCodebaseSurvey;
   headSha?: (dir: string) => string | null;
   commitsSince?: (dir: string, sinceSha: string) => number | null;
@@ -187,6 +187,7 @@ export async function buildSessionStartContext(args: {
   const t0 = Date.now();
   let cold: boolean | undefined; // undefined = not checked (autoSeed off / non-git / unreachable)
   let gitDocIds: Set<string> | undefined; // the cold-check's doc set, reused by the banner's git note
+  let seedLaunched: boolean | undefined;
   let bankEmpty = false; // true only when the server confirmed the bank holds no documents
   const harness = args.harness ?? "claude-code";
   const hasGit = args.hasGit ?? hasGitHistory;
@@ -278,7 +279,7 @@ export async function buildSessionStartContext(args: {
           // Pass the ASKING harness through: without it deepen.js falls back to the config
           // loader's harness default and misfiles this session's survey + git history into the
           // wrong bank (e.g. `opencode::<project>` for a claude-code session). See #3247.
-          startSeed(cwd, { limit: cfg.seedLimit, harness });
+          seedLaunched = (await startSeed(cwd, { limit: cfg.seedLimit, harness })) !== false;
           // Cold iff the bank has zero source:git docs and no survey baseline (an undefined result
           // — server error — is NOT treated as cold; we never surveyed/noted on an unconfirmed-empty
           // bank).
@@ -293,7 +294,7 @@ export async function buildSessionStartContext(args: {
               const sha = resolveHeadSha(cwd);
               if (started && sha) recordSurveyBaseline(sha);
             }
-            diag(harness, "seed_started", { bank: bankId });
+            if (seedLaunched !== false) diag(harness, "seed_started", { bank: bankId });
           } else if (cfg.codebaseSurvey !== false && cfg.surveyRefreshCommits > 0) {
             // WARM bank: re-run the survey once enough commits have accrued since the last one, so
             // structural pages track an evolving architecture. Branch-robust: read the
@@ -378,7 +379,8 @@ export async function buildSessionStartContext(args: {
       cold: cold === true,
     }).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
   }
-  systemMessage = buildSeedBanner(bankId, cold === true, gitNote, cfg.toolPrefix);
+  systemMessage = buildSeedBanner(bankId, cold === true && seedLaunched === true, gitNote, cfg.toolPrefix);
+  if (seedLaunched === false) systemMessage += "\nBackground seed launch failed.";
 
   // The old per-agent plugin keeps running next to this one until the user removes it — say so
   // where they will see it. Only Claude Code had that plugin.

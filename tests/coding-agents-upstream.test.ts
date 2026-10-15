@@ -11,6 +11,7 @@ import { HindsightClient, RateLimitedError } from "../src/upstream/coding-agents
 import { buildHookOutput } from "../src/upstream/coding-agents/src/core/hook";
 import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/knowledge-tools";
 import { readSessionCache, writeSessionCache } from "../src/upstream/coding-agents/src/core/session-cache";
+import { buildSessionStartContext } from "../src/upstream/coding-agents/src/core/session-start";
 import { run as install, parseJsonc } from "../src/upstream/coding-agents/src/installer";
 import { selectTools } from "../src/upstream/coding-agents/src/mcp-server";
 import { stageNativeKeychain } from "../src/upstream/coding-agents/src/native-storage";
@@ -1181,7 +1182,11 @@ it.each([undefined, "abc_"])("brands the packaged manual seed CLI for %s", (pref
   const seedPath = join(dir, "package/dist/hindsight-seed.js");
   const script = `
     const child = require("node:child_process");
-    child.spawn = () => ({ on() {}, unref() {} });
+    child.spawn = () => {
+      const launched = new child.ChildProcess();
+      queueMicrotask(() => launched.emit("spawn"));
+      return launched;
+    };
     require("node:module").syncBuiltinESMExports();
     process.argv = [process.execPath, ${JSON.stringify(seedPath)}, "seed", "--repo", ${JSON.stringify(dir)}];
     import(${JSON.stringify(seedPath)});
@@ -1193,7 +1198,7 @@ it.each([undefined, "abc_"])("brands the packaged manual seed CLI for %s", (pref
     timeout: 10000,
   });
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain(`${prefix ? "abc" : "Hindsight"} is learning this repo`);
+  expect(result.stdout).toContain(`${prefix ? "abc" : "Hindsight"} background seed launched`);
   if (prefix) expect(result.stdout).not.toContain("Hindsight");
 });
 it.each([undefined, "abc_"])("brands MCP startup failure after configuration initializes for %s", (prefix) => {
@@ -1350,3 +1355,71 @@ it("the packaged Grok hook rejects a changed effective human principal with the 
   expect(changed.stdout).toBe("");
   expect(changed.requests).toEqual([]);
 }, 15_000);
+
+it.each(["denied", "unexpected"])(
+  "the packaged Codex prompt observes %s rejection without leaking diagnostics",
+  (kind) => {
+    const dir = setup();
+    execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+    const normalPath = join(dir, "normal.json");
+    writeFileSync(normalPath, JSON.stringify({ autoSeed: false, retainSessions: false }));
+    const entry = join(dir, "package/dist/codex-hook.js");
+    const launch = `
+    const originalTrim = String.prototype.trim;
+    String.prototype.trim = function () {
+      if (process.env.HOOK_FAILURE_KIND === 'unexpected' && String(this) === 'TRIGGER_REJECTION')
+        throw new Error('SECRET_REJECTION_TOKEN=' + 'x'.repeat(10000));
+      return originalTrim.call(this);
+    };
+    globalThis.fetch = async () => new Response('SECRET_403_BODY', { status: 403 });
+    import(${JSON.stringify(entry)});
+  `;
+    const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", launch], {
+      cwd: dir,
+      input: JSON.stringify({ cwd: dir, session_id: "failure-test", prompt: "TRIGGER_REJECTION" }),
+      env: { ...process.env, HINDSIGHT_CONFIG: normalPath, HOOK_FAILURE_KIND: kind, TMPDIR: dir },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("[memory-router] Hook failed; memory context unavailable.\n");
+  },
+);
+
+it("the packaged manual seed command reports an unavailable executable without claiming seeding", () => {
+  const dir = setup();
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+  const result = spawnSync(
+    process.execPath,
+    [join(dir, "package/dist/hindsight-seed.js"), "seed", "--repo", process.cwd()],
+    {
+      env: { ...process.env, PATH: dir },
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("Background seed launch failed.\n");
+  expect(result.stderr).toBe("[memory-router] Background seed launch failed.\n");
+});
+
+it("session-start does not claim learning after seed launch fails", async () => {
+  const dir = setup();
+  const output = await buildSessionStartContext({
+    cwd: dir,
+    bankId: "A",
+    harness: "codex",
+    cfg: resolveConfig({ autoSeed: true, codebaseSurvey: false, gitIngest: "none" }),
+    client: {
+      listDocumentIds: async () => new Set<string>(),
+      listPages: async () => ({ items: [] }),
+    },
+    hasGit: () => true,
+    startSeed: async () => false,
+  });
+  expect(output.systemMessage).toContain("Background seed launch failed.");
+  expect(output.systemMessage).not.toContain("is learning");
+});
