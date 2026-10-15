@@ -36,7 +36,7 @@
     "build": "npm run clean && tsc",
     "lint": "biome lint . --max-diagnostics=none",
     "format:check": "biome format . --max-diagnostics=none",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.integration.json",
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

@@ -9419,6 +9419,119 @@ index 1382140..ea01e67 100644
  }
  
  /** Is `dir` the repo itself or somewhere inside it? */
+diff --git a/src/core/hook.test.ts b/src/core/hook.test.ts
+index 98a832a..13c6a63 100644
+--- a/src/core/hook.test.ts
++++ b/src/core/hook.test.ts
+@@ -7,6 +7,7 @@ import { buildHookOutput, runHook } from "./hook";
+ import { diagFilePath } from "./diag";
+ import { ReflectError } from "./hindsight";
+ import { buildReflectQuery } from "./inject";
++import { AccessDeniedError } from "@memory-router/shared/bank-access";
+ 
+ let root: string;
+ let cacheFile: string;
+@@ -14,6 +15,13 @@ let cacheFile: string;
+ beforeEach(() => {
+   root = mkdtempSync(join(tmpdir(), "hs-hook-"));
+   cacheFile = join(root, "cache", "session.json");
++  const config = join(root, "managed.json");
++  writeFileSync(config, JSON.stringify({
++    routerUrl: "https://router.test",
++    principals: { "claude-code": { writeBank: "bank-1", tokenEnv: "RUNTIME_TEST_TOKEN" }, dsh: { writeBank: "bank-1", tokenEnv: "RUNTIME_TEST_TOKEN" } },
++  }));
++  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", config);
++  vi.stubEnv("RUNTIME_TEST_TOKEN", `mr_runtime_${"a".repeat(64)}`);
+ });
+ 
+ afterEach(() => {
+@@ -61,6 +69,21 @@ function makeClient(
+ }
+ 
+ describe("buildHookOutput", () => {
++  it.each(["reflect", "listPages"] as const)("authorization denial from %s rejects the entire turn", async (method) => {
++    const client = makeClient({
++      [method]: vi.fn(async () => { throw new AccessDeniedError(); }),
++    });
++    await expect(buildHookOutput({
++      harness: "claude-code",
++      prompt: MATCHING_PROMPT,
++      cfg: resolveConfig({}),
++      client,
++      cacheFile,
++    })).rejects.toThrow("memory access denied");
++    expect(existsSync(cacheFile)).toBe(false);
++    expect(client.searchKnowledgePages).not.toHaveBeenCalled();
++    expect(client.recallObservations).not.toHaveBeenCalled();
++  });
+   it("turn 1: injects the reflect answer wrapped in the system-injection preamble", async () => {
+     const cfg = resolveConfig({});
+     const client = makeClient();
+@@ -76,7 +99,8 @@ describe("buildHookOutput", () => {
+     expect(existsSync(cacheFile)).toBe(true);
+     const cached = JSON.parse(readFileSync(cacheFile, "utf8"));
+     expect(cached.turns).toBe(1);
+-    expect(cached.reflectAnswer).toBe("REFLECT_ANSWER");
++    expect(cached.reflectAnswer).toBe("");
++    expect(readFileSync(cacheFile, "utf8")).not.toContain("REFLECT_ANSWER");
+   });
+ 
+   it("reflect runs ONCE per session: cached on turn 1, not called again on turn 2", async () => {
+@@ -701,10 +725,10 @@ describe("buildHookOutput", () => {
+     expect(result.context).not.toContain("hindsight_read_knowledge_page p1");
+     expect(result.context).toContain("Automatically retrieved by Hindsight");
+     expect(result.context).toContain("REFLECT_ANSWER");
+-    // The roster is cached for the cadence-based refresh.
++    // Managed state persists lifecycle markers, never bank content or the roster.
+     const cached = JSON.parse(readFileSync(cacheFile, "utf8"));
+-    expect(cached.pages.atTurn).toBe(1);
+-    expect(cached.pages.list).toEqual([{ id: "p1", title: "Uploader guide" }]);
++    expect(cached.pages).toBeUndefined();
++    expect(readFileSync(cacheFile, "utf8")).not.toContain("Uploader guide");
+   });
+ 
+   it("pages with content are NEVER auto-injected, even for an unrelated prompt", async () => {
+@@ -800,7 +824,7 @@ describe("buildHookOutput", () => {
+     }
+   });
+ 
+-  it("re-fetches pages every pageRefreshEveryTurns turns, serving the cache in between", async () => {
++  it("re-fetches authorized pages every turn and ignores legacy cached memory", async () => {
+     const cfg = resolveConfig({ pageRefreshEveryTurns: 2 });
+     const client = makeClient();
+     // Seed the cache so this session already has pages from turn 1.
+@@ -813,16 +837,18 @@ describe("buildHookOutput", () => {
+         pages: { atTurn: 1, list: [{ id: "p1", title: "Uploader guide", content: PAGE_CONTENT }] },
+       })
+     );
+-    // turn 2: 2 - 1 < 2 -> cache is fresh, no fetch
+-    await buildHookOutput({
++    // Legacy bank content must be discarded even inside the old refresh cadence.
++    const output = await buildHookOutput({
+       harness: "claude-code",
+       prompt: UNRELATED_PROMPT,
+       cfg,
+       client,
+       cacheFile,
+     });
+-    expect(client.listPages).not.toHaveBeenCalled();
+-    // turn 3: 3 - 1 >= 2 -> stale, re-fetched
++    expect(client.listPages).toHaveBeenCalledTimes(1);
++    expect(output.context).not.toContain("CACHED");
++    expect(output.context).not.toContain(PAGE_CONTENT);
++    // Every later turn checks the current roster again.
+     await buildHookOutput({
+       harness: "claude-code",
+       prompt: UNRELATED_PROMPT,
+@@ -830,7 +856,7 @@ describe("buildHookOutput", () => {
+       client,
+       cacheFile,
+     });
+-    expect(client.listPages).toHaveBeenCalledTimes(1);
++    expect(client.listPages).toHaveBeenCalledTimes(2);
+   });
+ });
+ 
 diff --git a/src/core/hook.ts b/src/core/hook.ts
 index 57ea089..cb6ec11 100644
 --- a/src/core/hook.ts
@@ -11323,6 +11436,77 @@ index 0000000..53f119e
 +  expect(await start()).toBe(false);
 +  expect(spawn).not.toHaveBeenCalled();
 +});
+diff --git a/src/core/runtime.test.ts b/src/core/runtime.test.ts
+index 60819a6..f631dce 100644
+--- a/src/core/runtime.test.ts
++++ b/src/core/runtime.test.ts
+@@ -1,11 +1,29 @@
+-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
++import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+ import { tmpdir } from "node:os";
+ import { join } from "node:path";
+-import { beforeEach, describe, expect, it, vi } from "vitest";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { resolveConfig } from "./config";
+ import type { HindsightClient } from "./hindsight";
+ import { RuntimeCore } from "./runtime";
+ 
++let fixtureRoot: string;
++beforeEach(() => {
++  fixtureRoot = mkdtempSync(join(tmpdir(), "runtime-managed-"));
++  const config = join(fixtureRoot, "managed.json");
++  writeFileSync(config, JSON.stringify({
++    routerUrl: "https://router.test",
++    principals: { opencode: { writeBank: "bank-1", tokenEnv: "RUNTIME_TEST_TOKEN" }, dsh: { writeBank: "bank-1", tokenEnv: "RUNTIME_TEST_TOKEN" } },
++  }));
++  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", config);
++  vi.stubEnv("RUNTIME_TEST_TOKEN", `mr_runtime_${"a".repeat(64)}`);
++  vi.stubEnv("HOME", fixtureRoot);
++  vi.stubEnv("TMPDIR", fixtureRoot);
++});
++afterEach(() => {
++  vi.unstubAllEnvs();
++  rmSync(fixtureRoot, { recursive: true, force: true });
++});
++
+ // The real ensureDaemon shells out (uvx/cargo probes) and spawns a detached process; only WHERE it
+ // is called from is under test here — the deciding itself is covered in daemon.test.ts.
+ const daemonSpy = vi.hoisted(() => vi.fn(async () => {}));
+@@ -31,6 +49,7 @@ vi.mock("./session-start", async (importOriginal) => {
+ describe("RuntimeCore", () => {
+   it("uses the shared prompt lifecycle and consumes the new-bank reflect deferral once", async () => {
+     const client = {
++      assertAuthorized: vi.fn(),
+       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+       listPages: vi.fn(async () => ({ items: [] })),
+       reflect: vi.fn(async () => "shared reflect"),
+@@ -57,6 +76,7 @@ describe("RuntimeCore", () => {
+     // pages by id — the agent was told both, and believed the stale half (#4607).
+     let pages: { id: string; name: string }[] = [];
+     const client = {
++      assertAuthorized: vi.fn(),
+       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+       listPages: vi.fn(async () => ({ items: pages })),
+       reflect: vi.fn(async () => ""),
+@@ -283,7 +303,7 @@ describe("RuntimeCore daemon lifecycle", () => {
+ describe("RuntimeCore reflect tool settings", () => {
+   it("forwards the resolved reflect timeout and budget into hindsight_reflect", async () => {
+     const reflect = vi.fn(async () => "answer");
+-    const client = { reflect } as unknown as HindsightClient;
++    const client = { reflect, assertAuthorized: vi.fn() } as unknown as HindsightClient;
+     const core = new RuntimeCore(
+       client,
+       "bank-1",
+@@ -307,7 +327,9 @@ describe("RuntimeCore tool workspace binding", () => {
+   const client = {
+     listDocumentIds: vi.fn(async () => new Set<string>()),
+     listPages: vi.fn(async () => ({ items: [] })),
++    hasCredentials: vi.fn(() => true),
+     activeOperations: vi.fn(async () => 0),
++    assertAuthorized: vi.fn(),
+   } as unknown as HindsightClient;
+ 
+   const workspaceOf = async (core: RuntimeCore): Promise<string> => {
 diff --git a/src/core/runtime.ts b/src/core/runtime.ts
 index a2c1afe..5594b35 100644
 --- a/src/core/runtime.ts
@@ -11680,6 +11864,73 @@ index 96380ee..a21dbe7 100644
      };
    }
    return { ok: false, message: "usage: hindsight-seed seed --repo <dir>" };
+diff --git a/src/core/session-cache.test.ts b/src/core/session-cache.test.ts
+index 0ccc716..141ec5a 100644
+--- a/src/core/session-cache.test.ts
++++ b/src/core/session-cache.test.ts
+@@ -1,5 +1,7 @@
+-import { rmSync } from "node:fs";
+-import { afterEach, describe, expect, it } from "vitest";
++import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import {
+   fileCursorStore,
+   readSessionCache,
+@@ -9,14 +11,15 @@ import {
+ } from "./session-cache";
+ 
+ const HARNESS = "codex-cursor-test";
+-const sessions = ["s1", "s2"];
++let root: string;
++beforeEach(() => {
++  root = mkdtempSync(join(tmpdir(), "session-cache-"));
++  vi.stubEnv("TMPDIR", root);
++});
+ 
+ afterEach(() => {
+-  for (const s of sessions) {
+-    rmSync(sessionCacheFile(HARNESS, s), { force: true });
+-    rmSync(sessionCacheFile(HARNESS, s).replace(/\.json$/, ".retain.json"), { force: true });
+-    rmSync(sessionCacheFile(HARNESS, s).replace(/\.json$/, ".root"), { force: true });
+-  }
++  vi.unstubAllEnvs();
++  rmSync(root, { recursive: true, force: true });
+ });
+ 
+ describe("fileCursorStore", () => {
+@@ -72,7 +75,7 @@ describe("fileCursorStore", () => {
+     const file = sessionCacheFile(HARNESS, "s1");
+     writeSessionCache(file, { turns: 3, reflectAnswer: "already ran" });
+     fileCursorStore(HARNESS).write("s1", { turns: 2, fingerprint: "f", bank: "b1" });
+-    expect(readSessionCache(file)).toEqual({ turns: 3, reflectAnswer: "already ran" });
++    expect(readSessionCache(file)).toEqual({ turns: 3, reflectAnswer: "" });
+   });
+ 
+   it("never exposes a half-written cursor", () => {
+@@ -118,3 +121,21 @@ describe("sessionRootDir", () => {
+     expect(sessionRootDir(HARNESS, "", "/work/one")).toBe("/work/one");
+   });
+ });
++
++
++describe("managed session cache", () => {
++  it("keeps only lifecycle markers when writing and reading legacy bank content", () => {
++    const file = sessionCacheFile(HARNESS, "s1");
++    const lifecycle = { turns: 2, reflectAttempts: 1, deferInitialReflect: true };
++    const legacy = {
++      ...lifecycle,
++      reflectAnswer: "private synthesis",
++      pages: { atTurn: 2, list: [{ id: "private-page", title: "private title" }] },
++    };
++    writeSessionCache(file, legacy);
++    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ ...lifecycle, reflectAnswer: "" });
++    // Previously persisted state is also sanitized before a prompt can reuse it.
++    writeFileSync(file, JSON.stringify(legacy));
++    expect(readSessionCache(file)).toEqual({ ...lifecycle, reflectAnswer: "" });
++  });
++});
 diff --git a/src/core/session-cache.ts b/src/core/session-cache.ts
 index efe1ce8..93978d3 100644
 --- a/src/core/session-cache.ts
@@ -18200,16 +18451,17 @@ index 9b72278..f954d3a 100644
 +  ]
  }
 diff --git a/vitest.config.ts b/vitest.config.ts
-index 68a1104..2b3ef13 100644
+index 68a1104..648fef4 100644
 --- a/vitest.config.ts
 +++ b/vitest.config.ts
-@@ -1,21 +1,5 @@
+@@ -1,21 +1,33 @@
  import { defineConfig } from "vitest/config";
 -import { tmpdir } from "node:os";
 -import { join } from "node:path";
 -
  export default defineConfig({
--  test: {
++  resolve: { alias: { "@memory-router": new URL("../../../src", import.meta.url).pathname } },
+   test: {
 -    env: {
 -      // Unit tests exercise code paths that emit diagnostics; keep them out of the REAL
 -      // ~/.hindsight/coding-agents-logs so a developer's trail isn't polluted with test noise.
@@ -18223,7 +18475,32 @@ index 68a1104..2b3ef13 100644
 -      // by the time a test body runs the value is already fixed. Points at a path with no file.
 -      HINDSIGHT_CONFIG: join(tmpdir(), "hindsight-coding-agent-test-absent.json"),
 -    },
--  },
-+  resolve: { alias: { "@memory-router": new URL("../../../src", import.meta.url).pathname } },
-+  test: { include: ["src/core/status.test.ts", "src/core/seed.test.ts", "src/core/chat.test.ts", "src/core/retain-cursor.test.ts", "src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
++    include: [
++      "src/core/status.test.ts",
++      "src/core/seed.test.ts",
++      "src/core/runtime.test.ts",
++      "src/core/hook.test.ts",
++      "src/core/session-cache.test.ts",
++      "src/core/chat.test.ts",
++      "src/core/retain-cursor.test.ts",
++      "src/core/usage.test.ts",
++      "src/core/daemon.test.ts",
++      "src/core/router-client.test.ts",
++      "src/installer-managed.test.ts",
++      "src/installer-branding.test.ts",
++      "src/core/branding.test.ts",
++      "src/core/private-state.test.ts",
++      "src/core/turn-journal.test.ts",
++      "src/core/turn-journal-policy.test.ts",
++      "src/core/router-survey.test.ts",
++      "src/core/transcript*.test.ts",
++      "src/core/missions.test.ts",
++      "src/core/uuid.test.ts",
++      "src/core/jsonl.test.ts",
++      "src/core/retain-stamp.test.ts",
++      "src/harness/registry.test.ts",
++      "src/harness/hook-lifecycle.test.ts",
++      "src/harness/plugin-entry.test.ts",
++    ],
+   },
  });
