@@ -172,13 +172,8 @@ export async function wireOpencode2Runtime(
 
   await registerCompanionSkill(ctx, harness);
 
-  // Sessions THIS plugin instance owns. See the event loop below for why the write-back cannot do
-  // without it.
-  const ownSessions = new Set<string>();
-
   // Each user turn: recall on the prompt; the injection it builds is pushed by the context hook.
   await ctx.session.hook("prompt", async (input) => {
-    ownSessions.add(input.sessionID);
     await core.onPrompt(input.sessionID, input.prompt?.text ?? "");
   });
 
@@ -196,7 +191,7 @@ export async function wireOpencode2Runtime(
   // hook saw — is the whole point: that list is built BEFORE the reply, so it always lags a turn
   // and a session's final exchange would never be retained.
   //
-  // `ownSessions` is a HARD BANK-ISOLATION GUARD, not an optimisation. v2's background service
+  // `core.hasSession` is a HARD BANK-ISOLATION GUARD, not an optimisation. v2's background service
   // hosts every open project at once, and unlike the session hooks — which fire only for the
   // location that loaded this plugin instance — `event.subscribe()` is GLOBAL: a plugin loaded for
   // project A receives session.idle for a session running in project B, carrying no location to
@@ -207,9 +202,13 @@ export async function wireOpencode2Runtime(
   void (async () => {
     for await (const event of ctx.event.subscribe({ signal: events.signal })) {
       const e = event as Oc2Event;
-      if (!e.type || !IDLE_EVENTS.has(e.type)) continue;
+      if (!e.type || (!IDLE_EVENTS.has(e.type) && e.type !== "session.deleted")) continue;
       const sessionID = e.data?.sessionID;
-      if (!sessionID || !ownSessions.has(sessionID)) continue;
+      if (!sessionID || !core.hasSession(sessionID)) continue;
+      if (e.type === "session.deleted") {
+        core.disposeSession(sessionID);
+        continue;
+      }
       diag(harness, "idle_signal", { signal: e.type, session: sessionID });
       // Deliberately NOT awaited: a retain must never stall delivery of the next event.
       void core.onSessionIdle(sessionID);
@@ -220,7 +219,10 @@ export async function wireOpencode2Runtime(
     // memory-less session must not be able to hide, so it goes in the diagnostic trail too.
   })().catch((e) => diag(harness, "idle_stream_failed", { error: describeError(e) }));
 
-  return () => events.abort();
+  return () => {
+    events.abort();
+    core.dispose();
+  };
 }
 
 /**
