@@ -259,8 +259,9 @@ describe("hosted router facade contract", () => {
         );
       vi.stubGlobal("fetch", fetcher);
       const request = new HostedRouterClient(config).getDocument("write", "doc", { signal: caller.signal });
-      const result = expect(request).rejects.toMatchObject({ statusCode: 503 });
-      (source === "caller" ? caller : deadline).abort();
+      const reason = new DOMException("cancelled", source === "caller" ? "AbortError" : "TimeoutError");
+      const result = expect(request).rejects.toBe(reason);
+      (source === "caller" ? caller : deadline).abort(reason);
       await result;
       expect(timeout).toHaveBeenCalledWith(15_000);
       expect(fetcher.mock.calls[0][1].signal).not.toBe(caller.signal);
