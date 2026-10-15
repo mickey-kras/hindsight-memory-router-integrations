@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
@@ -24,7 +25,7 @@ const {
   publish,
   waitForPublishedHead,
 } = require("./dependabot-preparation.cjs");
-const { requestValidation, runDispatchedPolicy } = require("./dependabot-validation.cjs");
+const { requestValidation, runDispatchedPolicy, runPolicy } = require("./dependabot-validation.cjs");
 
 const prGuardScript = execFileSync(
   "python3",
@@ -134,7 +135,7 @@ function harness() {
           return { data: { default_branch: "main", full_name: "owner/repo" } };
         },
         getContent: async ({ path }) => ({
-          data: { type: "file", encoding: "base64", content: Buffer.from(contents[path]).toString("base64") },
+          data: policyFile(contents[path]),
         }),
         getCommit: async () => ({ data: state.generated }),
         compareCommitsWithBasehead: async () => ({ data: { ahead_by: state.ahead } }),
@@ -282,7 +283,7 @@ test("publication accepts patch bumps and validates their signed generated commi
     }
     const prepared = bumpPackageInputs(original, changed);
     const encoded = (value) => ({
-      data: { type: "file", encoding: "base64", content: Buffer.from(value).toString("base64") },
+      data: policyFile(value),
     });
     h.github.rest.repos.getContent = async ({ path, ref }) =>
       encoded(
@@ -1019,7 +1020,7 @@ function dockerHarness() {
     return value === undefined
       ? getContent(args)
       : {
-          data: { type: "file", encoding: "base64", content: Buffer.from(value).toString("base64") },
+          data: policyFile(value),
         };
   };
   return h;
@@ -1352,4 +1353,207 @@ test("every packaging job selects and verifies the same npm before install, test
     }
   }
   assert.deepEqual(observed, expectedJobs);
+});
+
+function policyFile(value, encoding = "base64") {
+  const bytes = Buffer.from(value);
+  return {
+    type: "file",
+    encoding,
+    size: bytes.length,
+    sha: createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex"),
+    content: encoding === "none" ? "" : bytes.toString("base64"),
+  };
+}
+
+function largeFileHarness(value, encoding = "none") {
+  const metadata = policyFile(value, encoding);
+  const blob = { ...policyFile(value) };
+  delete blob.type;
+  const calls = [];
+  const github = {
+    rest: {
+      repos: {
+        getContent: async (args) => {
+          calls.push(["contents", args]);
+          return { data: metadata };
+        },
+      },
+      git: {
+        getBlob: async (args) => {
+          calls.push(["blob", args]);
+          return { data: blob };
+        },
+      },
+    },
+  };
+  const run = (filename = "integrations/coding-agents/router.patch", revision = head) =>
+    runPolicy(github, context.repo, { ...pull, user: owner, author_association: "OWNER", head: { sha: revision } }, [
+      { filename, status: "modified" },
+    ]);
+  return { metadata, blob, calls, run, github };
+}
+
+test("policy reads files at and above the Contents inline boundary by immutable identity", async () => {
+  for (const [size, encoding] of [
+    [1024 * 1024, "base64"],
+    [1024 * 1024 + 1, "none"],
+    [1070545, "none"],
+  ]) {
+    const h = largeFileHarness(Buffer.alloc(size, 120), encoding);
+    await h.run();
+    assert.deepEqual(h.calls[0], [
+      "contents",
+      {
+        ...context.repo,
+        path: "integrations/coding-agents/router.patch",
+        ref: head,
+        headers: { accept: "application/vnd.github.object+json" },
+      },
+    ]);
+    assert.equal(h.calls.length, encoding === "none" ? 2 : 1);
+    if (encoding === "none")
+      assert.deepEqual(h.calls[1], [
+        "blob",
+        {
+          ...context.repo,
+          file_sha: h.metadata.sha,
+          headers: { accept: "application/vnd.github+json" },
+        },
+      ]);
+  }
+});
+
+test("large files are evaluated by the trusted policy rather than skipped", async () => {
+  const content = JSON.stringify({
+    scripts: { "aislop:ci": "aislop ci", "test:coverage": "vitest run --coverage" },
+    padding: "x".repeat(1024 * 1024),
+  });
+  await largeFileHarness(content).run("package.json");
+  await assert.rejects(
+    largeFileHarness(content.replace("aislop ci", "echo bypass")).run("package.json"),
+    /full-repository Aislop scan must stay configured/,
+  );
+});
+
+test("large file retrieval rejects malformed metadata before requesting a blob", async () => {
+  for (const mutate of [
+    (h) => {
+      h.metadata.type = "dir";
+    },
+    (h) => {
+      h.metadata.type = "symlink";
+    },
+    (h) => {
+      h.metadata.submodule_git_url = "https://example.invalid/repo";
+    },
+    (h) => {
+      h.metadata.target = "another-file";
+    },
+    (h) => {
+      h.metadata.sha = "main";
+    },
+    (h) => {
+      delete h.metadata.sha;
+    },
+    (h) => {
+      h.metadata.size = -1;
+    },
+    (h) => {
+      h.metadata.size = 1.5;
+    },
+    (h) => {
+      h.metadata.size = "10";
+    },
+    (h) => {
+      h.metadata.size = 100 * 1024 * 1024 + 1;
+    },
+    (h) => {
+      h.metadata.content = "unexpected";
+    },
+    (h) => {
+      h.metadata.encoding = "utf-8";
+    },
+  ]) {
+    const h = largeFileHarness("test");
+    mutate(h);
+    await assert.rejects(h.run());
+    assert.equal(h.calls.length, 1);
+  }
+  const h = largeFileHarness("test");
+  await assert.rejects(h.run(undefined, "main"));
+  assert.equal(h.calls.length, 0);
+});
+
+test("large file retrieval rejects mismatched or malformed blob responses", async () => {
+  for (const mutate of [
+    (h) => {
+      h.blob.sha = "0".repeat(40);
+    },
+    (h) => {
+      h.blob.size++;
+    },
+    (h) => {
+      h.blob.content = Buffer.from("evil").toString("base64");
+    },
+    (h) => {
+      h.blob.content = "dGVzdA==!";
+    },
+    (h) => {
+      h.blob.content = "dGVzdB==";
+    },
+    (h) => {
+      h.blob.content = "dGVzdA";
+    },
+    (h) => {
+      h.blob.content = null;
+    },
+    (h) => {
+      h.blob.encoding = "none";
+    },
+    (h) => {
+      h.blob = null;
+      h.github.rest.git.getBlob = async () => ({ data: null });
+    },
+    (h) => {
+      h.github.rest.git.getBlob = async () => {
+        throw new Error("API unavailable");
+      };
+    },
+  ]) {
+    const h = largeFileHarness("test");
+    mutate(h);
+    await assert.rejects(h.run());
+  }
+});
+
+test("policy accepts empty files and wrapped base64 without relaxing byte identity", async () => {
+  await largeFileHarness("", "base64").run();
+  const h = largeFileHarness("test");
+  h.blob.content = "dGVz\ndA==\n";
+  await h.run();
+  h.metadata.size++;
+  await assert.rejects(h.run());
+});
+
+test("inline file retrieval rejects malformed encoding, size, and identity too", async () => {
+  for (const mutate of [
+    (h) => {
+      h.metadata.content += "!";
+    },
+    (h) => {
+      h.metadata.content = Buffer.from("evil").toString("base64");
+    },
+    (h) => {
+      h.metadata.size++;
+    },
+    (h) => {
+      h.metadata.sha = "0".repeat(40);
+    },
+  ]) {
+    const h = largeFileHarness("test", "base64");
+    mutate(h);
+    await assert.rejects(h.run());
+    assert.equal(h.calls.length, 1);
+  }
 });

@@ -1,4 +1,5 @@
 const { execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, dirname } = require("node:path");
@@ -79,9 +80,50 @@ async function validationEligibility(github, context, pull) {
 }
 
 async function readFile(github, repo, path, ref) {
-  const { data } = await github.rest.repos.getContent({ ...repo, path, ref });
-  if (data.type !== "file" || data.encoding !== "base64") throw new Error(`Not a regular file: ${path}`);
-  return Buffer.from(data.content, "base64").toString("utf8");
+  if (typeof ref !== "string" || !/^[0-9a-f]{40}$/.test(ref)) throw new Error(`Expected immutable commit SHA: ${path}`);
+  const { data } = await github.rest.repos.getContent({
+    ...repo,
+    path,
+    ref,
+    headers: { accept: "application/vnd.github.object+json" },
+  });
+  if (
+    data?.type !== "file" ||
+    "target" in data ||
+    "submodule_git_url" in data ||
+    !/^[0-9a-f]{40}$/.test(data.sha) ||
+    !Number.isSafeInteger(data.size) ||
+    data.size < 0 ||
+    data.size > 100 * 1024 * 1024
+  )
+    throw new Error(`Invalid regular file metadata: ${path}`);
+
+  // Contents omits payloads above 1 MiB. Fetch the exact blob identified at the
+  // immutable PR head; never follow a download URL or re-resolve a branch name.
+  let blob = data;
+  if (data.encoding === "none" && data.content === "") {
+    ({ data: blob } = await github.rest.git.getBlob({
+      ...repo,
+      file_sha: data.sha,
+      headers: { accept: "application/vnd.github+json" },
+    }));
+  }
+  if (
+    blob?.encoding !== "base64" ||
+    typeof blob.content !== "string" ||
+    blob.sha !== data.sha ||
+    blob.size !== data.size
+  )
+    throw new Error(`Invalid blob response: ${path}`);
+  const encoded = blob.content.replace(/[\r\n]/g, "");
+  const bytes = Buffer.from(encoded, "base64");
+  // Buffer's decoder is permissive; round-tripping rejects malformed encoding.
+  if (bytes.toString("base64") !== encoded || bytes.length !== data.size)
+    throw new Error(`Invalid blob content or size: ${path}`);
+  // SHA-1 is Git's object identity here, not a cryptographic authorization token.
+  const sha = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+  if (sha !== data.sha) throw new Error(`Blob identity mismatch: ${path}`);
+  return bytes;
 }
 
 async function runPolicy(github, repo, pull, files) {
