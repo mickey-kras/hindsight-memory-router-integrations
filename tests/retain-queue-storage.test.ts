@@ -101,6 +101,8 @@ describe("aggregate queue capacity", () => {
       Array.from({ length: 8 }, (_, index) =>
         run(process.execPath, [
           "--experimental-transform-types",
+          "--experimental-loader",
+          new URL("./helpers/typescript-source-loader.mjs", import.meta.url).href,
           "--input-type=module",
           "-e",
           `
