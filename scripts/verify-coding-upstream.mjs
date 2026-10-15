@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { assertExactFileSet, listFiles } from "./verify-vendored-files.mjs";
 
 const root = new URL("../integrations/coding-agents/", import.meta.url);
@@ -10,6 +11,9 @@ const expectedFiles = {
   ...changes,
 };
 const sourceRoot = new URL("../../src/upstream/coding-agents/", root);
+if (!isDeepStrictEqual(upstream, JSON.parse(readFileSync(new URL("UPSTREAM.json", sourceRoot), "utf8")))) {
+  throw new Error("Packaged and canonical coding upstream manifests differ");
+}
 assertExactFileSet(
   listFiles(sourceRoot.pathname, new Set(["dist", "node_modules"])),
   Object.entries(expectedFiles)

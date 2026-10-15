@@ -62,6 +62,7 @@ jobs:
       - run: node scripts/verify-coding-upstream.mjs
       - run: node scripts/verify-openclaw-overlay.mjs
       - run: node --test scripts/verify-vendored-files.test.mjs
+      - run: python3 -m unittest discover -s scripts -p test_sync_upstream.py
       - name: Install supported audit client
         # npm < 11 audits through the retired /audits/quick endpoint (HTTP 400
         # "endpoint is being retired"); npm 11 queries the supported bulk

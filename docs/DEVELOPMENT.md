@@ -14,6 +14,7 @@ npm test --prefix src/upstream/coding-agents
 npm audit --audit-level=moderate
 npm audit --prefix src/upstream/coding-agents --audit-level=moderate
 node scripts/verify-coding-upstream.mjs
+python3 -m unittest discover -s scripts -p test_sync_upstream.py
 ```
 
 Packages are built from source by CI (`npm pack`) and attached to the GitHub release; their SHA-256 hashes are pinned in `PACKAGE_SHA256` and Nix hashes in `PACKAGE_NIX_HASHES`. Tarballs are never committed (`packages/` is gitignored).
