@@ -300,6 +300,7 @@ export function createDshHooks(resolve: (agent: DshAgent) => Workspace | undefin
     },
 
     disposed({ agent }: { agent: DshAgent }): void {
+      resolve(agent)?.core.disposeSession(agent.session.header.id);
       liveAgents.delete(agent.session.header.id);
       lastInjected.delete(agent.session.header.id);
     },

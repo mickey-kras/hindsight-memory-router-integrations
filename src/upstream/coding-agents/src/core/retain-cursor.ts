@@ -179,10 +179,11 @@ export interface RetainCursorStore {
 }
 
 /** In-memory store for a long-lived host (opencode/kilo). */
-export function memoryCursorStore(): RetainCursorStore {
+export function memoryCursorStore(): RetainCursorStore & { delete(sessionId: string): void } {
   const cursors = new Map<string, RetainCursor>();
   return {
     read: (sessionId) => cursors.get(sessionId),
+    delete: (sessionId) => { cursors.delete(sessionId); },
     write: (sessionId, cursor) => void cursors.set(sessionId, cursor),
   };
 }

@@ -184,6 +184,21 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertEqual(sonar["Verify coverage provenance"]["run"],
                          "node .github/scripts/coverage-artifact.cjs verify")
         self.assertNotIn("Generate coverage for SonarQube", sonar)
+        sonar_steps = main["jobs"]["sonar"]["steps"]
+        install = sonar["Install SonarQube analysis dependencies"]
+        self.assertEqual(install["run"].splitlines(), [
+            "npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund",
+            'test "$(npm --version)" = 11.19.1',
+            "npm ci --ignore-scripts --no-audit --no-fund",
+            "npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund",
+        ])
+        self.assertNotIn("if", install)
+        self.assertNotIn("continue-on-error", install)
+        node = next(step for step in sonar_steps if step.get("uses", "").startswith("actions/setup-node@"))
+        self.assertLess(sonar_steps.index(node), sonar_steps.index(install))
+        self.assertLess(sonar_steps.index(install), sonar_steps.index(sonar["SonarQube analysis"]))
+        for step in sonar_steps:
+            self.assertNotRegex(step.get("run", ""), r"\bnpm\s+(?:run\s+)?(?:test|build)\b")
 
     def test_preparation_retains_packages_only_after_candidate_identity(self):
         release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
@@ -326,22 +341,25 @@ class DependencyPolicyTests(unittest.TestCase):
 
 
 class CIEfficiencyTests(unittest.TestCase):
-    def test_publish_cache_covers_fallback_and_release_tool_installs(self):
-        publish = yaml.safe_load((ROOT / MAIN).read_text())["jobs"]["publish"]
-        setup = next(step for step in publish["steps"] if step.get("uses", "").startswith("actions/setup-node@"))
-        cached = set(setup["with"]["cache-dependency-path"].splitlines())
-        installed = set()
-        for step in publish["steps"]:
-            for line in step.get("run", "").splitlines():
-                command = shlex.split(line)
-                if command[:2] != ["npm", "ci"]:
-                    continue
-                prefix = Path(command[command.index("--prefix") + 1]) if "--prefix" in command else Path(".")
-                lockfile = next(prefix / name for name in ["npm-shrinkwrap.json", "package-lock.json"]
-                                if (ROOT / prefix / name).is_file())
-                installed.add(str(lockfile))
-        self.assertTrue(installed, "Publication must retain locked dependency installation")
-        self.assertTrue(installed <= cached, f"Uncached installation lockfiles: {installed - cached}")
+    def test_main_caches_cover_sonar_and_publish_installations(self):
+        jobs = yaml.safe_load((ROOT / MAIN).read_text())["jobs"]
+        for job_name in ["sonar", "publish"]:
+            with self.subTest(job=job_name):
+                steps = jobs[job_name]["steps"]
+                setup = next(step for step in steps if step.get("uses", "").startswith("actions/setup-node@"))
+                cached = set(setup["with"].get("cache-dependency-path", "").splitlines())
+                installed = set()
+                for step in steps:
+                    for line in step.get("run", "").splitlines():
+                        command = shlex.split(line)
+                        if command[:2] != ["npm", "ci"]:
+                            continue
+                        prefix = Path(command[command.index("--prefix") + 1]) if "--prefix" in command else Path(".")
+                        lockfile = next(prefix / name for name in ["npm-shrinkwrap.json", "package-lock.json"]
+                                        if (ROOT / prefix / name).is_file())
+                        installed.add(str(lockfile))
+                self.assertTrue(installed, "Analysis and publication must retain locked dependency installation")
+                self.assertTrue(installed <= cached, f"Uncached installation lockfiles: {installed - cached}")
 
     def test_nix_source_and_dependency_hashes_remain_checked_on_cache_hits(self):
         ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
