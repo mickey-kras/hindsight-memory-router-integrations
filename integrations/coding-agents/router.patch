@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..8bb8264
+index 0000000..4981e26
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,45 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -45,6 +45,8 @@ index 0000000..8bb8264
 +SessionStart readiness probes propagate terminal authorization failures before launching further background work; transient failures retain their fallback behavior. Append capabilities and accepted-operation cursors belong to one bank, so a managed bank switch re-probes the destination and starts from a replacement transcript. Grok's native hooks file and generated backup, and Trae's generated JSON backups, are covered by installer transactions.
 +
 +Multi-source conversation retention preserves rollout contributions in their original order and rereads their sources when rebuilding the shared document. Sources must remain readable, including replies previously retained before their transcript was flushed. Reconstruction supports up to 16 source references and refuses any decoded source or assembled document exceeding 32 MiB of serialized turns or 100,000 turns. Missing or ambiguous sources, unknown legacy continuation boundaries, moving copied prefixes and exceeded limits stop the write with a diagnostic instead of replacing the document with incomplete data. Single-source and persistent-runtime retention retain their existing size behavior.
++
++Sync requires a confirmed zero active-operation count. Unavailable or malformed operation probes remain unknown; background settlement retries for up to 15 minutes and reports unconfirmed settlement at timeout. Authorization denial remains terminal.
 +
 +Persistent runtimes admit at most 256 sessions per workspace. Explicit host disposal releases completed state; admission evicts the least-recently-used idle session when end events are unavailable. Active prompts, transcript fetches, retains and dirty or buffered cursors stay pinned. When every slot is pinned, new sessions skip automatic recall/retention with a `session_capacity_reached` diagnostic; existing work continues. Evicted sessions resume with a full transcript replacement. OpenCode2 global events require current scoped-prompt admission, and keyed injection never falls back to another session. Cline keeps only the latest prompt ID for up to 256 sessions. Usage counters restart after eviction, so resumed transcripts can repeat local usage records.
 diff --git a/LICENSE b/LICENSE
@@ -8900,7 +8902,7 @@ index 823d7d6..c061b5e 100644
        expect(post.body.tags).toHaveLength(1);
        expect(post.body.tags[0]).toMatch(
 diff --git a/src/core/hindsight.ts b/src/core/hindsight.ts
-index f6ac73b..33deb70 100644
+index f6ac73b..d46efcc 100644
 --- a/src/core/hindsight.ts
 +++ b/src/core/hindsight.ts
 @@ -1,3 +1,7 @@
@@ -9236,7 +9238,43 @@ index f6ac73b..33deb70 100644
    /** Explicitly delete one document (and its cascaded memory units/links). Background sync must
     *  never use this as a cleanup primitive: a document id alone does not prove repository ownership. */
    async deleteDocument(documentId: string): Promise<void> {
-@@ -757,7 +648,7 @@ export class HindsightClient {
+@@ -717,17 +608,26 @@ export class HindsightClient {
+ 
+   /** Count of operations still ACTIVE on this bank — the list includes terminal ops (completed/
+    *  failed/cancelled), so filter by status. Powers syncStatus's "extractions drained" check. */
+-  async activeOperations(): Promise<number> {
+-    const r = await this.req("GET", this.bankUrl("/operations"));
++  async activeOperations(timeoutMs: number = 15_000): Promise<number> {
++    // The settlement loop owns retries and its deadline, including rate limiting.
++    const r = await this.req("GET", this.bankUrl("/operations"), undefined, [429], timeoutMs);
++    if (!r.ok) throw new RouterRequestError(r.status, boundedRetryAfterMs(r.headers.get("retry-after")));
+     try {
+-      const j = (await r.json()) as {
+-        operations?: { status?: string }[];
+-        items?: { status?: string }[];
+-      };
+-      const ops = j.operations ?? j.items ?? [];
+-      return ops.filter((o) => !TERMINAL.has((o?.status || "").toLowerCase())).length;
++      const body: unknown = await r.json();
++      if (!body || typeof body !== "object" || Array.isArray(body)) throw new RouterRequestError(502);
++      const { operations, items } = body as Record<string, unknown>;
++      const ops = operations ?? items;
++      if (!Array.isArray(ops)) throw new RouterRequestError(502);
++      let active = 0;
++      for (const op of ops as unknown[]) {
++        if (!op || typeof op !== "object" || !("status" in op) || typeof op.status !== "string" || !op.status) {
++          throw new RouterRequestError(502);
++        }
++        if (!TERMINAL.has(op.status.toLowerCase())) active++;
++      }
++      return active;
+     } catch {
+-      return 0;
++      throw new RouterRequestError(502);
+     }
+   }
+ 
+@@ -757,7 +657,7 @@ export class HindsightClient {
        let backoffMs = POLL_CYCLE_MS;
        await pool([...pending], this.maxParallelRetains, async (id) => {
          try {
@@ -9245,7 +9283,7 @@ index f6ac73b..33deb70 100644
            if (r.status === 429) {
              backoffMs = Math.min(
                RETRY_AFTER_CEILING_MS,
-@@ -781,9 +672,22 @@ export class HindsightClient {
+@@ -781,9 +681,22 @@ export class HindsightClient {
              pending.delete(id);
              if (st !== "completed") failed++;
            }
@@ -9270,7 +9308,7 @@ index f6ac73b..33deb70 100644
        });
        if (pending.size) {
          this.log(`  … ${pending.size}/${ids.length} ${label} ops pending`);
-@@ -804,33 +708,12 @@ export class HindsightClient {
+@@ -804,33 +717,12 @@ export class HindsightClient {
     * tool's configured window and aborted every high-budget synthesis mid-flight (#3590).
     */
    async reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string> {
@@ -9309,7 +9347,7 @@ index f6ac73b..33deb70 100644
    }
  
    /**
-@@ -1156,8 +1039,8 @@ export class HindsightClient {
+@@ -1156,8 +1048,8 @@ export class HindsightClient {
      return (
        s
          .toLowerCase()
@@ -9320,7 +9358,7 @@ index f6ac73b..33deb70 100644
          .slice(0, 60) || "initiative"
      );
    }
-@@ -1244,13 +1127,15 @@ export class HindsightClient {
+@@ -1244,13 +1136,15 @@ export class HindsightClient {
          (n) => n.kind === "folder" && (n.name || "").toLowerCase() === name.toLowerCase()
        );
        if (hit?.id) return hit.id;
@@ -9900,7 +9938,7 @@ index 127d9a9..dd45025 100644
        "document",
        {} // no harness in these tests: nothing to stamp
 diff --git a/src/core/knowledge-tools.ts b/src/core/knowledge-tools.ts
-index 621b1c8..81767c7 100644
+index 621b1c8..b656308 100644
 --- a/src/core/knowledge-tools.ts
 +++ b/src/core/knowledge-tools.ts
 @@ -1,3 +1,4 @@
@@ -9932,7 +9970,7 @@ index 621b1c8..81767c7 100644
      repoDir?: string;
      harness?: string;
      stampFor?: () => RetainStamp;
-@@ -129,9 +132,10 @@ export function buildKnowledgeTools(
+@@ -129,17 +132,19 @@ export function buildKnowledgeTools(
      toolGuideExtra?: string;
    } = {}
  ): ToolSpec[] {
@@ -9944,7 +9982,18 @@ index 621b1c8..81767c7 100644
      {
        name: "hindsight_sync_status",
        description:
-@@ -179,7 +183,7 @@ export function buildKnowledgeTools(
+         "Report whether this repo's memory bank is in sync: gitlog seed present, how much recent " +
+         "history has been deepened with full diffs, conversations ingested, knowledge pages " +
+         "created, and extractions still running. `synced: true` means the seeded memory is fully " +
+-        "queryable. Ingestion is automatic and background — if not synced, it is in progress; " +
+-        "nothing to run.",
++        "queryable. A positive activeOps count means operations are running; activeOps: null " +
++        "means operation status is unavailable. synced: false does not establish progress. " +
++        "Ingestion is automatic and background; nothing to run.",
+       inputSchema: {},
+       annotations: READ_ONLY_ANNOTATIONS,
+       handler: async () => {
+@@ -179,7 +184,7 @@ export function buildKnowledgeTools(
              path: configPath,
              exists: existsSync(configPath),
              api_url: cfg.apiUrl,
@@ -9953,7 +10002,7 @@ index 621b1c8..81767c7 100644
              disabled: cfg.disabled,
            },
            // What the LIVE client is signing with, which is not the same question as what the file
-@@ -187,8 +191,8 @@ export function buildKnowledgeTools(
+@@ -187,8 +192,8 @@ export function buildKnowledgeTools(
            // this tool reported that state as perfectly healthy (#3600). Booleans only — the token
            // value is never returned.
            credential: {
@@ -9964,7 +10013,7 @@ index 621b1c8..81767c7 100644
            },
            environment: {
              config_override: Boolean(process.env.HINDSIGHT_CONFIG),
-@@ -342,17 +346,7 @@ export function buildKnowledgeTools(
+@@ -342,17 +347,7 @@ export function buildKnowledgeTools(
        inputSchema: { title: z.string(), content: z.string() },
        annotations: NON_DESTRUCTIVE_WRITE_ANNOTATIONS,
        handler: guarded(async ({ title, content }) => {
@@ -9983,7 +10032,7 @@ index 621b1c8..81767c7 100644
          const stamp = opts.stampFor?.();
          const metadata = {
            ...stamp?.metadata,
-@@ -376,4 +370,22 @@ export function buildKnowledgeTools(
+@@ -376,4 +371,22 @@ export function buildKnowledgeTools(
        }),
      },
    ];
@@ -10687,10 +10736,10 @@ index 0507e5e..e6fd285 100644
        sessionRoot,
 diff --git a/src/core/router-client.test.ts b/src/core/router-client.test.ts
 new file mode 100644
-index 0000000..716ec50
+index 0000000..77326cf
 --- /dev/null
 +++ b/src/core/router-client.test.ts
-@@ -0,0 +1,465 @@
+@@ -0,0 +1,494 @@
 +import { execFileSync } from "node:child_process";
 +import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 +import { buildSessionStartContext } from "./session-start";
@@ -11155,6 +11204,35 @@ index 0000000..716ec50
 +    client: probe, harness: "codex", hasGit: () => true, startSeed, startSurvey, headSha: () => null });
 +  expect(startSeed).toHaveBeenCalledOnce(); expect(startSurvey).toHaveBeenCalledOnce();
 +  expect(output.deferInitialReflect).toBe(false);
++});
++
++it.each([
++  null, {}, { operations: {} }, { operations: [null] },
++  { operations: [{ status: 3 }] }, { operations: [{}] },
++  { operations: [{ status: "" }] },
++])("operation polling rejects malformed responses instead of reporting zero: %j", async (body) => {
++  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(body));
++  await expect(client().activeOperations()).rejects.toMatchObject({ statusCode: 502 });
++});
++
++it("operation polling rejects malformed JSON with a sanitized error", async () => {
++  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("secret body"));
++  await expect(client().activeOperations()).rejects.toThrow("memory request failed (502)");
++});
++
++it.each(["operations", "items"])("operation polling counts only nonterminal %s", async (key) => {
++  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ [key]: [
++    { status: "completed" }, { status: "failed" }, { status: "cancelled" }, { status: "running" },
++  ] }));
++  expect(await client().activeOperations()).toBe(1);
++});
++
++it("operation polling leaves rate-limit retry to its caller", async () => {
++  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, {
++    status: 429, headers: { "retry-after": "60" },
++  }));
++  await expect(client().activeOperations()).rejects.toMatchObject({ statusCode: 429, retryAfterMs: 60_000 });
++  expect(send).toHaveBeenCalledOnce();
 +});
 diff --git a/src/core/router-survey.test.ts b/src/core/router-survey.test.ts
 new file mode 100644
@@ -12417,6 +12495,246 @@ index 93025b5..c4437d2 100644
 +  if (existsSync(desired) && !owned.includes(desired)) throw new ToolPrefixError("unrelated skill name collision; choose another toolPrefix");
 +  if (owned.some(path => path !== desired)) throw new ToolPrefixError("installed skill/tool prefix mismatch; reinstall to migrate");
 +}
+diff --git a/src/core/status.test.ts b/src/core/status.test.ts
+index 94032b1..95f8af4 100644
+--- a/src/core/status.test.ts
++++ b/src/core/status.test.ts
+@@ -1,9 +1,10 @@
++import { RouterRequestError } from "@memory-router/shared/router-transport";
+ import { execFileSync } from "node:child_process";
+ import { mkdtempSync, rmSync } from "node:fs";
+ import { tmpdir } from "node:os";
+ import { basename, join } from "node:path";
+-import { afterEach, describe, expect, it } from "vitest";
+-import { syncStatus, DEEPEN_DIFF_TARGET, type StatusClient } from "./status";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { syncStatus, waitForSettlement, DEEPEN_DIFF_TARGET, type StatusClient } from "./status";
+ 
+ /** Build a StatusClient stub; per-tag doc sets, overridable listPages/activeOperations. */
+ function stubClient(opts: {
+@@ -28,6 +29,7 @@ function stubClient(opts: {
+ let dir: string | undefined;
+ 
+ afterEach(() => {
++  vi.useRealTimers();
+   if (dir) rmSync(dir, { recursive: true, force: true });
+   dir = undefined;
+ });
+@@ -100,7 +102,7 @@ describe("syncStatus", () => {
+     expect(s.synced).toBe(false);
+   });
+ 
+-  it("fail-open: an activeOperations rejection yields activeOps null and does NOT block synced", async () => {
++  it("an unavailable operation count blocks sync even with existing git and pages", async () => {
+     const client = stubClient({
+       gitIds: ["gitlog:repo"],
+       activeOperations: async () => {
+@@ -109,8 +111,7 @@ describe("syncStatus", () => {
+     });
+     const s = await syncStatus(client, "bank-1");
+     expect(s.activeOps).toBeNull();
+-    // (activeOps ?? 0) === 0 — an unreportable count doesn't gate completion.
+-    expect(s.synced).toBe(true);
++    expect(s.synced).toBe(false);
+   });
+ 
+   it("fail-open: a source:chat listDocumentIds rejection yields chatDocs 0, no throw", async () => {
+@@ -180,3 +181,98 @@ describe("syncStatus", () => {
+     expect(s.gitlogPresent).toBe(true);
+   });
+ });
++
++it("sync recovers only after an explicit zero count following a polling timeout", async () => {
++  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
++    .mockRejectedValueOnce(new DOMException("request timed out", "TimeoutError"))
++    .mockResolvedValueOnce(2)
++    .mockResolvedValueOnce(0);
++  const client = stubClient({ gitIds: ["gitlog:repo"], activeOperations });
++  expect(await syncStatus(client, "bank")).toMatchObject({ gitlogPresent: true, pagesCount: 1, activeOps: null, synced: false });
++  expect(await syncStatus(client, "bank")).toMatchObject({ activeOps: 2, synced: false });
++  expect(await syncStatus(client, "bank")).toMatchObject({ activeOps: 0, synced: true });
++});
++
++it.each([401, 403])("sync propagates authorization denial from operation polling (%s)", async (statusCode) => {
++  const denied = Object.assign(new Error("memory access denied"), { statusCode });
++  const client = stubClient({ gitIds: ["gitlog:repo"], activeOperations: async () => { throw denied; } });
++  await expect(syncStatus(client, "bank")).rejects.toBe(denied);
++});
++
++it.each(["source:chat", "pages", "source:upload", "source:survey-baseline"])(
++  "sync cannot report success after authorization denial in %s", async (probe) => {
++    const denied = Object.assign(new Error("memory access denied"), { statusCode: 403 });
++    const client = stubClient({
++      listDocumentIds: async (tag) => { if (tag === probe) throw denied; return new Set(["gitlog:repo"]); },
++      listPages: async () => { if (probe === "pages") throw denied; return { items: [{ id: "p1" }] }; },
++    });
++    await expect(syncStatus(client, "bank", "/repo")).rejects.toBe(denied);
++  }
++);
++
++it("settlement retries failed and timed-out probes until completion is established", async () => {
++  vi.useFakeTimers();
++  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
++    .mockRejectedValueOnce(new Error("secret-bearing upstream failure"))
++    .mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"))
++    .mockResolvedValueOnce(1)
++    .mockResolvedValueOnce(0);
++  const log = vi.fn<(message: string) => void>();
++  const pending = waitForSettlement({ activeOperations }, log, 20_000);
++  await vi.advanceTimersByTimeAsync(10_000);
++  expect(activeOperations).toHaveBeenCalledTimes(3);
++  await vi.advanceTimersByTimeAsync(5000);
++  expect(await pending).toBe(true);
++  expect(activeOperations).toHaveBeenCalledTimes(4);
++  expect(log.mock.calls.flat().join()).not.toContain("secret-bearing");
++});
++
++it.each([null, 3])("settlement remains unconfirmed at its deadline with count %s", async (active) => {
++  vi.useFakeTimers();
++  const activeOperations = vi.fn<StatusClient["activeOperations"]>().mockImplementation(async () => {
++    if (active === null) throw new Error("upstream unavailable");
++    return active;
++  });
++  const log = vi.fn<(message: string) => void>();
++  const pending = waitForSettlement({ activeOperations }, log, 6000);
++  await vi.advanceTimersByTimeAsync(6000);
++  expect(await pending).toBe(false);
++  expect(activeOperations).toHaveBeenCalledTimes(2);
++  expect(activeOperations).toHaveBeenNthCalledWith(2, 1000);
++  expect(log.mock.calls.at(-1)?.[0]).toContain("settlement unconfirmed at timeout");
++  expect(vi.getTimerCount()).toBe(0);
++});
++
++it.each([401, 403])("settlement stops immediately on authorization denial (%s)", async (statusCode) => {
++  vi.useFakeTimers();
++  const denied = Object.assign(new Error("memory access denied"), { statusCode });
++  const activeOperations = vi.fn<StatusClient["activeOperations"]>().mockRejectedValue(denied);
++  await expect(waitForSettlement({ activeOperations }, vi.fn())).rejects.toBe(denied);
++  expect(activeOperations).toHaveBeenCalledOnce();
++  expect(vi.getTimerCount()).toBe(0);
++});
++
++
++it("settlement honors bounded rate-limit delay before recovering", async () => {
++  vi.useFakeTimers();
++  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
++    .mockRejectedValueOnce(new RouterRequestError(429, 60_000))
++    .mockResolvedValueOnce(0);
++  const pending = waitForSettlement({ activeOperations }, vi.fn(), 90_000);
++  await vi.advanceTimersByTimeAsync(59_999);
++  expect(activeOperations).toHaveBeenCalledOnce();
++  await vi.advanceTimersByTimeAsync(1);
++  expect(await pending).toBe(true);
++  expect(activeOperations).toHaveBeenCalledTimes(2);
++});
++
++it("rate-limit delay cannot extend the settlement deadline", async () => {
++  vi.useFakeTimers();
++  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
++    .mockRejectedValue(new RouterRequestError(429, 60_000));
++  const pending = waitForSettlement({ activeOperations }, vi.fn(), 10_000);
++  await vi.advanceTimersByTimeAsync(10_000);
++  expect(await pending).toBe(false);
++  expect(activeOperations).toHaveBeenCalledOnce();
++  expect(vi.getTimerCount()).toBe(0);
++});
+diff --git a/src/core/status.ts b/src/core/status.ts
+index c282e49..da4911c 100644
+--- a/src/core/status.ts
++++ b/src/core/status.ts
+@@ -14,6 +14,8 @@
+  * trickle deliberately does NOT gate `synced` — it deepens across sessions and is a bonus, not a
+  * prerequisite.
+  */
++import { RouterRequestError } from "@memory-router/shared/router-transport";
++import { isAuthorizationError } from "@memory-router/shared/request-error";
+ import { execFileSync } from "node:child_process";
+ import { commitsSince, repoNameOf } from "./git";
+ import { parsePageList } from "./knowledge-injection";
+@@ -24,7 +26,41 @@ export interface StatusClient {
+   listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
+   listPages(): Promise<unknown>;
+   knowledgePagesSupported?: boolean;
+-  activeOperations(): Promise<number>;
++  activeOperations(timeoutMs?: number): Promise<number>;
++}
++
++function unavailable(error: unknown): null {
++  if (isAuthorizationError(error)) throw error;
++  return null;
++}
++
++export async function waitForSettlement(
++  client: Pick<StatusClient, "activeOperations">,
++  log: (message: string) => void,
++  maxMs: number = 15 * 60 * 1000
++): Promise<boolean> {
++  const deadline = Date.now() + maxMs;
++  let active: number | null = null;
++  while (Date.now() < deadline) {
++    let retryMs = 5000;
++    active = await client.activeOperations(Math.min(15_000, deadline - Date.now())).catch((error: unknown) => {
++      if (error instanceof RouterRequestError && error.statusCode === 429) {
++        retryMs = Math.max(retryMs, error.retryAfterMs);
++      }
++      return unavailable(error);
++    });
++    if (active === 0) return true;
++    if (Date.now() >= deadline) break;
++    log(
++      active === null
++        ? "[deepen] operation status unavailable; retrying settlement check"
++        : `[deepen] waiting for ${active} server-side op(s) to settle`
++    );
++    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(retryMs, deadline - Date.now())));
++  }
++  const state = active === null ? "operation status unavailable" : `${active} server-side op(s) still active`;
++  log(`[deepen] settlement unconfirmed at timeout (${state})`);
++  return false;
+ }
+ 
+ /** How much recent history the deepen engine targets with per-commit diffs. */
+@@ -65,12 +101,18 @@ export async function syncStatus(
+   const gitIds = await client.listDocumentIds("source:git", "all_strict");
+   const chatIds = await client
+     .listDocumentIds("source:chat", "all_strict")
+-    .catch(() => new Set<string>());
+-  const pages = parsePageList(await client.listPages().catch(() => null));
+-  const activeOps = await client.activeOperations().catch(() => null);
++    .catch((error: unknown) => {
++      unavailable(error);
++      return new Set<string>();
++    });
++  const pages = parsePageList(await client.listPages().catch(unavailable));
++  const activeOps = await client.activeOperations().catch(unavailable);
+   const uploads = await client
+     .listDocumentIds("source:upload", "all_strict")
+-    .catch(() => new Set<string>());
++    .catch((error: unknown) => {
++      unavailable(error);
++      return new Set<string>();
++    });
+   const surveyDocs = SURVEY_DOC_IDS.filter((id) => uploads.has(id)).length;
+ 
+   // Survey observability: the survey-baseline:<sha> markers Chris's re-survey mechanism writes.
+@@ -90,7 +132,8 @@ export async function syncStatus(
+         surveyBaseline = best.sha;
+         surveyCommitsBehind = best.behind;
+       }
+-    } catch {
++    } catch (error: unknown) {
++      unavailable(error);
+       /* fail open — survey state is informational */
+     }
+   }
+@@ -120,6 +163,6 @@ export async function syncStatus(
+     synced:
+       gitlogPresent &&
+       (client.knowledgePagesSupported === false || pages.length > 0) &&
+-      (activeOps ?? 0) === 0,
++      activeOps === 0,
+   };
+ }
 diff --git a/src/core/survey.test.ts b/src/core/survey.test.ts
 index 41c59c7..0126504 100644
 --- a/src/core/survey.test.ts
@@ -14490,9 +14808,18 @@ index da7d888..a6bb009 100644
        const entry = hooks.hooks[hook.event][0].hooks[0];
        expect(entry.command).toBe(`node "\${PLUGIN_ROOT}/dist/${hook.entry}"`);
 diff --git a/src/deepen.ts b/src/deepen.ts
-index f044545..f3225cd 100644
+index f044545..481218c 100644
 --- a/src/deepen.ts
 +++ b/src/deepen.ts
+@@ -35,7 +35,7 @@ import {
+ } from "./core/survey-lease";
+ import { buildPageTrigger } from "./core/missions";
+ import { HindsightClient } from "./core/hindsight";
+-import { DEEPEN_DIFF_TARGET } from "./core/status";
++import { DEEPEN_DIFF_TARGET, waitForSettlement } from "./core/status";
+ import type { ChatSession } from "./core/types";
+ import { pool } from "./core/util";
+ import { getHarness, HARNESS_NAMES } from "./harness/registry";
 @@ -121,7 +121,8 @@ async function main() {
    try {
      const harness = await getHarness(HARNESS);
@@ -14503,6 +14830,37 @@ index f044545..f3225cd 100644
        apiToken: API_TOKEN,
        bank: FINAL_BANK!,
        // Names the repository in every seeded page's query, so page synthesis can tell this
+@@ -289,17 +290,7 @@ async function main() {
+     // The drain above only covers operations THIS run enqueued — consolidation and the template's
+     // page refreshes run server-side on their own schedule. `synced` requires ZERO active ops, so
+     // wait (bounded) for the bank to fully settle before declaring the run complete.
+-    const settleDeadline = Date.now() + 15 * 60 * 1000;
+-    for (;;) {
+-      const active = await client.activeOperations().catch(() => 0);
+-      if (active === 0) break;
+-      if (Date.now() > settleDeadline) {
+-        log(`[deepen] ${active} server-side op(s) still active at settle timeout — proceeding`);
+-        break;
+-      }
+-      log(`[deepen] waiting for ${active} server-side op(s) to settle …`);
+-      await new Promise((r) => setTimeout(r, 5000));
+-    }
++    const settled = await waitForSettlement(client, log);
+     // (knowledge pages need no separate pass: configureBank seeds them through the knowledge-base
+     // API every run, matched by name — syncStatus's `synced` stays sound because it also requires
+     // the gitlog seed present AND zero active extraction operations.)
+@@ -310,9 +301,10 @@ async function main() {
+       ms: Date.now() - t0,
+       newChats: sessions.length,
+       failures,
++      settled,
+     });
+     log(
+-      `\n✅ deepen complete in ${((Date.now() - t0) / 1000).toFixed(1)}s${failures ? ` (${failures} items failed to enqueue)` : ""}.`
++      `\ndeepen complete in ${((Date.now() - t0) / 1000).toFixed(1)}s${settled ? "" : " (settlement unconfirmed)"}${failures ? ` (${failures} items failed to enqueue)` : ""}.`
+     );
+   } finally {
+     releaseLease(lease);
 diff --git a/src/docs-freshness.test.ts b/src/docs-freshness.test.ts
 index c393112..d2b1632 100644
 --- a/src/docs-freshness.test.ts
@@ -18106,7 +18464,7 @@ index 9b72278..f954d3a 100644
 +  ]
  }
 diff --git a/vitest.config.ts b/vitest.config.ts
-index 68a1104..c98c6d5 100644
+index 68a1104..309e803 100644
 --- a/vitest.config.ts
 +++ b/vitest.config.ts
 @@ -1,21 +1,5 @@
@@ -18131,5 +18489,5 @@ index 68a1104..c98c6d5 100644
 -    },
 -  },
 +  resolve: { alias: { "@memory-router": new URL("../../../src", import.meta.url).pathname } },
-+  test: { include: ["src/core/runtime-lifecycle.test.ts", "src/core/chat.test.ts", "src/core/retain-cursor.test.ts", "src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
++  test: { include: ["src/core/runtime-lifecycle.test.ts", "src/core/status.test.ts", "src/core/chat.test.ts", "src/core/retain-cursor.test.ts", "src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
  });
