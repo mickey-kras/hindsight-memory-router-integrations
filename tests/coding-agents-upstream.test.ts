@@ -158,6 +158,23 @@ it("upstream client requires a known harness and discards all reads on authoriza
   await expect(client.reflect("q", { timeoutMs: 100 })).rejects.toThrow();
 });
 
+it("fetches freshly authorized page lists even when roster injection cadence is above one", async () => {
+  const dir = setup();
+  const cacheFile = join(dir, "cache.json");
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ roots: [] }));
+  const client = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A" });
+  const cfg = resolveConfig({ autoInject: "none", pageRefreshEveryTurns: 100 });
+  await buildHookOutput({ harness: "codex", prompt: "first prompt", cfg, client, cacheFile });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(readSessionCache(cacheFile).pages).toBeUndefined();
+  fetch.mockResolvedValue(new Response("forbidden", { status: 403 }));
+  await expect(buildHookOutput({ harness: "codex", prompt: "next prompt", cfg, client, cacheFile })).rejects.toThrow(
+    "memory access denied",
+  );
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(() => client.assertAuthorized()).toThrow("memory access denied");
+});
+
 it("drops cached memory and suppresses successful reflect when page access is denied", async () => {
   const dir = setup();
   const cacheFile = join(dir, "cache.json");

@@ -13,6 +13,8 @@ export interface ManagedPrincipal extends BankAccess {
 export interface ManagedRouterConfig {
   routerUrl: string;
   toolPrefix?: string;
+  // Legacy compatibility inputs: validated but unused by coding-agent runtime.
+  // Configure retrieval through normal coding-agent config; OpenClaw has its own schema.
   recallTimeoutMs?: number;
   recallMaxTokens?: number;
   retainQueueFlushIntervalMs?: number;

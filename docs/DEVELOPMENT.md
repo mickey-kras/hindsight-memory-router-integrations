@@ -26,3 +26,12 @@ Dependabot preparation increments the patch version of each package whose depend
 Coding-agent provenance and deviations live in [`UPSTREAM.json`](../integrations/coding-agents/UPSTREAM.json), [`LOCAL_CHANGES.json`](../integrations/coding-agents/LOCAL_CHANGES.json), [`router.patch`](../integrations/coding-agents/router.patch) and [vendored deviations](../src/upstream/coding-agents/DEVIATIONS.md). After intentional vendored edits, run `npm run upstream:accept`; CI rejects unrecorded drift. Vendored dependencies move with upstream's tested lockfile during re-vendoring and are excluded from Dependabot.
 
 See [upstream upgrades](UPGRADING.md), [deviations](DEVIATIONS.md), [dependency updates](dependabot.md) and [releasing](RELEASING.md).
+
+## Dependency inventory
+
+| Package | Direct runtime declarations | Development declarations |
+| --- | --- | --- |
+| OpenClaw | `@vectorize-io/hindsight-agent-sdk`, `@vectorize-io/hindsight-client`, `fs-native-extensions` | `@biomejs/biome`, `@types/node`, `@vitest/coverage-v8`, `aislop`, `typescript`, `vitest` |
+| Coding agents | `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml`, `zod` | `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript`, `vitest` |
+
+OpenClaw declares `@vectorize-io/hindsight-client@1.0.0` as a direct production dependency because its exported TypeScript declarations import client types. The repository also overrides the SDK's transitive client to `1.0.0`. Coding-agent overrides cover `@opencode/plugin > @opentelemetry/core`, `esbuild`, `fast-uri`, `hono`, `http-cache-semantics`, `ip-address`, `postcss` and `vite`; their ranges are listed in [vendored deviations](../src/upstream/coding-agents/DEVIATIONS.md). Bundled JavaScript and platform-native secure-storage dependencies have different packaging requirements. Consult the manifests and shrinkwraps for current declared ranges and resolved transitive/platform packages.
