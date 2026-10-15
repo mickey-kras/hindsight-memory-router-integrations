@@ -2,7 +2,7 @@
 
 [Documentation](README.md) | [Repository](../README.md)
 
-Requires Node.js 22 or later and an HTTPS Memory Router endpoint. Install the OpenClaw `.tgz` from the [selected release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases), verifying its hash against that release's `PACKAGE_SHA256`.
+Requires Node.js 22.12.0 or later and an HTTPS Memory Router endpoint. Install the OpenClaw `.tgz` from the [selected release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases), verifying its hash against that release's `PACKAGE_SHA256`.
 
 Install the downloaded archive using the [OpenClaw plugin CLI](https://docs.openclaw.ai/cli/plugins/install):
 
@@ -10,7 +10,9 @@ Install the downloaded archive using the [OpenClaw plugin CLI](https://docs.open
 openclaw plugins install /absolute/path/downloaded-openclaw.tgz
 ```
 
-Replace the path with the verified release artifact. OpenClaw may require a newer Node.js version than this package's minimum.
+Replace the path with the verified release artifact. OpenClaw may require a newer Node.js version than this package's minimum. The root entrypoint supports ESM imports and CommonJS `require()` on Node.js 22.12.0 or later; `./hosted` supports ESM imports.
+
+Windows is not currently supported for the OpenClaw retain queue: native lock ownership and crash recovery are verified on Linux, while the process-lock tests require POSIX signals. Use a local filesystem with OS file-lock support.
 
 ## Configure an agent
 

@@ -2,7 +2,7 @@
 
 [Documentation](README.md) | [Repository](../README.md)
 
-Requires Node.js 22 or later. From the repository root:
+Requires Node.js 22.12.0 or later. From the repository root:
 
 ```sh
 npm ci

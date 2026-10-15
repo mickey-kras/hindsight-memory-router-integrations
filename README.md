@@ -25,7 +25,7 @@ The two release packages are OpenClaw and coding agents; coding-agent MCP is inc
 
 ## Install
 
-Requires Node.js 22 or later, an HTTPS Memory Router endpoint and server-side principal/bank/scope grants.
+Requires Node.js 22.12.0 or later, an HTTPS Memory Router endpoint and server-side principal/bank/scope grants.
 
 Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases) and verify its SHA-256 against `PACKAGE_SHA256` from the same release source. Packages are built by CI; tarballs are not kept in this repository.
 

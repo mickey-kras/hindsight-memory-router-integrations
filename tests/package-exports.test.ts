@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeAll, expect, it } from "vitest";
 
 beforeAll(() => {
@@ -20,4 +22,54 @@ it("loads the root plugin through its CommonJS package self-reference", () => {
     { cwd: process.cwd(), encoding: "utf8" },
   );
   expect(output).toBe("hindsight-memory-router");
+});
+
+it("ships root and hosted entrypoints without coding-only adapters", () => {
+  const packed = JSON.parse(
+    execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { encoding: "utf8" }),
+  ) as Array<{ files: Array<{ path: string }> }>;
+  const files = packed[0].files.map((file) => file.path);
+  expect(files).toEqual(
+    expect.arrayContaining([
+      "dist/plugin.js",
+      "dist/plugin.d.ts",
+      "dist/shared/hosted-client.js",
+      "dist/shared/hosted-client.d.ts",
+      "dist/upstream/src/retain-queue.js",
+      "dist/upstream/src/retain-queue.d.ts",
+    ]),
+  );
+  expect(files.some((file) => file.startsWith("dist/coding-agents/"))).toBe(false);
+});
+
+it("loads ESM root and hosted exports with usable declarations", () => {
+  const directory = mkdtempSync(join(process.cwd(), ".package-contract-"));
+  try {
+    const source = `
+      import plugin, { PLUGIN_ID } from "@mickey-kras/hindsight-memory-router-openclaw";
+      import { HostedRouterClient } from "@mickey-kras/hindsight-memory-router-openclaw/hosted";
+      if (typeof plugin !== "function" || PLUGIN_ID !== "hindsight-memory-router") throw new Error("missing root export");
+      if (typeof HostedRouterClient !== "function") throw new Error("missing hosted export");
+    `;
+    execFileSync(process.execPath, ["--input-type=module", "-e", source], { cwd: directory });
+    const consumer = join(directory, "consumer.mts");
+    writeFileSync(consumer, source);
+    execFileSync(
+      process.execPath,
+      [
+        "node_modules/typescript/bin/tsc",
+        "--ignoreConfig",
+        "--noEmit",
+        "--strict",
+        "--module",
+        "NodeNext",
+        "--target",
+        "ES2022",
+        consumer,
+      ],
+      { cwd: process.cwd(), stdio: "inherit" },
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
