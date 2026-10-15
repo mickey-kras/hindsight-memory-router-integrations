@@ -415,6 +415,124 @@ describe("plugin wiring", () => {
     };
   }
 
+  function deferredRetain() {
+    let resolve!: (value: { queued: boolean; bank: string }) => void;
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<{ queued: boolean; bank: string }>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it.each(["agent_end", "session_end"])(
+    "coalesces overlapping identical hooks starting with %s and preserves fresh documents after teardown",
+    async (firstHook) => {
+      const { handler, sessionEnd, event, retain } = retainIdentityFixture();
+      const deferred = deferredRetain();
+      retain.mockReturnValueOnce(deferred.promise);
+      const context = { agentId: "main", sessionKey: "overlap" };
+      const first = (firstHook === "agent_end" ? handler : sessionEnd)(event, context);
+      const ending = sessionEnd(event, context);
+      const duplicate = handler(event, context);
+      await Promise.resolve();
+      expect(retain).toHaveBeenCalledTimes(1);
+
+      deferred.resolve({ queued: false, bank: "main" });
+      await Promise.all([first, ending, duplicate]);
+      await handler(event, context);
+      expect(retain).toHaveBeenCalledTimes(2);
+      expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
+    },
+  );
+
+  it("retries a failed overlapping transcript without requiring session teardown", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const context = { agentId: "main", sessionKey: "retry" };
+    const first = handler(event, context);
+    const duplicate = handler(event, context);
+    await Promise.resolve();
+    expect(retain).toHaveBeenCalledTimes(1);
+    deferred.reject(new Error("failed retain"));
+    await Promise.all([first, duplicate]);
+    await handler(event, context);
+    await handler(event, context);
+    expect(retain).toHaveBeenCalledTimes(2);
+  });
+
+  it("delivers changed content independently and defers teardown until every active retain settles", async () => {
+    const { handler, sessionEnd, event, retain } = retainIdentityFixture();
+    const firstRetain = deferredRetain();
+    const changedRetain = deferredRetain();
+    retain.mockReturnValueOnce(firstRetain.promise).mockReturnValueOnce(changedRetain.promise);
+    const context = { agentId: "main", sessionKey: "changed" };
+    const changed = { messages: [...event.messages, { role: "assistant", content: "a new answer" }] };
+    const first = handler(event, context);
+    const update = handler(changed, context);
+    const ending = sessionEnd(changed, context);
+    await Promise.resolve();
+    expect(retain).toHaveBeenCalledTimes(2);
+
+    // The changed transcript completes while the original is still unresolved.
+    changedRetain.resolve({ queued: true, bank: "main" });
+    await Promise.all([update, ending]);
+    const lateDuplicate = handler(event, context);
+    await Promise.resolve();
+    expect(retain).toHaveBeenCalledTimes(2);
+    firstRetain.resolve({ queued: false, bank: "main" });
+    await Promise.all([first, lateDuplicate]);
+    expect(retain.mock.calls.map(([, request]) => JSON.parse(request.content))).toEqual([
+      event.messages,
+      changed.messages,
+    ]);
+    await handler(changed, context);
+    expect(retain).toHaveBeenCalledTimes(3);
+    expect(new Set(retain.mock.calls.map(([, request]) => request.documentId)).size).toBe(3);
+  });
+
+  it("does not let a late older retain rearm the newest completed transcript", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const context = { agentId: "main", sessionKey: "completion-order" };
+    const changed = { messages: [{ role: "user", content: "different turn" }] };
+    const first = handler(event, context);
+    await handler(changed, context);
+    deferred.resolve({ queued: false, bank: "main" });
+    await first;
+    await handler(changed, context);
+    expect(retain).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries failed coalesced work without blocking changed content", async () => {
+    const { handler, sessionEnd, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const context = { agentId: "main", sessionKey: "failed" };
+    const changed = { messages: [{ role: "user", content: "different turn" }] };
+    const first = handler(event, context);
+    const duplicate = sessionEnd(event, context);
+    await handler(changed, context);
+    expect(retain).toHaveBeenCalledTimes(2);
+    deferred.reject(new Error("failed retain"));
+    await Promise.all([first, duplicate]);
+    await handler(event, context);
+    expect(retain).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps overlapping exact principal/session tuples independent", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const first = handler(event, { agentId: "a", sessionKey: "b:c" });
+    await handler(event, { agentId: "a:b", sessionKey: "c" });
+    expect(retain.mock.calls.map(([principal]) => principal)).toEqual(["a", "a:b"]);
+    deferred.resolve({ queued: false, bank: "main" });
+    await first;
+  });
+
   it("retains a revisited session in a new document after digest-state eviction", async () => {
     const { handler, event, retain } = retainIdentityFixture();
     const original = { agentId: "main", sessionKey: "original" };
