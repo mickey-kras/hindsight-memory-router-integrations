@@ -93,10 +93,11 @@ export interface UsageCursorStore {
   write(sessionId: string, turns: number): void;
 }
 
-export function memoryUsageCursorStore(): UsageCursorStore {
+export function memoryUsageCursorStore(): UsageCursorStore & { delete(sessionId: string): void } {
   const recorded = new Map<string, number>();
   return {
     read: (sessionId) => recorded.get(sessionId),
+    delete: (sessionId) => { recorded.delete(sessionId); },
     write: (sessionId, turns) => void recorded.set(sessionId, turns),
   };
 }
