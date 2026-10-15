@@ -10,6 +10,7 @@ describe("pi extension adapter", () => {
       getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
       onTranscript: vi.fn(async () => {}),
       flush: vi.fn(async () => {}),
+      dispose: vi.fn(),
     };
     const hooks = createPiHooks(core, "pi");
     const sections: Record<string, string> = { base: "You are pi." };
@@ -125,7 +126,7 @@ describe("pi extension adapter", () => {
   it("writes back the whole session branch, not just the latest run's messages (#4963)", async () => {
     const onTranscript = vi.fn(async () => {});
     const flush = vi.fn(async () => {});
-    const core = { onPrompt: vi.fn(), getInjection: vi.fn(), onTranscript, flush };
+    const core = { onPrompt: vi.fn(), getInjection: vi.fn(), onTranscript, flush, dispose: vi.fn() };
     const hooks = createPiHooks(core as never, "pi");
     const msg = (role: string, text: string) => ({
       type: "message",
@@ -149,7 +150,7 @@ describe("pi extension adapter", () => {
     expect(flush).toHaveBeenCalledOnce();
   });
 
-  it("does not write back an empty exchange", async () => {
+  it("reports completion even for an empty exchange", async () => {
     const onTranscript = vi.fn(async () => {});
     const core = {
       onPrompt: vi.fn(async () => {}),
@@ -158,7 +159,7 @@ describe("pi extension adapter", () => {
     };
     const hooks = createPiHooks(core as never, "pi");
     await hooks.agentEnd({ messages: [] }, "session-1");
-    expect(onTranscript).not.toHaveBeenCalled();
+    expect(onTranscript).toHaveBeenCalledWith("session-1", [], true);
   });
 
   it("adapts a knowledge ToolSpec into a pi native tool with a JSON-Schema parameters object", async () => {
@@ -195,6 +196,7 @@ describe("pi extension factory", () => {
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
       flush: vi.fn(async () => {}),
+      dispose: vi.fn(),
       toolSpecs: (): ToolSpec[] => [
         {
           name: "hindsight_reflect",

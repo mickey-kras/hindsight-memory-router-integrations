@@ -68,7 +68,7 @@ export function logFilePath(): string {
 
 const NUMERIC_FIELDS = new Set([
   "ms", "chars", "count", "turns", "timeoutMs", "pages", "newChats", "failures",
-  "hostCatalog", "hindsight", "commits",
+  "hostCatalog", "hindsight", "commits", "limit",
 ]);
 const BOOLEAN_FIELDS = new Set(["cold", "wired", "hasSession", "appendSupported", "retry", "settled"]);
 const ERROR_CLASSES = ["timeout", "aborted", "connection_refused", "dns_failure", "operation_failed"] as const;

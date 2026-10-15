@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: [
       "src/core/logging-privacy.test.ts",
+      "src/core/runtime-lifecycle.test.ts",
       "src/core/status.test.ts",
       "src/core/seed.test.ts",
       "src/core/runtime.test.ts",

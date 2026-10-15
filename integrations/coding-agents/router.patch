@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..64a0d66
+index 0000000..e9f8533
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,49 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -51,6 +51,8 @@ index 0000000..64a0d66
 +SessionStart propagates failures to the shared lifecycle entrypoint. Hook lifecycle entrypoints observe rejected work, emit one fixed stderr diagnostic and exit 1 without adding protocol stdout. Authorization denial remains terminal. Seed launch waits only for the child spawn/error event; failure is reported without raw exception text, and manual success means launched, not extraction complete.
 +
 +Sync requires a confirmed zero active-operation count. Unavailable or malformed operation probes remain unknown; background settlement retries for up to 15 minutes and reports unconfirmed settlement at timeout. Authorization denial remains terminal.
++
++Persistent runtimes admit at most 256 sessions per workspace. Explicit host disposal releases completed state; admission evicts the least-recently-used idle session when end events are unavailable. Active prompts, transcript fetches, retains and dirty or buffered cursors stay pinned. When every slot is pinned, new sessions skip automatic recall/retention with a `session_capacity_reached` diagnostic; existing work continues. Evicted sessions resume with a full transcript replacement. OpenCode2 global events require current scoped-prompt admission, and keyed injection never falls back to another session. Cline keeps only the latest prompt ID for up to 256 sessions. Usage counters restart after eviction, so resumed transcripts can repeat local usage records.
 diff --git a/LICENSE b/LICENSE
 new file mode 100644
 index 0000000..f572d61
@@ -5657,11 +5659,71 @@ index 9a1ec42..23b1835 100644
 -  return resolved.cfg.disabled ? "" : `${brandWord()} · ${resolved.bankId}`;
 +  return resolved.cfg.disabled ? "" : `${brandWord(cfg.toolPrefix)} · ${resolved.bankId}`;
  }
+diff --git a/src/cline.test.ts b/src/cline.test.ts
+index d6e9c8e..9d4da1f 100644
+--- a/src/cline.test.ts
++++ b/src/cline.test.ts
+@@ -14,2 +14,3 @@ describe("Cline native plugin adapter", () => {
+     const core = {
++      hasSession: vi.fn(() => true),
+       onPrompt,
+@@ -41,2 +42,3 @@ describe("Cline native plugin adapter", () => {
+     const core = {
++      hasSession: vi.fn(() => true),
+       onPrompt: vi.fn(async () => {}),
+@@ -62,2 +64,3 @@ describe("Cline native plugin adapter", () => {
+       const core = {
++        hasSession: vi.fn(() => true),
+         onPrompt: vi.fn(() => new Promise<void>(() => {})),
+@@ -84,2 +87,3 @@ describe("Cline native plugin adapter", () => {
+       const core = {
++        hasSession: vi.fn(() => true),
+         onPrompt: vi.fn(async () => {}),
+@@ -102,2 +106,3 @@ describe("Cline native plugin adapter", () => {
+     const core = {
++      hasSession: vi.fn(() => true),
+       onPrompt: vi.fn(async () => {}),
 diff --git a/src/cline.ts b/src/cline.ts
-index 0050fc1..43ed7d6 100644
+index 0050fc1..7b82934 100644
 --- a/src/cline.ts
 +++ b/src/cline.ts
-@@ -190,4 +190,4 @@ function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefin
+@@ -9,3 +9,3 @@
+ import { resolveHostMemory } from "./core/host-client";
+-import { RuntimeCore } from "./core/runtime";
++import { MAX_RUNTIME_SESSIONS, RuntimeCore } from "./core/runtime";
+ import type { TransportTurn } from "./core/chat";
+@@ -116,3 +116,3 @@ async function settleWithinHookBudget(work: Promise<void>): Promise<boolean> {
+ export function createClineHooks(
+-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript">,
++  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "hasSession">,
+   configuredSessionId?: string,
+@@ -120,3 +120,3 @@ export function createClineHooks(
+ ) {
+-  const injectedPrompts = new Set<string>();
++  const injectedPrompts = new Map<string, string>();
+   let sessionStartAwaited = false;
+@@ -141,5 +141,11 @@ export function createClineHooks(
+       const id = sessionId(snapshot, configuredSessionId);
+-      const promptKey = `${id}:${user.id}`;
+-      if (!injectedPrompts.has(promptKey)) {
+-        injectedPrompts.add(promptKey);
++      // Capacity denial or eviction invalidates prompt deduplication: the same host
++      // message must get another admission attempt once a slot becomes available.
++      if (injectedPrompts.get(id) !== user.id || !core.hasSession(id)) {
++        injectedPrompts.delete(id);
++        injectedPrompts.set(id, user.id);
++        if (injectedPrompts.size > MAX_RUNTIME_SESSIONS) {
++          const oldest = injectedPrompts.keys().next().value;
++          if (oldest !== undefined) injectedPrompts.delete(oldest);
++        }
+         const prompt = user.content
+@@ -182,4 +188,3 @@ export function createClineHooks(
+       // afterRun: the run has ended, so the last turn is complete.
+-      if (turns.length)
+-        await core.onTranscript(sessionId(snapshot, configuredSessionId), turns, true);
++      await core.onTranscript(sessionId(snapshot, configuredSessionId), turns, true);
+     },
+@@ -190,4 +195,4 @@ function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefin
    const dir = workspaceRoot || process.cwd();
 -  const { cfg, bankId, client } = resolveHostMemory(HARNESS, dir);
 -  if (cfg.disabled) return undefined; // global switch, per-bank opt-out or optInOnly
@@ -5669,7 +5731,7 @@ index 0050fc1..43ed7d6 100644
 +  if (disabled) return undefined; // global switch, per-bank opt-out or optInOnly
    return new RuntimeCore(client, bankId, cfg, HARNESS, dir);
 diff --git a/src/core/auto-update.ts b/src/core/auto-update.ts
-index 93474de..4923ae4 100644
+index 93474de..98adfb1 100644
 --- a/src/core/auto-update.ts
 +++ b/src/core/auto-update.ts
 @@ -49,3 +49,3 @@ import { fileURLToPath } from "node:url";
@@ -5695,7 +5757,11 @@ index 93474de..4923ae4 100644
 -      child.on("error", (e) => done("", describeError(e)));
 +      child.on("error", (e) => done("", e));
        // close, not exit: stdout must have fully arrived before the parse.
-@@ -348,3 +348,3 @@ export async function npmViewVersion(
+@@ -345,6 +345,6 @@ export async function npmViewVersion(
+         }
+-        done("", "npm view never exited — hard deadline");
++        done("", { timedOut: true });
+       }, NPM_VIEW_HARD_DEADLINE_MS);
      } catch (e) {
 -      done("", describeError(e));
 +      done("", e);
@@ -9073,7 +9139,7 @@ index 62c74d1..b625c6f 100644
 +    expect(Object.keys(e ?? {}).sort((a, b) => a.localeCompare(b))).toEqual(["apiUrl", "harness", "serverMode", "source"]);
    });
 diff --git a/src/core/log.ts b/src/core/log.ts
-index b9efa62..902e989 100644
+index b9efa62..c038230 100644
 --- a/src/core/log.ts
 +++ b/src/core/log.ts
 @@ -9,3 +9,3 @@
@@ -9095,7 +9161,7 @@ index b9efa62..902e989 100644
  
 +const NUMERIC_FIELDS = new Set([
 +  "ms", "chars", "count", "turns", "timeoutMs", "pages", "newChats", "failures",
-+  "hostCatalog", "hindsight", "commits",
++  "hostCatalog", "hindsight", "commits", "limit",
 +]);
 +const BOOLEAN_FIELDS = new Set(["cold", "wired", "hasSession", "appendSupported", "retry", "settled"]);
 +const ERROR_CLASSES = ["timeout", "aborted", "connection_refused", "dns_failure", "operation_failed"] as const;
@@ -9151,15 +9217,17 @@ index b9efa62..902e989 100644
   */
 diff --git a/src/core/logging-privacy.test.ts b/src/core/logging-privacy.test.ts
 new file mode 100644
-index 0000000..1f4fd14
+index 0000000..8d035dd
 --- /dev/null
 +++ b/src/core/logging-privacy.test.ts
-@@ -0,0 +1,304 @@
+@@ -0,0 +1,354 @@
 +import { ChildProcess, type spawn } from "node:child_process";
 +import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { basename, join } from "node:path";
++import { PassThrough } from "node:stream";
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { npmViewVersion } from "./auto-update";
 +import { resolveConfig } from "./config";
 +import { diag, parseHookEvent } from "./diag";
 +import * as git from "./git";
@@ -9169,7 +9237,7 @@ index 0000000..1f4fd14
 +import { buildKnowledgeTools } from "./knowledge-tools";
 +import { log, setLogLevel } from "./log";
 +import { buildRetain } from "./retain-hook";
-+import { RuntimeCore } from "./runtime";
++import { MAX_RUNTIME_SESSIONS, RuntimeCore } from "./runtime";
 +import * as seed from "./seed";
 +import * as sessionStart from "./session-start";
 +import * as companionSkill from "./skill-sync";
@@ -9234,6 +9302,34 @@ index 0000000..1f4fd14
 +describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) => {
 +  beforeEach(() => setLogLevel(level));
 +
++  it("classifies the updater hard deadline without retaining registry output or late errors", async () => {
++    vi.useFakeTimers();
++    const child = new ChildProcess();
++    const output = new PassThrough();
++    child.stdout = output;
++    const kill = vi.spyOn(child, "kill").mockReturnValue(true);
++    const spawnImpl = vi.fn<typeof spawn>().mockReturnValue(child);
++    try {
++      let settled = false;
++      const result = npmViewVersion(IDENTITY, spawnImpl).then((version) => { settled = true; return version; });
++      output.write(`${PROMPT} ${ANSWER}`);
++      await vi.advanceTimersByTimeAsync(5_999);
++      expect(settled).toBe(false);
++      expect(kill).not.toHaveBeenCalled();
++      await vi.advanceTimersByTimeAsync(1);
++      await expect(result).resolves.toBe("");
++      expect(kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
++      child.emit("error", new Error(FAILURE));
++      child.emit("close", 1);
++      expect(contents(ordinary).trim().split("\n")).toHaveLength(1);
++      expect(contents(ordinary)).toContain('version check failed {"errorClass":"timeout"}');
++      expect(vi.getTimerCount()).toBe(0);
++    } finally {
++      output.destroy();
++      vi.useRealTimers();
++    }
++  });
++
 +  it("keeps successful reflection content in the injection and out of both log files", async () => {
 +    const output = await buildHookOutput({ harness: "codex", prompt: PROMPT,
 +      cfg: resolveConfig(), client: client(), cacheFile: join(root, "session.json") });
@@ -9241,6 +9337,25 @@ index 0000000..1f4fd14
 +    expect(records()).toContainEqual(expect.objectContaining({ event: "reflect_ok", chars: ANSWER.length }));
 +    expect(records().find((entry) => entry.event === "reflect_ok")).not.toHaveProperty("query");
 +    if (level === "debug") expect(contents(ordinary)).toContain("diag:reflect_ok");
++  });
++
++  it("keeps capacity and disposal diagnostics private while retaining the numeric session limit", async () => {
++    const runtime = new RuntimeCore(client(), "A", resolveConfig({ logLevel: level }), "codex", root);
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await runtime.onPrompt(`${IDENTITY}-${i}`, "");
++    await runtime.onPrompt(IDENTITY, PROMPT);
++    expect(runtime.hasSession(IDENTITY)).toBe(false);
++    expect(runtime.getInjection(IDENTITY)).toBeUndefined();
++    expect(records()).toContainEqual(expect.objectContaining({
++      event: "session_capacity_reached", limit: MAX_RUNTIME_SESSIONS,
++    }));
++    if (level === "debug") expect(contents(ordinary)).toContain(`"limit":${MAX_RUNTIME_SESSIONS}`);
++    runtime.disposeSession(`${IDENTITY}-0`);
++    await runtime.onPrompt(IDENTITY, PROMPT);
++    expect(runtime.hasSession(IDENTITY)).toBe(true);
++    expect(runtime.getInjection(IDENTITY)).toContain(ANSWER);
++    runtime.disposeSession(IDENTITY);
++    expect(runtime.getInjection(IDENTITY)).toBeUndefined();
++    expect(runtime.getInjection(undefined)).toBeUndefined();
 +  });
 +
 +  it("records failed reflect, fallback and page reads without their error messages or causes", async () => {
@@ -9455,8 +9570,9 @@ index 0000000..1f4fd14
 +    expect(contents(ordinary)).toContain('"count":3');
 +    expect(contents(ordinary)).toContain('"settled":false');
 +    expect(contents(ordinary)).toContain("ignoring invalid customPages entry");
-+    diag("deepen", "deepen_done", { settled: ANSWER });
++    diag("deepen", "deepen_done", { settled: ANSWER, limit: PROMPT });
 +    expect(records().at(-1)).not.toHaveProperty("settled");
++    expect(records().at(-1)).not.toHaveProperty("limit");
 +  });
 +});
 diff --git a/src/core/missions.test.ts b/src/core/missions.test.ts
@@ -9931,7 +10047,7 @@ index 0000000..c5a05ab
 +  }
 +}
 diff --git a/src/core/retain-cursor.ts b/src/core/retain-cursor.ts
-index 0cf18f5..da7c3c1 100644
+index 0cf18f5..28d0691 100644
 --- a/src/core/retain-cursor.ts
 +++ b/src/core/retain-cursor.ts
 @@ -9,3 +9,3 @@
@@ -9970,6 +10086,15 @@ index 0cf18f5..da7c3c1 100644
 -   *  plugin was upgraded keeps the old replace behaviour until its next write-back sets it. */
 +  // Legacy file references; rollout-aware cursors keep first-contribution order.
    paths?: string[];
+@@ -193,3 +181,3 @@ export interface RetainCursorStore {
+ /** In-memory store for a long-lived host (opencode/kilo). */
+-export function memoryCursorStore(): RetainCursorStore {
++export function memoryCursorStore(): RetainCursorStore & { delete(sessionId: string): void } {
+   const cursors = new Map<string, RetainCursor>();
+@@ -197,2 +185,3 @@ export function memoryCursorStore(): RetainCursorStore {
+     read: (sessionId) => cursors.get(sessionId),
++    delete: (sessionId) => { cursors.delete(sessionId); },
+     write: (sessionId, cursor) => void cursors.set(sessionId, cursor),
 diff --git a/src/core/retain-hook.ts b/src/core/retain-hook.ts
 index 0507e5e..b985ad1 100644
 --- a/src/core/retain-hook.ts
@@ -10636,6 +10761,389 @@ index 0000000..53f119e
 +  expect(await start()).toBe(false);
 +  expect(spawn).not.toHaveBeenCalled();
 +});
+diff --git a/src/core/runtime-lifecycle.test.ts b/src/core/runtime-lifecycle.test.ts
+new file mode 100644
+index 0000000..942649e
+--- /dev/null
++++ b/src/core/runtime-lifecycle.test.ts
+@@ -0,0 +1,377 @@
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { resolveConfig } from "./config";
++import type { HindsightClient } from "./hindsight";
++import { MAX_RUNTIME_SESSIONS, RuntimeCore } from "./runtime";
++import { createClineHooks } from "../cline";
++import { createPiHooks } from "../harness/pi-extension";
++import * as hostClient from "./host-client";
++import { createPluginEntry } from "../harness/plugin-entry";
++import type { OcMessage } from "./transcript-opencode";
++import { opencodeAdapter } from "../harness/opencode";
++import { diag } from "./diag";
++import { wireOpencode2Runtime } from "../harness/opencode2";
++
++vi.mock("@memory-router/coding-agents/runtime", async (original) => ({ ...(await original<typeof import("@memory-router/coding-agents/runtime")>()), managedToolPrefix: () => "hindsight_" }));
++vi.mock("./diag", () => ({ diag: vi.fn() }));
++vi.mock("./hook", () => ({ buildHookOutput: vi.fn(async () => ({ pages: [], context: "private memory" })) }));
++vi.mock("./usage", async (original) => ({ ...(await original<typeof import("./usage")>()), recordUsage: vi.fn() }));
++vi.mock("./skill-sync", () => ({ readPackagedSkill: () => undefined }));
++afterEach(() => vi.restoreAllMocks());
++
++function fixture(retainSessions = true) {
++  let fail = false;
++  const retain = vi.fn(async (_text: string, _context: string, _id: string, _tags: string[], _strategy: string, _options: { updateMode?: string } = {}): Promise<void> => {
++    if (fail) throw new Error("offline");
++  });
++  const client = { bank: "bank", retain, supportsAppendRetain: async () => true, assertAuthorized: () => {} } as unknown as HindsightClient;
++  const core = new RuntimeCore(client, "bank", resolveConfig({ retainSessions }), "opencode2");
++  const turns = [{ role: "user", content: "first" }, { role: "assistant", content: "reply" }];
++  async function complete(id: string): Promise<void> {
++    await core.onTranscript(id, turns, true);
++    await core.flush();
++  }
++  async function fill(): Promise<void> {
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await complete(`filler-${i}`);
++  }
++  return { core, client, retain, turns, complete, fill, fail: (value: boolean) => { fail = value; } };
++}
++
++function completionHooks(core: RuntimeCore, host: "pi" | "cline") {
++  if (host === "pi") {
++    const hooks = createPiHooks(core, "pi");
++    return {
++      prompt: (id: string) => hooks.beforeAgentStart({ prompt: "prompt", systemPrompt: "system" }, id),
++      complete: (id: string, text = "") => hooks.agentEnd({ messages: text ? [{ role: "user", content: text }] : [] }, id),
++    };
++  }
++  const hooks = createClineHooks(core);
++  const messages = (text: string) => text ? [{ id: "prompt", role: "user" as const, content: [{ type: "text", text }], createdAt: 1 }] : [];
++  return {
++    prompt: (id: string) => hooks.beforeModel({ snapshot: { agentId: id, messages: messages("prompt") }, request: { messages: [] } }),
++    complete: (id: string, text = "") => hooks.afterRun({ snapshot: { agentId: id, messages: messages(text) } }),
++  };
++}
++
++describe("bounded runtime lifecycle", () => {
++  it.each([
++    { host: "pi" as const, retainSessions: true },
++    { host: "pi" as const, retainSessions: false },
++    { host: "cline" as const, retainSessions: true },
++    { host: "cline" as const, retainSessions: false },
++  ])("releases $host empty completions with retention=$retainSessions", async ({ host, retainSessions }) => {
++    const f = fixture(retainSessions);
++    const hooks = completionHooks(f.core, host);
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) {
++      await hooks.prompt(`empty-${i}`);
++      await hooks.complete(`empty-${i}`);
++    }
++    await hooks.prompt("next");
++    expect(f.core.hasSession("next")).toBe(true);
++    expect(f.core.hasSession("empty-0")).toBe(false);
++    expect(f.retain).not.toHaveBeenCalled();
++  });
++
++  it.each(["pi", "cline"] as const)("preserves %s nonempty retention and pending writes across empty completion", async (host) => {
++    const f = fixture();
++    const hooks = completionHooks(f.core, host);
++    let release: (() => void) | undefined;
++    f.retain.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
++    await hooks.prompt("pending");
++    await hooks.complete("pending", "original content");
++    await vi.waitFor(() => expect(release).toBeDefined());
++    await hooks.complete("pending");
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onTranscript(`filler-${i}`, f.turns, true);
++    expect(f.core.hasSession("pending")).toBe(true);
++    release?.();
++    await f.core.flush();
++    expect(f.retain.mock.calls[0][0]).toContain("original content");
++
++    f.fail(true);
++    await hooks.prompt("pending");
++    await hooks.complete("pending", "updated content");
++    await f.core.flush();
++    const failed = f.retain.mock.calls.at(-1);
++    await hooks.complete("pending");
++    f.fail(false);
++    await f.fill();
++    expect(f.core.hasSession("pending")).toBe(true);
++    await hooks.complete("pending", "updated content");
++    await f.core.flush();
++    expect(f.retain.mock.calls.at(-1)?.[0]).toBe(failed?.[0]);
++  });
++
++  it("forwards definitive OpenCode deletion and Pi shutdown to runtime disposal", async () => {
++    const f = fixture();
++    await f.core.onPrompt("deleted", "prompt");
++    vi.spyOn(f.core, "toolSpecs").mockReturnValue([]);
++    const hooks = opencodeAdapter.createRuntime?.(f.core) as { event(input: { event: { type: string; properties: { info: { id: string } } } }): Promise<void> };
++    await hooks.event({ event: { type: "session.deleted", properties: { info: { id: "deleted" } } } });
++    expect(f.core.hasSession("deleted")).toBe(false);
++    await f.core.onPrompt("shutdown", "prompt");
++    await createPiHooks(f.core, "pi").sessionShutdown();
++    expect(f.core.hasSession("shutdown")).toBe(false);
++  });
++
++  it("retries the same Cline message after capacity denial without duplicating admitted recall", async () => {
++    const f = fixture();
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onPrompt(`active-${i}`, "prompt");
++    const onPrompt = vi.spyOn(f.core, "onPrompt");
++    const hooks = createClineHooks(f.core);
++    const input = { snapshot: { agentId: "retry", messages: [{ id: "same-message", role: "user" as const, content: [{ type: "text", text: "recall my context" }], createdAt: 1 }] }, request: { messages: [] } };
++    expect(await hooks.beforeModel(input)).toBeUndefined();
++    expect(f.core.hasSession("retry")).toBe(false);
++    expect(onPrompt).toHaveBeenCalledTimes(1);
++    f.core.disposeSession("active-0");
++    const admitted = await hooks.beforeModel(input);
++    expect(f.core.hasSession("retry")).toBe(true);
++    expect(admitted?.messages.at(-1)?.content[0].text).toContain("private memory");
++    expect(onPrompt).toHaveBeenCalledTimes(2);
++    await hooks.beforeModel(input);
++    expect(onPrompt).toHaveBeenCalledTimes(2);
++    f.core.disposeSession("retry");
++    await hooks.beforeModel(input);
++    expect(f.core.hasSession("retry")).toBe(true);
++    expect(onPrompt).toHaveBeenCalledTimes(3);
++  });
++
++  it("bounds Cline deduplication and remembers only the current prompt per session", async () => {
++    const onPrompt = vi.fn(async () => {});
++    const hooks = createClineHooks({ onPrompt, getInjection: () => undefined, onTranscript: async () => {}, hasSession: () => true });
++    const prompt = async (session: string, id: string): Promise<void> => {
++      await hooks.beforeModel({ snapshot: { agentId: session, messages: [{ id, role: "user", content: [{ type: "text", text: "prompt" }], createdAt: 1 }] }, request: { messages: [] } });
++    };
++    await prompt("first", "one");
++    await prompt("first", "one");
++    expect(onPrompt).toHaveBeenCalledTimes(1);
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await prompt(`other-${i}`, "one");
++    await prompt("first", "one");
++    expect(onPrompt).toHaveBeenCalledTimes(MAX_RUNTIME_SESSIONS + 2);
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await prompt("first", `turn-${i}`);
++    const calls = onPrompt.mock.calls.length;
++    await prompt("first", `turn-${MAX_RUNTIME_SESSIONS - 1}`);
++    expect(onPrompt).toHaveBeenCalledTimes(calls);
++  });
++
++  it("disposes many completed sessions and releases keyed and unkeyed injection", async () => {
++    const f = fixture();
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS * 2; i++) {
++      const id = `completed-${i}`;
++      await f.core.onPrompt(id, "prompt");
++      await f.complete(id);
++      expect(f.core.hasSession(id)).toBe(true);
++      f.core.disposeSession(id);
++      expect(f.core.hasSession(id)).toBe(false);
++      expect(f.core.getInjection(id)).toBeUndefined();
++      expect(f.core.getInjection(undefined)).toBeUndefined();
++    }
++  });
++
++  it("evicts idle sessions and replaces the complete transcript when an evicted session resumes", async () => {
++    const f = fixture();
++    await f.complete("resumed");
++    await f.fill();
++    expect(f.core.hasSession("resumed")).toBe(false);
++    await f.core.onPrompt("resumed", "continue");
++    await f.core.onTranscript("resumed", [...f.turns, { role: "user", content: "later" }], true);
++    await f.core.flush();
++    const last = f.retain.mock.calls.at(-1);
++    expect(last?.[2]).toBe("conversation:resumed");
++    expect(last?.[5]?.updateMode).not.toBe("append");
++    expect(last?.[0]).toContain("first");
++    expect(last?.[0]).toContain("later");
++  });
++
++  it("preserves an active session and never falls back to another session's injection", async () => {
++    const f = fixture();
++    await f.core.onPrompt("active", "prompt");
++    await f.fill();
++    expect(f.core.hasSession("active")).toBe(true);
++    expect(f.core.getInjection("active")).toContain("private memory");
++    expect(f.core.getInjection("foreign")).toBeUndefined();
++  });
++
++  it("rejects admission when every slot is active instead of evicting active sessions", async () => {
++    const f = fixture();
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onPrompt(`active-${i}`, "prompt");
++    await f.core.onPrompt("overflow", "prompt");
++    expect(diag).toHaveBeenCalledWith("opencode2", "session_capacity_reached", { limit: MAX_RUNTIME_SESSIONS });
++    expect(f.core.hasSession("overflow")).toBe(false);
++    expect(f.core.getInjection("overflow")).toBeUndefined();
++    expect(f.core.getInjection(undefined)).toBeUndefined();
++    expect(f.core.hasSession("active-0")).toBe(true);
++  });
++
++  it("defers disposal until a retain settles and preserves pending appends on failure", async () => {
++    const f = fixture();
++    await f.complete("pending");
++    f.fail(true);
++    await f.core.onTranscript("pending", [...f.turns, { role: "user", content: "buffered" }], true);
++    await f.core.flush();
++    f.core.disposeSession("pending");
++    await f.fill();
++    f.fail(false);
++    await f.core.onPrompt("pending", "retry");
++    await f.core.onTranscript("pending", [...f.turns, { role: "user", content: "buffered" }], true);
++    await f.core.flush();
++    const writes = f.retain.mock.calls.filter(call => call[2] === "conversation:pending");
++    expect(writes.at(-1)?.[5]?.updateMode).toBe("append");
++    expect(writes.at(-1)?.[0]).toBe(writes[1][0]);
++    f.core.disposeSession("pending");
++    expect(f.core.hasSession("pending")).toBe(false);
++  });
++
++  it("keeps a disposed in-flight retain pinned until it settles, then resumes with a replacement", async () => {
++    const f = fixture();
++    let release: (() => void) | undefined;
++    f.retain.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
++    await f.core.onTranscript("writing", f.turns, true);
++    await vi.waitFor(() => expect(release).toBeDefined());
++    f.core.disposeSession("writing");
++    // Other traffic must not evict the cursor out from under the unfinished request.
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onTranscript(`other-${i}`, f.turns, true);
++    release?.();
++    await f.core.flush();
++    expect(f.core.hasSession("writing")).toBe(false);
++    await f.complete("writing");
++    expect(f.retain.mock.calls.at(-1)?.[5]?.updateMode).not.toBe("append");
++  });
++
++  it("keeps an idle fetch pinned and does not close a newer prompt when the fetch finishes", async () => {
++    const f = fixture();
++    let release: ((turns: typeof f.turns) => void) | undefined;
++    f.core.setTranscriptSource(() => new Promise(resolve => { release = resolve; }));
++    const idle = f.core.onSessionIdle("fetching");
++    await f.core.onPrompt("fetching", "new prompt");
++    release?.(f.turns);
++    await idle;
++    await f.core.flush();
++    await f.fill();
++    expect(f.core.hasSession("fetching")).toBe(true);
++  });
++
++  it("admits new sessions when the plugin host omits its optional transcript API", async () => {
++    const f = fixture();
++    vi.spyOn(hostClient, "resolveHostMemory").mockReturnValue({ disabled: false, cfg: resolveConfig({}), bankId: "bank", client: f.client });
++    vi.spyOn(RuntimeCore.prototype, "toolSpecs").mockReturnValue([]);
++    const sources = vi.spyOn(RuntimeCore.prototype, "setTranscriptSource");
++    const cores: RuntimeCore[] = [];
++    vi.spyOn(RuntimeCore.prototype, "seedIfCold").mockImplementation(async function(this: RuntimeCore) { cores.push(this); });
++    const entry = createPluginEntry("opencode");
++    const hooks = await entry({ directory: "/repo", client: {} } as unknown as Parameters<typeof entry>[0]) as unknown as {
++      "chat.message": (input: { sessionID: string }, output: { parts: { type: string; text: string }[] }) => Promise<void>;
++      "experimental.chat.messages.transform": (input: unknown, output: { messages: OcMessage[] }) => Promise<void>;
++      "experimental.chat.system.transform": (input: { sessionID: string }, output: { system: string[] }) => Promise<void>;
++      event: (input: { event: { type: string; properties: { sessionID: string } } }) => Promise<void>;
++    };
++    expect(sources).not.toHaveBeenCalled();
++    expect(cores).toHaveLength(1);
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) {
++      const sessionID = `no-transcript-api-${i}`;
++      await hooks["chat.message"]({ sessionID }, { parts: [{ type: "text", text: "prompt" }] });
++      await hooks["experimental.chat.messages.transform"]({}, { messages: [{ info: { role: "user", sessionID }, parts: [{ type: "text", text: "prompt" }] }] });
++      await hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
++      await cores[0].flush();
++    }
++    await hooks["chat.message"]({ sessionID: "next-session" }, { parts: [{ type: "text", text: "prompt" }] });
++    const output = { system: [] as string[] };
++    await hooks["experimental.chat.system.transform"]({ sessionID: "next-session" }, output);
++    expect(output.system.join("\n")).toContain("private memory");
++    expect(f.retain).toHaveBeenCalledTimes(MAX_RUNTIME_SESSIONS);
++  });
++
++  it.each(["in-flight", "pending"])("preserves %s writes when idle has no transcript source", async (mode) => {
++    const f = fixture();
++    let release: (() => void) | undefined;
++    if (mode === "in-flight") f.retain.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
++    else { await f.complete("pinned"); f.fail(true); }
++    await f.core.onPrompt("pinned", "prompt");
++    await f.core.onTranscript("pinned", [...f.turns, { role: "user", content: "buffered turn" }], false);
++    if (mode === "pending") { await f.core.flush(); f.fail(false); }
++    else await vi.waitFor(() => expect(release).toBeDefined());
++    try {
++      await f.core.onSessionIdle("pinned");
++      for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onPrompt(`other-${i}`, "prompt");
++      expect(f.core.hasSession("pinned")).toBe(true);
++      expect(f.core.hasSession(`other-${MAX_RUNTIME_SESSIONS - 1}`)).toBe(false);
++    } finally {
++      release?.();
++      await f.core.flush();
++    }
++  });
++
++  it("admits new sessions after completed sessions fail to fetch their transcripts", async () => {
++    const f = fixture();
++    f.core.setTranscriptSource(async () => { throw new Error("host unavailable"); });
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) {
++      await f.core.onPrompt(`failed-fetch-${i}`, "prompt");
++      await f.core.onSessionIdle(`failed-fetch-${i}`);
++    }
++    const recoveredSource = vi.fn(async () => f.turns);
++    f.core.setTranscriptSource(recoveredSource);
++    await f.core.onPrompt("after-recovery", "prompt");
++    expect(f.core.hasSession("after-recovery")).toBe(true);
++    await f.core.onSessionIdle("after-recovery");
++    await f.core.flush();
++    expect(recoveredSource).toHaveBeenCalledExactlyOnceWith("after-recovery");
++    expect(f.retain).toHaveBeenCalledOnce();
++  });
++
++  it("keeps a newer prompt active when an older idle transcript fetch fails", async () => {
++    const f = fixture();
++    let reject: ((error: Error) => void) | undefined;
++    f.core.setTranscriptSource(() => new Promise((_resolve, rejectFetch) => { reject = rejectFetch; }));
++    await f.core.onPrompt("fetching", "old prompt");
++    const idle = f.core.onSessionIdle("fetching");
++    await f.core.onPrompt("fetching", "new prompt");
++    reject?.(new Error("host unavailable"));
++    await idle;
++    await f.fill();
++    expect(f.core.hasSession("fetching")).toBe(true);
++    expect(f.core.getInjection("fetching")).toContain("private memory");
++  });
++
++  it("denies global events for foreign or evicted sessions until a scoped prompt readmits them", async () => {
++    const f = fixture();
++    type Prompt = (input: { sessionID: string; prompt: { text: string } }) => Promise<void>;
++    let prompt: Prompt | undefined;
++    let next: ((event: { type: string; data: { sessionID: string } }) => void) | undefined;
++    let done = false;
++    const context = vi.fn(async () => [{ type: "user", text: "first" }]);
++    vi.spyOn(f.core, "toolSpecs").mockReturnValue([]);
++    const teardown = await wireOpencode2Runtime(f.core, {
++      session: { hook: async (name: string, callback: Prompt) => { if (name === "prompt") prompt = callback; }, context },
++      tool: { transform: async () => {} },
++      event: { subscribe: async function* () {
++        while (!done) yield await new Promise<{ type: string; data: { sessionID: string } }>(resolve => { next = resolve; });
++      } },
++    } as unknown as Parameters<typeof wireOpencode2Runtime>[1]);
++    async function emit(sessionID: string, type = "session.idle"): Promise<void> {
++      next?.({ type, data: { sessionID } });
++      await new Promise<void>(resolve => setTimeout(resolve, 0));
++    }
++    try {
++      await prompt?.({ sessionID: "owned", prompt: { text: "prompt" } });
++      await f.complete("owned");
++      await f.fill();
++      await emit("foreign");
++      await emit("owned");
++      expect(context).not.toHaveBeenCalled();
++      await prompt?.({ sessionID: "owned", prompt: { text: "resumed" } });
++      await emit("owned");
++      expect(context).toHaveBeenCalledExactlyOnceWith({ sessionID: "owned" });
++      await f.core.flush();
++      await emit("owned", "session.deleted");
++      expect(f.core.hasSession("owned")).toBe(false);
++      await emit("owned");
++      expect(context).toHaveBeenCalledTimes(1);
++      await prompt?.({ sessionID: "image-only", prompt: { text: "" } });
++      await emit("image-only");
++      expect(context).toHaveBeenLastCalledWith({ sessionID: "image-only" });
++      await f.core.flush();
++    } finally {
++      done = true;
++      teardown();
++      next?.({ type: "ignored", data: { sessionID: "" } });
++    }
++  });
++});
 diff --git a/src/core/runtime.test.ts b/src/core/runtime.test.ts
 index 60819a6..f631dce 100644
 --- a/src/core/runtime.test.ts
@@ -10689,7 +11197,7 @@ index 60819a6..f631dce 100644
 +    assertAuthorized: vi.fn(),
    } as unknown as HindsightClient;
 diff --git a/src/core/runtime.ts b/src/core/runtime.ts
-index a2c1afe..1cb64c0 100644
+index a2c1afe..04755e3 100644
 --- a/src/core/runtime.ts
 +++ b/src/core/runtime.ts
 @@ -1 +1,3 @@
@@ -10701,17 +11209,39 @@ index a2c1afe..1cb64c0 100644
 -import { describeError, log, setLogLevel } from "./log";
 +import { log, setLogLevel } from "./log";
  import type { HindsightClient } from "./hindsight";
-@@ -55,3 +57,3 @@ export class RuntimeCore {
+@@ -39,2 +41,12 @@ const HARNESS = "opencode";
+ const FLUSH_TIMEOUT_MS = 10_000;
++/** Hard admission limit: never discard active work or buffered writes to admit another session. */
++export const MAX_RUNTIME_SESSIONS = 256;
++interface RuntimeSession {
++  startTs: string;
++  retainedTurns: number;
++  active: boolean;
++  busy: number;
++  generation: number;
++  ended: boolean;
++}
+ 
+@@ -43,3 +55,3 @@ export class RuntimeCore {
+   private readonly turnCount = new Map<string, number>(); // sessionId -> user-turn counter (cadence)
+-  private readonly sessionState = new Map<string, { startTs: string; retainedTurns: number }>();
++  private readonly sessionState = new Map<string, RuntimeSession>();
+   /** Live write-back cursors. In memory, unlike the hook harnesses': this host outlives the session. */
+@@ -52,2 +64,3 @@ export class RuntimeCore {
+   private readonly inFlight = new Set<Promise<void>>();
++  private lastInjectionSession: string | undefined;
+   private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
+@@ -55,3 +68,3 @@ export class RuntimeCore {
    /** Host-notice channel (opencode/Kilo: client.tui.showToast via the adapter). Optional, fail-open. */
 -  private notify?: (title: string, message: string) => void;
 +  private notify?: (title: string, message: string) => void | PromiseLike<void>;
  
-@@ -74,3 +76,3 @@ export class RuntimeCore {
+@@ -74,3 +87,3 @@ export class RuntimeCore {
  
 -  setNotifier(notify: (title: string, message: string) => void): void {
 +  setNotifier(notify: (title: string, message: string) => void | PromiseLike<void>): void {
      this.notify = notify;
-@@ -78,2 +80,18 @@ export class RuntimeCore {
+@@ -78,2 +91,18 @@ export class RuntimeCore {
  
 +  private dispatchNotice(kind: "session" | "reflection", title: string, message: string): void {
 +    if (!this.notify) {
@@ -10730,11 +11260,11 @@ index a2c1afe..1cb64c0 100644
 +  }
 +
    /**
-@@ -91,2 +109,3 @@ export class RuntimeCore {
+@@ -91,2 +120,3 @@ export class RuntimeCore {
        repoDir: this.projectDir,
 +      toolPrefix: this.cfg.toolPrefix,
        harness: this.harness,
-@@ -148,9 +167,7 @@ export class RuntimeCore {
+@@ -148,9 +178,7 @@ export class RuntimeCore {
        });
 -      // The seed note is user-facing; opencode has no visible-system channel at load, so surface it
 -      // on stderr (shows in the plugin log / console) rather than dropping it.
@@ -10748,41 +11278,317 @@ index a2c1afe..1cb64c0 100644
 +        const title = toolBrand(this.cfg.toolPrefix).displayName;
 +        this.dispatchNotice("session", title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
        }
-@@ -170,2 +187,4 @@ export class RuntimeCore {
-     if (!sessionId || !prompt.trim()) return;
-+    this.injection.delete(sessionId);
+@@ -169,46 +197,63 @@ export class RuntimeCore {
+     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
+-    if (!sessionId || !prompt.trim()) return;
+-    const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
+-    this.turnCount.set(sessionId, turns);
++    if (!sessionId) return;
 +    this.lastInjection = "";
-     const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
-@@ -198,2 +217,3 @@ export class RuntimeCore {
-           reflectOnNewGoals: this.cfg.autoInject !== "reflect",
-+          toolPrefix: this.cfg.toolPrefix,
-           extra: this.cfg.toolGuideExtra,
-@@ -206,5 +226,4 @@ export class RuntimeCore {
-     if (output.notice) {
++    this.lastInjectionSession = undefined;
++    const state = this.stateFor(sessionId);
++    if (!state) return;
++    state.active = true;
++    state.ended = false;
++    state.generation++;
++    this.injection.delete(sessionId);
++    // The scoped prompt event establishes ownership even for image-only/empty text prompts.
++    if (!prompt.trim()) return;
++    state.busy++;
++    try {
++      const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
++      this.turnCount.set(sessionId, turns);
+ 
+-    const cacheFile = sessionCacheFile(this.harness, sessionId);
+-    if (this.deferInitialReflect) {
+-      // `seedIfCold` has no session id. Transfer its SessionStart decision to the first concrete
+-      // session here; `buildHookOutput` consumes it exactly once, like hook harnesses do.
+-      this.deferInitialReflect = false;
+-      writeSessionCache(cacheFile, { deferInitialReflect: true });
+-    }
+-    const output = await buildHookOutput({
+-      harness: this.harness,
+-      prompt,
+-      cfg: this.cfg,
+-      client: this.client,
+-      cacheFile,
+-    });
++      const cacheFile = sessionCacheFile(this.harness, sessionId);
++      if (this.deferInitialReflect) {
++        // `seedIfCold` has no session id. Transfer its SessionStart decision to the first concrete
++        // session here; `buildHookOutput` consumes it exactly once, like hook harnesses do.
++        this.deferInitialReflect = false;
++        writeSessionCache(cacheFile, { deferInitialReflect: true });
++      }
++      const output = await buildHookOutput({
++        harness: this.harness,
++        prompt,
++        cfg: this.cfg,
++        client: this.client,
++        cacheFile,
++      });
+ 
+-    const blocks: string[] = [];
+-    // The SessionStart-equivalent preamble, injected once on the first turn (later turns get the
+-    // periodic refresh below). Built HERE, from this session's own roster, rather than reused from
+-    // plugin load: that one is a process-lifetime snapshot, so a host started before the pages
+-    // existed told every later session "No knowledge pages yet" while the same turn's memory block
+-    // listed pages by id (#4607).
+-    if (turns === 1) {
+-      blocks.push(
+-        buildKnowledgePreamble(output.pages, {
+-          reflectOnNewGoals: this.cfg.autoInject !== "reflect",
+-          extra: this.cfg.toolGuideExtra,
+-        })
+-      );
+-    }
+-    if (output.context) blocks.push(output.context);
+-    // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
+-    // renders inside the TUI input line. The shared output owns when a notice exists.
+-    if (output.notice) {
 -      const preview = output.notice.replace(/\s+/g, " ").trim().slice(0, 140);
 -      log.info(this.harness, "reflect goal", { preview });
 -      this.notify?.("Hindsight · recalled past decisions", preview);
-+      const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
-+      this.dispatchNotice("reflection", `${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
++      const blocks: string[] = [];
++      // The SessionStart-equivalent preamble, injected once on the first turn (later turns get the
++      // periodic refresh below). Built HERE, from this session's own roster, rather than reused from
++      // plugin load: that one is a process-lifetime snapshot, so a host started before the pages
++      // existed told every later session "No knowledge pages yet" while the same turn's memory block
++      // listed pages by id (#4607).
++      if (turns === 1) {
++        blocks.push(
++          buildKnowledgePreamble(output.pages, {
++            reflectOnNewGoals: this.cfg.autoInject !== "reflect",
++            toolPrefix: this.cfg.toolPrefix,
++            extra: this.cfg.toolGuideExtra,
++          })
++        );
++      }
++      if (output.context) blocks.push(output.context);
++      // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
++      // renders inside the TUI input line. The shared output owns when a notice exists.
++      if (output.notice) {
++        const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
++        this.dispatchNotice("reflection", `${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
++      }
++      const block = blocks.filter(Boolean).join("\n\n");
++      this.injection.set(sessionId, block);
++      this.lastInjection = block; // for consumers that can't supply a sessionId (see getInjection)
++      this.lastInjectionSession = sessionId;
++    } finally {
++      state.busy--;
++      this.cleanupEnded(sessionId, state);
      }
-@@ -223,2 +242,3 @@ export class RuntimeCore {
+-    const block = blocks.filter(Boolean).join("\n\n");
+-    this.injection.set(sessionId, block);
+-    this.lastInjection = block; // for consumers that can't supply a sessionId (see getInjection)
+   }
+@@ -223,4 +268,6 @@ export class RuntimeCore {
    getInjection(sessionId: string | undefined): string | undefined {
+-    const keyed = sessionId ? this.injection.get(sessionId) : undefined;
+-    return keyed ?? this.lastInjection ?? undefined;
 +    this.client.assertAuthorized();
-     const keyed = sessionId ? this.injection.get(sessionId) : undefined;
-@@ -276,3 +296,3 @@ export class RuntimeCore {
-       diag(this.harness, "idle_fetch_failed", {
++    const id = sessionId ?? this.lastInjectionSession;
++    if (!id || !this.hasSession(id)) return undefined;
++    return sessionId ? this.injection.get(sessionId) : this.lastInjection || undefined;
+   }
+@@ -248,3 +295,16 @@ export class RuntimeCore {
+     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
+-    if (!sessionId || !turns.length) return;
++    if (!sessionId) return;
++    if (!turns.length) {
++      // A completed run can have no visible transcript (for example, an abort).
++      // Release only existing prompt activity; pending content and I/O stay pinned.
++      const st = this.sessionState.get(sessionId);
++      if (st && lastTurnComplete) {
++        st.active = false;
++        this.cleanupEnded(sessionId, st);
++      }
++      return;
++    }
++    const st = this.stateFor(sessionId);
++    if (!st) return;
++    st.active = !lastTurnComplete;
+     // Usage is a local file, so it is recorded whether or not write-back is on (#5391).
+@@ -252,4 +312,3 @@ export class RuntimeCore {
+     if (!this.writeBackEnabled) return;
+-    const st = this.stateFor(sessionId);
+-    this.retain(sessionId, turns, st.startTs);
++    this.retain(sessionId, turns, st);
+   }
+@@ -270,22 +329,34 @@ export class RuntimeCore {
+     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
+-    if (!sessionId || !this.fetchTranscript) return;
+-    let turns: TransportTurn[];
++    if (!sessionId) return;
++    const st = this.fetchTranscript ? this.stateFor(sessionId) : this.sessionState.get(sessionId);
++    if (!st) return;
++    const generation = st.generation;
++    st.busy++;
+     try {
+-      turns = await this.fetchTranscript(sessionId);
+-    } catch (e) {
+-      diag(this.harness, "idle_fetch_failed", {
 -        error: describeError(e),
-+        error: e,
-         session: sessionId,
-@@ -297,2 +317,3 @@ export class RuntimeCore {
+-        session: sessionId,
+-      });
+-      return;
++      if (!this.fetchTranscript) return;
++      let turns: TransportTurn[];
++      try {
++        turns = await this.fetchTranscript(sessionId);
++      } catch (e) {
++        diag(this.harness, "idle_fetch_failed", {
++          error: e,
++          session: sessionId,
++        });
++        return;
++      }
++      if (!turns.length) return;
++      this.recordUsage(sessionId, turns, true); // idle: the reply is in
++      if (!this.writeBackEnabled) return; // usage above is local and recorded regardless (#5391)
++      // idle can fire more than once for one exchange (and again on a session with no new activity);
++      // only retain when this transcript actually grew past what we last wrote.
++      if (turns.length <= st.retainedTurns) return;
++      st.retainedTurns = turns.length;
++      this.retain(sessionId, turns, st, "idle");
++    } finally {
++      // Idle ends this generation even when the host cannot return its transcript.
++      // A newer prompt or an outstanding write must retain its own pin.
++      if (st.generation === generation) st.active = false;
++      st.busy--;
++      this.cleanupEnded(sessionId, st);
+     }
+-    if (!turns.length) return;
+-    this.recordUsage(sessionId, turns, true); // idle: the reply is in
+-    if (!this.writeBackEnabled) return; // usage above is local and recorded regardless (#5391)
+-    const st = this.stateFor(sessionId);
+-    // idle can fire more than once for one exchange (and again on a session with no new activity);
+-    // only retain when this transcript actually grew past what we last wrote.
+-    if (turns.length <= st.retainedTurns) return;
+-    st.retainedTurns = turns.length;
+-    this.retain(sessionId, turns, st.startTs, "idle");
+   }
+@@ -297,2 +368,3 @@ export class RuntimeCore {
        bankId: this.bankId,
 +      toolPrefix: this.cfg.toolPrefix,
        turns,
-@@ -374,3 +395,3 @@ export class RuntimeCore {
+@@ -307,11 +379,62 @@ export class RuntimeCore {
+ 
+-  private stateFor(sessionId: string): {
+-    startTs: string;
+-    retainedTurns: number;
+-  } {
++  /** Admission is also the ownership guard for hosts whose event stream spans projects. */
++  hasSession(sessionId: string): boolean {
++    const state = this.sessionState.get(sessionId);
++    return state !== undefined && !state.ended;
++  }
++
++  /** A definitive host disposal, not merely the end of an assistant turn. */
++  disposeSession(sessionId: string): void {
++    const state = this.sessionState.get(sessionId);
++    if (!state) return;
++    state.ended = true;
++    state.active = false;
++    this.cleanupEnded(sessionId, state);
++  }
++
++  dispose(): void {
++    for (const sessionId of this.sessionState.keys()) this.disposeSession(sessionId);
++  }
++
++  private removable(sessionId: string, state: RuntimeSession): boolean {
++    const cursor = this.cursors.read(sessionId);
++    return !state.active && state.busy === 0 && !cursor?.dirty && !cursor?.pending?.length;
++  }
++
++  private cleanupEnded(sessionId: string, state: RuntimeSession): void {
++    if (state.ended && this.removable(sessionId, state)) this.removeSession(sessionId);
++  }
++
++  private removeSession(sessionId: string): void {
++    this.sessionState.delete(sessionId);
++    this.injection.delete(sessionId);
++    this.turnCount.delete(sessionId);
++    this.cursors.delete(sessionId);
++    this.usageCursors.delete(sessionId);
++    if (this.lastInjectionSession === sessionId) {
++      this.lastInjection = "";
++      this.lastInjectionSession = undefined;
++    }
++  }
++
++  private stateFor(sessionId: string): RuntimeSession | undefined {
+     let st = this.sessionState.get(sessionId);
+     if (!st) {
+-      st = { startTs: new Date().toISOString(), retainedTurns: 0 };
+-      this.sessionState.set(sessionId, st);
++      if (this.sessionState.size >= MAX_RUNTIME_SESSIONS) {
++        for (const [id, state] of this.sessionState) {
++          if (this.removable(id, state)) {
++            this.removeSession(id);
++            break;
++          }
++        }
++        if (this.sessionState.size >= MAX_RUNTIME_SESSIONS) {
++          diag(this.harness, "session_capacity_reached", { limit: MAX_RUNTIME_SESSIONS });
++          return undefined;
++        }
++      }
++      st = { startTs: new Date().toISOString(), retainedTurns: 0, active: false, busy: 0, generation: 0, ended: false };
+     }
++    // Insertion order is the least-recently-used order; pinned entries are skipped on eviction.
++    this.sessionState.delete(sessionId);
++    this.sessionState.set(sessionId, st);
+     return st;
+@@ -341,3 +464,3 @@ export class RuntimeCore {
+     turns: TransportTurn[],
+-    startTs: string,
++    state: RuntimeSession,
+     trigger = "turn"
+@@ -345,2 +468,3 @@ export class RuntimeCore {
+     const t0 = Date.now();
++    state.busy++;
+     // Daemon mode: the write path is the last chance to get a daemon up — the Stop-hook role, for
+@@ -353,3 +477,3 @@ export class RuntimeCore {
+       .then(() =>
+-        retainLiveSession(this.client, sessionId, turns, startTs, this.harness, {
++        retainLiveSession(this.client, sessionId, turns, state.startTs, this.harness, {
+           cursors: this.cursors,
+@@ -363,3 +487,3 @@ export class RuntimeCore {
+       )
+-      .then(() =>
++      .then(() => {
+         diag(this.harness, "retain_ok", {
+@@ -369,14 +493,20 @@ export class RuntimeCore {
+           trigger,
+-        })
+-      )
+-      .catch((e) =>
++        });
++      })
++      .catch((e) => {
++        // A failed idle write must be retryable even when the host's transcript has not grown.
++        state.retainedTurns = 0;
+         diag(this.harness, "retain_failed", {
            ms: Date.now() - t0,
 -          error: describeError(e),
 +          error: e,
            session: sessionId,
+           trigger,
+-        })
+-      );
++        });
++      });
+     this.inFlight.add(write);
+-    void write.finally(() => this.inFlight.delete(write));
++    void write.finally(() => {
++      this.inFlight.delete(write);
++      state.busy--;
++      this.cleanupEnded(sessionId, state);
++    });
+   }
 diff --git a/src/core/seed.test.ts b/src/core/seed.test.ts
 index e2617f5..b458753 100644
 --- a/src/core/seed.test.ts
@@ -13522,7 +14328,7 @@ index da0d378..ce3b6b6 100644
 +  });
 +});
 diff --git a/src/core/usage.ts b/src/core/usage.ts
-index b8d33d1..d7e4068 100644
+index b8d33d1..8405404 100644
 --- a/src/core/usage.ts
 +++ b/src/core/usage.ts
 @@ -21,2 +21,3 @@
@@ -13559,11 +14365,20 @@ index b8d33d1..d7e4068 100644
 -    } else if (ASSISTANT_ROLES.has(t.role) && CREDIT_RE.test(t.content)) {
 +    } else if (ASSISTANT_ROLES.has(t.role) && (CREDIT_RE.test(t.content) || t.content.toLowerCase().includes(`from ${toolBrand(toolPrefix).displayName.toLowerCase()} memory`))) {
        current.credited = true;
-@@ -107,2 +114,3 @@ export function recordUsage(args: {
+@@ -88,3 +95,3 @@ export interface UsageCursorStore {
+ 
+-export function memoryUsageCursorStore(): UsageCursorStore {
++export function memoryUsageCursorStore(): UsageCursorStore & { delete(sessionId: string): void } {
+   const recorded = new Map<string, number>();
+@@ -92,2 +99,3 @@ export function memoryUsageCursorStore(): UsageCursorStore {
+     read: (sessionId) => recorded.get(sessionId),
++    delete: (sessionId) => { recorded.delete(sessionId); },
+     write: (sessionId, turns) => void recorded.set(sessionId, turns),
+@@ -107,2 +115,3 @@ export function recordUsage(args: {
    bankId: string;
 +  toolPrefix?: string;
    turns: TransportTurn[];
-@@ -129,3 +137,3 @@ export function recordUsage(args: {
+@@ -129,3 +138,3 @@ export function recordUsage(args: {
  }): void {
 -  const summary = summarizeTurns(args.turns);
 +  const summary = summarizeTurns(args.turns, args.toolPrefix);
@@ -13756,7 +14571,7 @@ index c393112..d2b1632 100644
 +      "HINDSIGHT_" + field.replaceAll(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
      expect(pairs.filter(([, field, env]) => expected(field) !== env).map(([, f]) => f)).toEqual([]);
 diff --git a/src/dsh.ts b/src/dsh.ts
-index 25a5834..6970c18 100644
+index 25a5834..fad8756 100644
 --- a/src/dsh.ts
 +++ b/src/dsh.ts
 @@ -24,2 +24,3 @@
@@ -13779,11 +14594,15 @@ index 25a5834..6970c18 100644
 -  const workspace: Workspace = { core, root };
 +  const workspace: Workspace = { core, root, toolPrefix: cfg.toolPrefix };
    workspaces.set(root, workspace);
-@@ -371,2 +373,3 @@ function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
+@@ -300,2 +302,3 @@ export function createDshHooks(resolve: (agent: DshAgent) => Workspace | undefin
+     disposed({ agent }: { agent: DshAgent }): void {
++      resolve(agent)?.core.disposeSession(agent.session.header.id);
+       liveAgents.delete(agent.session.header.id);
+@@ -371,2 +374,3 @@ function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
    if (!template) return; // memory disabled where this process was launched
 +  const brand = toolBrand(template.toolPrefix).displayName;
    for (const spec of specsOf(template)) {
-@@ -383,5 +386,5 @@ function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
+@@ -383,5 +387,5 @@ function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
          const workspace = exec?.agent ? workspaceForAgent(exec.agent) : template;
 -        if (!workspace) return "Hindsight memory is disabled for this workspace.";
 +        if (!workspace) return `${brand} memory is disabled for this workspace.`;
@@ -13926,7 +14745,7 @@ index d363b45..3d0f33a 100644
 -  runRetainHook(HOOK_HARNESSES[harness].retain);
 +  runHookEntrypoint(() => runRetainHook(HOOK_HARNESSES[harness].retain));
 diff --git a/src/harness/opencode.ts b/src/harness/opencode.ts
-index 1556b0e..d537083 100644
+index 1556b0e..15a9d9f 100644
 --- a/src/harness/opencode.ts
 +++ b/src/harness/opencode.ts
 @@ -1 +1,3 @@
@@ -13998,8 +14817,18 @@ index 1556b0e..d537083 100644
 -    ...surveyAgentHook,
 +    ...surveyAgentHook(core.harness),
      tool: tools,
+@@ -135,3 +142,8 @@ function createRuntime(core: RuntimeCore) {
+     // last turn — usually its conclusion — was never retained at all.
+-    event: async (input: { event?: { type?: string; properties?: { sessionID?: string } } }) => {
++    event: async (input: { event?: { type?: string; properties?: { sessionID?: string; info?: { id?: string } } } }) => {
++      if (input?.event?.type === "session.deleted") {
++        const id = input.event.properties?.info?.id;
++        if (id) core.disposeSession(id);
++        return;
++      }
+       if (input?.event?.type !== "session.idle") return;
 diff --git a/src/harness/opencode2.ts b/src/harness/opencode2.ts
-index 40fc16a..d9969e8 100644
+index 40fc16a..310bce1 100644
 --- a/src/harness/opencode2.ts
 +++ b/src/harness/opencode2.ts
 @@ -1 +1,3 @@
@@ -14031,17 +14860,50 @@ index 40fc16a..d9969e8 100644
 -    diag(harness, "skill_register_failed", { error: describeError(e) });
 +    diag(harness, "skill_register_failed", { error: e });
    }
-@@ -218,3 +219,3 @@ export async function wireOpencode2Runtime(
+@@ -172,9 +173,4 @@ export async function wireOpencode2Runtime(
+ 
+-  // Sessions THIS plugin instance owns. See the event loop below for why the write-back cannot do
+-  // without it.
+-  const ownSessions = new Set<string>();
+-
+   // Each user turn: recall on the prompt; the injection it builds is pushed by the context hook.
+   await ctx.session.hook("prompt", async (input) => {
+-    ownSessions.add(input.sessionID);
+     await core.onPrompt(input.sessionID, input.prompt?.text ?? "");
+@@ -196,3 +192,3 @@ export async function wireOpencode2Runtime(
+   //
+-  // `ownSessions` is a HARD BANK-ISOLATION GUARD, not an optimisation. v2's background service
++  // `core.hasSession` is a HARD BANK-ISOLATION GUARD, not an optimisation. v2's background service
+   // hosts every open project at once, and unlike the session hooks — which fire only for the
+@@ -207,5 +203,9 @@ export async function wireOpencode2Runtime(
+       const e = event as Oc2Event;
+-      if (!e.type || !IDLE_EVENTS.has(e.type)) continue;
++      if (!e.type || (!IDLE_EVENTS.has(e.type) && e.type !== "session.deleted")) continue;
+       const sessionID = e.data?.sessionID;
+-      if (!sessionID || !ownSessions.has(sessionID)) continue;
++      if (!sessionID || !core.hasSession(sessionID)) continue;
++      if (e.type === "session.deleted") {
++        core.disposeSession(sessionID);
++        continue;
++      }
+       diag(harness, "idle_signal", { signal: e.type, session: sessionID });
+@@ -218,5 +218,8 @@ export async function wireOpencode2Runtime(
      // memory-less session must not be able to hide, so it goes in the diagnostic trail too.
 -  })().catch((e) => diag(harness, "idle_stream_failed", { error: describeError(e) }));
 +  })().catch((e) => diag(harness, "idle_stream_failed", { error: e }));
  
-@@ -229,3 +230,3 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
+-  return () => events.abort();
++  return () => {
++    events.abort();
++    core.dispose();
++  };
+ }
+@@ -229,3 +232,3 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
    return {
 -    id: `hindsight-${harness}`,
 +    id: `${toolBrand(managedToolPrefix(harness)).id}-${harness}`,
      async setup(ctx) {
-@@ -239,6 +240,6 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
+@@ -239,6 +242,6 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
        const dir = projectDir || process.cwd();
 -      const { cfg, bankId, client } = resolveHostMemory(harness, dir);
 +      const { disabled, cfg, bankId, client } = resolveHostMemory(harness, dir);
@@ -14050,11 +14912,55 @@ index 40fc16a..d9969e8 100644
 -      if (cfg.disabled) return;
 +      if (disabled) return;
        const core = new RuntimeCore(client, bankId, cfg, harness, dir);
+diff --git a/src/harness/pi-extension.test.ts b/src/harness/pi-extension.test.ts
+index 13719f2..5c4e5c8 100644
+--- a/src/harness/pi-extension.test.ts
++++ b/src/harness/pi-extension.test.ts
+@@ -12,2 +12,3 @@ describe("pi extension adapter", () => {
+       flush: vi.fn(async () => {}),
++      dispose: vi.fn(),
+     };
+@@ -127,3 +128,3 @@ describe("pi extension adapter", () => {
+     const flush = vi.fn(async () => {});
+-    const core = { onPrompt: vi.fn(), getInjection: vi.fn(), onTranscript, flush };
++    const core = { onPrompt: vi.fn(), getInjection: vi.fn(), onTranscript, flush, dispose: vi.fn() };
+     const hooks = createPiHooks(core as never, "pi");
+@@ -151,3 +152,3 @@ describe("pi extension adapter", () => {
+ 
+-  it("does not write back an empty exchange", async () => {
++  it("reports completion even for an empty exchange", async () => {
+     const onTranscript = vi.fn(async () => {});
+@@ -160,3 +161,3 @@ describe("pi extension adapter", () => {
+     await hooks.agentEnd({ messages: [] }, "session-1");
+-    expect(onTranscript).not.toHaveBeenCalled();
++    expect(onTranscript).toHaveBeenCalledWith("session-1", [], true);
+   });
+@@ -197,2 +198,3 @@ describe("pi extension factory", () => {
+       flush: vi.fn(async () => {}),
++      dispose: vi.fn(),
+       toolSpecs: (): ToolSpec[] => [
 diff --git a/src/harness/pi-extension.ts b/src/harness/pi-extension.ts
-index 1e1a731..67ac548 100644
+index 1e1a731..39dced4 100644
 --- a/src/harness/pi-extension.ts
 +++ b/src/harness/pi-extension.ts
-@@ -190,4 +190,4 @@ export function createPiHooks(
+@@ -140,3 +140,3 @@ export function toPiTool(
+ export function createPiHooks(
+-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "flush">,
++  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "flush" | "dispose">,
+   harness: string,
+@@ -182,6 +182,9 @@ export function createPiHooks(
+       const turns = branch ? readPiEntries(branch) : readPiMessages(event.messages);
+-      if (turns.length) await core.onTranscript(sessionId, turns, true); // the run has ended
++      await core.onTranscript(sessionId, turns, true); // the run has ended, even if no text survived
+     },
+     /** The host is exiting: the last agent_end's write-back is still in flight (#5081). */
+-    sessionShutdown: () => core.flush(),
++    sessionShutdown: async () => {
++      core.dispose();
++      await core.flush();
++    },
+   };
+@@ -190,4 +193,4 @@ export function createPiHooks(
  function createRuntime(harness: string, repoPath: string): RuntimeCore | undefined {
 -  const { cfg, bankId, client } = resolveHostMemory(harness, repoPath);
 -  if (cfg.disabled) return undefined; // global switch, per-bank opt-out or optInOnly
@@ -16766,10 +17672,10 @@ index 9b72278..f954d3a 100644
 +  ]
  }
 diff --git a/vitest.config.ts b/vitest.config.ts
-index 68a1104..c9ba2d6 100644
+index 68a1104..134362d 100644
 --- a/vitest.config.ts
 +++ b/vitest.config.ts
-@@ -1,20 +1,33 @@
+@@ -1,20 +1,34 @@
  import { defineConfig } from "vitest/config";
 -import { tmpdir } from "node:os";
 -import { join } from "node:path";
@@ -16792,6 +17698,7 @@ index 68a1104..c9ba2d6 100644
 -    },
 +    include: [
 +      "src/core/logging-privacy.test.ts",
++      "src/core/runtime-lifecycle.test.ts",
 +      "src/core/status.test.ts",
 +      "src/core/seed.test.ts",
 +      "src/core/runtime.test.ts",

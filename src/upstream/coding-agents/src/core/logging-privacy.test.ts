@@ -2,7 +2,9 @@ import { ChildProcess, type spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { npmViewVersion } from "./auto-update";
 import { resolveConfig } from "./config";
 import { diag, parseHookEvent } from "./diag";
 import * as git from "./git";
@@ -12,7 +14,7 @@ import * as hookLifecycle from "./hook";
 import { buildKnowledgeTools } from "./knowledge-tools";
 import { log, setLogLevel } from "./log";
 import { buildRetain } from "./retain-hook";
-import { RuntimeCore } from "./runtime";
+import { MAX_RUNTIME_SESSIONS, RuntimeCore } from "./runtime";
 import * as seed from "./seed";
 import * as sessionStart from "./session-start";
 import * as companionSkill from "./skill-sync";
@@ -77,6 +79,34 @@ afterEach(() => {
 describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) => {
   beforeEach(() => setLogLevel(level));
 
+  it("classifies the updater hard deadline without retaining registry output or late errors", async () => {
+    vi.useFakeTimers();
+    const child = new ChildProcess();
+    const output = new PassThrough();
+    child.stdout = output;
+    const kill = vi.spyOn(child, "kill").mockReturnValue(true);
+    const spawnImpl = vi.fn<typeof spawn>().mockReturnValue(child);
+    try {
+      let settled = false;
+      const result = npmViewVersion(IDENTITY, spawnImpl).then((version) => { settled = true; return version; });
+      output.write(`${PROMPT} ${ANSWER}`);
+      await vi.advanceTimersByTimeAsync(5_999);
+      expect(settled).toBe(false);
+      expect(kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toBe("");
+      expect(kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
+      child.emit("error", new Error(FAILURE));
+      child.emit("close", 1);
+      expect(contents(ordinary).trim().split("\n")).toHaveLength(1);
+      expect(contents(ordinary)).toContain('version check failed {"errorClass":"timeout"}');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      output.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps successful reflection content in the injection and out of both log files", async () => {
     const output = await buildHookOutput({ harness: "codex", prompt: PROMPT,
       cfg: resolveConfig(), client: client(), cacheFile: join(root, "session.json") });
@@ -84,6 +114,25 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
     expect(records()).toContainEqual(expect.objectContaining({ event: "reflect_ok", chars: ANSWER.length }));
     expect(records().find((entry) => entry.event === "reflect_ok")).not.toHaveProperty("query");
     if (level === "debug") expect(contents(ordinary)).toContain("diag:reflect_ok");
+  });
+
+  it("keeps capacity and disposal diagnostics private while retaining the numeric session limit", async () => {
+    const runtime = new RuntimeCore(client(), "A", resolveConfig({ logLevel: level }), "codex", root);
+    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await runtime.onPrompt(`${IDENTITY}-${i}`, "");
+    await runtime.onPrompt(IDENTITY, PROMPT);
+    expect(runtime.hasSession(IDENTITY)).toBe(false);
+    expect(runtime.getInjection(IDENTITY)).toBeUndefined();
+    expect(records()).toContainEqual(expect.objectContaining({
+      event: "session_capacity_reached", limit: MAX_RUNTIME_SESSIONS,
+    }));
+    if (level === "debug") expect(contents(ordinary)).toContain(`"limit":${MAX_RUNTIME_SESSIONS}`);
+    runtime.disposeSession(`${IDENTITY}-0`);
+    await runtime.onPrompt(IDENTITY, PROMPT);
+    expect(runtime.hasSession(IDENTITY)).toBe(true);
+    expect(runtime.getInjection(IDENTITY)).toContain(ANSWER);
+    runtime.disposeSession(IDENTITY);
+    expect(runtime.getInjection(IDENTITY)).toBeUndefined();
+    expect(runtime.getInjection(undefined)).toBeUndefined();
   });
 
   it("records failed reflect, fallback and page reads without their error messages or causes", async () => {
@@ -298,7 +347,8 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
     expect(contents(ordinary)).toContain('"count":3');
     expect(contents(ordinary)).toContain('"settled":false');
     expect(contents(ordinary)).toContain("ignoring invalid customPages entry");
-    diag("deepen", "deepen_done", { settled: ANSWER });
+    diag("deepen", "deepen_done", { settled: ANSWER, limit: PROMPT });
     expect(records().at(-1)).not.toHaveProperty("settled");
+    expect(records().at(-1)).not.toHaveProperty("limit");
   });
 });

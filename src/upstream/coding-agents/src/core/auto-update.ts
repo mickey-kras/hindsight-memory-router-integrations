@@ -343,7 +343,7 @@ export async function npmViewVersion(
         } catch {
           /* already dead */
         }
-        done("", "npm view never exited — hard deadline");
+        done("", { timedOut: true });
       }, NPM_VIEW_HARD_DEADLINE_MS);
     } catch (e) {
       done("", e);
