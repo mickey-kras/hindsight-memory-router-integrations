@@ -12,6 +12,7 @@ describe("Cline native plugin adapter", () => {
   it("injects the shared RuntimeCore context once for each new user message", async () => {
     const onPrompt = vi.fn(async () => {});
     const core = {
+      hasSession: vi.fn(() => true),
       onPrompt,
       getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
       onTranscript: vi.fn(async () => {}),
@@ -39,6 +40,7 @@ describe("Cline native plugin adapter", () => {
       releaseSessionStart = resolve;
     });
     const core = {
+      hasSession: vi.fn(() => true),
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
@@ -60,6 +62,7 @@ describe("Cline native plugin adapter", () => {
     "does not let a slow shared reflect exceed Cline's sandbox hook budget",
     async () => {
       const core = {
+        hasSession: vi.fn(() => true),
         onPrompt: vi.fn(() => new Promise<void>(() => {})),
         getInjection: vi.fn(() => undefined),
         onTranscript: vi.fn(async () => {}),
@@ -82,6 +85,7 @@ describe("Cline native plugin adapter", () => {
     "does not let a cold daemon start exceed Cline's sandbox hook budget",
     async () => {
       const core = {
+        hasSession: vi.fn(() => true),
         onPrompt: vi.fn(async () => {}),
         getInjection: vi.fn(() => undefined),
         onTranscript: vi.fn(async () => {}),
@@ -100,6 +104,7 @@ describe("Cline native plugin adapter", () => {
 
   it("retains only user-visible text and excludes tool arguments/results", async () => {
     const core = {
+      hasSession: vi.fn(() => true),
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
