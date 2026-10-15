@@ -1,116 +1,91 @@
-import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { ChildProcess, spawn as realSpawn } from "node:child_process";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { startBackgroundSeed, seedControl, DEFAULT_SEED_LIMIT } from "./seed";
 
+const failure = "[memory-router] Background seed launch failed.\n";
+afterEach(() => vi.restoreAllMocks());
+
+function fakeSpawn() {
+  const child = new ChildProcess();
+  const unref = vi.spyOn(child, "unref").mockImplementation(() => {});
+  const spawn = vi.fn<typeof realSpawn>().mockImplementation(() => child);
+  return { child, spawn, unref };
+}
+
 describe("startBackgroundSeed", () => {
-  function fakeSpawn() {
-    return vi.fn().mockReturnValue({ on: vi.fn(), unref: vi.fn() });
-  }
-
-  it("spawns node against enginePath, detached, output kept (log file or ignore), with the default gitlog limit", () => {
-    const spawn = fakeSpawn();
-    startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn });
-    expect(spawn).toHaveBeenCalledWith(
-      "node",
-      ["/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", String(DEFAULT_SEED_LIMIT)],
-      { detached: true, stdio: expect.anything(), windowsHide: true }
-    );
-    expect(spawn.mock.results[0].value.unref).toHaveBeenCalled();
+  it("waits for OS launch before unref and reports only launch, not completion", async () => {
+    const { child, spawn, unref } = fakeSpawn();
+    let settled = false;
+    const result = startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn })
+      .then((value) => { settled = true; return value; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(unref).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledWith("node", [
+      "/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", String(DEFAULT_SEED_LIMIT),
+    ], { detached: true, stdio: "ignore", windowsHide: true });
+    child.emit("spawn");
+    expect(await result).toBe(true);
+    expect(unref).toHaveBeenCalledOnce();
   });
 
-  it("defaults enginePath to deepen.js next to the module", () => {
-    const spawn = fakeSpawn();
-    startBackgroundSeed("/some/repo", { spawn });
-    expect(spawn).toHaveBeenCalledTimes(1);
-    const args = spawn.mock.calls[0][1] as string[];
-    expect(args[0].endsWith("deepen.js")).toBe(true);
-    expect(args.slice(1)).toEqual([
-      "--repo",
-      "/some/repo",
-      "--gitlog-limit",
-      String(DEFAULT_SEED_LIMIT),
-    ]);
+  it("preserves the default engine location, limit override and calling harness", async () => {
+    const { child, spawn } = fakeSpawn();
+    const result = startBackgroundSeed("/repo", { spawn, limit: 50, harness: "codex" });
+    expect(spawn).toHaveBeenCalledWith("node", [
+      expect.stringMatching(/deepen\.js$/), "--repo", "/repo", "--gitlog-limit", "50", "--harness", "codex",
+    ], { detached: true, stdio: "ignore", windowsHide: true });
+    child.emit("spawn");
+    expect(await result).toBe(true);
   });
 
-  it("opts.limit overrides the default limit", () => {
-    const spawn = fakeSpawn();
-    startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn, limit: 50 });
-    expect(spawn).toHaveBeenCalledWith(
-      "node",
-      ["/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", "50"],
-      { detached: true, stdio: expect.anything(), windowsHide: true }
-    );
+  it("reports asynchronous launch errors without raw error text or success", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const { child, spawn, unref } = fakeSpawn();
+    const result = startBackgroundSeed("/secret/path", { spawn });
+    child.emit("error", new Error("ENOENT token=SECRET " + "x".repeat(10_000)));
+    expect(await result).toBe(false);
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(failure);
+    expect(unref).not.toHaveBeenCalled();
   });
 
-  it("passes the calling harness to deepen so its config override is retained", () => {
-    const spawn = fakeSpawn();
-    startBackgroundSeed("/some/repo", {
-      enginePath: "/dist/deepen.js",
-      harness: "antigravity-cli",
-      spawn,
-    });
-    expect(spawn).toHaveBeenCalledWith(
-      "node",
-      [
-        "/dist/deepen.js",
-        "--repo",
-        "/some/repo",
-        "--gitlog-limit",
-        String(DEFAULT_SEED_LIMIT),
-        "--harness",
-        "antigravity-cli",
-      ],
-      { detached: true, stdio: expect.anything(), windowsHide: true }
-    );
+  it("reports synchronous launch errors with the same bounded diagnostic", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const spawn = vi.fn<typeof realSpawn>().mockImplementation(() => { throw new Error("SECRET EMFILE"); });
+    expect(await startBackgroundSeed("/repo", { spawn })).toBe(false);
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(failure);
   });
 
-  it("fail-safe: a spawn that throws does not throw out of startBackgroundSeed", () => {
-    const spawn = vi.fn().mockImplementation(() => {
-      throw new Error("spawn EMFILE");
-    });
-    expect(() =>
-      startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn })
-    ).not.toThrow();
-  });
-
-  it("fail-safe: an async 'error' event on the child (ENOENT/EACCES/sandbox) does not crash the caller", () => {
-    // Real spawn() failures like ENOENT arrive as an async 'error' event on the returned
-    // ChildProcess, not as a synchronous throw — so the spy must be a real EventEmitter to
-    // exercise that path (a plain object with unref() wouldn't emit anything).
-    const child = new EventEmitter() as EventEmitter & { unref: () => void };
-    child.unref = vi.fn();
-    const spawn = vi.fn().mockReturnValue(child);
-    expect(() =>
-      startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn })
-    ).not.toThrow();
-    // Emitting 'error' with no listener would normally throw (EventEmitter semantics) and crash
-    // the process — proving a listener was attached means this does NOT throw.
-    expect(() => child.emit("error", new Error("ENOENT"))).not.toThrow();
+  it("handles an actual unavailable executable error event", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const spawn = vi.fn<typeof realSpawn>().mockImplementation(() =>
+      realSpawn("/memory-router-nonexistent-executable", [], { stdio: "ignore" }));
+    expect(await startBackgroundSeed("/repo", { spawn })).toBe(false);
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(failure);
   });
 });
 
 describe("seedControl", () => {
-  function fakeSpawn() {
-    return vi.fn().mockReturnValue({ on: vi.fn(), unref: vi.fn() });
-  }
-
-  it("seed: spawns the background deepen engine and returns ok", () => {
-    const spawn = fakeSpawn();
-    const result = seedControl("seed", { repo: "/r", bankId: "b", spawn });
-    expect(spawn).toHaveBeenCalled();
-    expect(result.ok).toBe(true);
-    expect(result.message).toContain("b");
+  it("reports launch only after spawn succeeds", async () => {
+    const { child, spawn } = fakeSpawn();
+    const result = seedControl("seed", { repo: "/r", bankId: "bank", spawn });
+    child.emit("spawn");
+    expect(await result).toMatchObject({ ok: true, message: expect.stringContaining("seed launched") });
   });
 
-  it("decline (and any unknown command): not ok, usage message, no spawn", () => {
-    // "decline" is no longer a supported command — the live bank is the only state, so there is
-    // no declined flag to persist. It falls through to the usage error like any unknown command.
-    const spawn = fakeSpawn();
-    for (const command of ["decline", "bogus"]) {
-      const result = seedControl(command, { repo: "/r", bankId: "b", spawn });
-      expect(result.ok).toBe(false);
-      expect(result.message).toBe("usage: hindsight-seed seed --repo <dir>");
-    }
+  it("reports async launch failure to the manual caller", async () => {
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const { child, spawn } = fakeSpawn();
+    const result = seedControl("seed", { repo: "/r", bankId: "bank", spawn });
+    child.emit("error", new Error("SECRET"));
+    expect(await result).toEqual({ ok: false, message: "Background seed launch failed." });
+  });
+
+  it("does not spawn for unsupported commands", async () => {
+    const { spawn } = fakeSpawn();
+    expect(await seedControl("bogus", { repo: "/r", bankId: "b", spawn })).toEqual({
+      ok: false, message: "usage: hindsight-seed seed --repo <dir>",
+    });
     expect(spawn).not.toHaveBeenCalled();
   });
 });

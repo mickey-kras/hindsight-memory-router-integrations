@@ -1,11 +1,15 @@
 import {
   appendFileSync,
   closeSync,
+  linkSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -135,6 +139,29 @@ describe("RetainCoordinator", () => {
     const backendOutcome = await retain.retain("backend", { content: "work" });
     expect(backendOutcome.bank).toBe("dev");
     expect(fakeClients.get("backend")?.retains[0].bank).toBe("dev");
+  });
+
+  it("discovers and replays the normalized queue directory after symlink-parent traversal", async () => {
+    const safe = join(queueDir, "safe");
+    const other = join(queueDir, "other");
+    mkdirSync(join(safe, "queue"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "child"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "queue"), { mode: 0o700 });
+    symlinkSync(join(other, "child"), join(safe, "link"));
+    let fail = true;
+    const { retain, fakeClients } = makeStack({
+      queueDir: `${safe}/link/../queue`,
+      behavior: () => {
+        if (fail) throw httpError(503);
+      },
+    });
+    await expect(retain.retain("main", { content: "pending" })).resolves.toMatchObject({ queued: true });
+    expect(readdirSync(join(safe, "queue"))).toContain("hindsight-retain-queue.main.jsonl");
+    fail = false;
+    await retain.flushQueues();
+    expect(fakeClients.get("main")?.retains).toEqual([expect.objectContaining({ content: "pending", bank: "main" })]);
+    expect(readdirSync(join(safe, "queue"))).not.toContain("hindsight-retain-queue.main.jsonl");
+    expect(readdirSync(join(other, "queue"))).toEqual([]);
   });
 
   it("preserves an existing backlog when another coordinator opens its directory", async () => {
@@ -532,6 +559,40 @@ describe("RetainCoordinator", () => {
     ]);
     expect(() => readFileSync(blocked.path)).toThrow();
   });
+
+  it.each(["symlink", "hardlink"])(
+    "isolates a rejected %s queue without reading or changing its target",
+    async (kind) => {
+      const [blocked, ready] = await queuePrincipals(queueDir);
+      const target = join(queueDir, "private-target");
+      writeFileSync(target, blocked.raw, { mode: 0o644 });
+      rmSync(blocked.path);
+      if (kind === "symlink") symlinkSync(target, blocked.path);
+      else linkSync(target, blocked.path);
+      const logger = { warn: vi.fn(), error: vi.fn() };
+      const replay = makeStack({ queueDir, logger });
+
+      await expect(replay.retain.flushQueues()).resolves.toBeUndefined();
+
+      expect(readFileSync(target, "utf8")).toBe(blocked.raw);
+      expect(statSync(target).mode & 0o777).toBe(0o644);
+      expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
+      expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        `retain queue replay failed for agent ${blocked.principal}; remaining items stay queued for retry`,
+      );
+
+      rmSync(blocked.path);
+      writeFileSync(blocked.path, blocked.raw, { mode: 0o600 });
+      const restarted = makeStack({ queueDir });
+      await restarted.retain.flushQueues();
+      expect(restarted.fakeClients.get(blocked.principal)?.retains).toMatchObject([
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+      ]);
+      expect(readFileSync(target, "utf8")).toBe(blocked.raw);
+      expect(statSync(target).mode & 0o777).toBe(0o644);
+    },
+  );
 
   it("isolates recovery filesystem failures and retries the intact backlog after repair and restart", async () => {
     const [blocked, ready] = await queuePrincipals(queueDir);

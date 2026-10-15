@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.test.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "paths": {
+      "@memory-router/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "tests/coding-agents-upstream.test.ts",
+    "tests/coding-agents-prefix.test.ts",
+    "src/upstream/coding-agents/src/core/runtime.test.ts",
+    "src/upstream/coding-agents/src/core/hook.test.ts",
+    "src/upstream/coding-agents/src/core/session-cache.test.ts",
+    "src/shared/**/*.d.ts"
+  ],
+  "exclude": []
+}

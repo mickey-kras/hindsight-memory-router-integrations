@@ -4,6 +4,7 @@ import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createKnowledgeTools, TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import plugin, { buildRoutingStack, PLUGIN_ID, type RoutingStack, registerWithStack } from "../src/plugin.js";
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
@@ -190,11 +191,27 @@ describe("plugin wiring", () => {
     }
   });
 
-  it("rejects ambiguous principal maps and invalid numeric limits", () => {
+  it("accepts zero queue age but expires outage writes before a later replay", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 429 }));
+    const stack = buildRoutingStack(
+      { ...pluginConfig(queueDir), retainQueueMaxAgeMs: 0 },
+      { warn: vi.fn(), error: vi.fn() },
+    );
+    expect(await stack.retain.retain("main", { content: "queued before cleanup" })).toMatchObject({ queued: true });
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1000);
+    await stack.retain.flushQueues();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(queueDir, "hindsight-retain-queue.main.jsonl"))).toBe(false);
+  });
+
+  it("rejects the unsupported principals alias and invalid numeric limits", () => {
     const config = pluginConfig(queueDir);
     const logger = { warn: vi.fn(), error: vi.fn() };
     expect(() => buildRoutingStack({ ...config, principals: config.agents }, logger)).toThrow(
-      "configure agents or principals, not both",
+      "principals is unsupported in OpenClaw; configure agents",
+    );
+    expect(() => buildRoutingStack({ ...config, agents: undefined, principals: config.agents }, logger)).toThrow(
+      "principals is unsupported in OpenClaw; configure agents",
     );
     expect(() => buildRoutingStack({ ...config, recallTimeoutMs: 0 }, logger)).toThrow(
       "recallTimeoutMs must be a positive integer",
@@ -693,6 +710,55 @@ describe("plugin wiring", () => {
 
     expect(factory({ agentId: "stranger" })).toBeNull();
     expect(factory({})).toBeNull();
+  });
+
+  it("keeps SDK declarations, registered names and executable tools in agreement", async () => {
+    const expected = [
+      "agent_knowledge_create_page",
+      "agent_knowledge_delete_page",
+      "agent_knowledge_get_page",
+      "agent_knowledge_ingest",
+      "agent_knowledge_list_pages",
+      "agent_knowledge_recall",
+      "agent_knowledge_update_page",
+    ];
+    const sdkNames = [...expected, "agent_knowledge_reflect"].sort();
+    expect([...TOOL_NAMES].sort()).toEqual(sdkNames);
+    expect(
+      createKnowledgeTools({ apiUrl: "https://router.example.test", bankId: "main" })
+        .map((tool) => tool.name)
+        .sort(),
+    ).toEqual(sdkNames);
+    const api = makeApi(queueDir);
+    registerWithStack(api, buildRoutingStack(pluginConfig(queueDir), api.logger));
+    const { factory, opts } = api.toolFactories[0];
+    const tools = factory({ agentId: "main" }) as Array<{
+      name: string;
+      execute(id: string, params: Record<string, unknown>): Promise<unknown>;
+    }>;
+    expect([...(opts?.names ?? [])].sort()).toEqual(expected);
+    expect(tools.map((tool) => tool.name).sort()).toEqual(expected);
+    const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ results: [] }));
+    for (const tool of tools) {
+      send.mockClear();
+      await expect(
+        tool.execute("contract", {
+          query: "facts",
+          page_id: "page",
+          name: "Page",
+          source_query: "facts",
+          title: "Document",
+          content: "facts",
+        }),
+      ).resolves.toBeDefined();
+      expect(send).toHaveBeenCalled();
+    }
+    expect(
+      auditRecords(api)
+        .map((record) => record.op)
+        .sort(),
+    ).toEqual(expected);
+    expect(auditRecords(api).every((record) => record.outcome === "success")).toBe(true);
   });
 
   it("knowledge recall tool routes through the multi-bank coordinator", async () => {
