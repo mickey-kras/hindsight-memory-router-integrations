@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..6cf2151
+index 0000000..4403189
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -45,6 +45,8 @@ index 0000000..6cf2151
 +SessionStart readiness probes propagate terminal authorization failures before launching further background work; transient failures retain their fallback behavior. Append capabilities and accepted-operation cursors belong to one bank, so a managed bank switch re-probes the destination and starts from a replacement transcript. Grok's native hooks file and generated backup, and Trae's generated JSON backups, are covered by installer transactions.
 +
 +Multi-source conversation retention preserves rollout contributions in their original order and rereads their sources when rebuilding the shared document. Sources must remain readable, including replies previously retained before their transcript was flushed. Reconstruction supports up to 16 source references and refuses any decoded source or assembled document exceeding 32 MiB of serialized turns or 100,000 turns. Missing or ambiguous sources, unknown legacy continuation boundaries, moving copied prefixes and exceeded limits stop the write with a diagnostic instead of replacing the document with incomplete data. Single-source and persistent-runtime retention retain their existing size behavior.
++
++Hook lifecycle entrypoints observe rejected work, emit one fixed stderr diagnostic and exit 1 without adding protocol stdout. Authorization denial remains terminal. Seed launch waits only for the child spawn/error event; failure is reported without raw exception text, and manual success means launched, not extraction complete.
 diff --git a/LICENSE b/LICENSE
 new file mode 100644
 index 0000000..f572d61
@@ -9324,7 +9326,7 @@ index 1382140..ea01e67 100644
  
  /** Is `dir` the repo itself or somewhere inside it? */
 diff --git a/src/core/hook.ts b/src/core/hook.ts
-index 57ea089..757eb37 100644
+index 57ea089..cb6ec11 100644
 --- a/src/core/hook.ts
 +++ b/src/core/hook.ts
 @@ -1,3 +1,6 @@
@@ -9527,16 +9529,24 @@ index 57ea089..757eb37 100644
      apiToken: cfg.apiToken,
      bank: bankId,
      maxParallelRetains: cfg.maxParallelRetains,
-@@ -494,6 +535,7 @@ export async function runHook(
-     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
+@@ -491,9 +532,10 @@ export async function runHook(
+   // per-bank lock makes this a no-op — but a session that predates installation never received
+   // SessionStart. This limited fallback heals that case without duplicating any survey logic.
+   if (cfg.autoSeed !== false && !existsSync(cacheFile)) {
+-    startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
++    await startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
    }
  
 +  const handoffScope = spec.toolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
    const output = await buildHookOutput({ harness: spec.harness, prompt, cfg, client, cacheFile });
    // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
    // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
-@@ -506,8 +548,13 @@ export async function runHook(
-     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
+@@ -503,11 +545,16 @@ export async function runHook(
+     client.knowledgePagesSupported !== false &&
+     output.pages.length === 0
+   ) {
+-    startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
++    await startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
    }
    let context = output.context;
 -  if (context && spec.toolHook && sessionId) {
@@ -11255,11 +11265,201 @@ index a2c1afe..5594b35 100644
        turns,
        cursors: this.usageCursors,
        lastTurnComplete,
+diff --git a/src/core/seed.test.ts b/src/core/seed.test.ts
+index e2617f5..b458753 100644
+--- a/src/core/seed.test.ts
++++ b/src/core/seed.test.ts
+@@ -1,116 +1,91 @@
+-import { EventEmitter } from "node:events";
+-import { describe, expect, it, vi } from "vitest";
++import { ChildProcess, spawn as realSpawn } from "node:child_process";
++import { afterEach, describe, expect, it, vi } from "vitest";
+ import { startBackgroundSeed, seedControl, DEFAULT_SEED_LIMIT } from "./seed";
+ 
+-describe("startBackgroundSeed", () => {
+-  function fakeSpawn() {
+-    return vi.fn().mockReturnValue({ on: vi.fn(), unref: vi.fn() });
+-  }
++const failure = "[memory-router] Background seed launch failed.\n";
++afterEach(() => vi.restoreAllMocks());
+ 
+-  it("spawns node against enginePath, detached, output kept (log file or ignore), with the default gitlog limit", () => {
+-    const spawn = fakeSpawn();
+-    startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn });
+-    expect(spawn).toHaveBeenCalledWith(
+-      "node",
+-      ["/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", String(DEFAULT_SEED_LIMIT)],
+-      { detached: true, stdio: expect.anything(), windowsHide: true }
+-    );
+-    expect(spawn.mock.results[0].value.unref).toHaveBeenCalled();
+-  });
++function fakeSpawn() {
++  const child = new ChildProcess();
++  const unref = vi.spyOn(child, "unref").mockImplementation(() => {});
++  const spawn = vi.fn<typeof realSpawn>().mockImplementation(() => child);
++  return { child, spawn, unref };
++}
+ 
+-  it("defaults enginePath to deepen.js next to the module", () => {
+-    const spawn = fakeSpawn();
+-    startBackgroundSeed("/some/repo", { spawn });
+-    expect(spawn).toHaveBeenCalledTimes(1);
+-    const args = spawn.mock.calls[0][1] as string[];
+-    expect(args[0].endsWith("deepen.js")).toBe(true);
+-    expect(args.slice(1)).toEqual([
+-      "--repo",
+-      "/some/repo",
+-      "--gitlog-limit",
+-      String(DEFAULT_SEED_LIMIT),
+-    ]);
++describe("startBackgroundSeed", () => {
++  it("waits for OS launch before unref and reports only launch, not completion", async () => {
++    const { child, spawn, unref } = fakeSpawn();
++    let settled = false;
++    const result = startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn })
++      .then((value) => { settled = true; return value; });
++    await Promise.resolve();
++    expect(settled).toBe(false);
++    expect(unref).not.toHaveBeenCalled();
++    expect(spawn).toHaveBeenCalledWith("node", [
++      "/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", String(DEFAULT_SEED_LIMIT),
++    ], { detached: true, stdio: "ignore", windowsHide: true });
++    child.emit("spawn");
++    expect(await result).toBe(true);
++    expect(unref).toHaveBeenCalledOnce();
+   });
+ 
+-  it("opts.limit overrides the default limit", () => {
+-    const spawn = fakeSpawn();
+-    startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn, limit: 50 });
+-    expect(spawn).toHaveBeenCalledWith(
+-      "node",
+-      ["/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", "50"],
+-      { detached: true, stdio: expect.anything(), windowsHide: true }
+-    );
++  it("preserves the default engine location, limit override and calling harness", async () => {
++    const { child, spawn } = fakeSpawn();
++    const result = startBackgroundSeed("/repo", { spawn, limit: 50, harness: "codex" });
++    expect(spawn).toHaveBeenCalledWith("node", [
++      expect.stringMatching(/deepen\.js$/), "--repo", "/repo", "--gitlog-limit", "50", "--harness", "codex",
++    ], { detached: true, stdio: "ignore", windowsHide: true });
++    child.emit("spawn");
++    expect(await result).toBe(true);
+   });
+ 
+-  it("passes the calling harness to deepen so its config override is retained", () => {
+-    const spawn = fakeSpawn();
+-    startBackgroundSeed("/some/repo", {
+-      enginePath: "/dist/deepen.js",
+-      harness: "antigravity-cli",
+-      spawn,
+-    });
+-    expect(spawn).toHaveBeenCalledWith(
+-      "node",
+-      [
+-        "/dist/deepen.js",
+-        "--repo",
+-        "/some/repo",
+-        "--gitlog-limit",
+-        String(DEFAULT_SEED_LIMIT),
+-        "--harness",
+-        "antigravity-cli",
+-      ],
+-      { detached: true, stdio: expect.anything(), windowsHide: true }
+-    );
++  it("reports asynchronous launch errors without raw error text or success", async () => {
++    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
++    const { child, spawn, unref } = fakeSpawn();
++    const result = startBackgroundSeed("/secret/path", { spawn });
++    child.emit("error", new Error("ENOENT token=SECRET " + "x".repeat(10_000)));
++    expect(await result).toBe(false);
++    expect(stderr).toHaveBeenCalledExactlyOnceWith(failure);
++    expect(unref).not.toHaveBeenCalled();
+   });
+ 
+-  it("fail-safe: a spawn that throws does not throw out of startBackgroundSeed", () => {
+-    const spawn = vi.fn().mockImplementation(() => {
+-      throw new Error("spawn EMFILE");
+-    });
+-    expect(() =>
+-      startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn })
+-    ).not.toThrow();
++  it("reports synchronous launch errors with the same bounded diagnostic", async () => {
++    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
++    const spawn = vi.fn<typeof realSpawn>().mockImplementation(() => { throw new Error("SECRET EMFILE"); });
++    expect(await startBackgroundSeed("/repo", { spawn })).toBe(false);
++    expect(stderr).toHaveBeenCalledExactlyOnceWith(failure);
+   });
+ 
+-  it("fail-safe: an async 'error' event on the child (ENOENT/EACCES/sandbox) does not crash the caller", () => {
+-    // Real spawn() failures like ENOENT arrive as an async 'error' event on the returned
+-    // ChildProcess, not as a synchronous throw — so the spy must be a real EventEmitter to
+-    // exercise that path (a plain object with unref() wouldn't emit anything).
+-    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+-    child.unref = vi.fn();
+-    const spawn = vi.fn().mockReturnValue(child);
+-    expect(() =>
+-      startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn })
+-    ).not.toThrow();
+-    // Emitting 'error' with no listener would normally throw (EventEmitter semantics) and crash
+-    // the process — proving a listener was attached means this does NOT throw.
+-    expect(() => child.emit("error", new Error("ENOENT"))).not.toThrow();
++  it("handles an actual unavailable executable error event", async () => {
++    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
++    const spawn = vi.fn<typeof realSpawn>().mockImplementation(() =>
++      realSpawn("/memory-router-nonexistent-executable", [], { stdio: "ignore" }));
++    expect(await startBackgroundSeed("/repo", { spawn })).toBe(false);
++    expect(stderr).toHaveBeenCalledExactlyOnceWith(failure);
+   });
+ });
+ 
+ describe("seedControl", () => {
+-  function fakeSpawn() {
+-    return vi.fn().mockReturnValue({ on: vi.fn(), unref: vi.fn() });
+-  }
++  it("reports launch only after spawn succeeds", async () => {
++    const { child, spawn } = fakeSpawn();
++    const result = seedControl("seed", { repo: "/r", bankId: "bank", spawn });
++    child.emit("spawn");
++    expect(await result).toMatchObject({ ok: true, message: expect.stringContaining("seed launched") });
++  });
+ 
+-  it("seed: spawns the background deepen engine and returns ok", () => {
+-    const spawn = fakeSpawn();
+-    const result = seedControl("seed", { repo: "/r", bankId: "b", spawn });
+-    expect(spawn).toHaveBeenCalled();
+-    expect(result.ok).toBe(true);
+-    expect(result.message).toContain("b");
++  it("reports async launch failure to the manual caller", async () => {
++    vi.spyOn(process.stderr, "write").mockReturnValue(true);
++    const { child, spawn } = fakeSpawn();
++    const result = seedControl("seed", { repo: "/r", bankId: "bank", spawn });
++    child.emit("error", new Error("SECRET"));
++    expect(await result).toEqual({ ok: false, message: "Background seed launch failed." });
+   });
+ 
+-  it("decline (and any unknown command): not ok, usage message, no spawn", () => {
+-    // "decline" is no longer a supported command — the live bank is the only state, so there is
+-    // no declined flag to persist. It falls through to the usage error like any unknown command.
+-    const spawn = fakeSpawn();
+-    for (const command of ["decline", "bogus"]) {
+-      const result = seedControl(command, { repo: "/r", bankId: "b", spawn });
+-      expect(result.ok).toBe(false);
+-      expect(result.message).toBe("usage: hindsight-seed seed --repo <dir>");
+-    }
++  it("does not spawn for unsupported commands", async () => {
++    const { spawn } = fakeSpawn();
++    expect(await seedControl("bogus", { repo: "/r", bankId: "b", spawn })).toEqual({
++      ok: false, message: "usage: hindsight-seed seed --repo <dir>",
++    });
+     expect(spawn).not.toHaveBeenCalled();
+   });
+ });
 diff --git a/src/core/seed.ts b/src/core/seed.ts
-index 96380ee..ca307d5 100644
+index 96380ee..a21dbe7 100644
 --- a/src/core/seed.ts
 +++ b/src/core/seed.ts
-@@ -7,8 +7,8 @@
+@@ -7,21 +7,23 @@
   * Fail-safe throughout: state read/write never throws — a corrupt or unwritable state file must
   * not break the hook.
   */
@@ -11269,23 +11469,80 @@ index 96380ee..ca307d5 100644
  import { dirname, join } from "node:path";
  import { fileURLToPath } from "node:url";
  
-@@ -66,15 +66,17 @@ export function seedControl(
+ export const DEFAULT_SEED_LIMIT = 300;
+ 
++type SeedSpawn = (...args: Parameters<typeof realSpawn>) => ReturnType<typeof realSpawn>;
++
+ /** Spawn a DETACHED background run of the deepen engine for `repoDir`. Idempotent server-side
+  *  (per-bank lock + dedup by document id), so firing it every session start is safe — each run does
+- *  only the missing work (cold seed, new conversations, the next diff-deepening batch). Fire-and-forget:
+- *  the child outlives this process; extraction is server-side/async so nothing here blocks. Never throws. */
+-export function startBackgroundSeed(
++ *  only the missing work (cold seed, new conversations, the next diff-deepening batch). The child outlives this process.
++ *  Await only OS launch confirmation, not extraction; true means launched, never seeded. Never rejects. */
++export async function startBackgroundSeed(
+   repoDir: string,
+-  opts: { limit?: number; harness?: string; enginePath?: string; spawn?: typeof realSpawn } = {}
+-): void {
++  opts: { limit?: number; harness?: string; enginePath?: string; spawn?: SeedSpawn } = {}
++): Promise<boolean> {
+   try {
+     const spawnFn = opts.spawn ?? realSpawn;
+     const enginePath =
+@@ -45,13 +47,19 @@ export function startBackgroundSeed(
+         windowsHide: true,
+       }
+     );
+-    // spawn() failures (ENOENT/EACCES/fd exhaustion/sandboxed environments) often arrive
+-    // ASYNCHRONOUSLY as an 'error' event on the child, not as a synchronous throw — an
+-    // unhandled 'error' event would crash the caller. Swallow it: fire-and-forget best-effort.
+-    child.on("error", () => {});
+-    child.unref();
++    return await new Promise<boolean>((resolve) => {
++      child.once("error", () => {
++        process.stderr.write("[memory-router] Background seed launch failed.\n");
++        resolve(false);
++      });
++      child.once("spawn", () => {
++        child.unref();
++        resolve(true);
++      });
++    });
+   } catch {
+-    /* best-effort: a failed spawn must not break the caller */
++    process.stderr.write("[memory-router] Background seed launch failed.\n");
++    return false;
+   }
+ }
+ 
+@@ -61,20 +69,25 @@ export interface SeedControlResult {
+ }
+ 
+ /** Execute a seed-control command. Pure-ish: bank + connection are passed in; spawn + stateDir injectable. */
+-export function seedControl(
++export async function seedControl(
+   command: string,
    args: {
      repo: string;
      bankId: string;
 +    toolPrefix?: string;
      limit?: number;
+-    spawn?: typeof realSpawn;
 +    harness?: string;
-     spawn?: typeof realSpawn;
++    spawn?: SeedSpawn;
    }
- ): SeedControlResult {
+-): SeedControlResult {
++): Promise<SeedControlResult> {
    if (command === "seed") {
 -    startBackgroundSeed(args.repo, { limit: args.limit, spawn: args.spawn });
-+    startBackgroundSeed(args.repo, { limit: args.limit, spawn: args.spawn, harness: args.harness });
++    const launched = await startBackgroundSeed(args.repo, {
++      limit: args.limit, spawn: args.spawn, harness: args.harness,
++    });
++    if (!launched) return { ok: false, message: "Background seed launch failed." };
      return {
        ok: true,
 -      message: `🧠 Hindsight is learning this repo → memory bank “${args.bankId}”`,
-+      message: `🧠 ${toolBrand(args.toolPrefix).displayName} is learning this repo → memory bank “${args.bankId}”`,
++      message: `🧠 ${toolBrand(args.toolPrefix).displayName} background seed launched for memory bank “${args.bankId}”`,
      };
    }
    return { ok: false, message: "usage: hindsight-seed seed --repo <dir>" };
@@ -11522,7 +11779,7 @@ index efe1ce8..93978d3 100644
          /* best-effort: a cursor that cannot be written costs a replace, never data */
        }
 diff --git a/src/core/session-start.ts b/src/core/session-start.ts
-index 5cc323b..967fad8 100644
+index 5cc323b..d7db35a 100644
 --- a/src/core/session-start.ts
 +++ b/src/core/session-start.ts
 @@ -1,3 +1,6 @@
@@ -11571,7 +11828,24 @@ index 5cc323b..967fad8 100644
    if (gitlogCurrent === undefined) return undefined; // server hiccup: say nothing rather than guess
    if (mode === "message") return gitlogCurrent ? "git in sync" : "catching up on new commits";
    // full: deepening progress = per-commit docs vs the recent-history target
-@@ -204,7 +209,7 @@ export async function buildSessionStartContext(args: {
+@@ -170,7 +175,7 @@ export async function buildSessionStartContext(args: {
+   harness?: string;
+   stateDir?: string;
+   hasGit?: (dir: string) => boolean;
+-  startSeed?: (repoDir: string, opts?: { limit?: number; harness?: string }) => void;
++  startSeed?: (repoDir: string, opts?: { limit?: number; harness?: string }) => void | Promise<boolean>;
+   startSurvey?: typeof startCodebaseSurvey;
+   headSha?: (dir: string) => string | null;
+   commitsSince?: (dir: string, sinceSha: string) => number | null;
+@@ -182,6 +187,7 @@ export async function buildSessionStartContext(args: {
+   const t0 = Date.now();
+   let cold: boolean | undefined; // undefined = not checked (autoSeed off / non-git / unreachable)
+   let gitDocIds: Set<string> | undefined; // the cold-check's doc set, reused by the banner's git note
++  let seedLaunched: boolean | undefined;
+   let bankEmpty = false; // true only when the server confirmed the bank holds no documents
+   const harness = args.harness ?? "claude-code";
+   const hasGit = args.hasGit ?? hasGitHistory;
+@@ -204,7 +210,7 @@ export async function buildSessionStartContext(args: {
      try {
        const stamp = retainStamp();
        const content =
@@ -11580,7 +11854,7 @@ index 5cc323b..967fad8 100644
          `(Internal marker: no memories are extracted from this document.)`;
        const tags = [...new Set([...stamp.tags, SURVEY_BASELINE_TAG])];
        // Fire-and-forget; Promise.resolve tolerates a non-Promise return (e.g. a test spy).
-@@ -237,7 +242,8 @@ export async function buildSessionStartContext(args: {
+@@ -237,7 +243,8 @@ export async function buildSessionStartContext(args: {
          let docIds: Set<string> | undefined;
          try {
            docIds = await client.listDocumentIds("source:git", "all_strict");
@@ -11590,7 +11864,7 @@ index 5cc323b..967fad8 100644
            docIds = undefined; // server unreachable: transient — do nothing, try again next session
          }
  
-@@ -250,7 +256,7 @@ export async function buildSessionStartContext(args: {
+@@ -250,7 +257,7 @@ export async function buildSessionStartContext(args: {
          if (docIds?.size === 0) {
            baselines = await client
              .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
@@ -11599,7 +11873,7 @@ index 5cc323b..967fad8 100644
          }
          cold = docIds !== undefined ? docIds.size === 0 && !baselines?.size : undefined;
          gitDocIds = docIds;
-@@ -261,7 +267,7 @@ export async function buildSessionStartContext(args: {
+@@ -261,7 +268,7 @@ export async function buildSessionStartContext(args: {
          if (cold === true && client.hasDocuments) {
            bankEmpty = await client.hasDocuments().then(
              (has) => !has,
@@ -11608,7 +11882,25 @@ index 5cc323b..967fad8 100644
            );
          }
          if (docIds !== undefined) {
-@@ -301,7 +307,7 @@ export async function buildSessionStartContext(args: {
+@@ -272,7 +279,7 @@ export async function buildSessionStartContext(args: {
+           // Pass the ASKING harness through: without it deepen.js falls back to the config
+           // loader's harness default and misfiles this session's survey + git history into the
+           // wrong bank (e.g. `opencode::<project>` for a claude-code session). See #3247.
+-          startSeed(cwd, { limit: cfg.seedLimit, harness });
++          seedLaunched = (await startSeed(cwd, { limit: cfg.seedLimit, harness })) !== false;
+           // Cold iff the bank has zero source:git docs and no survey baseline (an undefined result
+           // — server error — is NOT treated as cold; we never surveyed/noted on an unconfirmed-empty
+           // bank).
+@@ -287,7 +294,7 @@ export async function buildSessionStartContext(args: {
+               const sha = resolveHeadSha(cwd);
+               if (started && sha) recordSurveyBaseline(sha);
+             }
+-            diag(harness, "seed_started", { bank: bankId });
++            if (seedLaunched !== false) diag(harness, "seed_started", { bank: bankId });
+           } else if (cfg.codebaseSurvey !== false && cfg.surveyRefreshCommits > 0) {
+             // WARM bank: re-run the survey once enough commits have accrued since the last one, so
+             // structural pages track an evolving architecture. Branch-robust: read the
+@@ -301,7 +308,7 @@ export async function buildSessionStartContext(args: {
                  baselines ??
                  (await client
                    .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
@@ -11617,7 +11909,7 @@ index 5cc323b..967fad8 100644
                const counts: number[] = [];
                for (const id of markers) {
                  if (!id.startsWith(SURVEY_BASELINE_PREFIX)) continue;
-@@ -313,7 +319,7 @@ export async function buildSessionStartContext(args: {
+@@ -313,7 +320,7 @@ export async function buildSessionStartContext(args: {
                // CLI on PATH, budget kill) — the marker alone must not suppress retries forever.
                const uploads = await client
                  .listDocumentIds("source:upload", "all_strict")
@@ -11626,7 +11918,7 @@ index 5cc323b..967fad8 100644
                const findingsAbsent =
                  counts.length > 0 && !SURVEY_DOC_IDS.some((id) => uploads.has(id));
                if ((sinceLast !== null && sinceLast >= cfg.surveyRefreshCommits) || findingsAbsent) {
-@@ -343,13 +349,15 @@ export async function buildSessionStartContext(args: {
+@@ -343,13 +350,15 @@ export async function buildSessionStartContext(args: {
    let pages: PageRef[] = [];
    try {
      pages = parsePageList(await client.listPages());
@@ -11643,7 +11935,7 @@ index 5cc323b..967fad8 100644
      reflectOnNewGoals: cfg.autoInject !== "reflect",
      extra: cfg.toolGuideExtra,
    });
-@@ -368,9 +376,9 @@ export async function buildSessionStartContext(args: {
+@@ -368,9 +377,10 @@ export async function buildSessionStartContext(args: {
        gitIds: gitDocIds,
        mode: cfg.gitIngest,
        cold: cold === true,
@@ -11651,11 +11943,12 @@ index 5cc323b..967fad8 100644
 +    }).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
    }
 -  systemMessage = buildSeedBanner(bankId, cold === true, gitNote);
-+  systemMessage = buildSeedBanner(bankId, cold === true, gitNote, cfg.toolPrefix);
++  systemMessage = buildSeedBanner(bankId, cold === true && seedLaunched === true, gitNote, cfg.toolPrefix);
++  if (seedLaunched === false) systemMessage += "\nBackground seed launch failed.";
  
    // The old per-agent plugin keeps running next to this one until the user removes it — say so
    // where they will see it. Only Claude Code had that plugin.
-@@ -436,6 +444,7 @@ export async function runSessionStartHook(
+@@ -436,6 +446,7 @@ export async function runSessionStartHook(
      // cold one keeps coming up in the background and is picked up by a later turn.
      await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
      const client = makeClient({
@@ -11663,7 +11956,7 @@ index 5cc323b..967fad8 100644
        apiUrl: cfg.apiUrl,
        apiToken: cfg.apiToken,
        bank: bankId,
-@@ -443,16 +452,22 @@ export async function runSessionStartHook(
+@@ -443,16 +454,22 @@ export async function runSessionStartHook(
        observationScopes: cfg.observationScopes,
      });
  
@@ -14107,7 +14400,7 @@ index 9631ac5..2d5ef72 100644
          "sessionStart",
          "stop",
 diff --git a/src/harness/hook-lifecycle.ts b/src/harness/hook-lifecycle.ts
-index d363b45..2190d18 100644
+index d363b45..3d0f33a 100644
 --- a/src/harness/hook-lifecycle.ts
 +++ b/src/harness/hook-lifecycle.ts
 @@ -390,9 +390,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
@@ -14132,6 +14425,30 @@ index d363b45..2190d18 100644
      },
      prompt: copilotPrompt,
      retain: {
+@@ -795,9 +791,20 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
+   },
+ };
+ 
++// Hook failures must not print raw exceptions or inject diagnostics into protocol stdout.
++// Exit one (ordinary hook failure, never a host blocking decision) with no extra stdout.
++async function runHookEntrypoint(run: () => Promise<void>): Promise<void> {
++  try {
++    await run();
++  } catch {
++    process.stderr.write("[memory-router] Hook failed; memory context unavailable.\n");
++    process.exitCode = 1;
++  }
++}
++
+ export const runHarnessSessionStart = (harness: HookHarnessName): Promise<void> =>
+-  runSessionStartHook(HOOK_HARNESSES[harness].sessionStart);
++  runHookEntrypoint(() => runSessionStartHook(HOOK_HARNESSES[harness].sessionStart));
+ export const runHarnessPrompt = (harness: HookHarnessName): Promise<void> =>
+-  runHook(HOOK_HARNESSES[harness].prompt);
++  runHookEntrypoint(() => runHook(HOOK_HARNESSES[harness].prompt));
+ export const runHarnessRetain = (harness: HookHarnessName): Promise<void> =>
+-  runRetainHook(HOOK_HARNESSES[harness].retain);
++  runHookEntrypoint(() => runRetainHook(HOOK_HARNESSES[harness].retain));
 diff --git a/src/harness/opencode.ts b/src/harness/opencode.ts
 index 1556b0e..d537083 100644
 --- a/src/harness/opencode.ts
@@ -14314,7 +14631,7 @@ index 90f45ce..c86e8eb 100644
      // Visible presence via the host's own notice API (POST /tui/show-toast) — never stderr, which
      // these TUIs render at the cursor, wedging text against the input bar.
 diff --git a/src/hindsight-seed.ts b/src/hindsight-seed.ts
-index d3e9f9c..06cc2d9 100644
+index d3e9f9c..b47a37b 100644
 --- a/src/hindsight-seed.ts
 +++ b/src/hindsight-seed.ts
 @@ -30,6 +30,6 @@ if (bankId === null) {
@@ -14322,9 +14639,10 @@ index d3e9f9c..06cc2d9 100644
    process.exit(1);
  }
 -const result = seedControl(command, { repo, bankId });
-+const result = seedControl(command, { repo, bankId, harness: "claude-code", toolPrefix: cfg.toolPrefix });
++const result = await seedControl(command, { repo, bankId, harness: "claude-code", toolPrefix: cfg.toolPrefix });
  console.log(result.message);
- process.exit(result.ok ? 0 : 1);
+-process.exit(result.ok ? 0 : 1);
++process.exitCode = result.ok ? 0 : 1;
 diff --git a/src/install-transaction.ts b/src/install-transaction.ts
 new file mode 100644
 index 0000000..4e21384
@@ -17368,7 +17686,7 @@ index 9b72278..f954d3a 100644
 +  ]
  }
 diff --git a/vitest.config.ts b/vitest.config.ts
-index 68a1104..82b6fe7 100644
+index 68a1104..1d6ada4 100644
 --- a/vitest.config.ts
 +++ b/vitest.config.ts
 @@ -1,21 +1,5 @@
@@ -17393,5 +17711,5 @@ index 68a1104..82b6fe7 100644
 -    },
 -  },
 +  resolve: { alias: { "@memory-router": new URL("../../../src", import.meta.url).pathname } },
-+  test: { include: ["src/core/chat.test.ts", "src/core/retain-cursor.test.ts", "src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
++  test: { include: ["src/core/seed.test.ts", "src/core/chat.test.ts", "src/core/retain-cursor.test.ts", "src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
  });
