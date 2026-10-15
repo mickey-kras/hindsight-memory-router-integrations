@@ -41,6 +41,8 @@ previous generation retained; upgrading does not remove older logs that may cont
 
 This logging policy does not cover host transcripts, model-facing context, user-facing notices or
 explicit foreground command output, which can contain memory content.
+Persistent hosts with a notifier still receive notice payloads through that callback. Hosts without
+a notifier retain only lifecycle metadata; notice content is not copied to logs or stdout/stderr.
 
 ## Ingest document identity
 

@@ -55,7 +55,7 @@ export class RuntimeCore {
   private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
   private deferInitialReflect = false;
   /** Host-notice channel (opencode/Kilo: client.tui.showToast via the adapter). Optional, fail-open. */
-  private notify?: (title: string, message: string) => void;
+  private notify?: (title: string, message: string) => void | PromiseLike<void>;
 
   constructor(
     private readonly client: HindsightClient,
@@ -74,8 +74,24 @@ export class RuntimeCore {
     setLogLevel(cfg.logLevel);
   }
 
-  setNotifier(notify: (title: string, message: string) => void): void {
+  setNotifier(notify: (title: string, message: string) => void | PromiseLike<void>): void {
     this.notify = notify;
+  }
+
+  private dispatchNotice(kind: "session" | "reflection", title: string, message: string): void {
+    if (!this.notify) {
+      log.info(this.harness, `${kind} notice not dispatched: host notifier unavailable`);
+      return;
+    }
+    try {
+      const pending = this.notify(title, message);
+      log.info(this.harness, `${kind} notice dispatched`);
+      void Promise.resolve(pending).catch((error: unknown) => {
+        log.warn(this.harness, `${kind} notice delivery failed`, { error });
+      });
+    } catch (error) {
+      log.warn(this.harness, `${kind} notice delivery failed`, { error });
+    }
   }
 
   /**
@@ -152,9 +168,8 @@ export class RuntimeCore {
       // Surface the seed note through the host's toast API when available; its text stays out of logs.
       if (out.systemMessage) {
         const plain = stripVTControlCharacters(out.systemMessage);
-        log.info(this.harness, "session notice delivered");
         const title = toolBrand(this.cfg.toolPrefix).displayName;
-        this.notify?.(title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
+        this.dispatchNotice("session", title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
       }
       this.deferInitialReflect = out.deferInitialReflect === true;
     } catch {
@@ -210,8 +225,7 @@ export class RuntimeCore {
     // renders inside the TUI input line. The shared output owns when a notice exists.
     if (output.notice) {
       const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
-      log.info(this.harness, "reflection notice delivered");
-      this.notify?.(`${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
+      this.dispatchNotice("reflection", `${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
     }
     const block = blocks.filter(Boolean).join("\n\n");
     this.injection.set(sessionId, block);

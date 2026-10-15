@@ -33,6 +33,8 @@ npm test --prefix src/upstream/coding-agents
 
 `upstream:accept` records reviewed adaptations; it is not a substitute for reviewing conflicts.
 `--patch-only` regenerates the complete coding-agent patch, including local additions and deletions.
+The patch uses one line of unified context to stay within GitHub's 1 MiB inline Contents API limit while
+preserving exact reconstruction with standard `git apply`; no adapted content is omitted.
 Repeat both after any further adapted-source edits.
 
 Pack both packages with the npm version pinned in `.github/workflows/ci.yml`. Refresh all entries

@@ -6,10 +6,13 @@ import { resolveConfig } from "./config";
 import { diag, parseHookEvent } from "./diag";
 import { HindsightClient, ReflectError } from "./hindsight";
 import { buildHookOutput } from "./hook";
+import * as hookLifecycle from "./hook";
 import { buildKnowledgeTools } from "./knowledge-tools";
 import { log, setLogLevel } from "./log";
 import { buildRetain } from "./retain-hook";
 import { RuntimeCore } from "./runtime";
+import * as sessionStart from "./session-start";
+import * as companionSkill from "./skill-sync";
 import { writeSessionCache } from "./session-cache";
 
 const PROMPT = "PROMPT_CANARY_private_question";
@@ -118,7 +121,64 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
     await runtime.onPrompt(IDENTITY, PROMPT);
     expect(runtime.getInjection(IDENTITY)).toContain(ANSWER);
     expect(notify).toHaveBeenCalled();
-    expect(contents(ordinary)).toContain("reflection notice delivered");
+    expect(contents(ordinary)).toContain("reflection notice dispatched");
+  });
+
+  it.each(["absent", "working", "throwing", "rejecting"] as const)(
+    "preserves lifecycle and private model output when notifier is %s", async (mode) => {
+      vi.spyOn(companionSkill, "syncCompanionSkill").mockImplementation(() => {});
+      vi.spyOn(sessionStart, "buildSessionStartContext").mockResolvedValue({
+        systemMessage: `Hindsight is learning ${IDENTITY}`, deferInitialReflect: true,
+      });
+      const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const instance = client();
+      const hookOutputs = vi.spyOn(hookLifecycle, "buildHookOutput");
+      const runtime = new RuntimeCore(instance, "A", resolveConfig({ logLevel: level, autoUpdate: false }), "codex", root);
+      const failure = new Error(FAILURE);
+      const notify = vi.fn<(title: string, message: string) => void | Promise<void>>(() => {
+        if (mode === "throwing") throw failure;
+        if (mode === "rejecting") return Promise.reject(failure);
+      });
+      if (mode !== "absent") runtime.setNotifier(notify);
+      await runtime.seedIfCold(root);
+      await runtime.onPrompt(IDENTITY, PROMPT);
+      expect(instance.reflect).not.toHaveBeenCalled();
+      expect(runtime.getInjection(IDENTITY)).toBeTruthy();
+      await runtime.onPrompt(IDENTITY, PROMPT);
+      expect(instance.reflect).toHaveBeenCalledOnce();
+      expect(runtime.getInjection(IDENTITY)).toContain(ANSWER);
+      await Promise.resolve();
+      if (mode === "absent") {
+        expect(notify).not.toHaveBeenCalled();
+        expect(contents(ordinary)).toContain("session notice not dispatched: host notifier unavailable");
+        expect(contents(ordinary)).toContain("reflection notice not dispatched: host notifier unavailable");
+      } else {
+        expect(notify).toHaveBeenCalledWith("Hindsight", `Is learning ${IDENTITY}`);
+        const notice = (await hookOutputs.mock.results[1].value).notice!;
+        expect(notify).toHaveBeenCalledWith("Hindsight · recalled past decisions", notice.replaceAll(/\s+/g, " ").trim().slice(0, 140));
+        const outcome = mode === "working" ? "dispatched" : "delivery failed";
+        expect(contents(ordinary)).toContain(`session notice ${outcome}`);
+        expect(contents(ordinary)).toContain(`reflection notice ${outcome}`);
+      }
+      expect(stdout).not.toHaveBeenCalled();
+      expect(stderr).not.toHaveBeenCalled();
+    }
+  );
+
+  it("keeps failed-reflection notices private when no host notifier exists", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const instance = client();
+    vi.mocked(instance.reflect).mockRejectedValue(new ReflectError(FAILURE, 503, false));
+    const runtime = new RuntimeCore(instance, "A", resolveConfig({ logLevel: level }), "codex", root);
+    await runtime.onPrompt(IDENTITY, PROMPT);
+    expect(runtime.getInjection(IDENTITY)).toContain("hindsight_search_knowledge_pages");
+    expect(runtime.getInjection(IDENTITY)).not.toContain(FAILURE);
+    expect(contents(ordinary)).toContain("reflection notice not dispatched: host notifier unavailable");
+    expect(contents(ordinary)).not.toContain("reflection notice dispatched");
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).not.toHaveBeenCalled();
   });
 
   it("reports unknown sync status and foreground errors without persisting their content", async () => {
