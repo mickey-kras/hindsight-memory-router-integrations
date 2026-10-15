@@ -990,4 +990,161 @@ describe("plugin wiring", () => {
       }),
     ]);
   });
+
+  describe("retain replay lifecycle", () => {
+    let api: FakeApi;
+    let stack: RoutingStack;
+    let service: FakeApi["services"][number];
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      api = makeApi(queueDir);
+      stack = instrumentedStack(queueDir, { constructed: [], recalls: [], retains: [] });
+      stack.config.retainQueueFlushIntervalMs = 100;
+      registerWithStack(api, stack);
+      service = api.services[0];
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("owns one interval across concurrent starts, repeated stops and restart", async () => {
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
+      await Promise.all([service.start(), service.start(), service.start()]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await Promise.all([service.stop(), service.stop()]);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledTimes(3);
+      await service.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it.each(["rejection", "synchronous throw"])(
+      "observes an initial %s and retries without duplicate timers",
+      async (failure) => {
+        const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
+        const secretError = new Error(`private transcript ${TOKEN_MAIN}`);
+        if (failure === "rejection") flush.mockRejectedValueOnce(secretError);
+        else
+          flush.mockImplementationOnce(() => {
+            throw secretError;
+          });
+        await service.start();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(api.logger.error).toHaveBeenCalledExactlyOnceWith("retain queue flush failed: memory operation failed");
+        expect(vi.getTimerCount()).toBe(1);
+        await service.start();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(flush).toHaveBeenCalledTimes(2);
+        await service.stop();
+        expect(vi.getTimerCount()).toBe(0);
+      },
+    );
+
+    it("unwinds a failed timer setup and allows a subsequent start", async () => {
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
+      vi.spyOn(globalThis, "setInterval").mockImplementationOnce(() => {
+        throw new Error("timer unavailable");
+      });
+      await expect(service.start()).rejects.toThrow("timer unavailable");
+      expect(flush).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      await service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledOnce();
+      await service.stop();
+    });
+
+    it("returns from startup while replay is deferred and never overlaps interval flushes", async () => {
+      let complete!: () => void;
+      const replay = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockReturnValueOnce(replay).mockResolvedValue(undefined);
+      await service.start();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(flush).toHaveBeenCalledTimes(1);
+      complete();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await service.stop();
+    });
+
+    it("waits for active replay and serializes starts arriving during stop", async () => {
+      let complete!: () => void;
+      const replay = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockReturnValueOnce(replay).mockResolvedValue(undefined);
+      await service.start();
+      let stopped = false;
+      const stop = service.stop().then(() => {
+        stopped = true;
+      });
+      const restart = Promise.all([service.start(), service.start()]);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(stopped).toBe(false);
+      expect(flush).toHaveBeenCalledTimes(1);
+      complete();
+      await stop;
+      await restart;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(1);
+      expect(api.logger.warn).not.toHaveBeenCalled();
+      await service.stop();
+    });
+
+    it("bounds shutdown, preserves pending durable work and owns unfinished replay across restart", async () => {
+      const client = stack.clients.forAgent(stack.credentials.resolve("main"));
+      const retain = vi
+        .spyOn(client, "retain")
+        .mockRejectedValueOnce(Object.assign(new Error("unavailable"), { statusCode: 503 }));
+      await stack.retain.retain("main", { content: "durable pending transcript" });
+      const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+      let complete!: () => void;
+      retain.mockImplementation(
+        () =>
+          new Promise<Record<string, unknown>>((resolve) => {
+            complete = () => resolve({});
+          }),
+      );
+      const flush = vi.spyOn(stack.retain, "flushQueues");
+      await service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(retain).toHaveBeenCalledTimes(2);
+      let stopped = false;
+      const stop = Promise.all([service.stop(), service.stop()]).then(() => {
+        stopped = true;
+      });
+      await vi.advanceTimersByTimeAsync(999);
+      expect(stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await stop;
+      expect(vi.getTimerCount()).toBe(0);
+      expect(JSON.parse(readFileSync(queueFile, "utf8")).content).toBe("durable pending transcript");
+      expect(api.logger.warn).toHaveBeenCalledExactlyOnceWith(
+        "retain queue shutdown wait expired; active replay may finish after stop",
+      );
+      await service.start();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(flush).toHaveBeenCalledTimes(1);
+      complete();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(existsSync(queueFile)).toBe(false);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await service.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
 });

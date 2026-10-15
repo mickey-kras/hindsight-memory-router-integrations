@@ -53,6 +53,7 @@ export const RUNTIME_DEFAULTS = Object.freeze({
   retainQueueMaxBytes: DEFAULT_QUEUE_MAX_BYTES,
 });
 const MAX_SESSION_STATE_ENTRIES = 1000;
+const RETAIN_SHUTDOWN_TIMEOUT_MS = 1000;
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
   "Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:";
 const DEFAULT_RETAIN_CONTEXT =
@@ -457,22 +458,50 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   api.on("session_end", (event, ctx) => runRetain(event, ctx, "session_end"));
 
   let flushTimer: ReturnType<typeof setInterval> | undefined;
+  let activeFlush: Promise<void> | undefined;
+  let stopping: Promise<void> | undefined;
+  const flush = (): void => {
+    if (activeFlush) return;
+    activeFlush = Promise.resolve()
+      .then(() => stack.retain.flushQueues())
+      .catch((error: unknown) => {
+        log.error(`retain queue flush failed: ${memoryErrorMessage(error)}`);
+      })
+      .finally(() => {
+        activeFlush = undefined;
+      });
+  };
   api.registerService({
     id: PLUGIN_ID,
     async start() {
-      flushTimer = setInterval(() => {
-        void stack.retain.flushQueues().catch((error: unknown) => {
-          log.error(`retain queue flush failed: ${memoryErrorMessage(error)}`);
-        });
-      }, config.retainQueueFlushIntervalMs ?? RUNTIME_DEFAULTS.retainQueueFlushIntervalMs);
+      if (stopping) await stopping;
+      if (flushTimer) return;
+      flushTimer = setInterval(flush, config.retainQueueFlushIntervalMs ?? RUNTIME_DEFAULTS.retainQueueFlushIntervalMs);
       flushTimer.unref?.();
-      await stack.retain.flushQueues();
+      flush();
     },
     async stop() {
+      if (stopping) return stopping;
       if (flushTimer) {
         clearInterval(flushTimer);
         flushTimer = undefined;
       }
+      if (!activeFlush) return;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      stopping = Promise.race([
+        activeFlush,
+        new Promise<void>((resolve) => {
+          deadline = setTimeout(() => {
+            log.warn("retain queue shutdown wait expired; active replay may finish after stop");
+            resolve();
+          }, RETAIN_SHUTDOWN_TIMEOUT_MS);
+        }),
+      ]).finally(() => {
+        clearTimeout(deadline);
+        stopping = undefined;
+      });
+      // Keep activeFlush owned after the deadline, including across a restart.
+      await stopping;
     },
   });
 }
