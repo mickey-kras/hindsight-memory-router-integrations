@@ -138,7 +138,7 @@ export function toPiTool(
  * calls Hindsight directly.
  */
 export function createPiHooks(
-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "flush">,
+  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "flush" | "dispose">,
   harness: string,
   sessionStart?: Promise<void>
 ) {
@@ -183,7 +183,10 @@ export function createPiHooks(
       if (turns.length) await core.onTranscript(sessionId, turns, true); // the run has ended
     },
     /** The host is exiting: the last agent_end's write-back is still in flight (#5081). */
-    sessionShutdown: () => core.flush(),
+    sessionShutdown: async () => {
+      core.dispose();
+      await core.flush();
+    },
   };
 }
 

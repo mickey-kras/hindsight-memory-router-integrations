@@ -29,6 +29,10 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 - `retainQueueMaxItems` (1,000) and `retainQueueMaxBytes` (16 MiB) cap all principal queues in one `queueDir`. Both must be positive integers. Byte accounting includes 128 bytes per record reserved for replay metadata. A full queue rejects new outage writes with `RetainQueueCapacityError`; existing entries stay in FIFO order.
 - Queue mutations use OS-owned file locks through `fs-native-extensions`; paused writers retain ownership and crashed writers release it automatically. Writers sharing `queueDir` must use the same limits and this package version on a local filesystem with OS file-lock support. Keep the two `.retain-*.lock` files in place while any writer is running. Replay is serialized per directory; enqueue uses a separate lock. Backlogs already above the byte limit remain on disk; increase the limit to replay them.
 
+## Persistent coding-agent sessions
+
+Each workspace runtime keeps at most 256 sessions. Completed sessions are released on host disposal; otherwise clean idle sessions are evicted as new sessions arrive. Active work and failed-write buffers stay pinned. If all slots are pinned, new sessions skip automatic memory with a `session_capacity_reached` diagnostic until a slot becomes available. Resumed evicted sessions replace their full transcript and must pass the host's ownership checks again. Local usage counters restart after eviction.
+
 ## Audit logs
 
 Every memory operation emits a single-line JSON audit record (principal, op, bank, outcome, bounded error

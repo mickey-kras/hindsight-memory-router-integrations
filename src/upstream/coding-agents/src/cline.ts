@@ -7,7 +7,7 @@
  * guarantee as every other Hindsight harness. The memory behaviour itself stays in RuntimeCore.
  */
 import { resolveHostMemory } from "./core/host-client";
-import { RuntimeCore } from "./core/runtime";
+import { MAX_RUNTIME_SESSIONS, RuntimeCore } from "./core/runtime";
 import type { TransportTurn } from "./core/chat";
 import { diag } from "./core/diag";
 
@@ -118,7 +118,7 @@ export function createClineHooks(
   configuredSessionId?: string,
   sessionStart?: Promise<void>
 ) {
-  const injectedPrompts = new Set<string>();
+  const injectedPrompts = new Map<string, string>();
   let sessionStartAwaited = false;
   return {
     async beforeModel({
@@ -139,9 +139,13 @@ export function createClineHooks(
       const user = latestUserMessage(snapshot.messages);
       if (!user) return undefined;
       const id = sessionId(snapshot, configuredSessionId);
-      const promptKey = `${id}:${user.id}`;
-      if (!injectedPrompts.has(promptKey)) {
-        injectedPrompts.add(promptKey);
+      if (injectedPrompts.get(id) !== user.id) {
+        injectedPrompts.delete(id);
+        injectedPrompts.set(id, user.id);
+        if (injectedPrompts.size > MAX_RUNTIME_SESSIONS) {
+          const oldest = injectedPrompts.keys().next().value;
+          if (oldest !== undefined) injectedPrompts.delete(oldest);
+        }
         const prompt = user.content
           .filter((part) => part.type === "text" && part.text)
           .map((part) => part.text!)

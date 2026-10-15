@@ -39,11 +39,21 @@ import { sessionCacheFile, writeSessionCache } from "./session-cache";
 const HARNESS = "opencode";
 /** How long `flush` holds a host's exit for in-flight write-backs: room for one retain request. */
 const FLUSH_TIMEOUT_MS = 10_000;
+/** Hard admission limit: never discard active work or buffered writes to admit another session. */
+export const MAX_RUNTIME_SESSIONS = 256;
+interface RuntimeSession {
+  startTs: string;
+  retainedTurns: number;
+  active: boolean;
+  busy: number;
+  generation: number;
+  ended: boolean;
+}
 
 export class RuntimeCore {
   private readonly injection = new Map<string, string>(); // sessionId -> this turn's injection block
   private readonly turnCount = new Map<string, number>(); // sessionId -> user-turn counter (cadence)
-  private readonly sessionState = new Map<string, { startTs: string; retainedTurns: number }>();
+  private readonly sessionState = new Map<string, RuntimeSession>();
   /** Live write-back cursors. In memory, unlike the hook harnesses': this host outlives the session. */
   private readonly cursors = memoryCursorStore();
   /** Turns already written to the usage log (core/usage.ts), per session. */
@@ -52,6 +62,7 @@ export class RuntimeCore {
   private fetchTranscript?: (sessionId: string) => Promise<TransportTurn[]>;
   /** Write-backs started and not yet settled — what `flush` waits for. */
   private readonly inFlight = new Set<Promise<void>>();
+  private lastInjectionSession: string | undefined;
   private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
   private deferInitialReflect = false;
   /** Host-notice channel (opencode/Kilo: client.tui.showToast via the adapter). Optional, fail-open. */
@@ -171,53 +182,68 @@ export class RuntimeCore {
    */
   async onPrompt(sessionId: string | undefined, prompt: string): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
-    if (!sessionId || !prompt.trim()) return;
-    this.injection.delete(sessionId);
+    if (!sessionId) return;
     this.lastInjection = "";
-    const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
-    this.turnCount.set(sessionId, turns);
+    this.lastInjectionSession = undefined;
+    const state = this.stateFor(sessionId);
+    if (!state) return;
+    state.active = true;
+    state.ended = false;
+    state.generation++;
+    this.injection.delete(sessionId);
+    // The scoped prompt event establishes ownership even for image-only/empty text prompts.
+    if (!prompt.trim()) return;
+    state.busy++;
+    try {
+      const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
+      this.turnCount.set(sessionId, turns);
 
-    const cacheFile = sessionCacheFile(this.harness, sessionId);
-    if (this.deferInitialReflect) {
-      // `seedIfCold` has no session id. Transfer its SessionStart decision to the first concrete
-      // session here; `buildHookOutput` consumes it exactly once, like hook harnesses do.
-      this.deferInitialReflect = false;
-      writeSessionCache(cacheFile, { deferInitialReflect: true });
-    }
-    const output = await buildHookOutput({
-      harness: this.harness,
-      prompt,
-      cfg: this.cfg,
-      client: this.client,
-      cacheFile,
-    });
+      const cacheFile = sessionCacheFile(this.harness, sessionId);
+      if (this.deferInitialReflect) {
+        // `seedIfCold` has no session id. Transfer its SessionStart decision to the first concrete
+        // session here; `buildHookOutput` consumes it exactly once, like hook harnesses do.
+        this.deferInitialReflect = false;
+        writeSessionCache(cacheFile, { deferInitialReflect: true });
+      }
+      const output = await buildHookOutput({
+        harness: this.harness,
+        prompt,
+        cfg: this.cfg,
+        client: this.client,
+        cacheFile,
+      });
 
-    const blocks: string[] = [];
-    // The SessionStart-equivalent preamble, injected once on the first turn (later turns get the
-    // periodic refresh below). Built HERE, from this session's own roster, rather than reused from
-    // plugin load: that one is a process-lifetime snapshot, so a host started before the pages
-    // existed told every later session "No knowledge pages yet" while the same turn's memory block
-    // listed pages by id (#4607).
-    if (turns === 1) {
-      blocks.push(
-        buildKnowledgePreamble(output.pages, {
-          reflectOnNewGoals: this.cfg.autoInject !== "reflect",
-          toolPrefix: this.cfg.toolPrefix,
-          extra: this.cfg.toolGuideExtra,
-        })
-      );
+      const blocks: string[] = [];
+      // The SessionStart-equivalent preamble, injected once on the first turn (later turns get the
+      // periodic refresh below). Built HERE, from this session's own roster, rather than reused from
+      // plugin load: that one is a process-lifetime snapshot, so a host started before the pages
+      // existed told every later session "No knowledge pages yet" while the same turn's memory block
+      // listed pages by id (#4607).
+      if (turns === 1) {
+        blocks.push(
+          buildKnowledgePreamble(output.pages, {
+            reflectOnNewGoals: this.cfg.autoInject !== "reflect",
+            toolPrefix: this.cfg.toolPrefix,
+            extra: this.cfg.toolGuideExtra,
+          })
+        );
+      }
+      if (output.context) blocks.push(output.context);
+      // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
+      // renders inside the TUI input line. The shared output owns when a notice exists.
+      if (output.notice) {
+        const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
+        log.info(this.harness, "reflect goal", { preview });
+        this.notify?.(`${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
+      }
+      const block = blocks.filter(Boolean).join("\n\n");
+      this.injection.set(sessionId, block);
+      this.lastInjection = block; // for consumers that can't supply a sessionId (see getInjection)
+      this.lastInjectionSession = sessionId;
+    } finally {
+      state.busy--;
+      this.cleanupEnded(sessionId, state);
     }
-    if (output.context) blocks.push(output.context);
-    // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
-    // renders inside the TUI input line. The shared output owns when a notice exists.
-    if (output.notice) {
-      const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
-      log.info(this.harness, "reflect goal", { preview });
-      this.notify?.(`${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
-    }
-    const block = blocks.filter(Boolean).join("\n\n");
-    this.injection.set(sessionId, block);
-    this.lastInjection = block; // for consumers that can't supply a sessionId (see getInjection)
   }
 
   /**
@@ -229,8 +255,9 @@ export class RuntimeCore {
    */
   getInjection(sessionId: string | undefined): string | undefined {
     this.client.assertAuthorized();
-    const keyed = sessionId ? this.injection.get(sessionId) : undefined;
-    return keyed ?? this.lastInjection ?? undefined;
+    const id = sessionId ?? this.lastInjectionSession;
+    if (!id || !this.hasSession(id)) return undefined;
+    return sessionId ? this.injection.get(sessionId) : this.lastInjection || undefined;
   }
 
   /**
@@ -255,11 +282,13 @@ export class RuntimeCore {
   ): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
     if (!sessionId || !turns.length) return;
+    const st = this.stateFor(sessionId);
+    if (!st) return;
+    st.active = !lastTurnComplete;
     // Usage is a local file, so it is recorded whether or not write-back is on (#5391).
     this.recordUsage(sessionId, turns, lastTurnComplete);
     if (!this.writeBackEnabled) return;
-    const st = this.stateFor(sessionId);
-    this.retain(sessionId, turns, st.startTs);
+    this.retain(sessionId, turns, st);
   }
 
   /**
@@ -277,25 +306,36 @@ export class RuntimeCore {
   async onSessionIdle(sessionId: string): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
     if (!sessionId || !this.fetchTranscript) return;
-    let turns: TransportTurn[];
-    try {
-      turns = await this.fetchTranscript(sessionId);
-    } catch (e) {
-      diag(this.harness, "idle_fetch_failed", {
-        error: describeError(e),
-        session: sessionId,
-      });
-      return;
-    }
-    if (!turns.length) return;
-    this.recordUsage(sessionId, turns, true); // idle: the reply is in
-    if (!this.writeBackEnabled) return; // usage above is local and recorded regardless (#5391)
     const st = this.stateFor(sessionId);
-    // idle can fire more than once for one exchange (and again on a session with no new activity);
-    // only retain when this transcript actually grew past what we last wrote.
-    if (turns.length <= st.retainedTurns) return;
-    st.retainedTurns = turns.length;
-    this.retain(sessionId, turns, st.startTs, "idle");
+    if (!st) return;
+    const generation = st.generation;
+    st.busy++;
+    try {
+      let turns: TransportTurn[];
+      try {
+        turns = await this.fetchTranscript(sessionId);
+      } catch (e) {
+        diag(this.harness, "idle_fetch_failed", {
+          error: describeError(e),
+          session: sessionId,
+        });
+        return;
+      }
+      if (!turns.length) return;
+      this.recordUsage(sessionId, turns, true); // idle: the reply is in
+      if (!this.writeBackEnabled) return; // usage above is local and recorded regardless (#5391)
+      // idle can fire more than once for one exchange (and again on a session with no new activity);
+      // only retain when this transcript actually grew past what we last wrote.
+      if (turns.length <= st.retainedTurns) return;
+      st.retainedTurns = turns.length;
+      this.retain(sessionId, turns, st, "idle");
+    } finally {
+      // Idle ends this generation even when the host cannot return its transcript.
+      // A newer prompt or an outstanding write must retain its own pin.
+      if (st.generation === generation) st.active = false;
+      st.busy--;
+      this.cleanupEnded(sessionId, st);
+    }
   }
 
   private recordUsage(sessionId: string, turns: TransportTurn[], lastTurnComplete: boolean): void {
@@ -314,15 +354,66 @@ export class RuntimeCore {
     });
   }
 
-  private stateFor(sessionId: string): {
-    startTs: string;
-    retainedTurns: number;
-  } {
+  /** Admission is also the ownership guard for hosts whose event stream spans projects. */
+  hasSession(sessionId: string): boolean {
+    const state = this.sessionState.get(sessionId);
+    return state !== undefined && !state.ended;
+  }
+
+  /** A definitive host disposal, not merely the end of an assistant turn. */
+  disposeSession(sessionId: string): void {
+    const state = this.sessionState.get(sessionId);
+    if (!state) return;
+    state.ended = true;
+    state.active = false;
+    this.cleanupEnded(sessionId, state);
+  }
+
+  dispose(): void {
+    for (const sessionId of this.sessionState.keys()) this.disposeSession(sessionId);
+  }
+
+  private removable(sessionId: string, state: RuntimeSession): boolean {
+    const cursor = this.cursors.read(sessionId);
+    return !state.active && state.busy === 0 && !cursor?.dirty && !cursor?.pending?.length;
+  }
+
+  private cleanupEnded(sessionId: string, state: RuntimeSession): void {
+    if (state.ended && this.removable(sessionId, state)) this.removeSession(sessionId);
+  }
+
+  private removeSession(sessionId: string): void {
+    this.sessionState.delete(sessionId);
+    this.injection.delete(sessionId);
+    this.turnCount.delete(sessionId);
+    this.cursors.delete(sessionId);
+    this.usageCursors.delete(sessionId);
+    if (this.lastInjectionSession === sessionId) {
+      this.lastInjection = "";
+      this.lastInjectionSession = undefined;
+    }
+  }
+
+  private stateFor(sessionId: string): RuntimeSession | undefined {
     let st = this.sessionState.get(sessionId);
     if (!st) {
-      st = { startTs: new Date().toISOString(), retainedTurns: 0 };
-      this.sessionState.set(sessionId, st);
+      if (this.sessionState.size >= MAX_RUNTIME_SESSIONS) {
+        for (const [id, state] of this.sessionState) {
+          if (this.removable(id, state)) {
+            this.removeSession(id);
+            break;
+          }
+        }
+        if (this.sessionState.size >= MAX_RUNTIME_SESSIONS) {
+          diag(this.harness, "session_capacity_reached", { limit: MAX_RUNTIME_SESSIONS });
+          return undefined;
+        }
+      }
+      st = { startTs: new Date().toISOString(), retainedTurns: 0, active: false, busy: 0, generation: 0, ended: false };
     }
+    // Insertion order is the least-recently-used order; pinned entries are skipped on eviction.
+    this.sessionState.delete(sessionId);
+    this.sessionState.set(sessionId, st);
     return st;
   }
 
@@ -348,10 +439,11 @@ export class RuntimeCore {
   private retain(
     sessionId: string,
     turns: TransportTurn[],
-    startTs: string,
+    state: RuntimeSession,
     trigger = "turn"
   ): void {
     const t0 = Date.now();
+    state.busy++;
     // Daemon mode: the write path is the last chance to get a daemon up — the Stop-hook role, for
     // hosts that have no Stop hook. A daemon that died mid-session would otherwise take the whole
     // exchange with it. The wait sits INSIDE the fire-and-forget chain, so
@@ -360,7 +452,7 @@ export class RuntimeCore {
     // daemon produces the same `retain_failed` diagnostic as an unreachable Cloud server.
     const write = ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_RETAIN_MS })
       .then(() =>
-        retainLiveSession(this.client, sessionId, turns, startTs, this.harness, {
+        retainLiveSession(this.client, sessionId, turns, state.startTs, this.harness, {
           cursors: this.cursors,
           stamp: buildRetainStamp(this.cfg, {
             directory: this.projectDir,
@@ -370,23 +462,29 @@ export class RuntimeCore {
           }),
         })
       )
-      .then(() =>
+      .then(() => {
         diag(this.harness, "retain_ok", {
           ms: Date.now() - t0,
           turns: turns.length,
           session: sessionId,
           trigger,
-        })
-      )
-      .catch((e) =>
+        });
+      })
+      .catch((e) => {
+        // A failed idle write must be retryable even when the host's transcript has not grown.
+        state.retainedTurns = 0;
         diag(this.harness, "retain_failed", {
           ms: Date.now() - t0,
           error: describeError(e),
           session: sessionId,
           trigger,
-        })
-      );
+        });
+      });
     this.inFlight.add(write);
-    void write.finally(() => this.inFlight.delete(write));
+    void write.finally(() => {
+      this.inFlight.delete(write);
+      state.busy--;
+      this.cleanupEnded(sessionId, state);
+    });
   }
 }

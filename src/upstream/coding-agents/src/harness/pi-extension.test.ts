@@ -10,6 +10,7 @@ describe("pi extension adapter", () => {
       getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
       onTranscript: vi.fn(async () => {}),
       flush: vi.fn(async () => {}),
+      dispose: vi.fn(),
     };
     const hooks = createPiHooks(core, "pi");
     const sections: Record<string, string> = { base: "You are pi." };
@@ -195,6 +196,7 @@ describe("pi extension factory", () => {
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
       flush: vi.fn(async () => {}),
+      dispose: vi.fn(),
       toolSpecs: (): ToolSpec[] => [
         {
           name: "hindsight_reflect",
