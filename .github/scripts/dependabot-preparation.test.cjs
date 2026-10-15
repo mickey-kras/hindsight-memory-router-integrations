@@ -24,7 +24,7 @@ const {
   publish,
   waitForPublishedHead,
 } = require("./dependabot-preparation.cjs");
-const { requestValidation, runDispatchedPolicy } = require("./dependabot-validation.cjs");
+const { requestValidation, runPolicy, runDispatchedPolicy } = require("./dependabot-validation.cjs");
 
 const prGuardScript = execFileSync(
   "python3",
@@ -1352,4 +1352,121 @@ test("every packaging job selects and verifies the same npm before install, test
     }
   }
   assert.deepEqual(observed, expectedJobs);
+});
+
+function policyFileHarness(text, large = false) {
+  const bytes = Buffer.from(text);
+  const sha = execFileSync("git", ["hash-object", "--stdin"], { input: bytes, encoding: "utf8" }).trim();
+  const blob = { sha, size: bytes.length, encoding: "base64", content: bytes.toString("base64") };
+  const metadata = { ...blob, type: "file", ...(large ? { encoding: "none", content: "" } : {}) };
+  const requests = [];
+  const github = {
+    rest: {
+      repos: {
+        getContent: async (request) => {
+          requests.push({ operation: "contents", ...request });
+          return { data: metadata };
+        },
+      },
+      git: {
+        getBlob: async (request) => {
+          requests.push({ operation: "blob", ...request });
+          return { data: blob };
+        },
+      },
+    },
+  };
+  const run = () => runPolicy(github, context.repo, pull, [{ filename: "package.json", status: "modified" }]);
+  return { run, github, metadata, blob, requests };
+}
+
+const policyPackage = JSON.stringify({
+  scripts: { "aislop:ci": "aislop ci", "test:coverage": "vitest run --coverage" },
+});
+
+test("policy reads inline base64 at the exact PR head without a blob request", async () => {
+  const h = policyFileHarness(policyPackage);
+  h.metadata.content = `${h.metadata.content.match(/.{1,60}/g).join("\n")}\n`;
+  await h.run();
+  assert.deepEqual(h.requests, [{ operation: "contents", ...context.repo, path: "package.json", ref: head }]);
+});
+
+test("policy reads a large file by its immutable blob and evaluates its trailing contents", async () => {
+  const h = policyFileHarness(`${" ".repeat(1024 * 1024)}${policyPackage}`, true);
+  await h.run();
+  assert.deepEqual(h.requests, [
+    { operation: "contents", ...context.repo, path: "package.json", ref: head },
+    { operation: "blob", ...context.repo, file_sha: h.metadata.sha },
+  ]);
+  const invalid = policyFileHarness(`${" ".repeat(1024 * 1024)}{"scripts":{}}`, true);
+  await assert.rejects(invalid.run, (error) => error.stdout.includes("coverage test command must stay configured"));
+});
+
+test("policy rejects non-files and malformed contents metadata before blob lookup", async () => {
+  for (const metadata of [
+    null,
+    [],
+    { type: "dir" },
+    { type: "symlink" },
+    { type: "file", encoding: "none", submodule_git_url: "https://example.invalid/repo" },
+    { type: "file", encoding: "none", target: "package.json" },
+    { type: "file", encoding: "none", sha: "not-a-sha", size: 2, content: "" },
+    { type: "file", encoding: "none", sha: head, size: -1, content: "" },
+    { type: "file", encoding: "none", sha: head, size: "2", content: "" },
+    { type: "file", encoding: "none", sha: head, size: 2, content: "unexpected" },
+    { type: "file", encoding: "base64", content: null },
+    { type: "file", encoding: "base64", content: "!!!" },
+    { type: "file", encoding: "utf-8", content: policyPackage },
+  ]) {
+    const h = policyFileHarness(policyPackage);
+    h.github.rest.repos.getContent = async () => ({ data: metadata });
+    await assert.rejects(h.run, /Not a regular file|Invalid file/);
+    assert.deepEqual(h.requests, []);
+  }
+});
+
+test("policy rejects malformed or mismatched blobs instead of accepting omitted file contents", async () => {
+  for (const mutate of [
+    (blob) => {
+      blob.sha = base;
+    },
+    (blob) => {
+      blob.size += 1;
+    },
+    (blob) => {
+      blob.encoding = "none";
+    },
+    (blob) => {
+      blob.content = undefined;
+    },
+    (blob) => {
+      blob.content += "!";
+    },
+    (blob) => {
+      blob.content = Buffer.from("x").toString("base64");
+    },
+    (blob) => {
+      blob.content = Buffer.from(policyPackage.replace("aislop ci", "aislop xx")).toString("base64");
+    },
+  ]) {
+    const h = policyFileHarness(policyPackage, true);
+    mutate(h.blob);
+    await assert.rejects(h.run, /Invalid (?:blob|file)/);
+    assert.equal(h.requests.length, 2);
+  }
+  const h = policyFileHarness(policyPackage, true);
+  h.github.rest.git.getBlob = async () => ({ data: null });
+  await assert.rejects(h.run, /Invalid blob metadata/);
+});
+
+test("policy propagates content and blob retrieval failures without fallback or success", async () => {
+  for (const operation of ["getContent", "getBlob"]) {
+    const h = policyFileHarness(policyPackage, true);
+    const failure = new Error("GitHub request failed");
+    h.github.rest[operation === "getContent" ? "repos" : "git"][operation] = async () => {
+      throw failure;
+    };
+    await assert.rejects(h.run, (error) => error === failure);
+    assert.equal(h.requests.length, operation === "getContent" ? 0 : 1);
+  }
 });
