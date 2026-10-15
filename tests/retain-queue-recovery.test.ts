@@ -3,6 +3,9 @@ import {
   appendFileSync,
   fsyncSync,
   mkdtempSync,
+  mkdirSync,
+  openSync,
+  symlinkSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -17,7 +20,7 @@ import { type QueuedRetain, RetainQueue } from "../src/upstream/src/retain-queue
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
-  return { ...fs, fsyncSync: vi.fn(fs.fsyncSync), renameSync: vi.fn(fs.renameSync) };
+  return { ...fs, openSync: vi.fn(fs.openSync), fsyncSync: vi.fn(fs.fsyncSync), renameSync: vi.fn(fs.renameSync) };
 });
 
 let directory: string;
@@ -81,13 +84,14 @@ describe("retain queue corrupt-record recovery", () => {
         tail,
       ]),
     );
+    const original = readFileSync(filePath);
     const onCorruption = vi.fn();
     const queue = new RetainQueue({ filePath, maxAgeMs: 60_000, onCorruption });
 
     expect(queue.peek().map((queued) => queued.id)).toEqual(["first", "second"]);
     run(queue);
 
-    expect(recoveries()).toEqual([Buffer.concat([bad, invalidUtf8, tail])]);
+    expect(recoveries()).toEqual([original]);
     expect(queue.peek().map((queued) => queued.id)).toEqual(ids);
     expect(queue.peek().find((queued) => queued.id === "second")).toMatchObject({
       documentId: "document",
@@ -97,9 +101,11 @@ describe("retain queue corrupt-record recovery", () => {
     expect(onCorruption).toHaveBeenCalledExactlyOnceWith({ malformedJson: 4, invalidShape: 1 });
     new RetainQueue({ filePath }).removeMany([]);
     expect(recoveries()).toHaveLength(1);
-    expect(statSync(`${filePath}.recovery`).mode & 0o777).toBe(0o700);
-    for (const name of readdirSync(`${filePath}.recovery`)) {
-      expect(statSync(join(`${filePath}.recovery`, name)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(`${filePath}.recovery`).mode & 0o777).toBe(0o700);
+      for (const name of readdirSync(`${filePath}.recovery`)) {
+        expect(statSync(join(`${filePath}.recovery`, name)).mode & 0o777).toBe(0o600);
+      }
     }
   });
 
@@ -134,11 +140,12 @@ describe("retain queue corrupt-record recovery", () => {
         : invalid;
     // An empty object is intentionally a missing-fields record.
     const raw = line(invalid && typeof invalid === "object" && Object.keys(invalid).length === 0 ? invalid : record);
-    writeFileSync(filePath, raw + line(item("valid")));
+    const original = raw + line(item("valid"));
+    writeFileSync(filePath, original);
     const queue = new RetainQueue({ filePath });
     expect(queue.peek().map((queued) => queued.id)).toEqual(["valid"]);
     queue.remove("valid");
-    expect(recoveries()).toEqual([Buffer.from(raw)]);
+    expect(recoveries()).toEqual([Buffer.from(original)]);
     expect(() => readFileSync(filePath)).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 
@@ -152,17 +159,18 @@ describe("retain queue corrupt-record recovery", () => {
     });
     expect(() => new RetainQueue({ filePath }).ensureOperationId("first", "operation")).toThrow("write failed");
     expect(readFileSync(filePath, "utf8")).toBe(original);
-    expect(recoveries()).toEqual([Buffer.from("broken\nbroken\n")]);
+    expect(recoveries()).toEqual([Buffer.from(original)]);
 
     vi.mocked(renameSync).mockReset();
     appendFileSync(filePath, line(item("later", { operationId: "later-operation" })));
+    const extended = readFileSync(filePath);
     const restarted = new RetainQueue({ filePath });
     restarted.ensureOperationId("first", "operation");
     expect(restarted.peek().map(({ id, operationId }) => ({ id, operationId }))).toEqual([
       { id: "first", operationId: "operation" },
       { id: "later", operationId: "later-operation" },
     ]);
-    expect(recoveries()).toEqual([Buffer.from("broken\nbroken\n")]);
+    expect(recoveries()).toEqual([extended]);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -190,24 +198,27 @@ describe("retain queue corrupt-record recovery", () => {
       expect(readFileSync(filePath, "utf8")).toBe(original);
       const restarted = new RetainQueue({ filePath });
       restarted.ensureOperationId("first", "operation");
-      expect(recoveries()).toEqual([Buffer.from("broken\nbroken\n")]);
+      expect(recoveries()).toEqual([Buffer.from(original)]);
       expect(restarted.peek()[0].operationId).toBe("operation");
     },
   );
 
-  it.each([0, 1, 2, 3])("keeps original bytes when durability barrier %i fails", async (barrier) => {
-    const original = `${line(item("first"))}broken\n`;
-    writeFileSync(filePath, original);
-    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
-    for (let index = 0; index < barrier; index++) vi.mocked(fsyncSync).mockImplementationOnce(actualFs.fsyncSync);
-    vi.mocked(fsyncSync).mockImplementationOnce(() => {
-      throw new Error("sync failed");
-    });
-    expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("sync failed");
-    expect(readFileSync(filePath, "utf8")).toBe(original);
-    new RetainQueue({ filePath }).removeMany([]);
-    expect(recoveries()).toEqual([Buffer.from("broken\n")]);
-  });
+  it.each(process.platform === "win32" ? [0, 1] : [0, 1, 2, 3])(
+    "keeps original bytes when durability barrier %i fails",
+    async (barrier) => {
+      const original = `${line(item("first"))}broken\n`;
+      writeFileSync(filePath, original);
+      const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+      for (let index = 0; index < barrier; index++) vi.mocked(fsyncSync).mockImplementationOnce(actualFs.fsyncSync);
+      vi.mocked(fsyncSync).mockImplementationOnce(() => {
+        throw new Error("sync failed");
+      });
+      expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("sync failed");
+      expect(readFileSync(filePath, "utf8")).toBe(original);
+      new RetainQueue({ filePath }).removeMany([]);
+      expect(recoveries()).toEqual([Buffer.from(original)]);
+    },
+  );
 
   it("preserves a malformed-only queue before removing the active file", () => {
     const original = Buffer.from("  \r\nnull\n{unterminated");
@@ -229,13 +240,119 @@ describe("retain queue corrupt-record recovery", () => {
     },
   );
 
-  it("fails closed if an existing recovery file differs from its content address", () => {
-    writeFileSync(filePath, "broken\n");
-    new RetainQueue({ filePath }).removeMany([]);
+  it("fails closed if an existing recovery snapshot is not a prefix of the source", async () => {
+    const original = `${line(item("first"))}broken\n`;
+    writeFileSync(filePath, original);
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(renameSync).mockImplementation((source, destination) => {
+      if (destination === filePath) throw new Error("active rewrite failed");
+      actualFs.renameSync(source, destination);
+    });
+    expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("active rewrite failed");
+    vi.mocked(renameSync).mockReset();
     const recovery = join(`${filePath}.recovery`, readdirSync(`${filePath}.recovery`)[0]);
     writeFileSync(recovery, "changed");
-    writeFileSync(filePath, "broken\n");
     expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("does not match queued bytes");
-    expect(readFileSync(filePath, "utf8")).toBe("broken\n");
+    expect(readFileSync(filePath, "utf8")).toBe(original);
+  });
+
+  it("extends one recovery snapshot after a failed rewrite and later corrupt appends", async () => {
+    const original = `${line(item("first"))}bad-A\nbad-A\n`;
+    writeFileSync(filePath, original);
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(renameSync).mockImplementation((source, destination) => {
+      if (destination === filePath) throw new Error("active rewrite failed");
+      actualFs.renameSync(source, destination);
+    });
+    expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("active rewrite failed");
+    expect(recoveries()).toEqual([Buffer.from(original)]);
+
+    appendFileSync(filePath, "bad-B\n");
+    vi.mocked(renameSync).mockImplementation(() => {
+      throw new Error("archive replacement failed");
+    });
+    expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("archive replacement failed");
+    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(readFileSync(filePath, "utf8")).toBe(`${original}bad-B\n`);
+    expect(readdirSync(`${filePath}.recovery`)).toHaveLength(1);
+
+    vi.mocked(renameSync).mockReset();
+    new RetainQueue({ filePath }).ensureOperationId("first", "operation");
+    expect(recoveries()).toEqual([Buffer.from(`${original}bad-B\n`)]);
+    expect(new RetainQueue({ filePath }).peek()[0].operationId).toBe("operation");
+  });
+
+  it("keeps distinct recovery generations after replacing the active queue", () => {
+    const original = `${line(item("first"))}bad-A\n`;
+    writeFileSync(filePath, original);
+    const queue = new RetainQueue({ filePath });
+    queue.ensureOperationId("first", "operation");
+    appendFileSync(filePath, "bad-B\n");
+    const next = readFileSync(filePath);
+    queue.removeMany([]);
+    expect(recoveries()).toHaveLength(2);
+    expect(recoveries()).toEqual(expect.arrayContaining([Buffer.from(original), next]));
+  });
+
+  it.skipIf(process.platform === "win32")("does not follow a preexisting recovery temporary symlink", () => {
+    const original = `${line(item("first"))}broken\n`;
+    writeFileSync(filePath, original);
+    mkdirSync(`${filePath}.recovery`);
+    symlinkSync(filePath, join(`${filePath}.recovery`, "pending.tmp"));
+    const queue = new RetainQueue({ filePath });
+    queue.removeMany([]);
+    expect(queue.peek()[0].id).toBe("first");
+    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(vi.mocked(openSync).mock.calls.some(([, flags]) => flags === "wx")).toBe(true);
+  });
+
+  it("recovers millions of empty records within a bounded child heap", () => {
+    const bytes = Buffer.alloc(4 * 1024 * 1024, 10);
+    writeFileSync(filePath, bytes);
+    const source = `
+      import { RetainQueue } from ${JSON.stringify(new URL("../src/upstream/src/retain-queue.ts", import.meta.url).href)};
+      const queue = new RetainQueue({ filePath: ${JSON.stringify(filePath)}, maxReadBytes: 16 * 1024 * 1024 });
+      if (queue.peek().length !== 0) throw new Error("invalid records replayed");
+      queue.removeMany([]);
+    `;
+    execFileSync(
+      process.execPath,
+      ["--max-old-space-size=128", "--experimental-transform-types", "--input-type=module", "-e", source],
+      {
+        stdio: "pipe",
+        timeout: 10_000,
+      },
+    );
+    const saved = recoveries();
+    expect(saved).toHaveLength(1);
+    expect(saved[0].equals(bytes)).toBe(true);
+  });
+
+  it("flushes writable file handles without directory opens under Windows constraints", async () => {
+    const original = `${line(item("first"))}broken\n`;
+    writeFileSync(filePath, original);
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const flagsByFd = new Map<number, string | number>();
+    vi.mocked(openSync).mockImplementation((path, flags, mode) => {
+      if (actualFs.existsSync(path) && actualFs.statSync(path).isDirectory())
+        throw new Error("directory open unsupported");
+      const fd = actualFs.openSync(path, flags, mode);
+      flagsByFd.set(fd, flags);
+      return fd;
+    });
+    vi.mocked(fsyncSync).mockImplementation((fd) => {
+      if (!new Set(["wx", "r+"]).has(String(flagsByFd.get(fd))))
+        throw new Error("FlushFileBuffers requires GENERIC_WRITE");
+      actualFs.fsyncSync(fd);
+    });
+    const platform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      new RetainQueue({ filePath }).removeMany([]);
+    } finally {
+      Object.defineProperty(process, "platform", { value: platform });
+    }
+    expect(recoveries()).toEqual([Buffer.from(original)]);
+    expect(new RetainQueue({ filePath }).peek()[0].id).toBe("first");
   });
 });

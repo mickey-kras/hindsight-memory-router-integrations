@@ -510,6 +510,7 @@ describe("RetainCoordinator", () => {
     const corrupt = 'private broken transcript\r\n{"content":"private invalid record"}\n';
     appendFileSync(queueFile, corrupt);
     await failing.retain.retain("main", { content: "second", documentId: "document", updateMode: "replace" });
+    const original = readFileSync(queueFile, "utf8");
     const log = { warn: vi.fn(), error: vi.fn() };
     const replay = makeStack({ queueDir, logger: log });
     await replay.retain.flushQueues();
@@ -520,7 +521,7 @@ describe("RetainCoordinator", () => {
       ["second", "replace"],
     ]);
     const recoveryDir = `${queueFile}.recovery`;
-    expect(readFileSync(join(recoveryDir, readdirSync(recoveryDir)[0]), "utf8")).toBe(corrupt);
+    expect(readFileSync(join(recoveryDir, readdirSync(recoveryDir)[0]), "utf8")).toBe(original);
     expect(log.error).toHaveBeenCalledExactlyOnceWith(
       "retain queue recovery preserved corrupt records: malformed-json=1, invalid-shape=1",
     );
@@ -716,7 +717,7 @@ describe("RetainCoordinator", () => {
         .sort(),
     ).toEqual(["new-0", "new-1", "new-2", "new-3", "new-4", "old"]);
     const recoveryDir = `${queueFile}.recovery`;
-    expect(readFileSync(join(recoveryDir, readdirSync(recoveryDir)[0]), "utf8")).toBe("broken\n");
+    expect(readFileSync(join(recoveryDir, readdirSync(recoveryDir)[0]), "utf8")).toContain("broken\n");
   });
   it("does not deserialize backlog records while accepting subsequent outage writes", async () => {
     const stack = makeStack({

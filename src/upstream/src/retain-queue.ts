@@ -17,6 +17,8 @@ import {
   unlinkSync,
   statSync,
   closeSync,
+  chmodSync,
+  fstatSync,
   fchmodSync,
   fsyncSync,
   lstatSync,
@@ -60,7 +62,8 @@ export interface RetainQueueCorruption {
 
 interface QueueContents {
   items: QueuedRetain[];
-  corrupt: Buffer[];
+  source: string;
+  bytes: Buffer;
   counts: RetainQueueCorruption;
 }
 
@@ -93,6 +96,9 @@ function isQueuedRetain(value: unknown): value is QueuedRetain {
 }
 
 function syncDirectory(directory: string): void {
+  // Windows FlushFileBuffers flushes file metadata through the writable file
+  // handle below; directory handles do not support this POSIX barrier.
+  if (process.platform === "win32") return;
   const fd = openSync(directory, "r");
   try {
     fsyncSync(fd);
@@ -236,17 +242,41 @@ export class RetainQueue {
   }
 
   private readAll(): QueueContents {
-    const result: QueueContents = { items: [], corrupt: [], counts: { malformedJson: 0, invalidShape: 0 } };
+    const result: QueueContents = {
+      items: [],
+      source: "",
+      bytes: Buffer.alloc(0),
+      counts: { malformedJson: 0, invalidShape: 0 },
+    };
     if (!existsSync(this.filePath)) return result;
-    if (this.options.maxReadBytes !== undefined && statSync(this.filePath).size > this.options.maxReadBytes) {
-      throw new RangeError(
-        "retain queue exceeds configured byte limit; increase the limit to replay this legacy backlog",
-      );
+    const fd = openSync(this.filePath, "r");
+    try {
+      const info = fstatSync(fd, { bigint: true });
+      if (this.options.maxReadBytes !== undefined && info.size > BigInt(this.options.maxReadBytes)) {
+        throw new RangeError(
+          "retain queue exceeds configured byte limit; increase the limit to replay this legacy backlog",
+        );
+      }
+      result.source = createHash("sha256").update(`${info.dev}:${info.ino}:${info.birthtimeNs}`).digest("hex");
+      result.bytes = readFileSync(fd);
+    } finally {
+      closeSync(fd);
     }
-    const content = readFileSync(this.filePath);
+    const content = result.bytes;
     for (let start = 0; start < content.length; ) {
       const newline = content.indexOf(10, start);
       const end = newline < 0 ? content.length : newline + 1;
+      let first = start;
+      while (
+        first < end &&
+        (content[first] === 9 || content[first] === 10 || content[first] === 13 || content[first] === 32)
+      )
+        first++;
+      if (first === end) {
+        result.counts.malformedJson++;
+        start = end;
+        continue;
+      }
       const raw = content.subarray(start, end);
       start = end;
       let item: unknown;
@@ -254,50 +284,58 @@ export class RetainQueue {
         if (!isUtf8(raw)) throw new TypeError("invalid UTF-8");
         item = JSON.parse(raw.toString("utf8"));
       } catch {
-        result.corrupt.push(raw);
         result.counts.malformedJson++;
         continue;
       }
       if (isQueuedRetain(item)) result.items.push(item);
-      else {
-        result.corrupt.push(raw);
-        result.counts.invalidShape++;
-      }
+      else result.counts.invalidShape++;
     }
     return result;
   }
 
   private preserveCorruptRecords(contents: QueueContents): void {
-    if (contents.corrupt.length === 0) return;
-    // Preserve the complete sequence, including duplicate records and original
-    // line endings. Its content hash makes retries after a failed rewrite safe.
-    const bytes = Buffer.concat(contents.corrupt);
+    if (contents.counts.malformedJson + contents.counts.invalidShape === 0) return;
+    // Keep original order and duplicate occurrences in one snapshot per source
+    // inode/generation. A retry after an append extends that snapshot, rather
+    // than duplicating already recovered bytes in a second artifact.
     const recoveryDir = `${this.filePath}.recovery`;
     mkdirSync(recoveryDir, { recursive: true, mode: 0o700 });
     if (!lstatSync(recoveryDir).isDirectory()) throw new Error("retain recovery path must be a directory");
-    const directoryFd = openSync(recoveryDir, "r");
-    try {
-      fchmodSync(directoryFd, 0o700);
-    } finally {
-      closeSync(directoryFd);
-    }
-    const recoveryPath = join(recoveryDir, `${createHash("sha256").update(bytes).digest("hex")}.jsonl`);
-    if (!existsSync(recoveryPath)) {
-      const tmpPath = join(recoveryDir, "pending.tmp");
-      const fd = openSync(tmpPath, "w", 0o600);
-      try {
-        fchmodSync(fd, 0o600);
-        writeFileSync(fd, bytes);
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
+    chmodSync(recoveryDir, 0o700);
+    const recoveryPath = join(recoveryDir, `${contents.source}.jsonl`);
+    let priorLength = 0;
+    if (existsSync(recoveryPath)) {
+      const info = lstatSync(recoveryPath);
+      if (!info.isFile() || info.size > contents.bytes.length)
+        throw new Error("retain recovery snapshot does not match queued bytes");
+      const prior = readFileSync(recoveryPath);
+      if (prior.length > contents.bytes.length || !contents.bytes.subarray(0, prior.length).equals(prior)) {
+        throw new Error("retain recovery snapshot does not match queued bytes");
       }
-      renameSync(tmpPath, recoveryPath);
+      priorLength = prior.length;
     }
-    if (!lstatSync(recoveryPath).isFile() || !readFileSync(recoveryPath).equals(bytes)) {
-      throw new Error("retain recovery record does not match queued bytes");
+    if (priorLength !== contents.bytes.length) {
+      const tmpPath = join(recoveryDir, `${randomBytes(16).toString("hex")}.tmp`);
+      const fd = openSync(tmpPath, "wx", 0o600);
+      try {
+        try {
+          writeFileSync(fd, contents.bytes);
+          fsyncSync(fd);
+        } finally {
+          closeSync(fd);
+        }
+        renameSync(tmpPath, recoveryPath);
+      } finally {
+        try {
+          unlinkSync(tmpPath);
+        } catch (error) {
+          if (!isRecord(error) || error.code !== "ENOENT") throw error;
+        }
+      }
     }
-    const fd = openSync(recoveryPath, "r");
+    // Flush the committed name through a writable handle (required by Windows
+    // FlushFileBuffers) before the active queue can be replaced or removed.
+    const fd = openSync(recoveryPath, "r+");
     try {
       fchmodSync(fd, 0o600);
       fsyncSync(fd);
