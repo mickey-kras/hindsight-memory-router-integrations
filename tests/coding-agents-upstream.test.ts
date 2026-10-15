@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
-import plugin, { PLUGIN_ID } from "../src/plugin.js";
+import plugin, { PLUGIN_ID, type RoutingStack } from "../src/plugin.js";
 import { deriveBankId } from "../src/upstream/coding-agents/src/core/bank";
 import { applyBankConfig, loadConfig, resolveConfig } from "../src/upstream/coding-agents/src/core/config";
 import { HindsightClient, RateLimitedError } from "../src/upstream/coding-agents/src/core/hindsight";
@@ -264,17 +264,18 @@ it.each([
     );
     let openclawTools: Array<{ name: string; execute(id: string, params: Record<string, unknown>): Promise<unknown> }> =
       [];
+    const routerConfig = {
+      routerUrl: "https://router.test",
+      agents: { codex: { token, writeBank: "A" } },
+      enableKnowledgeTools: true,
+      queueDir: join(dir, "queue"),
+    } satisfies RoutingStack["config"];
     plugin({
       config: {
         plugins: {
           entries: {
             [PLUGIN_ID]: {
-              config: {
-                routerUrl: "https://router.test",
-                agents: { codex: { token, writeBank: "A" } },
-                enableKnowledgeTools: true,
-                queueDir: join(dir, "queue"),
-              },
+              config: routerConfig,
             },
           },
         },

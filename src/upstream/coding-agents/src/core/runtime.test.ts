@@ -1,10 +1,28 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
 import { RuntimeCore } from "./runtime";
+
+let fixtureRoot: string;
+beforeEach(() => {
+  fixtureRoot = mkdtempSync(join(tmpdir(), "runtime-managed-"));
+  const config = join(fixtureRoot, "managed.json");
+  writeFileSync(config, JSON.stringify({
+    routerUrl: "https://router.test",
+    principals: { opencode: { writeBank: "bank-1", tokenEnv: "RUNTIME_TEST_TOKEN" }, dsh: { writeBank: "bank-1", tokenEnv: "RUNTIME_TEST_TOKEN" } },
+  }));
+  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", config);
+  vi.stubEnv("RUNTIME_TEST_TOKEN", `mr_runtime_${"a".repeat(64)}`);
+  vi.stubEnv("HOME", fixtureRoot);
+  vi.stubEnv("TMPDIR", fixtureRoot);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(fixtureRoot, { recursive: true, force: true });
+});
 
 // The real ensureDaemon shells out (uvx/cargo probes) and spawns a detached process; only WHERE it
 // is called from is under test here — the deciding itself is covered in daemon.test.ts.
@@ -31,6 +49,7 @@ vi.mock("./session-start", async (importOriginal) => {
 describe("RuntimeCore", () => {
   it("uses the shared prompt lifecycle and consumes the new-bank reflect deferral once", async () => {
     const client = {
+      assertAuthorized: vi.fn(),
       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
       listPages: vi.fn(async () => ({ items: [] })),
       reflect: vi.fn(async () => "shared reflect"),
@@ -57,6 +76,7 @@ describe("RuntimeCore", () => {
     // pages by id — the agent was told both, and believed the stale half (#4607).
     let pages: { id: string; name: string }[] = [];
     const client = {
+      assertAuthorized: vi.fn(),
       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
       listPages: vi.fn(async () => ({ items: pages })),
       reflect: vi.fn(async () => ""),
@@ -283,7 +303,7 @@ describe("RuntimeCore daemon lifecycle", () => {
 describe("RuntimeCore reflect tool settings", () => {
   it("forwards the resolved reflect timeout and budget into hindsight_reflect", async () => {
     const reflect = vi.fn(async () => "answer");
-    const client = { reflect } as unknown as HindsightClient;
+    const client = { reflect, assertAuthorized: vi.fn() } as unknown as HindsightClient;
     const core = new RuntimeCore(
       client,
       "bank-1",
@@ -307,7 +327,9 @@ describe("RuntimeCore tool workspace binding", () => {
   const client = {
     listDocumentIds: vi.fn(async () => new Set<string>()),
     listPages: vi.fn(async () => ({ items: [] })),
+    hasCredentials: vi.fn(() => true),
     activeOperations: vi.fn(async () => 0),
+    assertAuthorized: vi.fn(),
   } as unknown as HindsightClient;
 
   const workspaceOf = async (core: RuntimeCore): Promise<string> => {
