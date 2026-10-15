@@ -7,7 +7,7 @@
  * the turns added since the last successful write, using the server's `update_mode: "append"`.
  *
  * Append is only correct while our view of the document matches the server's, so this deliberately
- * falls back to a FULL REPLACE — which is idempotent by construction and therefore always safe —
+ * falls back to a FULL REPLACE reconstructed from every known contributed source
  * whenever that cannot be established:
  *
  *   - no cursor          first write-back of the session, or the cache was evicted.
@@ -63,9 +63,8 @@ export const PENDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
  *  the buffer stops growing and the cursor falls back to it. Also bounds the cursor file. */
 export const PENDING_MAX_BYTES = 256 * 1024;
 
-/** How many of a session's rollout files the cursor remembers. Past this the oldest is forgotten and
- *  a late hook for it costs one more append of that file — bounded, where an unbounded list would
- *  grow the cursor file for the life of the session. */
+/** Maximum source references for cumulative reconstruction. Further sources are refused rather
+ *  than forgetting a contribution that a later replacement would otherwise delete. */
 export const MAX_CURSOR_PATHS = 16;
 
 /** The `paths` a cursor carries once `path`'s turns are in the document: the files already there,
@@ -87,6 +86,8 @@ export function pendingReplayable(cursor: RetainCursor, now: number): boolean {
 }
 
 export interface RetainCursor {
+  // Source references only; transcript bodies remain in the harness logs.
+  rollouts?: { path: string; fromTurn: number; turns: number; fingerprint: string; prefix?: string; copiedFrom?: string; unflushed?: { turns: number; fingerprint: string } }[];
   /** Turns the document holds once every `pending` entry has been applied — what the next append
    *  must start from, whether those turns are already committed or still buffered. */
   turns: number;
@@ -96,20 +97,7 @@ export interface RetainCursor {
    *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
    *  its id and changes bank, and the new bank holds no document to append to. */
   bank: string;
-  /** The transcript FILES whose turns are already in the document, oldest first — the last is the
-   *  one `turns`/`fingerprint` describe. Empty for the persistent-plugin runtime, which holds its
-   *  turns in memory and has no file. One session can move between files — Codex writes a
-   *  continuation rollout under the same `session_meta.id` (#4493) — and the new file starts at
-   *  that segment rather than repeating the earlier one; without this the differing prefix reads as
-   *  a rewritten transcript and the replace drops everything already retained.
-   *
-   *  It is the whole set and not just the latest because a file can fire again AFTER the session
-   *  moved on (a late hook, or a second process still writing the earlier rollout): against the
-   *  latest path alone that reads as another new segment, and every alternation appends the file
-   *  again — unbounded. A file we have already written is never a new segment.
-   *
-   *  A cursor written before this field existed has none, so a session already in flight when the
-   *  plugin was upgraded keeps the old replace behaviour until its next write-back sets it. */
+  // Legacy file references; rollout-aware cursors keep first-contribution order.
   paths?: string[];
   /** The server answered that it can take appends. Cached so later write-backs skip the probe. */
   appendSupported?: boolean;

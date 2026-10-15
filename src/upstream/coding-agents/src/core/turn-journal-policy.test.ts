@@ -100,6 +100,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   rmSync(root, { recursive: true, force: true });
@@ -301,10 +302,9 @@ describe("one-time tool-hook handoff authorization", () => {
     pending();
     let release!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { release = resolve; });
-    const fetch = vi.spyOn(globalThis, "fetch").mockReturnValueOnce(response);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] })).mockReturnValueOnce(response);
     const attempt = runHook(hook, clients().makePrompt);
     pending("NEW_MEMORY");
-    fetch.mockResolvedValue(Response.json({ items: [] }));
     release(new Response(null, { status }));
     if (status === 503) {
       await expect(attempt).rejects.toThrow();
@@ -338,15 +338,19 @@ describe("one-time tool-hook handoff authorization", () => {
     pending();
     const responses: ((response: Response) => void)[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
-      if (responses.length < 2) return new Promise<Response>((resolve) => { responses.push(resolve); });
+      if (responses.length < 4) return new Promise<Response>((resolve) => { responses.push(resolve); });
       return Response.json({ items: [] });
     });
     const denied = expect(runHook(hook, clients().makePrompt)).rejects.toThrow("memory access denied");
     const allowed = runHook(hook, clients().makePrompt);
     responses[0](new Response(null, { status: 403 }));
-    await denied;
-    responses[1](Response.json({ items: [] }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    responses[2](Response.json({ items: [] }));
+    responses[3](Response.json({ items: [] }));
     await allowed;
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    responses[1](Response.json({ items: [] }));
+    await denied;
     expect(process.stdout.write).not.toHaveBeenCalled();
   });
 
@@ -654,6 +658,88 @@ describe("Grok handoff across working-directory changes", () => {
     vi.mocked(process.stdout.write).mockClear();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
     grokEvent(alias, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  function timedAuthorization() {
+    const config = JSON.parse(readFileSync(managedPath, "utf8"));
+    config.principals["grok-build"].additionalReadBanks = ["A", "B", "C"];
+    writeFileSync(managedPath, JSON.stringify(config));
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("deadline", "TimeoutError")), milliseconds);
+      return controller.signal;
+    });
+  }
+
+  function delayedResponse(milliseconds: number | undefined, status: number, signal?: AbortSignal | null): Promise<Response> {
+    return new Promise((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(signal?.reason); };
+      const timer = milliseconds === undefined ? undefined : setTimeout(() => {
+        signal?.removeEventListener("abort", abort);
+        resolve(new Response(null, { status }));
+      }, milliseconds);
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+    });
+  }
+
+  it("delivers after three individually successful 11-second bank probes within the Grok tool deadline", async () => {
+    timedAuthorization();
+    await produce("UserPromptSubmit");
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) =>
+      delayedResponse(11_000, 200, init?.signal));
+    grokEvent(approved, true);
+    const started = Date.now();
+    let complete = false;
+    const attempt = runHook(grok.prompt, clients().makePrompt).then(() => { complete = true; });
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(complete).toBe(true);
+    await attempt;
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(process.stdout.write).toHaveBeenCalledOnce();
+    const hostTimeout = grok.additionalHooks?.find((registration) => registration.event === "PostToolUse")?.timeout;
+    expect(hostTimeout).toBe(30);
+    expect(Date.now() - started).toBeLessThan((hostTimeout ?? 0) * 1000);
+  });
+
+  it("bounds all stalled bank probes below the host deadline and retains context for a successful retry", async () => {
+    timedAuthorization();
+    await produce("UserPromptSubmit");
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) =>
+      delayedResponse(undefined, 200, init?.signal));
+    grokEvent(approved, true);
+    let error: unknown;
+    const attempt = runHook(grok.prompt, clients().makePrompt).catch((failure) => { error = failure; });
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(error).toBeInstanceOf(Error);
+    await attempt;
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(new Set(fetch.mock.calls.map(([, init]) => init?.signal)).size).toBe(1);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    fetch.mockResolvedValue(Response.json({ items: [] }));
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).toHaveBeenCalledOnce();
+  });
+
+  it.each([401, 403])("does not let an early transient hide sibling HTTP %s while another bank stalls", async (status) => {
+    timedAuthorization();
+    await produce("UserPromptSubmit");
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      if (String(url).includes("/banks/A/")) return delayedResponse(1000, 503, init?.signal);
+      if (String(url).includes("/banks/B/")) return delayedResponse(12_000, status, init?.signal);
+      return delayedResponse(undefined, 200, init?.signal);
+    });
+    grokEvent(approved, true);
+    let error: unknown;
+    const attempt = runHook(grok.prompt, clients().makePrompt).catch((failure) => { error = failure; });
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(error).toMatchObject({ message: "memory access denied" });
+    await attempt;
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    fetch.mockResolvedValue(Response.json({ items: [] }));
     await runHook(grok.prompt, clients().makePrompt);
     expect(process.stdout.write).not.toHaveBeenCalled();
   });

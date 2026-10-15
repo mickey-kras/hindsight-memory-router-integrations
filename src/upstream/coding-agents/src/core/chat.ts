@@ -1,4 +1,5 @@
 import { AccessDeniedError } from "@memory-router/shared/bank-access";
+import { createHash } from "node:crypto";
 /**
  * Harness-agnostic chat memory: the JSON user/assistant transcript schema shared by BOTH the
  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
@@ -10,6 +11,7 @@ import {
   advancePaths,
   fingerprintTurns,
   MAX_CURSOR_OPS,
+  MAX_CURSOR_PATHS,
   planRetain,
   type RetainCursor,
   type RetainCursorStore,
@@ -18,6 +20,16 @@ import type { RetainStamp } from "./retain-stamp";
 import type { ChatSession } from "./types";
 import { uuidV5 } from "./uuid";
 import { pool, sleep } from "./util";
+
+const MAX_ROLLOUT_TURNS = 100_000;
+const MAX_ROLLOUT_CHARS = 32 * 1024 * 1024;
+const MAX_ROLLOUT_PATH_CHARS = 32 * 1024;
+
+function contentFingerprint(turns: TransportTurn[], count: number): string {
+  const hash = createHash("sha1").update(String(count));
+  for (let i = 0; i < count; i++) hash.update("\n" + JSON.stringify({ role: turns[i].role, content: turns[i].content }));
+  return hash.digest("hex");
+}
 
 export interface TransportTurn {
   role: string;
@@ -282,6 +294,8 @@ export async function retainLiveSession(
     retryUntil?: number;
     /** The transcript file the turns came from, when there is one — see RetainCursor.paths. */
     transcriptPath?: string;
+    readTranscript?: (path: string) => TransportTurn[];
+    sourceTurnCount?: number;
   } = {}
 ): Promise<void> {
   const cursors = opts.cursors;
@@ -295,7 +309,9 @@ export async function retainLiveSession(
       opts.stamp,
       undefined,
       opts.retryUntil,
-      opts.transcriptPath
+      opts.transcriptPath,
+      opts.readTranscript,
+      opts.sourceTurnCount
     );
   // Serialised so the plan is made against the previous write-back's CONFIRMED cursor (see above).
   return serialize(cursors, sessionId, () =>
@@ -308,7 +324,9 @@ export async function retainLiveSession(
       opts.stamp,
       cursors,
       opts.retryUntil,
-      opts.transcriptPath
+      opts.transcriptPath,
+      opts.readTranscript,
+      opts.sourceTurnCount
     )
   );
 }
@@ -323,13 +341,108 @@ async function writeSession(
   cursors?: RetainCursorStore,
   /** Absolute time this write-back may keep retrying until; the caller owns its own clock. */
   retryUntil = Date.now() + DEFAULT_RETRY_WINDOW_MS,
-  transcriptPath?: string
+  transcriptPath?: string,
+  readTranscript?: (path: string) => TransportTurn[],
+  sourceTurnCount?: number
 ): Promise<void> {
   if (!turns.length) return;
   const refId = `conversation:${sessionId}`;
   let cursor = cursors?.read(sessionId);
   // Capability and accepted operations belong to the former bank, not the newly mapped bank.
   if (cursor && cursor.bank !== client.bank) cursor = undefined;
+  let rollouts: RetainCursor["rollouts"];
+  if (transcriptPath && readTranscript) {
+    if (transcriptPath.length > MAX_ROLLOUT_PATH_CHARS || (cursor?.rollouts && (!Array.isArray(cursor.rollouts) || cursor.rollouts.length > MAX_CURSOR_PATHS)))
+      throw new Error("Invalid rollout retention state");
+    const reconstructing = (cursor?.rollouts?.map(segment => segment.path) ?? cursor?.paths ?? []).some(path => path !== transcriptPath);
+    const validateSource = (source: TransportTurn[]) => {
+      if (!reconstructing) return;
+      if (source.length > MAX_ROLLOUT_TURNS) throw new Error("Rollout reconstruction turn limit reached");
+      let chars = 0;
+      for (const turn of source) {
+        chars += JSON.stringify(turn).length;
+        if (chars > MAX_ROLLOUT_CHARS) throw new Error("Rollout reconstruction size limit reached");
+      }
+    };
+    validateSource(turns);
+    if (cursor && (!Number.isSafeInteger(cursor.turns) || cursor.turns < 0 || typeof cursor.fingerprint !== "string" || (cursor.rollouts && !cursor.rollouts.length)))
+      throw new Error("Invalid rollout retention state");
+    if (!cursor?.rollouts && (cursor?.paths?.length ?? 0) > 1)
+      throw new Error("Cannot reconstruct legacy multi-rollout retention state");
+    if (cursor && !cursor.rollouts && !cursor.paths?.length && (cursor.turns > turns.length || fingerprintTurns(turns, cursor.turns) !== cursor.fingerprint))
+      throw new Error("Cannot reconstruct legacy rollout retention state");
+    rollouts = cursor?.rollouts?.map(segment => ({ ...segment }))
+      ?? (cursor?.paths?.length ? [{ path: cursor.paths[0], fromTurn: 0, turns: cursor.turns, fingerprint: cursor.fingerprint }] : []);
+    if (rollouts.length > MAX_CURSOR_PATHS || new Set(rollouts.map(segment => segment.path)).size !== rollouts.length)
+      throw new Error("Invalid rollout retention state");
+    if (cursor?.rollouts && cursor.paths && (cursor.paths.length !== rollouts.length || cursor.paths.some((path, i) => path !== rollouts![i].path)))
+      throw new Error("Invalid rollout retention state");
+    const aggregate: TransportTurn[] = [];
+    const sourceCounts = new Map<string, number>();
+    let aggregateChars = 0;
+    const include = (source: TransportTurn[], fromTurn: number) => {
+      if (reconstructing && source.length > MAX_ROLLOUT_TURNS) throw new Error("Rollout reconstruction turn limit reached");
+      for (let i = fromTurn; i < source.length; i++) {
+        if (reconstructing) aggregateChars += JSON.stringify(source[i]).length;
+        if (reconstructing && (aggregate.length >= MAX_ROLLOUT_TURNS || aggregateChars > MAX_ROLLOUT_CHARS))
+          throw new Error("Rollout reconstruction size limit reached");
+        aggregate.push(source[i]);
+      }
+    };
+    for (const segment of rollouts) {
+      if (typeof segment.path !== "string" || segment.path.length > MAX_ROLLOUT_PATH_CHARS || typeof segment.fingerprint !== "string" || !Number.isSafeInteger(segment.fromTurn) || segment.fromTurn < 0 || !Number.isSafeInteger(segment.turns) || segment.turns < segment.fromTurn)
+        throw new Error("A contributed rollout cannot be reconstructed");
+      if (segment.copiedFrom !== undefined && (typeof segment.copiedFrom !== "string" || !segment.copiedFrom.length))
+        throw new Error("Invalid copied rollout reference");
+      const parentTurns = segment.copiedFrom ? sourceCounts.get(segment.copiedFrom) : aggregate.length;
+      if (parentTurns === undefined || (segment.copiedFrom && segment.fromTurn === 0))
+        throw new Error("Invalid copied rollout reference");
+      const source = segment.path === transcriptPath ? turns : readTranscript(segment.path);
+      if (segment.path !== transcriptPath) validateSource(source);
+      if (!source.length && segment.turns > 0) throw new Error("A contributed rollout is empty or unreadable");
+      if (segment.unflushed) {
+        const prefix = segment.unflushed;
+        if (!Number.isSafeInteger(prefix.turns) || prefix.turns < 1 || prefix.turns > source.length || contentFingerprint(source, prefix.turns) !== prefix.fingerprint)
+          throw new Error("A contributed reply has not been flushed to its rollout");
+        if (segment.path !== transcriptPath || (sourceTurnCount !== undefined && sourceTurnCount >= prefix.turns)) delete segment.unflushed;
+      }
+      if (source.length < segment.fromTurn || (segment.fromTurn > 0 && fingerprintTurns(source, segment.fromTurn) !== segment.prefix))
+        throw new Error("A copied rollout prefix changed");
+      if (segment.fromTurn > 0 && parentTurns !== segment.fromTurn &&
+        (source.length < segment.turns || fingerprintTurns(source, segment.turns) !== segment.fingerprint ||
+          segment.turns === segment.fromTurn))
+        throw new Error("A copied rollout boundary is ambiguous");
+      segment.turns = source.length;
+      segment.fingerprint = fingerprintTurns(source, source.length);
+      include(source, segment.fromTurn);
+      sourceCounts.set(segment.path, source.length);
+    }
+    if (!rollouts.some(segment => segment.path === transcriptPath)) {
+      if (rollouts.length >= MAX_CURSOR_PATHS) throw new Error("Rollout retention path limit reached");
+      let fromTurn = 0, prefix: string | undefined, copiedFrom: string | undefined;
+      const candidates = rollouts.length && cursor ? [
+        { turns: aggregate.length, fingerprint: fingerprintTurns(aggregate, aggregate.length), path: undefined },
+        { turns: cursor.turns, fingerprint: cursor.fingerprint, path: undefined },
+        ...rollouts, ...(cursor.rollouts ?? []),
+      ] : [];
+      const prefixHashes = new Map<number, string>();
+      for (const candidate of candidates) {
+        if (candidate.turns <= fromTurn || candidate.turns > turns.length) continue;
+        const hash = prefixHashes.get(candidate.turns) ?? fingerprintTurns(turns, candidate.turns);
+        prefixHashes.set(candidate.turns, hash);
+        if (hash === candidate.fingerprint) { fromTurn = candidate.turns; prefix = hash; copiedFrom = candidate.path; }
+      }
+      rollouts.push({ path: transcriptPath, fromTurn, turns: turns.length, fingerprint: fingerprintTurns(turns, turns.length), ...(fromTurn ? { prefix, ...(copiedFrom ? { copiedFrom } : {}) } : {}) });
+      include(turns, fromTurn);
+    }
+    const active = rollouts.find(segment => segment.path === transcriptPath)!;
+    if (sourceTurnCount !== undefined && sourceTurnCount < turns.length)
+      active.unflushed = { turns: turns.length, fingerprint: contentFingerprint(turns, turns.length) };
+    turns = aggregate;
+    startTs = turns[0]?.timestamp ?? startTs;
+  } else if (cursor?.rollouts || (transcriptPath && cursor?.paths?.some(path => path !== transcriptPath))) {
+    throw new Error("A transcript reader is required to preserve contributed rollouts");
+  }
   // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
   // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
   // (#4560). A "no" is not remembered — the server can be upgraded mid-session.
@@ -343,15 +456,13 @@ async function writeSession(
   const plan = planRetain(turns, cursor, {
     appendSupported,
     bank: client.bank,
-    path: transcriptPath,
+    path: rollouts ? undefined : transcriptPath,
   });
   // Recorded whenever the probe ran, so a deployment where append never activates shows up in the
   // diag trail instead of only as oversized retains (#5286). A cached "yes" is not re-logged.
   if (probed) diag(harness ?? "", "retain_mode", { mode: plan.mode, appendSupported });
-  // Which files the document holds after this write-back. A replace rebuilds it from THIS file
-  // alone, so it forgets the others — which is what lets the file it dropped be appended back as a
-  // segment on its next hook, rather than replacing again.
-  const paths =
+  // Never forget a source that still contributes to the document.
+  const paths = rollouts ? rollouts.map(segment => segment.path) :
     plan.mode === "replace"
       ? transcriptPath
         ? [transcriptPath]
@@ -406,6 +517,7 @@ async function writeSession(
     fingerprint: fingerprintTurns(turns, turns.length),
     bank: client.bank,
     ...(paths ? { paths } : {}),
+    ...(rollouts ? { rollouts } : {}),
     ...(appendSupported ? { appendSupported: true } : {}),
   };
   /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */

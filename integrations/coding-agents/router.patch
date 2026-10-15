@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..8780820
+index 0000000..6cf2151
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,41 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -36,13 +36,15 @@ index 0000000..8780820
 +
 +New upstream append capability, retry budgets, query bounds, page scoping and document freshness reads use the existing guarded client. Version probing accepts GET /v1/version and falls back to /version; authorization failures remain terminal. Router error bodies are redacted, so a 404 cannot latch page support off based on its upstream body.
 +
-+Grok tool-hook context is stored privately and delivered only after managed credentials and the current project mapping are validated. Its handoff key includes endpoint, primary bank, the canonical physical path of the recorded session root, session, a hash of the actual effective principal and the complete managed read-bank scope. Moving into a subdirectory preserves the handoff only while both the live directory and recorded root remain authorized for the same bank and the live directory remains physically inside that root. Every bank that could contribute to aggregated memory is freshly authorized before delivery; scope/principal changes and server revocations reject the handoff. The effective endpoint, physical workspace and project mapping are resolved again after awaited reads and grant probes. Authorization failures discard it permanently. Tokens never enter identity keys. Pending context uses immutable blocks with atomic claims per publication; concurrent tools may deliver separate blocks, and waiting-block deduplication is best-effort. Delivery reads at most 64 blocks per event, leaving later blocks for subsequent events; terminal denial discards the bound scope's pending snapshot. Session caches retain attempt counters and lifecycle flags, never memory content.
++Grok tool-hook context is stored privately and delivered only after managed credentials and the current project mapping are validated. Its handoff key includes endpoint, primary bank, the canonical physical path of the recorded session root, session, a hash of the actual effective principal and the complete managed read-bank scope. Moving into a subdirectory preserves the handoff only while both the live directory and recorded root remain authorized for the same bank and the live directory remains physically inside that root. Every bank that could contribute to aggregated memory is freshly authorized in parallel under one shared 15-second deadline before delivery; scope/principal changes and server revocations reject the handoff. The effective endpoint, physical workspace and project mapping are resolved again after awaited reads and grant probes. Authorization failures discard it permanently. Tokens never enter identity keys. Pending context uses immutable blocks with atomic claims per publication; concurrent tools may deliver separate blocks, and waiting-block deduplication is best-effort. Delivery reads at most 64 blocks per event, leaving later blocks for subsequent events; terminal denial discards the bound scope's pending snapshot. Session caches retain attempt counters and lifecycle flags, never memory content.
 +
 +New Kimi, WorkBuddy, CodeBuddy and TraeCode entries use managed identity and branded registration names. Trae workspace MCP files are written only by explicit transactional installation for operator-mapped projects; hooks only report the workspace-MCP gate. Global settings and workspace SQLite enable switches remain user-managed.
 +
 +Managed settings are reapplied after every path/bank override, including paths without a bank section. Project prompt tuning stays available; read-only principals cannot restore ingestion, surveys or bank management. The shared transport composes over the current host dispatcher to disable Undici's header/body timeout caps while preserving the request's AbortSignal deadline and proxy setup.
 +
 +SessionStart readiness probes propagate terminal authorization failures before launching further background work; transient failures retain their fallback behavior. Append capabilities and accepted-operation cursors belong to one bank, so a managed bank switch re-probes the destination and starts from a replacement transcript. Grok's native hooks file and generated backup, and Trae's generated JSON backups, are covered by installer transactions.
++
++Multi-source conversation retention preserves rollout contributions in their original order and rereads their sources when rebuilding the shared document. Sources must remain readable, including replies previously retained before their transcript was flushed. Reconstruction supports up to 16 source references and refuses any decoded source or assembled document exceeding 32 MiB of serialized turns or 100,000 turns. Missing or ambiguous sources, unknown legacy continuation boundaries, moving copied prefixes and exceeded limits stop the write with a diagnostic instead of replacing the document with incomplete data. Single-source and persistent-runtime retention retain their existing size behavior.
 diff --git a/LICENSE b/LICENSE
 new file mode 100644
 index 0000000..f572d61
@@ -6714,10 +6716,348 @@ index 0000000..23f282e
 +  expect(current).toContain("Managed setup and updates");
 +});
 diff --git a/src/core/chat.test.ts b/src/core/chat.test.ts
-index 8fe5792..29e6d4c 100644
+index 8fe5792..953fdcb 100644
 --- a/src/core/chat.test.ts
 +++ b/src/core/chat.test.ts
-@@ -721,3 +721,25 @@ describe("retainLiveSession — incremental write-back", () => {
+@@ -1,4 +1,6 @@
+-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
++import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { buildRetain } from "./retain-hook";
++import { memoryUsageCursorStore } from "./usage";
+ import { tmpdir } from "node:os";
+ import { join } from "node:path";
+ import { describe, expect, it, vi } from "vitest";
+@@ -10,7 +12,299 @@ import {
+   retainLiveSession,
+   type TransportTurn,
+ } from "./chat";
+-import { PENDING_MAX_AGE_MS, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
++import { MAX_CURSOR_PATHS, PENDING_MAX_AGE_MS, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
++import { log } from "./log";
++
++function rolloutFixture(appendSupported = true) {
++  const dir = mkdtempSync(join(tmpdir(), "cumulative-rollouts-"));
++  const cursors = memoryCursorStore();
++  const usageCursors = memoryUsageCursorStore();
++  const documents = new Map<string, string[]>();
++  const applied = new Set<string>();
++  let bank = "A", failAfterCommit = false;
++  const retain = vi.fn(async (content: string, _context: string, documentId: string, _tags: string[], _strategy: string, opts: { updateMode?: string; operationId?: string } = {}) => {
++    expect(documentId).toBe("conversation:rollouts");
++    if (opts.operationId && applied.has(opts.operationId)) return;
++    const incoming = content.split("\n").map(line => JSON.parse(line)).filter(turn => turn.role !== "system").map(turn => turn.content as string);
++    documents.set(bank, opts.updateMode === "append" ? [...(documents.get(bank) ?? []), ...incoming] : incoming);
++    if (opts.operationId) applied.add(opts.operationId);
++    if (failAfterCommit) { failAfterCommit = false; throw new Error("response lost after commit"); }
++  });
++  const client = { get bank() { return bank; }, retain, supportsAppendRetain: vi.fn(async () => appendSupported),
++    bankUrl: (suffix: string) => suffix, req: vi.fn(async () => new Response('{"status":"completed"}')) };
++  const path = (name: string) => join(dir, `${name}.jsonl`);
++  const put = (name: string, texts: string[]) => writeFileSync(path(name), texts.map(content => JSON.stringify({ type: "user", message: { content }, timestamp: "2026-01-01T00:00:00Z" })).join("\n"));
++  const stop = (name: string, extra: { lastAssistantMessage?: string; readTranscript?: (path: string) => TransportTurn[] } = {}) => buildRetain({ harness: "codex", sessionId: "rollouts", transcriptPath: path(name), client, cursors, usageCursors, ...extra });
++  return { dir, cursors, client, retain, documents, path, put, stop, switchBank: (value: string) => { bank = value; }, loseResponse: () => { failAfterCommit = true; } };
++}
++
++async function withRollouts(run: (fixture: ReturnType<typeof rolloutFixture>) => Promise<void>, appendSupported = true) {
++  const fixture = rolloutFixture(appendSupported);
++  try { await run(fixture); } finally { rmSync(fixture.dir, { recursive: true, force: true }); }
++}
++
++describe("cumulative rollout retention", () => {
++  it.each([true, false])("preserves contributions and edits with append support %s", async (supported) => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]);
++      await f.stop("a"); await f.stop("b");
++      f.put("a", ["edited A1", "A2"]);
++      await f.stop("a");
++      expect(f.documents.get("A")).toEqual(["edited A1", "A2", "B1"]);
++      await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["edited A1", "A2", "B1"]);
++      expect(f.cursors.read("rollouts")?.paths).toEqual([f.path("a"), f.path("b")]);
++    }, supported);
++  });
++
++  it("deduplicates copied prefixes while retaining independent earlier-file edits", async () => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["A1", "B1"]);
++      await f.stop("a"); await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
++      f.put("a", ["edited A1", "A2"]); f.put("b", ["A1", "B1", "B2"]);
++      await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["edited A1", "A2", "B1", "B2"]);
++    });
++  });
++
++  it.each(["missing", "empty", "legacy", "copied-prefix"])("refuses unsafe %s reconstruction without changing the document or cursor", async (failure) => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", failure === "copied-prefix" ? ["A1", "B1"] : ["B1"]);
++      await f.stop("a"); await f.stop("b");
++      if (failure === "missing") rmSync(f.path("a"));
++      if (failure === "empty") f.put("a", []);
++      if (failure === "legacy") { const state = f.cursors.read("rollouts")!; f.cursors.write("rollouts", { ...state, rollouts: undefined }); }
++      if (failure === "copied-prefix") f.put("b", ["changed copied A1", "B1", "B2"]);
++      const before = structuredClone(f.cursors.read("rollouts"));
++      const writes = f.retain.mock.calls.length;
++      const warning = vi.spyOn(log, "warn");
++      try {
++        await f.stop("b");
++        expect(f.documents.get("A")).toEqual(["A1", "B1"]);
++        expect(f.retain).toHaveBeenCalledTimes(writes);
++        expect(f.cursors.read("rollouts")).toEqual(before);
++        expect(warning).toHaveBeenCalledWith("codex", "session write-back failed", expect.objectContaining({ error: expect.any(String) }));
++      } finally { warning.mockRestore(); }
++    });
++  });
++
++  it("keeps every known segment at the path cap and refuses another source", async () => {
++    await withRollouts(async f => {
++      for (let i = 0; i <= MAX_CURSOR_PATHS; i++) { f.put(String(i), [`turn ${i}`]); await f.stop(String(i)); }
++      expect(f.documents.get("A")).toEqual(Array.from({ length: MAX_CURSOR_PATHS }, (_, i) => `turn ${i}`));
++      expect(f.cursors.read("rollouts")?.rollouts).toHaveLength(MAX_CURSOR_PATHS);
++      f.put("0", ["edited first"]);
++      await f.stop("0");
++      expect(f.documents.get("A")).toEqual(["edited first", ...Array.from({ length: MAX_CURSOR_PATHS - 1 }, (_, i) => `turn ${i + 1}`)]);
++    });
++  });
++
++  it.each(["pending", "expired-pending", "dirty", "failed-operation"])("reconstructs every segment during %s recovery", async (failure) => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]);
++      await f.stop("a"); await f.stop("b");
++      if (failure === "failed-operation") f.client.req.mockResolvedValueOnce(new Response('{"status":"failed"}'));
++      else {
++        if (failure === "dirty") f.put("a", ["edited A1", "A2"]);
++        else f.put("b", ["B1", "B2"]);
++        f.retain.mockRejectedValueOnce(new Error("offline"));
++        await f.stop(failure === "dirty" ? "a" : "b");
++        if (failure === "expired-pending") {
++          const state = f.cursors.read("rollouts")!;
++          f.cursors.write("rollouts", { ...state, pending: state.pending?.map(entry => ({ ...entry, at: Date.now() - PENDING_MAX_AGE_MS - 1 })) });
++        }
++      }
++      const edited = failure === "pending" || failure === "dirty";
++      if (edited) f.put("a", ["edited A1", "A2"]);
++      await f.stop(edited ? "a" : "b");
++      expect(f.documents.get("A")).toEqual([...(edited ? ["edited A1", "A2"] : ["A1"]), "B1", ...(failure === "pending" || failure === "expired-pending" ? ["B2"] : [])]);
++      expect(f.retain.mock.calls.at(-1)?.[5]?.updateMode).toBeUndefined();
++      expect(f.cursors.read("rollouts")?.dirty).toBeFalsy();
++      expect(f.cursors.read("rollouts")?.pending).toBeUndefined();
++    });
++  });
++
++  it("replays an append whose response was lost under its original operation ID without duplicating a segment", async () => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]);
++      await f.stop("a"); await f.stop("b");
++      f.put("b", ["B1", "B2"]); f.loseResponse();
++      await f.stop("b");
++      const lost = f.retain.mock.calls.at(-1);
++      await f.stop("b");
++      expect(f.retain.mock.calls.at(-1)).toEqual(lost);
++      expect(f.documents.get("A")).toEqual(["A1", "B1", "B2"]);
++    });
++  });
++
++  it("starts the new bank from the current source without reading former-bank files", async () => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]);
++      await f.stop("a"); await f.stop("b");
++      rmSync(f.path("a")); f.switchBank("B");
++      await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
++      expect(f.documents.get("B")).toEqual(["B1"]);
++      expect(f.cursors.read("rollouts")?.paths).toEqual([f.path("b")]);
++    });
++  });
++
++  it("refuses a moving copied-prefix boundary rather than duplicating new parent turns", async () => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["A1", "B1"]);
++      await f.stop("a"); await f.stop("b");
++      f.put("a", ["A1", "A2"]); f.put("b", ["A1", "A2", "B1"]);
++      const before = structuredClone(f.cursors.read("rollouts"));
++      const writes = f.retain.mock.calls.length;
++      await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
++      expect(f.cursors.read("rollouts")).toEqual(before);
++      expect(f.retain).toHaveBeenCalledTimes(writes);
++    });
++  });
++
++  it("deduplicates a new rollout copying only the previous source and preserves first-contribution order", async () => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]); f.put("c", ["B1", "C1"]);
++      await f.stop("a"); await f.stop("b"); await f.stop("c");
++      expect(f.documents.get("A")).toEqual(["A1", "B1", "C1"]);
++      expect(f.cursors.read("rollouts")?.rollouts?.[2].copiedFrom).toBe(f.path("b"));
++      f.put("a", ["A1", "A2"]);
++      await f.stop("a");
++      expect(f.documents.get("A")).toEqual(["A1", "A2", "B1", "C1"]);
++      f.put("b", ["B1", "B2"]); f.put("c", ["B1", "B2", "C1"]);
++      const writes = f.retain.mock.calls.length;
++      await f.stop("c");
++      expect(f.retain).toHaveBeenCalledTimes(writes);
++      expect(f.documents.get("A")).toEqual(["A1", "A2", "B1", "C1"]);
++    });
++  });
++
++  it.each(["growth", "edit"])("deduplicates a fresh whole-aggregate copy after unseen earlier-source %s", async (change) => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]);
++      await f.stop("a"); await f.stop("b");
++      const currentA = change === "growth" ? ["A1", "A2"] : ["edited A1"];
++      f.put("a", currentA); f.put("c", [...currentA, "B1", "C1"]);
++      await f.stop("c");
++      expect(f.documents.get("A")).toEqual([...currentA, "B1", "C1"]);
++      expect(f.cursors.read("rollouts")?.rollouts?.[2].fromTurn).toBe(currentA.length + 1);
++      expect(f.cursors.read("rollouts")?.rollouts?.[2].copiedFrom).toBeUndefined();
++    });
++  });
++
++  it.each(["self", "later", "unknown"])("refuses a %s copied-source reference", async (kind) => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["A1", "B1"]); f.put("c", ["C1"]);
++      await f.stop("a"); await f.stop("b"); await f.stop("c");
++      const state = f.cursors.read("rollouts")!;
++      f.cursors.write("rollouts", { ...state, rollouts: state.rollouts!.map((segment, i) => i === 1 ? { ...segment, copiedFrom: f.path(kind === "self" ? "b" : kind === "later" ? "c" : "unknown") } : segment) });
++      const before = structuredClone(f.cursors.read("rollouts"));
++      await f.stop("b");
++      expect(f.retain).toHaveBeenCalledTimes(3);
++      expect(f.documents.get("A")).toEqual(["A1", "B1", "C1"]);
++      expect(f.cursors.read("rollouts")).toEqual(before);
++    });
++  });
++
++  it("retains synthesized replies until their exact content has materialized in the source", async () => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]);
++      await f.stop("a", { lastAssistantMessage: "unflushed reply" });
++      await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["A1", "unflushed reply"]);
++      expect(f.retain).toHaveBeenCalledTimes(1);
++      writeFileSync(f.path("a"), [
++        { type: "user", message: { content: "A1" }, timestamp: "2026-01-01T00:00:00Z" },
++        { type: "assistant", message: { content: "unflushed reply" }, timestamp: "2026-01-01T00:00:01Z" },
++      ].map(turn => JSON.stringify(turn)).join("\n"));
++      await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["A1", "unflushed reply", "B1"]);
++      expect(f.cursors.read("rollouts")?.rollouts?.[0].unflushed).toBeUndefined();
++    });
++  });
++
++  it("uses the supplied harness reader for synthetic sources", async () => {
++    await withRollouts(async f => {
++      const sources = new Map<string, TransportTurn[]>([[f.path("a"), [{ role: "user", content: "A1" }]], [f.path("b"), [{ role: "user", content: "B1" }]]]);
++      const readTranscript = (path: string) => sources.get(path) ?? [];
++      await f.stop("a", { readTranscript }); await f.stop("b", { readTranscript });
++      sources.get(f.path("a"))!.push({ role: "user", content: "A2" });
++      await f.stop("a", { readTranscript });
++      expect(f.documents.get("A")).toEqual(["A1", "A2", "B1"]);
++    });
++  });
++
++  it("migrates a legacy single-source cursor without losing its source", async () => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]);
++      await f.stop("a");
++      f.cursors.write("rollouts", { ...f.cursors.read("rollouts")!, rollouts: undefined });
++      await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
++    });
++  });
++
++  it.each([-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])("refuses invalid copied offset %s without mutating retained state", async (fromTurn) => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); f.put("b", ["B1"]);
++      await f.stop("a"); await f.stop("b");
++      const state = f.cursors.read("rollouts")!;
++      f.cursors.write("rollouts", { ...state, rollouts: state.rollouts!.map((entry, i) => i ? { ...entry, fromTurn } : entry) });
++      const before = structuredClone(f.cursors.read("rollouts"));
++      await f.stop("b");
++      expect(f.documents.get("A")).toEqual(["A1", "B1"]);
++      expect(f.cursors.read("rollouts")).toEqual(before);
++      expect(f.retain).toHaveBeenCalledTimes(2);
++    });
++  });
++
++  it("refuses duplicate rollout references", async () => {
++    await withRollouts(async f => {
++      f.put("a", ["A1"]); await f.stop("a");
++      const state = f.cursors.read("rollouts")!;
++      f.cursors.write("rollouts", { ...state, rollouts: [state.rollouts![0], state.rollouts![0]] });
++      await f.stop("a");
++      expect(f.retain).toHaveBeenCalledTimes(1);
++      expect(f.documents.get("A")).toEqual(["A1"]);
++    });
++  });
++
++  it("bounds multi-source reconstruction cardinality without altering the prior document", async () => {
++    await withRollouts(async f => {
++      const readTranscript = (path: string) => path === f.path("a") ? [{ role: "user", content: "A1" }] : Array.from({ length: 100_001 }, () => ({ role: "user", content: "x" }));
++      await f.stop("a", { readTranscript });
++      await f.stop("b", { readTranscript });
++      expect(f.documents.get("A")).toEqual(["A1"]);
++      expect(f.retain).toHaveBeenCalledTimes(1);
++    });
++  });
++
++  it("bounds the aggregate even when every source is individually under the work limit", async () => {
++    await withRollouts(async f => {
++      const a = Array.from({ length: 60_000 }, () => ({ role: "user", content: "A" }));
++      const b = Array.from({ length: 60_000 }, () => ({ role: "user", content: "B" }));
++      const readTranscript = (path: string) => path === f.path("a") ? a : b;
++      await f.stop("a", { readTranscript }); await f.stop("b", { readTranscript });
++      expect(f.retain).toHaveBeenCalledTimes(1);
++      expect(f.documents.get("A")).toHaveLength(60_000);
++      expect(f.documents.get("A")?.every(content => content === "A")).toBe(true);
++    });
++  });
++
++  it("preserves the single-source size contract and safely refuses oversized multi-source rebuilding", async () => {
++    await withRollouts(async f => {
++      const large = "x".repeat(32 * 1024 * 1024);
++      const readTranscript = (path: string) => [{ role: "user", content: path === f.path("a") ? large : "B1" }];
++      await f.stop("a", { readTranscript });
++      expect(f.documents.get("A")?.[0].length).toBe(large.length);
++      await f.stop("b", { readTranscript });
++      expect(f.retain).toHaveBeenCalledTimes(1);
++      expect(f.documents.get("A")).toHaveLength(1);
++    });
++  });
++});
+ 
+ describe("renderSessionJsonl", () => {
+   const turns: TransportTurn[] = [
+@@ -54,6 +348,28 @@ describe("renderSessionJsonl", () => {
+ });
+ 
+ describe("retainLiveSession", () => {
++  it("preserves every rollout in the cumulative document when an earlier rollout grows", async () => {
++    const dir = mkdtempSync(join(tmpdir(), "retain-rollouts-"));
++    try {
++      const a = join(dir, "a.jsonl"), b = join(dir, "b.jsonl");
++      const put = (path: string, texts: string[]) => writeFileSync(path, texts.map(content => JSON.stringify({ type: "user", message: { content }, timestamp: "2026-01-01T00:00:00Z" })).join("\n"));
++      let document: string[] = [];
++      const retain = vi.fn(async (content: string, _context: string, _documentId: string, _tags: string[], _strategy: string, opts: { updateMode?: string } = {}) => {
++        const incoming = content.split("\n").map(line => JSON.parse(line)).filter(turn => turn.role !== "system").map(turn => turn.content);
++        document = opts.updateMode === "append" ? [...document, ...incoming] : incoming;
++      });
++      const client = { bank: "A", retain, supportsAppendRetain: async () => true, bankUrl: (suffix: string) => suffix,
++        req: vi.fn(async () => new Response('{"status":"completed"}')) };
++      const cursors = memoryCursorStore();
++      const stop = (path: string) => buildRetain({ harness: "codex", sessionId: "rollouts", transcriptPath: path, client, cursors, usageCursors: memoryUsageCursorStore() });
++      put(a, ["A1"]); put(b, ["B1"]);
++      await stop(a); await stop(b);
++      expect(document).toEqual(["A1", "B1"]);
++      put(a, ["A1", "A2"]);
++      await stop(a);
++      expect(document).toEqual(["A1", "A2", "B1"]);
++    } finally { rmSync(dir, { recursive: true, force: true }); }
++  });
+   it("upserts the JSONL transcript under conversation:<id> with the unified conversation strategy", async () => {
+     const retain = vi.fn().mockResolvedValue(undefined);
+     const client = { retain } as unknown as HindsightClient;
+@@ -721,3 +1037,25 @@ describe("retainLiveSession — incremental write-back", () => {
      expect(retain.mock.calls[0][5].updateMode).toBeUndefined();
    });
  });
@@ -6744,15 +7084,41 @@ index 8fe5792..29e6d4c 100644
 +  });
 +});
 diff --git a/src/core/chat.ts b/src/core/chat.ts
-index 8d60c72..6679eb9 100644
+index 8d60c72..a6c4bb1 100644
 --- a/src/core/chat.ts
 +++ b/src/core/chat.ts
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
 +import { AccessDeniedError } from "@memory-router/shared/bank-access";
++import { createHash } from "node:crypto";
  /**
   * Harness-agnostic chat memory: the JSON user/assistant transcript schema shared by BOTH the
   * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
-@@ -122,7 +123,8 @@ export async function ingestChats(
+@@ -9,6 +11,7 @@ import {
+   advancePaths,
+   fingerprintTurns,
+   MAX_CURSOR_OPS,
++  MAX_CURSOR_PATHS,
+   planRetain,
+   type RetainCursor,
+   type RetainCursorStore,
+@@ -18,6 +21,16 @@ import type { ChatSession } from "./types";
+ import { uuidV5 } from "./uuid";
+ import { pool, sleep } from "./util";
+ 
++const MAX_ROLLOUT_TURNS = 100_000;
++const MAX_ROLLOUT_CHARS = 32 * 1024 * 1024;
++const MAX_ROLLOUT_PATH_CHARS = 32 * 1024;
++
++function contentFingerprint(turns: TransportTurn[], count: number): string {
++  const hash = createHash("sha1").update(String(count));
++  for (let i = 0; i < count; i++) hash.update("\n" + JSON.stringify({ role: turns[i].role, content: turns[i].content }));
++  return hash.digest("hex");
++}
++
+ export interface TransportTurn {
+   role: string;
+   content: string;
+@@ -122,7 +135,8 @@ export async function ingestChats(
  async function supportsAppend(client: HindsightClient): Promise<boolean> {
    try {
      return await client.supportsAppendRetain();
@@ -6762,7 +7128,7 @@ index 8d60c72..6679eb9 100644
      return false;
    }
  }
-@@ -154,7 +156,8 @@ async function settleOps(
+@@ -154,7 +168,8 @@ async function settleOps(
          );
          if (r.status === 404) return "not_found"; // pruned: nothing left to learn
          return String(((await r.json()) as { status?: unknown }).status ?? "").toLowerCase();
@@ -6772,15 +7138,174 @@ index 8d60c72..6679eb9 100644
          return "";
        }
      })
-@@ -325,6 +328,8 @@ async function writeSession(
+@@ -279,6 +294,8 @@ export async function retainLiveSession(
+     retryUntil?: number;
+     /** The transcript file the turns came from, when there is one — see RetainCursor.paths. */
+     transcriptPath?: string;
++    readTranscript?: (path: string) => TransportTurn[];
++    sourceTurnCount?: number;
+   } = {}
+ ): Promise<void> {
+   const cursors = opts.cursors;
+@@ -292,7 +309,9 @@ export async function retainLiveSession(
+       opts.stamp,
+       undefined,
+       opts.retryUntil,
+-      opts.transcriptPath
++      opts.transcriptPath,
++      opts.readTranscript,
++      opts.sourceTurnCount
+     );
+   // Serialised so the plan is made against the previous write-back's CONFIRMED cursor (see above).
+   return serialize(cursors, sessionId, () =>
+@@ -305,7 +324,9 @@ export async function retainLiveSession(
+       opts.stamp,
+       cursors,
+       opts.retryUntil,
+-      opts.transcriptPath
++      opts.transcriptPath,
++      opts.readTranscript,
++      opts.sourceTurnCount
+     )
+   );
+ }
+@@ -320,11 +341,108 @@ async function writeSession(
+   cursors?: RetainCursorStore,
+   /** Absolute time this write-back may keep retrying until; the caller owns its own clock. */
+   retryUntil = Date.now() + DEFAULT_RETRY_WINDOW_MS,
+-  transcriptPath?: string
++  transcriptPath?: string,
++  readTranscript?: (path: string) => TransportTurn[],
++  sourceTurnCount?: number
+ ): Promise<void> {
    if (!turns.length) return;
    const refId = `conversation:${sessionId}`;
    let cursor = cursors?.read(sessionId);
 +  // Capability and accepted operations belong to the former bank, not the newly mapped bank.
 +  if (cursor && cursor.bank !== client.bank) cursor = undefined;
++  let rollouts: RetainCursor["rollouts"];
++  if (transcriptPath && readTranscript) {
++    if (transcriptPath.length > MAX_ROLLOUT_PATH_CHARS || (cursor?.rollouts && (!Array.isArray(cursor.rollouts) || cursor.rollouts.length > MAX_CURSOR_PATHS)))
++      throw new Error("Invalid rollout retention state");
++    const reconstructing = (cursor?.rollouts?.map(segment => segment.path) ?? cursor?.paths ?? []).some(path => path !== transcriptPath);
++    const validateSource = (source: TransportTurn[]) => {
++      if (!reconstructing) return;
++      if (source.length > MAX_ROLLOUT_TURNS) throw new Error("Rollout reconstruction turn limit reached");
++      let chars = 0;
++      for (const turn of source) {
++        chars += JSON.stringify(turn).length;
++        if (chars > MAX_ROLLOUT_CHARS) throw new Error("Rollout reconstruction size limit reached");
++      }
++    };
++    validateSource(turns);
++    if (cursor && (!Number.isSafeInteger(cursor.turns) || cursor.turns < 0 || typeof cursor.fingerprint !== "string" || (cursor.rollouts && !cursor.rollouts.length)))
++      throw new Error("Invalid rollout retention state");
++    if (!cursor?.rollouts && (cursor?.paths?.length ?? 0) > 1)
++      throw new Error("Cannot reconstruct legacy multi-rollout retention state");
++    if (cursor && !cursor.rollouts && !cursor.paths?.length && (cursor.turns > turns.length || fingerprintTurns(turns, cursor.turns) !== cursor.fingerprint))
++      throw new Error("Cannot reconstruct legacy rollout retention state");
++    rollouts = cursor?.rollouts?.map(segment => ({ ...segment }))
++      ?? (cursor?.paths?.length ? [{ path: cursor.paths[0], fromTurn: 0, turns: cursor.turns, fingerprint: cursor.fingerprint }] : []);
++    if (rollouts.length > MAX_CURSOR_PATHS || new Set(rollouts.map(segment => segment.path)).size !== rollouts.length)
++      throw new Error("Invalid rollout retention state");
++    if (cursor?.rollouts && cursor.paths && (cursor.paths.length !== rollouts.length || cursor.paths.some((path, i) => path !== rollouts![i].path)))
++      throw new Error("Invalid rollout retention state");
++    const aggregate: TransportTurn[] = [];
++    const sourceCounts = new Map<string, number>();
++    let aggregateChars = 0;
++    const include = (source: TransportTurn[], fromTurn: number) => {
++      if (reconstructing && source.length > MAX_ROLLOUT_TURNS) throw new Error("Rollout reconstruction turn limit reached");
++      for (let i = fromTurn; i < source.length; i++) {
++        if (reconstructing) aggregateChars += JSON.stringify(source[i]).length;
++        if (reconstructing && (aggregate.length >= MAX_ROLLOUT_TURNS || aggregateChars > MAX_ROLLOUT_CHARS))
++          throw new Error("Rollout reconstruction size limit reached");
++        aggregate.push(source[i]);
++      }
++    };
++    for (const segment of rollouts) {
++      if (typeof segment.path !== "string" || segment.path.length > MAX_ROLLOUT_PATH_CHARS || typeof segment.fingerprint !== "string" || !Number.isSafeInteger(segment.fromTurn) || segment.fromTurn < 0 || !Number.isSafeInteger(segment.turns) || segment.turns < segment.fromTurn)
++        throw new Error("A contributed rollout cannot be reconstructed");
++      if (segment.copiedFrom !== undefined && (typeof segment.copiedFrom !== "string" || !segment.copiedFrom.length))
++        throw new Error("Invalid copied rollout reference");
++      const parentTurns = segment.copiedFrom ? sourceCounts.get(segment.copiedFrom) : aggregate.length;
++      if (parentTurns === undefined || (segment.copiedFrom && segment.fromTurn === 0))
++        throw new Error("Invalid copied rollout reference");
++      const source = segment.path === transcriptPath ? turns : readTranscript(segment.path);
++      if (segment.path !== transcriptPath) validateSource(source);
++      if (!source.length && segment.turns > 0) throw new Error("A contributed rollout is empty or unreadable");
++      if (segment.unflushed) {
++        const prefix = segment.unflushed;
++        if (!Number.isSafeInteger(prefix.turns) || prefix.turns < 1 || prefix.turns > source.length || contentFingerprint(source, prefix.turns) !== prefix.fingerprint)
++          throw new Error("A contributed reply has not been flushed to its rollout");
++        if (segment.path !== transcriptPath || (sourceTurnCount !== undefined && sourceTurnCount >= prefix.turns)) delete segment.unflushed;
++      }
++      if (source.length < segment.fromTurn || (segment.fromTurn > 0 && fingerprintTurns(source, segment.fromTurn) !== segment.prefix))
++        throw new Error("A copied rollout prefix changed");
++      if (segment.fromTurn > 0 && parentTurns !== segment.fromTurn &&
++        (source.length < segment.turns || fingerprintTurns(source, segment.turns) !== segment.fingerprint ||
++          segment.turns === segment.fromTurn))
++        throw new Error("A copied rollout boundary is ambiguous");
++      segment.turns = source.length;
++      segment.fingerprint = fingerprintTurns(source, source.length);
++      include(source, segment.fromTurn);
++      sourceCounts.set(segment.path, source.length);
++    }
++    if (!rollouts.some(segment => segment.path === transcriptPath)) {
++      if (rollouts.length >= MAX_CURSOR_PATHS) throw new Error("Rollout retention path limit reached");
++      let fromTurn = 0, prefix: string | undefined, copiedFrom: string | undefined;
++      const candidates = rollouts.length && cursor ? [
++        { turns: aggregate.length, fingerprint: fingerprintTurns(aggregate, aggregate.length), path: undefined },
++        { turns: cursor.turns, fingerprint: cursor.fingerprint, path: undefined },
++        ...rollouts, ...(cursor.rollouts ?? []),
++      ] : [];
++      const prefixHashes = new Map<number, string>();
++      for (const candidate of candidates) {
++        if (candidate.turns <= fromTurn || candidate.turns > turns.length) continue;
++        const hash = prefixHashes.get(candidate.turns) ?? fingerprintTurns(turns, candidate.turns);
++        prefixHashes.set(candidate.turns, hash);
++        if (hash === candidate.fingerprint) { fromTurn = candidate.turns; prefix = hash; copiedFrom = candidate.path; }
++      }
++      rollouts.push({ path: transcriptPath, fromTurn, turns: turns.length, fingerprint: fingerprintTurns(turns, turns.length), ...(fromTurn ? { prefix, ...(copiedFrom ? { copiedFrom } : {}) } : {}) });
++      include(turns, fromTurn);
++    }
++    const active = rollouts.find(segment => segment.path === transcriptPath)!;
++    if (sourceTurnCount !== undefined && sourceTurnCount < turns.length)
++      active.unflushed = { turns: turns.length, fingerprint: contentFingerprint(turns, turns.length) };
++    turns = aggregate;
++    startTs = turns[0]?.timestamp ?? startTs;
++  } else if (cursor?.rollouts || (transcriptPath && cursor?.paths?.some(path => path !== transcriptPath))) {
++    throw new Error("A transcript reader is required to preserve contributed rollouts");
++  }
    // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
    // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
    // (#4560). A "no" is not remembered — the server can be upgraded mid-session.
+@@ -338,15 +456,13 @@ async function writeSession(
+   const plan = planRetain(turns, cursor, {
+     appendSupported,
+     bank: client.bank,
+-    path: transcriptPath,
++    path: rollouts ? undefined : transcriptPath,
+   });
+   // Recorded whenever the probe ran, so a deployment where append never activates shows up in the
+   // diag trail instead of only as oversized retains (#5286). A cached "yes" is not re-logged.
+   if (probed) diag(harness ?? "", "retain_mode", { mode: plan.mode, appendSupported });
+-  // Which files the document holds after this write-back. A replace rebuilds it from THIS file
+-  // alone, so it forgets the others — which is what lets the file it dropped be appended back as a
+-  // segment on its next hook, rather than replacing again.
+-  const paths =
++  // Never forget a source that still contributes to the document.
++  const paths = rollouts ? rollouts.map(segment => segment.path) :
+     plan.mode === "replace"
+       ? transcriptPath
+         ? [transcriptPath]
+@@ -401,6 +517,7 @@ async function writeSession(
+     fingerprint: fingerprintTurns(turns, turns.length),
+     bank: client.bank,
+     ...(paths ? { paths } : {}),
++    ...(rollouts ? { rollouts } : {}),
+     ...(appendSupported ? { appendSupported: true } : {}),
+   };
+   /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */
 diff --git a/src/core/config.ts b/src/core/config.ts
 index fe2f5b4..c60adc5 100644
 --- a/src/core/config.ts
@@ -8799,7 +9324,7 @@ index 1382140..ea01e67 100644
  
  /** Is `dir` the repo itself or somewhere inside it? */
 diff --git a/src/core/hook.ts b/src/core/hook.ts
-index 57ea089..c110b7c 100644
+index 57ea089..757eb37 100644
 --- a/src/core/hook.ts
 +++ b/src/core/hook.ts
 @@ -1,3 +1,6 @@
@@ -8827,7 +9352,15 @@ index 57ea089..c110b7c 100644
    reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
    listPages(): Promise<unknown>;
    searchKnowledgePages(
-@@ -159,8 +166,9 @@ async function injectPages(
+@@ -108,6 +115,7 @@ const HOOK_INJECT_ATTEMPTS = 2;
+  *  Larger than the failure budget: an empty retrieval is cheap (no LLM), and its query is the
+  *  current prompt, so an opener like "hi" matching nothing says nothing about the real question. */
+ const HOOK_INJECT_EMPTY_ATTEMPTS = 5;
++const TOOL_HANDOFF_AUTH_TIMEOUT_MS = 15_000;
+ 
+ /**
+  * What to cache for a once-per-session auto-injection, given what the source returned.
+@@ -159,8 +167,9 @@ async function injectPages(
      // How MANY pages come back is the client's `pageSearchLimit`, shared with the MCP tool.
      const hits = await client.searchKnowledgePages(prompt.slice(0, 500), { timeoutMs });
      diag(harness, event, { ms: Date.now() - t0, count: hits.length });
@@ -8838,7 +9371,7 @@ index 57ea089..c110b7c 100644
      diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
      return undefined;
    }
-@@ -181,8 +189,9 @@ async function injectRecall(
+@@ -181,8 +190,9 @@ async function injectRecall(
      // What is asked for — types, token budget, everything — is the client's `recallOptions`.
      const observations = await client.recallObservations(boundRecallQuery(prompt), { timeoutMs });
      diag(harness, event, { ms: Date.now() - t0, count: observations.length });
@@ -8849,7 +9382,7 @@ index 57ea089..c110b7c 100644
      diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
      return undefined;
    }
-@@ -315,6 +324,7 @@ export async function buildHookOutput(args: {
+@@ -315,6 +325,7 @@ export async function buildHookOutput(args: {
          answer: reflectAnswer.slice(0, 8000),
        });
      } catch (e) {
@@ -8857,7 +9390,7 @@ index 57ea089..c110b7c 100644
        // A failure is RETRYABLE, not an answer — `resolveInjection` leaves it unresolved until the
        // budget is spent. Caching "" here meant one timeout on the session's first prompt disabled
        // synthesis for the ENTIRE session, and against a real server a reflect near the timeout is a
-@@ -355,6 +365,7 @@ export async function buildHookOutput(args: {
+@@ -355,6 +366,7 @@ export async function buildHookOutput(args: {
        pages = parsePageList(await client.listPages());
        diag(harness, "pages_ok", { ms: Date.now() - t0, count: pages.length });
      } catch (e) {
@@ -8865,7 +9398,7 @@ index 57ea089..c110b7c 100644
        diag(
          harness,
          client.knowledgePagesSupported === false ? "knowledge_pages_unavailable" : "pages_failed",
-@@ -379,7 +390,7 @@ export async function buildHookOutput(args: {
+@@ -379,7 +391,7 @@ export async function buildHookOutput(args: {
    // ran. No cadence re-injection: replaying the turn-1 synthesis at arbitrary later turns reads
    // as random noise once the session drifts, and the agent holds hindsight_reflect for a FRESH
    // pass if compaction or drift makes it need memory again.
@@ -8874,7 +9407,7 @@ index 57ea089..c110b7c 100644
    // Knowledge pages are NOT auto-injected: the agent pulls them through
    // hindsight_search_knowledge_pages when a question warrants it — an unprompted injection on
    // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
-@@ -388,6 +399,7 @@ export async function buildHookOutput(args: {
+@@ -388,6 +400,7 @@ export async function buildHookOutput(args: {
      blocks.push(
        buildRosterRefresh(pages, {
          reflectOnNewGoals: cfg.autoInject !== "reflect",
@@ -8882,7 +9415,7 @@ index 57ea089..c110b7c 100644
          extra: cfg.toolGuideExtra,
        })
      );
-@@ -403,14 +415,14 @@ export async function buildHookOutput(args: {
+@@ -403,14 +416,14 @@ export async function buildHookOutput(args: {
      // source answered and point at the diag file, but that read as an error on a turn that
      // worked; reflect_failed + reflect_fallback_* in the diag trail carry the details.
    } else if (reflectRanThisTurn && reflectAnswer) {
@@ -8900,7 +9433,7 @@ index 57ea089..c110b7c 100644
        `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;
    } else if (reflectFailed) {
      // The failure is already in the diag trail and plugin.log, but both are files nobody is
-@@ -418,7 +430,7 @@ export async function buildHookOutput(args: {
+@@ -418,7 +431,7 @@ export async function buildHookOutput(args: {
      // One terse line pointing at the trail — not an explanation, and not advice to the agent:
      // this fires only on a turn that actually attempted a source, so at most
      // HOOK_INJECT_ATTEMPTS times per session.
@@ -8909,7 +9442,7 @@ index 57ea089..c110b7c 100644
    }
  
    return { context: kept.length ? kept.join("\n\n") : undefined, notice, pages };
-@@ -436,16 +448,10 @@ export async function runHook(
+@@ -436,16 +449,10 @@ export async function runHook(
    if (!ev) return;
    if (spec.accept && !spec.accept(ev)) return;
    const { prompt: rawPrompt, cwd: rawCwd, sessionId } = spec.parse(ev);
@@ -8927,7 +9460,7 @@ index 57ea089..c110b7c 100644
  
    let cfg = loadConfig({ harness: spec.harness });
    setLogLevel(cfg.logLevel);
-@@ -454,14 +460,6 @@ export async function runHook(
+@@ -454,14 +461,6 @@ export async function runHook(
      return;
    }
  
@@ -8942,7 +9475,7 @@ index 57ea089..c110b7c 100644
    const out = (context: string | undefined, notice?: string) =>
      process.stdout.write(JSON.stringify(spec.emit(context ?? "", notice, ev)));
  
-@@ -475,8 +473,39 @@ export async function runHook(
+@@ -475,8 +474,50 @@ export async function runHook(
      log.debug(spec.harness, "hook skipped: bank disabled via banks override", { bank: bankId });
      return;
    }
@@ -8954,12 +9487,23 @@ index 57ea089..c110b7c 100644
 +    try {
 +      // Aggregated memory can contain any readable bank. A guarded GET 404 means the authorized
 +      // backend bank is missing; transport authorization failures still discard this handoff.
-+      for (const bank of scope.banks) {
-+        await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"));
-+      }
++      const signal = AbortSignal.timeout(TOOL_HANDOFF_AUTH_TIMEOUT_MS);
++      const probes = await Promise.allSettled(scope.banks.map(async (bank) => {
++        try {
++          await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"), { signal });
++        } catch (error) {
++          if (error instanceof AccessDeniedError) discardPendingContext(spec.harness, key);
++          throw error;
++        }
++      }));
++      const denied = probes.find((probe): probe is PromiseRejectedResult =>
++        probe.status === "rejected" && probe.reason instanceof AccessDeniedError);
++      if (denied) throw denied.reason;
 +      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
 +      if (scope.transport.authorizationIdentity() !== scope.identity ||
 +          pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key) throw new AccessDeniedError();
++      const failed = probes.find((probe): probe is PromiseRejectedResult => probe.status === "rejected");
++      if (failed) throw failed.reason;
 +    } catch (error) {
 +      if (error instanceof AccessDeniedError) discardPendingContext(spec.harness, key);
 +      throw error;
@@ -8983,7 +9527,7 @@ index 57ea089..c110b7c 100644
      apiToken: cfg.apiToken,
      bank: bankId,
      maxParallelRetains: cfg.maxParallelRetains,
-@@ -494,6 +523,7 @@ export async function runHook(
+@@ -494,6 +535,7 @@ export async function runHook(
      startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
    }
  
@@ -8991,7 +9535,7 @@ index 57ea089..c110b7c 100644
    const output = await buildHookOutput({ harness: spec.harness, prompt, cfg, client, cacheFile });
    // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
    // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
-@@ -506,8 +536,13 @@ export async function runHook(
+@@ -506,8 +548,13 @@ export async function runHook(
      startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
    }
    let context = output.context;
@@ -9917,8 +10461,64 @@ index 0000000..c5a05ab
 +    if (created) rmSync(temporary, { force: true });
 +  }
 +}
+diff --git a/src/core/retain-cursor.ts b/src/core/retain-cursor.ts
+index 0cf18f5..da7c3c1 100644
+--- a/src/core/retain-cursor.ts
++++ b/src/core/retain-cursor.ts
+@@ -7,7 +7,7 @@
+  * the turns added since the last successful write, using the server's `update_mode: "append"`.
+  *
+  * Append is only correct while our view of the document matches the server's, so this deliberately
+- * falls back to a FULL REPLACE — which is idempotent by construction and therefore always safe —
++ * falls back to a FULL REPLACE reconstructed from every known contributed source
+  * whenever that cannot be established:
+  *
+  *   - no cursor          first write-back of the session, or the cache was evicted.
+@@ -63,9 +63,8 @@ export const PENDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+  *  the buffer stops growing and the cursor falls back to it. Also bounds the cursor file. */
+ export const PENDING_MAX_BYTES = 256 * 1024;
+ 
+-/** How many of a session's rollout files the cursor remembers. Past this the oldest is forgotten and
+- *  a late hook for it costs one more append of that file — bounded, where an unbounded list would
+- *  grow the cursor file for the life of the session. */
++/** Maximum source references for cumulative reconstruction. Further sources are refused rather
++ *  than forgetting a contribution that a later replacement would otherwise delete. */
+ export const MAX_CURSOR_PATHS = 16;
+ 
+ /** The `paths` a cursor carries once `path`'s turns are in the document: the files already there,
+@@ -87,6 +86,8 @@ export function pendingReplayable(cursor: RetainCursor, now: number): boolean {
+ }
+ 
+ export interface RetainCursor {
++  // Source references only; transcript bodies remain in the harness logs.
++  rollouts?: { path: string; fromTurn: number; turns: number; fingerprint: string; prefix?: string; copiedFrom?: string; unflushed?: { turns: number; fingerprint: string } }[];
+   /** Turns the document holds once every `pending` entry has been applied — what the next append
+    *  must start from, whether those turns are already committed or still buffered. */
+   turns: number;
+@@ -96,20 +97,7 @@ export interface RetainCursor {
+    *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
+    *  its id and changes bank, and the new bank holds no document to append to. */
+   bank: string;
+-  /** The transcript FILES whose turns are already in the document, oldest first — the last is the
+-   *  one `turns`/`fingerprint` describe. Empty for the persistent-plugin runtime, which holds its
+-   *  turns in memory and has no file. One session can move between files — Codex writes a
+-   *  continuation rollout under the same `session_meta.id` (#4493) — and the new file starts at
+-   *  that segment rather than repeating the earlier one; without this the differing prefix reads as
+-   *  a rewritten transcript and the replace drops everything already retained.
+-   *
+-   *  It is the whole set and not just the latest because a file can fire again AFTER the session
+-   *  moved on (a late hook, or a second process still writing the earlier rollout): against the
+-   *  latest path alone that reads as another new segment, and every alternation appends the file
+-   *  again — unbounded. A file we have already written is never a new segment.
+-   *
+-   *  A cursor written before this field existed has none, so a session already in flight when the
+-   *  plugin was upgraded keeps the old replace behaviour until its next write-back sets it. */
++  // Legacy file references; rollout-aware cursors keep first-contribution order.
+   paths?: string[];
+   /** The server answered that it can take appends. Cached so later write-backs skip the probe. */
+   appendSupported?: boolean;
 diff --git a/src/core/retain-hook.ts b/src/core/retain-hook.ts
-index 0507e5e..042acd0 100644
+index 0507e5e..e6fd285 100644
 --- a/src/core/retain-hook.ts
 +++ b/src/core/retain-hook.ts
 @@ -13,6 +13,7 @@
@@ -9937,7 +10537,15 @@ index 0507e5e..042acd0 100644
    /** Injectable for tests; defaults to the per-session temp file. */
    usageCursors?: UsageCursorStore;
  }): Promise<void> {
-@@ -144,6 +146,7 @@ export async function buildRetain(args: {
+@@ -120,6 +122,7 @@ export async function buildRetain(args: {
+   const readTranscript = args.readTranscript ?? readClaudeTranscript;
+ 
+   const turns = readTranscript(transcriptPath);
++  const sourceTurnCount = turns.length;
+   // Decode BEFORE stripping/trimming: the raw field can be a serialized content-block list rather
+   // than prose (see LastMessageReader), and the injected-memory tags live inside its text blocks.
+   const decoded = args.lastAssistantMessage
+@@ -144,6 +147,7 @@ export async function buildRetain(args: {
      harness,
      sessionId,
      bankId: args.bankId ?? "",
@@ -9945,7 +10553,16 @@ index 0507e5e..042acd0 100644
      turns,
      cursors: args.usageCursors ?? fileUsageCursorStore(harness),
      lastTurnComplete: true,
-@@ -201,21 +204,7 @@ export async function runRetainHook(
+@@ -162,6 +166,8 @@ export async function buildRetain(args: {
+       stamp: args.stamp,
+       retryUntil: args.retryUntil,
+       transcriptPath,
++      readTranscript,
++      sourceTurnCount,
+     });
+     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
+   } catch (e) {
+@@ -201,21 +207,7 @@ export async function runRetainHook(
    setLogLevel(cfg.logLevel);
    if (cfg.disabled) return;
  
@@ -9968,7 +10585,7 @@ index 0507e5e..042acd0 100644
  
    const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
    const derived = deriveBankIdOrSkip(cfg, cwd, spec.harness, sessionRoot);
-@@ -228,12 +217,22 @@ export async function runRetainHook(
+@@ -228,12 +220,22 @@ export async function runRetainHook(
    if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
    // Checked only HERE, after the bank is resolved, so a `banks.<id>` section can turn write-back
    // back on for one repo under a global `retainSessions: false` (and vice versa). Before the
@@ -9994,7 +10611,7 @@ index 0507e5e..042acd0 100644
      // Last chance to get the daemon up: this is the write path, and a session whose daemon never
      // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
      // any hook and nothing is waiting on its result, so it can afford the longer wait.
-@@ -241,6 +240,7 @@ export async function runRetainHook(
+@@ -241,6 +243,7 @@ export async function runRetainHook(
      // produces the same `retain_failed` diagnostic as an unreachable Cloud/self-hosted server.
      await ensureDaemon(cfg, spec.harness, { waitMs: DAEMON_WAIT_RETAIN_MS });
      client = makeClient({
@@ -10002,7 +10619,7 @@ index 0507e5e..042acd0 100644
        apiUrl: cfg.apiUrl,
        apiToken: cfg.apiToken,
        bank: bankId,
-@@ -249,6 +249,7 @@ export async function runRetainHook(
+@@ -249,6 +252,7 @@ export async function runRetainHook(
      });
    }
  
@@ -10010,7 +10627,7 @@ index 0507e5e..042acd0 100644
    await buildRetain({
      harness: spec.harness,
      sessionId: sessionId || "no-session",
-@@ -259,6 +260,7 @@ export async function runRetainHook(
+@@ -259,6 +263,7 @@ export async function runRetainHook(
      readLastMessage: spec.readLastMessage,
      retryUntil: hostDeadline,
      bankId,
@@ -12030,10 +12647,10 @@ index dbc9254..e07ac87 100644
  /**
 diff --git a/src/core/turn-journal-policy.test.ts b/src/core/turn-journal-policy.test.ts
 new file mode 100644
-index 0000000..43bf2e7
+index 0000000..d39fd5b
 --- /dev/null
 +++ b/src/core/turn-journal-policy.test.ts
-@@ -0,0 +1,699 @@
+@@ -0,0 +1,785 @@
 +import { managedReadScope } from "@memory-router/coding-agents/runtime";
 +import { pendingContextKey, stashPendingContext } from "./session-cache";
 +import { runSessionStartHook } from "./session-start";
@@ -12136,6 +12753,7 @@ index 0000000..43bf2e7
 +});
 +
 +afterEach(() => {
++  vi.useRealTimers();
 +  vi.unstubAllEnvs();
 +  vi.restoreAllMocks();
 +  rmSync(root, { recursive: true, force: true });
@@ -12337,10 +12955,9 @@ index 0000000..43bf2e7
 +    pending();
 +    let release!: (response: Response) => void;
 +    const response = new Promise<Response>((resolve) => { release = resolve; });
-+    const fetch = vi.spyOn(globalThis, "fetch").mockReturnValueOnce(response);
++    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] })).mockReturnValueOnce(response);
 +    const attempt = runHook(hook, clients().makePrompt);
 +    pending("NEW_MEMORY");
-+    fetch.mockResolvedValue(Response.json({ items: [] }));
 +    release(new Response(null, { status }));
 +    if (status === 503) {
 +      await expect(attempt).rejects.toThrow();
@@ -12374,15 +12991,19 @@ index 0000000..43bf2e7
 +    pending();
 +    const responses: ((response: Response) => void)[] = [];
 +    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
-+      if (responses.length < 2) return new Promise<Response>((resolve) => { responses.push(resolve); });
++      if (responses.length < 4) return new Promise<Response>((resolve) => { responses.push(resolve); });
 +      return Response.json({ items: [] });
 +    });
 +    const denied = expect(runHook(hook, clients().makePrompt)).rejects.toThrow("memory access denied");
 +    const allowed = runHook(hook, clients().makePrompt);
 +    responses[0](new Response(null, { status: 403 }));
-+    await denied;
-+    responses[1](Response.json({ items: [] }));
++    await new Promise<void>((resolve) => setImmediate(resolve));
++    responses[2](Response.json({ items: [] }));
++    responses[3](Response.json({ items: [] }));
 +    await allowed;
++    expect(process.stdout.write).not.toHaveBeenCalled();
++    responses[1](Response.json({ items: [] }));
++    await denied;
 +    expect(process.stdout.write).not.toHaveBeenCalled();
 +  });
 +
@@ -12690,6 +13311,88 @@ index 0000000..43bf2e7
 +    vi.mocked(process.stdout.write).mockClear();
 +    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
 +    grokEvent(alias, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).not.toHaveBeenCalled();
++  });
++
++  function timedAuthorization() {
++    const config = JSON.parse(readFileSync(managedPath, "utf8"));
++    config.principals["grok-build"].additionalReadBanks = ["A", "B", "C"];
++    writeFileSync(managedPath, JSON.stringify(config));
++    vi.useFakeTimers();
++    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
++      const controller = new AbortController();
++      setTimeout(() => controller.abort(new DOMException("deadline", "TimeoutError")), milliseconds);
++      return controller.signal;
++    });
++  }
++
++  function delayedResponse(milliseconds: number | undefined, status: number, signal?: AbortSignal | null): Promise<Response> {
++    return new Promise((resolve, reject) => {
++      const abort = () => { clearTimeout(timer); reject(signal?.reason); };
++      const timer = milliseconds === undefined ? undefined : setTimeout(() => {
++        signal?.removeEventListener("abort", abort);
++        resolve(new Response(null, { status }));
++      }, milliseconds);
++      if (signal?.aborted) abort();
++      else signal?.addEventListener("abort", abort, { once: true });
++    });
++  }
++
++  it("delivers after three individually successful 11-second bank probes within the Grok tool deadline", async () => {
++    timedAuthorization();
++    await produce("UserPromptSubmit");
++    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) =>
++      delayedResponse(11_000, 200, init?.signal));
++    grokEvent(approved, true);
++    const started = Date.now();
++    let complete = false;
++    const attempt = runHook(grok.prompt, clients().makePrompt).then(() => { complete = true; });
++    await vi.advanceTimersByTimeAsync(11_000);
++    expect(complete).toBe(true);
++    await attempt;
++    expect(fetch).toHaveBeenCalledTimes(3);
++    expect(process.stdout.write).toHaveBeenCalledOnce();
++    const hostTimeout = grok.additionalHooks?.find((registration) => registration.event === "PostToolUse")?.timeout;
++    expect(hostTimeout).toBe(30);
++    expect(Date.now() - started).toBeLessThan((hostTimeout ?? 0) * 1000);
++  });
++
++  it("bounds all stalled bank probes below the host deadline and retains context for a successful retry", async () => {
++    timedAuthorization();
++    await produce("UserPromptSubmit");
++    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) =>
++      delayedResponse(undefined, 200, init?.signal));
++    grokEvent(approved, true);
++    let error: unknown;
++    const attempt = runHook(grok.prompt, clients().makePrompt).catch((failure) => { error = failure; });
++    await vi.advanceTimersByTimeAsync(29_000);
++    expect(error).toBeInstanceOf(Error);
++    await attempt;
++    expect(fetch).toHaveBeenCalledTimes(3);
++    expect(new Set(fetch.mock.calls.map(([, init]) => init?.signal)).size).toBe(1);
++    expect(process.stdout.write).not.toHaveBeenCalled();
++    fetch.mockResolvedValue(Response.json({ items: [] }));
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).toHaveBeenCalledOnce();
++  });
++
++  it.each([401, 403])("does not let an early transient hide sibling HTTP %s while another bank stalls", async (status) => {
++    timedAuthorization();
++    await produce("UserPromptSubmit");
++    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
++      if (String(url).includes("/banks/A/")) return delayedResponse(1000, 503, init?.signal);
++      if (String(url).includes("/banks/B/")) return delayedResponse(12_000, status, init?.signal);
++      return delayedResponse(undefined, 200, init?.signal);
++    });
++    grokEvent(approved, true);
++    let error: unknown;
++    const attempt = runHook(grok.prompt, clients().makePrompt).catch((failure) => { error = failure; });
++    await vi.advanceTimersByTimeAsync(29_000);
++    expect(error).toMatchObject({ message: "memory access denied" });
++    await attempt;
++    expect(process.stdout.write).not.toHaveBeenCalled();
++    fetch.mockResolvedValue(Response.json({ items: [] }));
 +    await runHook(grok.prompt, clients().makePrompt);
 +    expect(process.stdout.write).not.toHaveBeenCalled();
 +  });

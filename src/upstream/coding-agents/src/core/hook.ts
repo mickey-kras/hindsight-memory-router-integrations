@@ -115,6 +115,7 @@ const HOOK_INJECT_ATTEMPTS = 2;
  *  Larger than the failure budget: an empty retrieval is cheap (no LLM), and its query is the
  *  current prompt, so an opener like "hi" matching nothing says nothing about the real question. */
 const HOOK_INJECT_EMPTY_ATTEMPTS = 5;
+const TOOL_HANDOFF_AUTH_TIMEOUT_MS = 15_000;
 
 /**
  * What to cache for a once-per-session auto-injection, given what the source returned.
@@ -481,12 +482,23 @@ export async function runHook(
     try {
       // Aggregated memory can contain any readable bank. A guarded GET 404 means the authorized
       // backend bank is missing; transport authorization failures still discard this handoff.
-      for (const bank of scope.banks) {
-        await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"));
-      }
+      const signal = AbortSignal.timeout(TOOL_HANDOFF_AUTH_TIMEOUT_MS);
+      const probes = await Promise.allSettled(scope.banks.map(async (bank) => {
+        try {
+          await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"), { signal });
+        } catch (error) {
+          if (error instanceof AccessDeniedError) discardPendingContext(spec.harness, key);
+          throw error;
+        }
+      }));
+      const denied = probes.find((probe): probe is PromiseRejectedResult =>
+        probe.status === "rejected" && probe.reason instanceof AccessDeniedError);
+      if (denied) throw denied.reason;
       const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
       if (scope.transport.authorizationIdentity() !== scope.identity ||
           pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key) throw new AccessDeniedError();
+      const failed = probes.find((probe): probe is PromiseRejectedResult => probe.status === "rejected");
+      if (failed) throw failed.reason;
     } catch (error) {
       if (error instanceof AccessDeniedError) discardPendingContext(spec.harness, key);
       throw error;

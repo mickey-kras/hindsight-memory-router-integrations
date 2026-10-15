@@ -122,6 +122,7 @@ export async function buildRetain(args: {
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
 
   const turns = readTranscript(transcriptPath);
+  const sourceTurnCount = turns.length;
   // Decode BEFORE stripping/trimming: the raw field can be a serialized content-block list rather
   // than prose (see LastMessageReader), and the injected-memory tags live inside its text blocks.
   const decoded = args.lastAssistantMessage
@@ -165,6 +166,8 @@ export async function buildRetain(args: {
       stamp: args.stamp,
       retryUntil: args.retryUntil,
       transcriptPath,
+      readTranscript,
+      sourceTurnCount,
     });
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {
