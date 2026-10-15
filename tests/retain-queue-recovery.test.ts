@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
   fsyncSync,
+  constants,
   mkdtempSync,
   mkdirSync,
   openSync,
@@ -192,9 +193,20 @@ describe("retain queue corrupt-record recovery", () => {
       new RetainQueue({ filePath: ${JSON.stringify(filePath)} }).ensureOperationId("first", "operation");
     `;
       expect(() =>
-        execFileSync(process.execPath, ["--experimental-transform-types", "--input-type=module", "-e", source], {
-          stdio: "pipe",
-        }),
+        execFileSync(
+          process.execPath,
+          [
+            "--experimental-transform-types",
+            "--experimental-loader",
+            new URL("./helpers/typescript-source-loader.mjs", import.meta.url).href,
+            "--input-type=module",
+            "-e",
+            source,
+          ],
+          {
+            stdio: "pipe",
+          },
+        ),
       ).toThrow(expect.objectContaining({ signal: "SIGKILL" }));
       expect(readFileSync(filePath, "utf8")).toBe(original);
       const restarted = new RetainQueue({ filePath });
@@ -332,9 +344,20 @@ describe("retain queue corrupt-record recovery", () => {
     `;
       for (let attempt = 0; attempt < 2; attempt++) {
         expect(() =>
-          execFileSync(process.execPath, ["--experimental-transform-types", "--input-type=module", "-e", source], {
-            stdio: "pipe",
-          }),
+          execFileSync(
+            process.execPath,
+            [
+              "--experimental-transform-types",
+              "--experimental-loader",
+              new URL("./helpers/typescript-source-loader.mjs", import.meta.url).href,
+              "--input-type=module",
+              "-e",
+              source,
+            ],
+            {
+              stdio: "pipe",
+            },
+          ),
         ).toThrow(expect.objectContaining({ signal: "SIGKILL" }));
         expect(readFileSync(filePath, "utf8")).toBe(`${original}bad-B\n`);
         expect(recoveries()).toEqual([Buffer.from("bad-A\n")]);
@@ -361,7 +384,9 @@ describe("retain queue corrupt-record recovery", () => {
     queue.removeMany([]);
     expect(queue.peek()[0].id).toBe("first");
     expect(recoveries()).toEqual([Buffer.from("broken\n")]);
-    expect(vi.mocked(openSync).mock.calls.some(([, flags]) => flags === "wx")).toBe(true);
+    expect(
+      vi.mocked(openSync).mock.calls.some(([, flags]) => typeof flags === "number" && (flags & constants.O_EXCL) !== 0),
+    ).toBe(true);
   });
 
   it.each(["empty records", "alternating valid and corrupt records"])(
@@ -383,7 +408,15 @@ describe("retain queue corrupt-record recovery", () => {
     `;
       execFileSync(
         process.execPath,
-        ["--max-old-space-size=128", "--experimental-transform-types", "--input-type=module", "-e", source],
+        [
+          "--max-old-space-size=128",
+          "--experimental-transform-types",
+          "--experimental-loader",
+          new URL("./helpers/typescript-source-loader.mjs", import.meta.url).href,
+          "--input-type=module",
+          "-e",
+          source,
+        ],
         {
           stdio: "pipe",
           timeout: 10_000,
@@ -395,31 +428,17 @@ describe("retain queue corrupt-record recovery", () => {
     },
   );
 
-  it("flushes writable file handles without directory opens under Windows constraints", async () => {
+  it.each(["win32", "darwin"])("rejects recovery on unsupported %s before filesystem access", (platform) => {
     const original = `${line(item("first"))}broken\n`;
     writeFileSync(filePath, original);
-    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
-    const flagsByFd = new Map<number, string | number>();
-    vi.mocked(openSync).mockImplementation((path, flags, mode) => {
-      if (actualFs.existsSync(path) && actualFs.statSync(path).isDirectory())
-        throw new Error("directory open unsupported");
-      const fd = actualFs.openSync(path, flags, mode);
-      flagsByFd.set(fd, flags);
-      return fd;
-    });
-    vi.mocked(fsyncSync).mockImplementation((fd) => {
-      if (!new Set(["wx", "r+"]).has(String(flagsByFd.get(fd))))
-        throw new Error("FlushFileBuffers requires GENERIC_WRITE");
-      actualFs.fsyncSync(fd);
-    });
-    const platform = process.platform;
-    Object.defineProperty(process, "platform", { value: "win32" });
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: platform });
     try {
-      new RetainQueue({ filePath }).removeMany([]);
+      expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("require Linux");
+      expect(openSync).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(process, "platform", { value: platform });
+      Object.defineProperty(process, "platform", { value: originalPlatform });
     }
-    expect(recoveries()).toEqual([Buffer.from("broken\n")]);
-    expect(new RetainQueue({ filePath }).peek()[0].id).toBe("first");
+    expect(readFileSync(filePath, "utf8")).toBe(original);
   });
 });

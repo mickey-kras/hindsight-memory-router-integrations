@@ -281,7 +281,17 @@ export class RuntimeCore {
     lastTurnComplete: boolean
   ): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
-    if (!sessionId || !turns.length) return;
+    if (!sessionId) return;
+    if (!turns.length) {
+      // A completed run can have no visible transcript (for example, an abort).
+      // Release only existing prompt activity; pending content and I/O stay pinned.
+      const st = this.sessionState.get(sessionId);
+      if (st && lastTurnComplete) {
+        st.active = false;
+        this.cleanupEnded(sessionId, st);
+      }
+      return;
+    }
     const st = this.stateFor(sessionId);
     if (!st) return;
     st.active = !lastTurnComplete;

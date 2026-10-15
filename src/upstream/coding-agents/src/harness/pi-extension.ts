@@ -180,7 +180,7 @@ export function createPiHooks(
       branch?: readonly PiEntry[]
     ): Promise<void> {
       const turns = branch ? readPiEntries(branch) : readPiMessages(event.messages);
-      if (turns.length) await core.onTranscript(sessionId, turns, true); // the run has ended
+      await core.onTranscript(sessionId, turns, true); // the run has ended, even if no text survived
     },
     /** The host is exiting: the last agent_end's write-back is still in flight (#5081). */
     sessionShutdown: async () => {

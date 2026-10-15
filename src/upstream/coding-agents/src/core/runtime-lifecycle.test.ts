@@ -18,13 +18,13 @@ vi.mock("./usage", async (original) => ({ ...(await original<typeof import("./us
 vi.mock("./skill-sync", () => ({ readPackagedSkill: () => undefined }));
 afterEach(() => vi.restoreAllMocks());
 
-function fixture() {
+function fixture(retainSessions = true) {
   let fail = false;
   const retain = vi.fn(async (_text: string, _context: string, _id: string, _tags: string[], _strategy: string, _options: { updateMode?: string } = {}): Promise<void> => {
     if (fail) throw new Error("offline");
   });
   const client = { bank: "bank", retain, supportsAppendRetain: async () => true, assertAuthorized: () => {} } as unknown as HindsightClient;
-  const core = new RuntimeCore(client, "bank", resolveConfig({}), "opencode2");
+  const core = new RuntimeCore(client, "bank", resolveConfig({ retainSessions }), "opencode2");
   const turns = [{ role: "user", content: "first" }, { role: "assistant", content: "reply" }];
   async function complete(id: string): Promise<void> {
     await core.onTranscript(id, turns, true);
@@ -36,7 +36,70 @@ function fixture() {
   return { core, client, retain, turns, complete, fill, fail: (value: boolean) => { fail = value; } };
 }
 
+function completionHooks(core: RuntimeCore, host: "pi" | "cline") {
+  if (host === "pi") {
+    const hooks = createPiHooks(core, "pi");
+    return {
+      prompt: (id: string) => hooks.beforeAgentStart({ prompt: "prompt", systemPrompt: "system" }, id),
+      complete: (id: string, text = "") => hooks.agentEnd({ messages: text ? [{ role: "user", content: text }] : [] }, id),
+    };
+  }
+  const hooks = createClineHooks(core);
+  const messages = (text: string) => text ? [{ id: "prompt", role: "user" as const, content: [{ type: "text", text }], createdAt: 1 }] : [];
+  return {
+    prompt: (id: string) => hooks.beforeModel({ snapshot: { agentId: id, messages: messages("prompt") }, request: { messages: [] } }),
+    complete: (id: string, text = "") => hooks.afterRun({ snapshot: { agentId: id, messages: messages(text) } }),
+  };
+}
+
 describe("bounded runtime lifecycle", () => {
+  it.each([
+    { host: "pi" as const, retainSessions: true },
+    { host: "pi" as const, retainSessions: false },
+    { host: "cline" as const, retainSessions: true },
+    { host: "cline" as const, retainSessions: false },
+  ])("releases $host empty completions with retention=$retainSessions", async ({ host, retainSessions }) => {
+    const f = fixture(retainSessions);
+    const hooks = completionHooks(f.core, host);
+    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) {
+      await hooks.prompt(`empty-${i}`);
+      await hooks.complete(`empty-${i}`);
+    }
+    await hooks.prompt("next");
+    expect(f.core.hasSession("next")).toBe(true);
+    expect(f.core.hasSession("empty-0")).toBe(false);
+    expect(f.retain).not.toHaveBeenCalled();
+  });
+
+  it.each(["pi", "cline"] as const)("preserves %s nonempty retention and pending writes across empty completion", async (host) => {
+    const f = fixture();
+    const hooks = completionHooks(f.core, host);
+    let release: (() => void) | undefined;
+    f.retain.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    await hooks.prompt("pending");
+    await hooks.complete("pending", "original content");
+    await vi.waitFor(() => expect(release).toBeDefined());
+    await hooks.complete("pending");
+    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onTranscript(`filler-${i}`, f.turns, true);
+    expect(f.core.hasSession("pending")).toBe(true);
+    release?.();
+    await f.core.flush();
+    expect(f.retain.mock.calls[0][0]).toContain("original content");
+
+    f.fail(true);
+    await hooks.prompt("pending");
+    await hooks.complete("pending", "updated content");
+    await f.core.flush();
+    const failed = f.retain.mock.calls.at(-1);
+    await hooks.complete("pending");
+    f.fail(false);
+    await f.fill();
+    expect(f.core.hasSession("pending")).toBe(true);
+    await hooks.complete("pending", "updated content");
+    await f.core.flush();
+    expect(f.retain.mock.calls.at(-1)?.[0]).toBe(failed?.[0]);
+  });
+
   it("forwards definitive OpenCode deletion and Pi shutdown to runtime disposal", async () => {
     const f = fixture();
     await f.core.onPrompt("deleted", "prompt");

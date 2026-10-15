@@ -184,8 +184,7 @@ export function createClineHooks(
     async afterRun({ snapshot }: { snapshot: ClineSnapshot }): Promise<void> {
       const turns = clineTranscript(snapshot.messages);
       // afterRun: the run has ended, so the last turn is complete.
-      if (turns.length)
-        await core.onTranscript(sessionId(snapshot, configuredSessionId), turns, true);
+      await core.onTranscript(sessionId(snapshot, configuredSessionId), turns, true);
     },
   };
 }

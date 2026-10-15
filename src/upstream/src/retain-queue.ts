@@ -8,28 +8,29 @@
  * Zero runtime dependencies; uses only Node built-ins.
  */
 
-import {
-  readFileSync,
-  writeFileSync,
-  appendFileSync,
-  existsSync,
-  renameSync,
-  unlinkSync,
-  statSync,
-  closeSync,
-  chmodSync,
-  fstatSync,
-  fchmodSync,
-  fsyncSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readSync,
-  readdirSync,
-} from "node:fs";
-import { createHash, randomBytes } from "node:crypto";
 import { isUtf8 } from "node:buffer";
-import { dirname, join } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  appendFileSync,
+  closeSync,
+  constants,
+  fstatSync,
+  fsyncSync,
+  readFileSync,
+  readdirSync,
+  readSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import {
+  isMissingQueueFile,
+  openPrivateQueueDirectory,
+  openPrivateQueueFile,
+  privateQueueDirectory,
+  removePrivateQueueFile,
+  writePrivateQueueFile,
+} from "../../shared/private-queue-files.js";
 
 /** The subset of a retain payload the queue needs to persist and replay. */
 export interface QueuedRetainPayload {
@@ -97,10 +98,7 @@ function isQueuedRetain(value: unknown): value is QueuedRetain {
 }
 
 function syncDirectory(directory: string): void {
-  // Windows FlushFileBuffers flushes file metadata through the writable file
-  // handle below; directory handles do not support this POSIX barrier.
-  if (process.platform === "win32") return;
-  const fd = openSync(directory, "r");
+  const fd = openPrivateQueueDirectory(directory);
   try {
     fsyncSync(fd);
   } finally {
@@ -129,7 +127,7 @@ export class RetainQueue {
   private readonly options: RetainQueueOptions;
 
   constructor(opts: RetainQueueOptions) {
-    this.filePath = opts.filePath;
+    this.filePath = resolve(opts.filePath);
     this.maxAgeMs = opts.maxAgeMs ?? -1;
     this.options = opts;
   }
@@ -155,7 +153,12 @@ export class RetainQueue {
       this.writeAll(contents.items, contents);
     }
     this.options.capacity?.assertAppend(Buffer.byteLength(serialized));
-    appendFileSync(this.filePath, serialized, { encoding: "utf8", mode: 0o600 });
+    const fd = openPrivateQueueFile(this.filePath, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
+    try {
+      appendFileSync(fd, serialized, "utf8");
+    } finally {
+      closeSync(fd);
+    }
     this.options.capacity?.didAppend(this.filePath);
     if (this.cachedSize !== undefined) this.cachedSize++;
   }
@@ -229,11 +232,16 @@ export class RetainQueue {
   }
 
   private hasUnterminatedRecord(): boolean {
-    if (!existsSync(this.filePath)) return false;
-    const size = statSync(this.filePath).size;
-    if (size === 0) return false;
-    const fd = openSync(this.filePath, "r");
+    let fd: number;
     try {
+      fd = openPrivateQueueFile(this.filePath, constants.O_RDONLY);
+    } catch (error) {
+      if (isMissingQueueFile(error)) return false;
+      throw error;
+    }
+    try {
+      const size = fstatSync(fd).size;
+      if (size === 0) return false;
       const last = Buffer.alloc(1);
       readSync(fd, last, 0, 1, size - 1);
       return last[0] !== 10;
@@ -249,8 +257,13 @@ export class RetainQueue {
       bytes: Buffer.alloc(0),
       counts: { malformedJson: 0, invalidShape: 0 },
     };
-    if (!existsSync(this.filePath)) return result;
-    const fd = openSync(this.filePath, "r");
+    let fd: number;
+    try {
+      fd = openPrivateQueueFile(this.filePath, constants.O_RDONLY);
+    } catch (error) {
+      if (isMissingQueueFile(error)) return result;
+      throw error;
+    }
     try {
       const info = fstatSync(fd, { bigint: true });
       if (this.options.maxReadBytes !== undefined && info.size > BigInt(this.options.maxReadBytes)) {
@@ -320,35 +333,40 @@ export class RetainQueue {
     // snapshot per source inode/generation. A retry after an append extends
     // that snapshot rather than duplicating bytes in a second artifact.
     const recoveryDir = `${this.filePath}.recovery`;
-    mkdirSync(recoveryDir, { recursive: true, mode: 0o700 });
-    if (!lstatSync(recoveryDir).isDirectory()) throw new Error("retain recovery path must be a directory");
-    chmodSync(recoveryDir, 0o700);
+    privateQueueDirectory(recoveryDir, true);
     // The caller holds the queue mutation lock. Clean only our unfinished
     // snapshots, without scanning committed archives or following symlinks.
     const pendingDir = join(recoveryDir, "pending");
-    mkdirSync(pendingDir, { mode: 0o700, recursive: true });
-    if (!lstatSync(pendingDir).isDirectory()) throw new Error("retain recovery pending path must be a directory");
-    chmodSync(pendingDir, 0o700);
+    privateQueueDirectory(pendingDir, true);
     for (const entry of readdirSync(pendingDir, { withFileTypes: true })) {
       if (entry.isFile() && /^retain-[a-f0-9]{32}\.tmp$/.test(entry.name)) {
-        unlinkSync(join(pendingDir, entry.name));
+        removePrivateQueueFile(join(pendingDir, entry.name));
       }
     }
     const recoveryPath = join(recoveryDir, `${contents.source}.jsonl`);
     let priorLength = 0;
-    if (existsSync(recoveryPath)) {
-      const info = lstatSync(recoveryPath);
-      if (!info.isFile() || info.size > contents.bytes.length)
-        throw new Error("retain recovery snapshot does not match queued bytes");
-      const prior = readFileSync(recoveryPath);
-      if (prior.length > contents.bytes.length || !contents.bytes.subarray(0, prior.length).equals(prior)) {
-        throw new Error("retain recovery snapshot does not match queued bytes");
+    let priorFd: number | undefined;
+    try {
+      priorFd = openPrivateQueueFile(recoveryPath, constants.O_RDONLY);
+    } catch (error) {
+      if (!isMissingQueueFile(error)) throw error;
+    }
+    if (priorFd !== undefined) {
+      try {
+        if (fstatSync(priorFd).size > contents.bytes.length)
+          throw new Error("retain recovery snapshot does not match queued bytes");
+        const prior = readFileSync(priorFd);
+        if (prior.length > contents.bytes.length || !contents.bytes.subarray(0, prior.length).equals(prior)) {
+          throw new Error("retain recovery snapshot does not match queued bytes");
+        }
+        priorLength = prior.length;
+      } finally {
+        closeSync(priorFd);
       }
-      priorLength = prior.length;
     }
     if (priorLength !== contents.bytes.length) {
       const tmpPath = join(pendingDir, `retain-${randomBytes(16).toString("hex")}.tmp`);
-      const fd = openSync(tmpPath, "wx", 0o600);
+      const fd = openPrivateQueueFile(tmpPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL);
       try {
         try {
           writeFileSync(fd, contents.bytes);
@@ -358,18 +376,12 @@ export class RetainQueue {
         }
         renameSync(tmpPath, recoveryPath);
       } finally {
-        try {
-          unlinkSync(tmpPath);
-        } catch (error) {
-          if (!isRecord(error) || error.code !== "ENOENT") throw error;
-        }
+        removePrivateQueueFile(tmpPath);
       }
     }
-    // Flush the committed name through a writable handle (required by Windows
-    // FlushFileBuffers) before the active queue can be replaced or removed.
-    const fd = openSync(recoveryPath, "r+");
+    // Flush the committed snapshot before replacing or removing the active queue.
+    const fd = openPrivateQueueFile(recoveryPath, constants.O_RDWR);
     try {
-      fchmodSync(fd, 0o600);
       fsyncSync(fd);
     } finally {
       closeSync(fd);
@@ -384,20 +396,11 @@ export class RetainQueue {
   private writeAll(items: QueuedRetain[], contents: QueueContents): void {
     this.preserveCorruptRecords(contents);
     if (items.length === 0) {
-      try {
-        unlinkSync(this.filePath);
-      } catch (error) {
-        if (!isRecord(error) || error.code !== "ENOENT") throw error;
-      }
+      removePrivateQueueFile(this.filePath);
       this.cachedSize = 0;
       return;
     }
-    const tmpPath = this.filePath + ".tmp";
-    writeFileSync(tmpPath, items.map((i) => JSON.stringify(i)).join("\n") + "\n", {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    renameSync(tmpPath, this.filePath);
+    writePrivateQueueFile(this.filePath, items.map((i) => JSON.stringify(i)).join("\n") + "\n");
     this.cachedSize = items.length;
   }
 }
