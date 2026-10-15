@@ -83,6 +83,7 @@ jobs:
       issues: write
     needs: [quality, aislop, codeql]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
@@ -161,6 +162,7 @@ jobs:
     outputs:
       released: ${{ steps.finalized.outputs.latest }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: release-automation
     concurrency:
       group: package-release-${{ github.repository }}
@@ -187,6 +189,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.23.3
+          cache: npm
+          cache-dependency-path: |
+            npm-shrinkwrap.json
+            src/upstream/coding-agents/npm-shrinkwrap.json
+            .github/scripts/package-lock.json
       - name: Resolve retained packages
         id: retained
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
