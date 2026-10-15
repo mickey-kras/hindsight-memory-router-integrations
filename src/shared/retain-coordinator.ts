@@ -85,6 +85,10 @@ export class RetainCoordinator {
       maxAgeMs: this.queueMaxAgeMs,
       maxReadBytes: this.storage.maxBytes,
       capacity: this.storage,
+      onCorruption: ({ malformedJson, invalidShape }) =>
+        this.log.error(
+          `retain queue recovery preserved corrupt records: malformed-json=${malformedJson}, invalid-shape=${invalidShape}`,
+        ),
     });
   }
 
