@@ -8,7 +8,7 @@
 - Optional human mode resolves a short-lived session from native OS secure storage on every request. Browser login uses the router's loopback OIDC/PKCE exchange; sign-out revokes and deletes the session. Persistent application credentials remain separate.
 - Redirects and raw server error bodies are blocked. Automatic upstream replacement and installer token migration are disabled.
 - Diagnostic and ordinary log files use an allowlist of timing, counts, booleans and bounded classifications at every verbosity. Prompts, answers, failure text, identifiers, paths, URLs and arbitrary progress messages are omitted; no content-debug mode is provided. Existing log files are not purged by an upgrade.
-- Transcript parsing, provenance tags, retain payloads, hooks, and harness adapters retain upstream behavior.
+- Upstream transcript parsing, provenance tags, retain payloads, hooks and harness adapters remain the baseline, with deliberate routing, privacy, installer and reliability adaptations. This is not a claim of identical behavior; the changes and source hashes below define the maintained differences.
 - Manual document ingestion uses the shared exact-title hash identity. Legacy IDs remain untouched; see the root README migration note.
 - `src/core/inject.ts` rewords the reflect rendering rules to "commit, PR and issue ids": the upstream "commit/PR/issue" slash token trips the Memory Router encoded-payload request scan, which rejects the reflect query with 422 suspicious_content.
 
@@ -18,12 +18,13 @@ Live harness and deployed Memory Router compatibility must be verified before ro
 
 Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back. Local usage can read existing host transcripts, but journal-only hosts capture prompts and replies only when session retention is enabled and the principal can write the resolved bank.
 Session state uses per-user private directories (0700 on POSIX), regular files (0600), and exclusive atomic temporary files. Owned legacy directories are secured and migrated; symlinks, hard links, and foreign-owned paths are rejected.
-Memory content is not reused from session caches; lifecycle flags remain cached. Authorization failures disable that client until restart.
+Memory content is not reused from session caches; lifecycle flags remain cached. A denied application-token value remains blocked until it changes; human credentials require explicit login after expiry or denial.
 
 Reliability fixes use explicit sorting, global replacements, Node ANSI stripping, optional arguments, and non-empty installer regex matches. Transcript escape decoding retains UTF-16 surrogate behavior.
 
-Dependency security overrides (`package.json` `overrides`, applied to `npm-shrinkwrap.json`):
-- `@opentelemetry/core` is forced to `>=2.8.0 <3.0.0`, scoped under `@opencode/plugin`, fixing GHSA-8988-4f7v-96qf (unbounded memory allocation in W3C Baggage propagation, moderate, `<=2.7.x` affected). `@opencode/plugin`/`@opencode/util` pin the vulnerable 2.6.1 line (`fixAvailable: false` even at the latest release), so an npm override is the only remediation. The remaining flagged packages (`exporter-trace-otlp-http`, `otlp-exporter-base`, `otlp-transformer`, `resources`, `sdk-logs`, `sdk-metrics`, `sdk-trace-base`, `sdk-trace-node`) are vulnerable only transitively through `core` and are cleared by this single override; the override is nested under `@opencode/plugin` because that subtree is the sole OpenTelemetry consumer.
+Dependencies are classified by their package declarations; bundling does not make declared runtime dependencies development-only. Direct runtime dependencies are `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml` and `zod`. Development dependencies are `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript` and `vitest`.
+
+The complete override inventory is `@opencode/plugin > @opentelemetry/core` (`>=2.8.0 <3.0.0`), `esbuild` (`>=0.25.0 <1.0.0`), `fast-uri` (`>=3.1.6 <4.0.0`), `hono` (`>=4.13.7 <5.0.0`), `http-cache-semantics` (`4.3.0`), `ip-address` (`>=10.5.1 <11.0.0`), `postcss` (`>=8.5.23 <9.0.0`) and `vite` (`>=6.4.3 <7.0.0`). These ranges constrain the dependency graph; exact resolved versions are in `npm-shrinkwrap.json`. Reassess compatibility and advisories when updating, rather than assuming these overrides are permanently required or sufficient.
 
 Survey admission is scoped to the managed router URL, principal and bank. Tokens never enter lease keys; credential rotation keeps the same lease. Normal config cannot override the managed principal. No CodeQL suppression is used.
 

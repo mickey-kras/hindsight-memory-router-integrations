@@ -1,7 +1,7 @@
 {
-  "DEVIATIONS.md": "501909cf5a7776df3052b99d5fbe0a6a6f3e62cfdf418042251a5ab2d3e521dd",
+  "DEVIATIONS.md": "8c588a5c5081cfdd1bc21e42a80e12d57d5fa85cc6ef5cfef161f44bc73b79e5",
   "LICENSE": "55dd88319dfa99291d635e32df6e70ca55ee1952b323b2d4433def3940ef1594",
-  "README.md": "d18b42c649e7dc6d55b87ebad78b5cd3fe402ac4760b0c1188c5c2469a55fd50",
+  "README.md": "3a1bfd79a257d090f1897cf4c7d9b165e101d0833707fe8177c0971429abbf5c",
   "UPSTREAM.json": "6a4f78e42746dac66c2b243413298ffd7117e1dbf8befdedfc7e190a2e720560",
   "cordis.patch.yml": "9a32a0a6819c281fcb0f17c9c2e77ba6be8f78f7f369882edbe9170afd48cd25",
   "e2e/Dockerfile.base": "dadb8e743fa1d9f5d90d0d1ff834d66f6b7a18ff9289240e1e6fce97161dd84c",
@@ -21,7 +21,7 @@
   "src/core/branding.test.ts": "7a398c0b4a04d2ce8d8014c23fc08ecd504a80ba964380a3b694ac546e555ca8",
   "src/core/chat.test.ts": "469a2c712f99fef47c0d2a895ada039cb8fa9f26e61441622b203ff0ab77d993",
   "src/core/chat.ts": "bb113d5338a8e6900ee6531cda5a22a6adadaf251d4b8a98bc337b79ac046a0c",
-  "src/core/config.ts": "a044502dd3ae1b3d92d7e8de309279398567a64e67694e20c4cbbeac421df928",
+  "src/core/config.ts": "95a9c4bd9e70ddeb9a23ed005e016d4005773ed220a712c4676440dfb21ddf1b",
   "src/core/daemon.test.ts": "d5b96e81748185c9a4f1fdc1b517d969094f3f2fad9ef2acb42c2b2bd4159dbb",
   "src/core/daemon.ts": "929ee65b009ab119427590d1eeb81b5ac06c37e768f4879582923bd3a4be082c",
   "src/core/diag.ts": "9cc37c0ca190a78adb35e619b856d5e28d8aeec9aed3e1d764a7f87573af8554",

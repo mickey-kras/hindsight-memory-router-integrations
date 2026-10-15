@@ -150,7 +150,7 @@ export interface RawConfig {
    *  `hindsight_search_knowledge_pages` results. It adds to the built-in text, never replaces it,
    *  so the plugin's call triggers and crediting rule keep up with releases (#4791). */
   toolGuideExtra?: string;
-  pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 1; 0 also means 1)
+  pageRefreshEveryTurns?: number; // hook roster injection cadence (default/0 = 1); page lists are fetched fresh every prompt
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
    *    "cron" (default)         — refresh on `pageTriggerCron` only, and only when actually stale
@@ -277,23 +277,21 @@ export interface RawConfig {
    *  scopes literally. Anything else falls back to the default. */
   observationScopes?: ObservationScopes;
   /** Per-harness overrides of any of the fields above, keyed by harness name ("opencode",
-   *  "claude-code", ...). Lets one config file give each agent its own bank/settings. */
+   *  "claude-code", ...). Tunes behavior per harness; managed routing is reapplied. */
   harnesses?: Record<string, Omit<RawConfig, "harnesses">>;
   /** Per-BANK overrides, applied AFTER bank resolution — the per-repo opt-in/out surface, keyed
    *  by the RESOLVED bank id (run a session once or check the banner to see it). Any behavioral
-   *  field, plus `bank` to RENAME the destination (single hop: the section is selected by the
-   *  resolved id, the rename is literal — several ids may converge on one shared bank).
+   *  field may be tuned; `bank` is accepted for compatibility but cannot rename the destination.
    *  Bank-resolution fields (bankId/template/map/...) are ignored here. Example:
    *    "banks": { "coding-agent::secret-client": { "disabled": true },
-   *               "coding-agent::old-name": { "bank": "team::shared" },
    *               "coding-agent::big-mono": { "gitIngest": "full", "retainSessions": false } } */
   banks?: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
   /** Per-DIRECTORY overrides, keyed by absolute path prefix (`~` allowed; longest prefix wins;
    *  a linked worktree uses its main checkout's entry). Applied after bank resolution and before
-   *  the `banks.<id>` section, so one entry can send every repo under a directory to another
-   *  server or tenant while each repo keeps its own bank. Bank-resolution fields are ignored here,
+   *  the `banks.<id>` section. Managed endpoint, identity and bank settings are reapplied;
+   *  normal config cannot select another server or tenant. Bank-resolution fields are ignored here,
    *  as in `banks`. Example:
-   *    "paths": { "~/work/client-x": { "apiToken": "client-x-key" } } */
+   *    "paths": { "~/work/client-x": { "retainSessions": false } } */
   paths?: Record<string, Omit<RawConfig, "banks" | "harnesses" | "paths">>;
 }
 
@@ -709,13 +707,7 @@ function mergeRaw(a: RawConfig, b: RawConfig): RawConfig {
   };
 }
 
-/**
- * Keys a PROJECT-LOCAL (untrusted, repo-supplied) config may NOT set. These control where the user's
- * credential + prompts/transcripts are sent (`apiUrl`, `apiToken`) or remap banks globally
- * (`mapPathToBank`, which "overrides everything"). A repo can still set its own per-repo bank via
- * `bankId`/`bankIdTemplate` — just not the network endpoint, token, or global path→bank map. The
- * user-global config is trusted and unrestricted.
- */
+/** Load normal behavioral settings; operator-managed identity, endpoint and path mappings remain authoritative. */
 export interface LoadOptions {
   /** Which harness is asking ("opencode", "claude-code", ...) — applies its `harnesses.<name>` overrides. */
   harness?: string;
@@ -903,15 +895,14 @@ export function applyBankConfig(
     return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness), disabled: true }, bankId: resolvedId };
   const byPath = directory === undefined ? undefined : pathSection(cfg, cfg.paths, directory);
   if (byPath) {
-    // A path entry never renames the bank: only `banks.<id>` may, below.
+    // Ordinary path and bank overrides cannot rename the managed bank.
     const { bank: _rename, ...rest } = overrideFields(byPath);
     cfg = { ...cfg, ...resolvePartial(cfg, rest as RawConfig) };
   }
   const section = cfg.banks[resolvedId];
   if (!section) return { cfg: { ...cfg, ...managedSettings(cfg.routerHarness) }, bankId: resolvedId };
   const safe = overrideFields(section);
-  // `bank` renames the destination — single hop, selected by the ORIGINAL resolved id (the
-  // target's own banks section, if any, is deliberately NOT consulted: no chaining).
+  // Preserve the operator-managed bank; legacy rename inputs are ignored.
   const bankId = resolvedId;
   delete safe.bank;
   return { cfg: { ...cfg, ...resolvePartial(cfg, safe as RawConfig), ...managedSettings(cfg.routerHarness) }, bankId };
