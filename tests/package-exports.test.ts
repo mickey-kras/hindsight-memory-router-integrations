@@ -1,11 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, expect, it } from "vitest";
-
-beforeAll(() => {
-  execFileSync("npm", ["run", "build", "--silent"], { cwd: process.cwd() });
-}, 120000);
+import { expect, it } from "vitest";
 
 it("loads the root plugin through its CommonJS package self-reference", () => {
   const output = execFileSync(

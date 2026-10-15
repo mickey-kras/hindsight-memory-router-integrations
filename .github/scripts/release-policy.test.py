@@ -33,6 +33,8 @@ PATHS = [
     ".github/scripts/release.test.cjs",
     ".github/scripts/release-policy.test.py",
     ".github/scripts/release.cjs",
+    ".github/scripts/coverage-artifact.cjs",
+    ".github/scripts/coverage-artifact.test.cjs",
     ".github/scripts/release-follow-up.cjs",
     ".github/scripts/release-settings.cjs",
     ".github/rulesets/protect-release-branches.json",
@@ -162,6 +164,33 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertEqual(steps["Attest tested packages"]["with"]["predicate-path"], "${{ steps.provenance.outputs.path }}")
         self.assertEqual(steps["Retain tested packages"]["with"]["name"], "packages-${{ inputs.candidate_sha }}")
         self.assertEqual(steps["Restore retained packages"]["with"]["artifact-ids"], "${{ steps.retained.outputs.artifact }}")
+
+    def test_coverage_is_restored_from_successful_quality_output(self):
+        ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        main = yaml.safe_load((ROOT / MAIN).read_text())
+        checks = ci["jobs"]["checks"]
+        self.assertEqual(checks["outputs"]["coverage_artifact"], "${{ steps.coverage.outputs.artifact-id }}")
+        retained = next(step for step in checks["steps"] if step.get("id") == "coverage")
+        self.assertNotIn("if", retained)
+        self.assertEqual(checks["steps"][-1], retained)
+        sonar = {step.get("name"): step for step in main["jobs"]["sonar"]["steps"]}
+        self.assertEqual(sonar["Restore verified coverage"]["with"]["artifact-ids"],
+                         "${{ needs.quality.outputs.coverage_artifact }}")
+        self.assertEqual(sonar["Verify coverage provenance"]["run"],
+                         "node .github/scripts/coverage-artifact.cjs verify")
+        self.assertNotIn("Generate coverage for SonarQube", sonar)
+
+    def test_preparation_retains_packages_only_after_candidate_identity(self):
+        release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+        steps = release["jobs"]["prepare-release"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertLess(names.index("Freeze inputs and create release branch"), names.index("Retain prepared packages"))
+        retained = steps[names.index("Retain prepared packages")]
+        self.assertEqual(retained["with"]["name"], "packages-${{ steps.prepared.outputs.sha }}")
+        self.assertEqual(retained["if"], "steps.prepared.outputs.sha != '' && steps.retained.outputs.artifact == ''")
+        main = yaml.safe_load((ROOT / MAIN).read_text())
+        publish = {step.get("name"): step for step in main["jobs"]["publish"]["steps"]}
+        self.assertIn("sha256sum --check PACKAGE_SHA256", publish["Verify retained package inventory"]["run"])
 
     def test_cancellation_keeps_recovery_state_and_suppresses_reporting(self):
         main = yaml.safe_load((ROOT / MAIN).read_text())

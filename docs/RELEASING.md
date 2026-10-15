@@ -144,3 +144,7 @@ basis instead:
 If a run fails before any job starts, fix the startup cause and rerun it. Failed
 candidates, draft releases, and content-addressed attestations are resumable state;
 release automation does not delete them on failure or cancellation.
+
+Preparation retains verified tarballs only after the candidate SHA exists. Publication restores the immutable artifact ID from the same release run and main snapshot, rejects expired or ambiguous artifacts, then verifies the candidate package inventory and SHA-256 pins before the existing release preflight and attestations. Rerunning preparation reuses the retained artifact; it never overwrites it. Full candidate checks still run.
+
+Sonar restores coverage by the artifact ID returned by successful quality checks in the same workflow run. Source SHA, run ID and report digest must match before scanning; the Sonar quality gate remains required. Failed checks do not publish coverage.
