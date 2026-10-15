@@ -1,7 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildRetain } from "./retain-hook";
+import { memoryCursorStore } from "./retain-cursor";
+import { memoryUsageCursorStore } from "./usage";
 import { kimiSessionDir, readKimiTranscript, readKimiWire } from "./transcript-kimi";
 import type { KimiWireEvent } from "./transcript-kimi";
 
@@ -293,6 +296,112 @@ describe("readKimiWire", () => {
 });
 
 describe("readKimiTranscript", () => {
+  it("reads late turns after more than 32MiB of discarded results, reasoning and telemetry", () => {
+    const noise = "x".repeat(1024 * 1024);
+    writeWire("main", [
+      ...Array.from({ length: 34 }, (_, i) => i % 3 === 0
+        ? { type: "llm.request", body: noise }
+        : i % 3 === 1 ? loop({ type: "tool.result", result: noise }, i)
+        : loop({ type: "content.part", stepUuid: "reasoning", part: { type: "think", text: noise } }, i)),
+      { type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text: "late prompt" }], time: 100 },
+      loop({ type: "content.part", stepUuid: "late", part: { type: "text", text: "late reply" } }, 200),
+    ]);
+    expect(readKimiTranscript(root).map(turn => turn.content)).toEqual(["late prompt", "late reply"]);
+  });
+
+  it("bounds retained normalized content across agents", () => {
+    writeWire("main", [{ type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text: "x".repeat(20 * 1024 * 1024) }], time: 100 }]);
+    writeWire("agent-1", [loop({ type: "content.part", stepUuid: "large", part: { type: "text", text: "y".repeat(20 * 1024 * 1024) } }, 200)]);
+    const turns = readKimiTranscript(root);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].content.length).toBe(20 * 1024 * 1024);
+  });
+
+  it("bounds an unfinished assistant step across many text records", () => {
+    writeWire("main", Array.from({ length: 34 }, () => loop({ type: "content.part", stepUuid: "unbounded", part: { type: "text", text: "x".repeat(1024 * 1024) } }, 100)));
+    expect(readKimiTranscript(root)).toEqual([]);
+  });
+
+  it("bounds the number of retained tiny turns across agents", () => {
+    writeWire("main", Array.from({ length: 100_001 }, (_, time) => ({ type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text: "x" }], time })));
+    writeWire("agent-1", [loop({ type: "tool.call", name: "Bash", args: {} }, 200_000)]);
+    const turns = readKimiTranscript(root);
+    expect(turns).toHaveLength(100_000);
+    expect(turns.every(turn => turn.content === "x")).toBe(true);
+  });
+
+  it("bounds tiny buffered text fragments even before a step produces a turn", () => {
+    writeWire("main", Array.from({ length: 100_001 }, () => loop({ type: "content.part", stepUuid: "tiny", part: { type: "text", text: "" } }, 100)));
+    writeWire("agent-1", [loop({ type: "tool.call", name: "Bash", args: {} }, 200)]);
+    expect(readKimiTranscript(root)).toEqual([]);
+  });
+
+  it("does not spend the item budget on discarded records", () => {
+    writeWire("main", [
+      ...Array.from({ length: 100_001 }, (_, i) => i % 3 === 0 ? { type: "llm.request" }
+        : i % 3 === 1 ? loop({ type: "tool.result", result: "" }, i)
+        : loop({ type: "content.part", part: { type: "think", text: "" } }, i)),
+      { type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text: "survives" }], time: 200_000 },
+    ]);
+    expect(readKimiTranscript(root).map(turn => turn.content)).toEqual(["survives"]);
+  });
+
+  it("appends main and subagent growth across Stops and replays a failed append unchanged", async () => {
+    const prompt = (text: string, time: number) => ({ type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text }], time });
+    const main = [prompt("start", 100), prompt("main work", 300)];
+    const agent = [loop({ type: "tool.call", name: "Bash", args: { command: "agent work" } }, 200)];
+    writeWire("main", main); writeWire("agent-1", agent);
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { bank: "A", retain, supportsAppendRetain: async () => true, bankUrl: (suffix: string) => suffix,
+      req: vi.fn(async () => new Response('{"status":"completed"}')) };
+    const cursors = memoryCursorStore();
+    const usageCursors = memoryUsageCursorStore();
+    const stop = () => buildRetain({ harness: "kimi-code", sessionId: "growing", transcriptPath: root, readTranscript: readKimiTranscript, client, cursors, usageCursors });
+    await stop();
+    expect(retain.mock.calls[0][5].updateMode).toBeUndefined();
+    expect(retain.mock.calls[0][0]).toContain("agent work");
+    main.push(prompt("main later", 400)); writeWire("main", main);
+    await stop();
+    expect(retain.mock.calls[1][5].updateMode).toBe("append");
+    expect(retain.mock.calls[1][0].split("\n").map((line: string) => JSON.parse(line).content)).toEqual(["main later"]);
+    agent.push(loop({ type: "tool.call", name: "Bash", args: { command: "agent later" } }, 500)); writeWire("agent-1", agent);
+    retain.mockRejectedValueOnce(new Error("connection failed"));
+    await stop();
+    expect(cursors.read("growing")?.pending).toHaveLength(1);
+    const failed = retain.mock.calls[2];
+    await stop();
+    expect(retain.mock.calls[3]).toEqual(failed);
+    expect(cursors.read("growing")?.pending?.length ?? 0).toBe(0);
+    await stop();
+    expect(retain).toHaveBeenCalledTimes(4);
+    client.req.mockResolvedValueOnce(new Response('{"status":"failed"}'));
+    main.push(prompt("after lost acknowledgement", 600)); writeWire("main", main);
+    await stop();
+    expect(retain).toHaveBeenCalledTimes(5);
+    expect(retain.mock.calls[4][5].updateMode).toBeUndefined();
+    expect(retain.mock.calls[4][0]).toContain("main later");
+    expect(retain.mock.calls[4][0]).toContain("agent later");
+  });
+
+  it.each(["late", "tied", "malformed", "edited"])("replaces safely when %s records change the retained prefix", async (kind) => {
+    const prompt = (text: string, time: number) => ({ type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text }], time });
+    const main = [prompt("main", 100)];
+    writeWire("main", main);
+    writeWire("agent-1", [loop({ type: "tool.call", name: "Bash", args: { command: "agent" } }, 200)]);
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { bank: "A", retain, supportsAppendRetain: async () => true, bankUrl: (suffix: string) => suffix,
+      req: vi.fn(async () => new Response('{"status":"completed"}')) };
+    const cursors = memoryCursorStore();
+    const stop = () => buildRetain({ harness: "kimi-code", sessionId: kind, transcriptPath: root, readTranscript: readKimiTranscript, client, cursors, usageCursors: memoryUsageCursorStore() });
+    await stop();
+    if (kind === "edited") main[0] = prompt("edited main", 100);
+    else main.push(prompt("new main", kind === "late" ? 150 : kind === "tied" ? 200 : 1e100));
+    writeWire("main", main);
+    await stop();
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[1][5].updateMode).toBeUndefined();
+    expect(retain.mock.calls[1][0]).toContain(kind === "edited" ? "edited main" : "new main");
+  });
   it("reads every agent's wire log in agent order — main first, then agent-<n> numerically", () => {
     writeWire("main", [
       {

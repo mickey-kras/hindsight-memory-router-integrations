@@ -384,14 +384,16 @@ describe("one-time tool-hook handoff authorization", () => {
     else if (change === "mapping") config.principals.zcode.mapPathToBank[approved] = "B";
     else if (change === "scope") config.principals.zcode.additionalReadBanks = ["A"];
     else if (change === "workspace") {
-      const nested = join(approved, "nested");
-      mkdirSync(nested);
-      input.stdin = JSON.stringify({ session_id: sessionId, cwd: nested, tool: true });
+      const other = join(root, "other-workspace");
+      mkdirSync(other);
+      config.principals.zcode.mapPathToBank[other] = "A";
+      input.stdin = JSON.stringify({ session_id: sessionId, cwd: other, tool: true });
     } else input.stdin = JSON.stringify({ session_id: "another-session", cwd: approved, tool: true });
     writeFileSync(managedPath, JSON.stringify(config));
     fetch.mockClear();
     fetch.mockResolvedValue(Response.json({ items: [] }));
-    await runHook(hook, clients().makePrompt);
+    if (change === "workspace") await expect(runHook(hook, clients().makePrompt)).rejects.toThrow("memory access denied");
+    else await runHook(hook, clients().makePrompt);
     expect(process.stdout.write).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
     writeFileSync(managedPath, original);
@@ -497,5 +499,201 @@ describe("one-time tool-hook handoff authorization", () => {
     input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
     await runHook(hook, clients().makePrompt);
     expect(out).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("Grok handoff across working-directory changes", () => {
+  const grok = HOOK_HARNESSES["grok-build"];
+
+  beforeEach(() => {
+    const config = JSON.parse(readFileSync(managedPath, "utf8"));
+    config.principals["grok-build"] = config.principals.zcode;
+    writeFileSync(managedPath, JSON.stringify(config));
+    configure({ codebaseSurvey: false });
+  });
+
+  function grokEvent(cwd: string, tool = false) {
+    input.stdin = JSON.stringify({ sessionId, cwd, prompt, hookEventName: tool ? "post_tool_use" : "user_prompt_submit" });
+  }
+
+  async function produce(source: string, cwd = approved) {
+    grokEvent(cwd);
+    if (source === "SessionStart") {
+      await runSessionStartHook(grok.sessionStart, () => ({
+        ...clients().makePrompt(), listDocumentIds: async () => new Set<string>(),
+      }));
+    } else await runHook(grok.prompt, clients().makePrompt);
+    vi.mocked(process.stdout.write).mockClear();
+  }
+
+  it.each(["SessionStart", "UserPromptSubmit"])("delivers %s context after cd into a project subdirectory, once", async (source) => {
+    const nested = join(approved, "src");
+    mkdirSync(nested);
+    await produce(source);
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
+    grokEvent(nested, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    const output = JSON.parse(String(vi.mocked(process.stdout.write).mock.calls[0]?.[0] ?? "null"));
+    expect(output?.hookSpecificOutput).toMatchObject({ hookEventName: "PostToolUse", additionalContext: expect.any(String) });
+    expect(output.hookSpecificOutput.additionalContext.length).toBeGreaterThan(0);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://router.example.test/v1/default/banks/A/documents?limit=1",
+      "https://router.example.test/v1/default/banks/B/documents?limit=1",
+    ]);
+    vi.mocked(process.stdout.write).mockClear();
+    grokEvent(approved, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  it("shares one handoff between SessionStart at root, a prompt in a subdirectory, and a root tool event", async () => {
+    const nested = join(approved, "src");
+    mkdirSync(nested);
+    await produce("SessionStart");
+    await produce("UserPromptSubmit", nested);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
+    grokEvent(approved, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).toHaveBeenCalledOnce();
+    vi.mocked(process.stdout.write).mockClear();
+    grokEvent(nested, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  it("discards the original handoff when its anchor mapping is removed during awaited probes", async () => {
+    const nested = join(approved, "src");
+    mkdirSync(nested);
+    await produce("UserPromptSubmit");
+    const original = readFileSync(managedPath, "utf8");
+    const config = JSON.parse(original);
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      config.principals["grok-build"].mapPathToBank = { [nested]: "A" };
+      writeFileSync(managedPath, JSON.stringify(config));
+      return Response.json({ items: [] });
+    });
+    grokEvent(nested, true);
+    await expect(runHook(grok.prompt, clients().makePrompt)).rejects.toThrow("memory access denied");
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    writeFileSync(managedPath, original);
+    fetch.mockResolvedValue(Response.json({ items: [] }));
+    grokEvent(approved, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  it.each(["SessionStart", "UserPromptSubmit"])("delivers %s context from a stable root alias to its physical descendant", async (source) => {
+    const physical = join(approved, "project");
+    const nested = join(physical, "src");
+    const alias = join(root, "session-root");
+    mkdirSync(nested, { recursive: true });
+    symlinkSync(physical, alias);
+    await produce(source, alias);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
+    grokEvent(nested, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).toHaveBeenCalledOnce();
+    vi.mocked(process.stdout.write).mockClear();
+    grokEvent(alias, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["SessionStart", "before", "alias"], ["UserPromptSubmit", "before", "alias"],
+    ["SessionStart", "before", "physical"], ["UserPromptSubmit", "before", "physical"],
+    ["SessionStart", "during", "alias"], ["UserPromptSubmit", "during", "alias"],
+  ])("keeps %s context out of a replacement workspace when its root alias changes %s probes (%s cwd)", async (source, when, spelling) => {
+    const first = join(approved, "first");
+    const second = join(approved, "second");
+    const alias = join(root, "session-root");
+    mkdirSync(first);
+    mkdirSync(second);
+    symlinkSync(first, alias);
+    await produce(source, alias);
+    const retarget = () => { rmSync(alias); symlinkSync(second, alias); };
+    if (when === "before") retarget();
+    let changed = when === "before";
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      if (!changed) { retarget(); changed = true; }
+      return Response.json({ items: [] });
+    });
+    grokEvent(spelling === "physical" ? second : alias, true);
+    const attempt = runHook(grok.prompt, clients().makePrompt);
+    if (when === "during") await expect(attempt).rejects.toThrow("memory access denied");
+    else await attempt;
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    if (when === "before") expect(fetch).not.toHaveBeenCalled();
+    else {
+      rmSync(alias);
+      symlinkSync(first, alias);
+      grokEvent(alias, true);
+      await runHook(grok.prompt, clients().makePrompt);
+      expect(process.stdout.write).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(["SessionStart", "UserPromptSubmit"])("does not publish %s context into a replacement root while its client read awaits", async (source) => {
+    const first = join(approved, "first");
+    const second = join(approved, "second");
+    const alias = join(root, "session-root");
+    mkdirSync(first);
+    mkdirSync(second);
+    symlinkSync(first, alias);
+    const scope = managedReadScope("grok-build", alias);
+    const makeClient = () => ({
+      ...clients().makePrompt(),
+      listDocumentIds: async () => new Set<string>(),
+      readScope: () => ({ endpoint: scope.endpoint, bankId: scope.bankId, identity: scope.identity, banks: scope.banks }),
+      listPages: async () => { rmSync(alias); symlinkSync(second, alias); return []; },
+    });
+    grokEvent(alias);
+    if (source === "SessionStart") await runSessionStartHook(grok.sessionStart, makeClient);
+    else await expect(runHook(grok.prompt, makeClient)).rejects.toThrow("memory access denied");
+    vi.mocked(process.stdout.write).mockClear();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
+    grokEvent(alias, true);
+    await runHook(grok.prompt, clients().makePrompt);
+    expect(process.stdout.write).not.toHaveBeenCalled();
+  });
+
+  it.each(["unmapped", "different bank", "another workspace", "symlink escape"])("does not deliver old workspace memory after moving into %s", async (boundary) => {
+    await produce("UserPromptSubmit");
+    const next = join(root, "other-workspace");
+    mkdirSync(next);
+    const config = JSON.parse(readFileSync(managedPath, "utf8"));
+    let cwd = next;
+    if (boundary === "different bank") {
+      cwd = join(approved, "different-bank");
+      mkdirSync(cwd);
+      config.principals["grok-build"].mapPathToBank[cwd] = "B";
+    } else if (boundary !== "unmapped") {
+      config.principals["grok-build"].mapPathToBank[next] = "A";
+      if (boundary === "symlink escape") {
+        cwd = join(approved, "escape");
+        symlinkSync(next, cwd);
+      }
+    }
+    writeFileSync(managedPath, JSON.stringify(config));
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
+    grokEvent(cwd, true);
+    await expect(runHook(grok.prompt, clients().makePrompt)).rejects.toThrow("memory access denied");
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the recorded root's current mapping instead of using its cached authorization", async () => {
+    const nested = join(approved, "src");
+    mkdirSync(nested);
+    await produce("UserPromptSubmit");
+    const config = JSON.parse(readFileSync(managedPath, "utf8"));
+    config.principals["grok-build"].mapPathToBank = { [nested]: "A" };
+    writeFileSync(managedPath, JSON.stringify(config));
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
+    grokEvent(nested, true);
+    await expect(runHook(grok.prompt, clients().makePrompt)).rejects.toThrow("memory access denied");
+    expect(process.stdout.write).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

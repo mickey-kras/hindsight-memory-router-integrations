@@ -2,7 +2,7 @@ import { managedBank, managedToolPrefix } from "@memory-router/coding-agents/run
 import { toolBrand } from "@memory-router/shared/tool-prefix";
 import { readPrivateFile, writePrivateFileAtomic, sessionStateFile } from "./private-state";
 /**
- * TraeCode's per-repo workspace MCP registration — why it exists and why the hook writes it.
+ * TraeCode's per-repo workspace MCP registration.
  *
  * TraeCode launches USER-level MCP servers (Trae CN's `<userData>/User/mcp.json`) with the
  * ELECTRON PROCESS's cwd — the user's home directory, not the workspace the agent is chatting in.
@@ -14,25 +14,9 @@ import { readPrivateFile, writePrivateFileAtomic, sessionStateFile } from "./pri
  * reads a per-workspace `<repo>/.trae/mcp.json` (verified in the Trae CN bundle: workspace-folder
  * managers join each folder's `.trae/mcp.json` under the `mcp.config.ws<n>.` scope key, parse the
  * SAME `mcpServers` top-level object as the user file, keep `{command, args, cwd, env}` for stdio
- * servers, and hot-reload the file with a 200ms debounce). So the SessionStart hook — which knows
- * the repo AND runs only where memory is actually live (the caller derives the bank and applies
- * opt-in first) — makes sure that file registers our server pinned to THIS repo:
- *   {"mcpServers":{"hindsight":{"command":"node","args":["<dist>/mcp-server.js"],
- *     "env":{"HINDSIGHT_MCP_HARNESS":"traecode","HINDSIGHT_MCP_PROJECT_CWD":"<repo>"}}}}
+ * servers, and hot-reload the file with a 200ms debounce).
  *
- * Fidelity rules, in order: never throw; never touch a foreign "hindsight" entry (same ownership
- * check the installer applies to user-level files); never clobber the rest of the document; and
- * rewrite only on a real diff so the hook is idempotent. The registration carries an absolute,
- * machine-specific path, so a repo .gitignore that does not already ignore the file gets the one
- * line that keeps it out of version control — but only when a .gitignore already exists: creating
- * one is a bigger statement about the repo than a hook should make.
- *
- * The installer pre-writes the same registration (and seeds the workspace enable switch below) for
- * every repo in `mapPathToBank` — it runs unsandboxed, while Trae's hook sandbox denies file
- * creation in the workspace and (observed live, 2026-09-21) drops sandbox.json rules aimed at
- * Trae's own storage. The hook stays as a best-effort top-up for repos opted in after the last
- * install; because both paths check before writing, whichever lands first leaves the other a
- * read-only no-op.
+ * The installer writes registrations for every repo in `mapPathToBank`.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -219,10 +203,6 @@ function ensureGitignored(repo: string): void {
   writeFileSync(gitignore, current + addition);
 }
 
-/** Ensure `<repo>/.trae/mcp.json` registers the hindsight MCP server for THIS repo, seed the
- *  workspace's per-server enable switch (below), then report whichever blocker still hides the
- *  tools: the global workspace-MCP gate first, else a seed failure. undefined = nothing to say.
- *  Never throws. */
 export function ensureTraecodeWorkspaceMcp(
   cwd: string,
   opts: { home?: string; dist?: string; stateFile?: string } = {}
@@ -234,7 +214,7 @@ export function ensureTraecodeWorkspaceMcp(
 
 /** The registration itself — merge-not-clobber, foreign entries untouched, idempotent. Never
  *  throws, never rewrites anything but our own entry, and does nothing when already correct.
- *  Returns what happened: the installer reports it per opted-in repo; the hook ignores it. */
+ *  Returns what happened: the installer reports it per opted-in repo. */
 export function registerTraecodeWorkspaceMcp(
   cwd: string,
   opts: { home?: string; dist?: string } = {}
@@ -350,12 +330,7 @@ export function removeTraecodeWorkspaceMcpEntry(
 // only when ITS OWN switch for this window is on — and that switch defaults to off, persisted in
 // the window's storage DB: `<userData>/User/workspaceStorage/<hash>/state.vscdb`, ItemTable key
 // `icubeAgentExtension.enabled.mcp.config.ws0.<server>` (ws0 = the single root folder), value the
-// TEXT "true" that Trae's MCP panel writes when someone flips it by hand. Flipping by hand per
-// repo is exactly the manual step this integration must not have, so the SessionStart hook writes
-// the key itself: find the storage dir whose workspace.json points at this repo, and set it when
-// it is not already "true". Verified against a live Trae CN install (key absent → tools hidden;
-// panel toggle → TEXT "true" in that row). Effect starts with the NEXT window — Trae holds the
-// table in memory for the running one — which matches when the registration lands anyway.
+// TEXT "true" that Trae's MCP panel writes when someone flips it by hand.
 
 const WORKSPACE_STORAGE_REL = join("User", "workspaceStorage");
 const ENABLED_KEY_PREFIX = "icubeAgentExtension.enabled.mcp.config.ws0.";

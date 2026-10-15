@@ -475,8 +475,8 @@ export async function runHook(
   }
   if (spec.toolHook?.accept(ev)) {
     if (!sessionId) return;
-    const scope = managedReadScope(cfg.routerHarness, cwd);
-    const key = pendingContextKey(scope.endpoint, scope.bankId, cwd, sessionId, scope);
+    const scope = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
+    const key = pendingContextKey(scope.endpoint, scope.bankId, scope.workspace, sessionId, scope);
     if (!hasPendingContext(spec.harness, key)) return;
     try {
       // Aggregated memory can contain any readable bank. A guarded GET 404 means the authorized
@@ -484,9 +484,9 @@ export async function runHook(
       for (const bank of scope.banks) {
         await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"));
       }
-      const current = managedReadScope(cfg.routerHarness, cwd);
+      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
       if (scope.transport.authorizationIdentity() !== scope.identity ||
-          pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key) throw new AccessDeniedError();
+          pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key) throw new AccessDeniedError();
     } catch (error) {
       if (error instanceof AccessDeniedError) discardPendingContext(spec.harness, key);
       throw error;
@@ -523,7 +523,7 @@ export async function runHook(
     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
 
-  const handoffScope = spec.toolHook && sessionId ? (client.readScope?.() ?? managedReadScope(cfg.routerHarness, cwd)) : undefined;
+  const handoffScope = spec.toolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
   const output = await buildHookOutput({ harness: spec.harness, prompt, cfg, client, cacheFile });
   // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
   // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
@@ -537,11 +537,11 @@ export async function runHook(
   }
   let context = output.context;
   if (context && spec.toolHook && sessionId && handoffScope) {
-    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, cwd, sessionId, handoffScope);
-    const current = managedReadScope(cfg.routerHarness, cwd);
+    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
+    const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
     const clientScope = client.readScope?.() ?? current;
-    if (pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key ||
-        pendingContextKey(clientScope.endpoint, clientScope.bankId, cwd, sessionId, clientScope) !== key) throw new AccessDeniedError();
+    if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
+        pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) throw new AccessDeniedError();
     stashPendingContext(spec.harness, key, context);
     context = undefined;
   }

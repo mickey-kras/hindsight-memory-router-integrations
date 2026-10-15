@@ -66,7 +66,7 @@ const SESSION_PREFIX = "session_";
 const MAIN_AGENT = "main";
 
 /**
- * Most wire-log text one Stop may decode across ALL of a session's agents.
+ * Most conversation text retained or buffered in an unfinished step across a session's agents.
  *
  * `readJsonl` streams and bounds nothing by design (#4380): memory is the largest record plus
  * whatever the reader keeps, and a per-file cap was removed because a sliding tail window shifts
@@ -77,9 +77,13 @@ const MAIN_AGENT = "main";
  * DIRECTORY: one wire.jsonl per agent, and a swarm session on this machine has 61 of them under a
  * single session. Bounding the sum is therefore a cross-file concern that no per-file reader can
  * express. The budget is the same order as the old per-file cap — it keeps a hook process near
- * ~100MB — and it is spent in agent order, so `main` is always read whole.
+ * ~100MB — and it is spent in agent order. Discarded tool output, reasoning and telemetry do not
+ * consume the budget. A streamed text step is bounded before normalization so it cannot grow
+ * without limit while waiting for its final part. Completed turns and buffered text fragments
+ * also share a 100,000-item limit to bound object and array overhead for tiny records.
  */
 const MAX_SESSION_CHARS = 32 * 1024 * 1024;
+const MAX_SESSION_ITEMS = 100_000;
 
 /** Structural subset of one nested loop event (`context.append_loop_event.event`). */
 interface KimiLoopEvent {
@@ -160,16 +164,20 @@ export function kimiPromptText(input: unknown): string {
  * the same function serves a file, a stream, or a backfill. Never throws on malformed entries.
  */
 export function readKimiWire(events: readonly KimiWireEvent[]): TransportTurn[] {
-  const turns: TransportTurn[] = [];
+  return [...kimiTurns(events || [])];
+}
+
+function* kimiTurns(events: Iterable<KimiWireEvent>, budget?: { remaining: number; items: number }): Generator<TransportTurn> {
   // One assistant message is streamed as N `content.part` records sharing a stepUuid. Buffer them
   // so a step renders as one turn: the JSONL transcript is chunked a turn per line server-side, and
   // a sentence split across four lines is four fragments to the extractor.
-  let step: { uuid: string; texts: string[]; stamp: { timestamp?: string } } | undefined;
+  let step: { uuid: string; texts: string[]; chars: number; stamp: { timestamp?: string } } | undefined;
   const flushStep = () => {
     if (!step) return;
     const content = stripInjectedMemory(step.texts.join("\n")).trim();
-    if (content) turns.push({ role: "assistant", content, ...step.stamp });
+    const turn = content ? { role: "assistant" as const, content, ...step.stamp } : undefined;
     step = undefined;
+    return turn;
   };
 
   for (const event of events || []) {
@@ -177,11 +185,12 @@ export function readKimiWire(events: readonly KimiWireEvent[]): TransportTurn[] 
     const stamp = stampOf(event);
 
     if (event.type === "turn.prompt") {
-      flushStep();
+      const pending = flushStep();
+      if (pending) yield pending;
       // Kimi drives itself through the same record: only `user` is a human — see the module doc.
       if (event.origin?.kind !== "user") continue;
       const content = stripInjectedMemory(kimiPromptText(event.input)).trim();
-      if (content) turns.push({ role: "user", content, ...stamp });
+      if (content) yield { role: "user", content, ...stamp };
       continue;
     }
     // Everything else conversational is nested. `context.append_message` is deliberately not a
@@ -194,19 +203,29 @@ export function readKimiWire(events: readonly KimiWireEvent[]): TransportTurn[] 
       // `think` parts are the model's reasoning — dropped, like Claude `thinking`.
       if (loop.part?.type !== "text" || typeof loop.part.text !== "string") continue;
       const uuid = typeof loop.stepUuid === "string" ? loop.stepUuid : "";
-      if (step && step.uuid !== uuid) flushStep();
-      if (!step) step = { uuid, texts: [], stamp };
+      if (step && step.uuid !== uuid) {
+        const pending = flushStep();
+        if (pending) yield pending;
+      }
+      if (!step) step = { uuid, texts: [], chars: 0, stamp };
+      step.chars += loop.part.text.length + (step.texts.length ? 1 : 0);
+      if (budget && step.chars > budget.remaining) {
+        budget.remaining = -1;
+        return;
+      }
+      if (budget && --budget.items < 0) return;
       step.texts.push(loop.part.text);
     } else if (loop.type === "tool.call") {
-      flushStep(); // a step's prose precedes the calls it made
+      const pending = flushStep();
+      if (pending) yield pending;
       if (typeof loop.name !== "string" || !loop.name) continue;
-      turns.push({ role: "action", content: actionLine(loop.name, loop.args), ...stamp });
+      yield { role: "action", content: actionLine(loop.name, loop.args), ...stamp };
     }
     // step.begin / step.end: loop bookkeeping. tool.result: raw tool output, which the shared
     // `actionLine` convention keeps out of the bank (see transcript-util.ts).
   }
-  flushStep();
-  return turns;
+  const pending = flushStep();
+  if (pending) yield pending;
 }
 
 /** Agent directories in a stable, readable order: the main loop first, then `agent-<n>` by number
@@ -251,8 +270,7 @@ function parseEvent(rawLine: string): KimiWireEvent | undefined {
 }
 
 /**
- * Read a whole Kimi session — every agent's wire log, concatenated in agent order — into one
- * normalized transcript.
+ * Read a whole Kimi session into one normalized transcript, ordered by valid record timestamps.
  *
  * `path` is the SESSION DIRECTORY, not a file: Kimi's Stop payload has no transcript path, so
  * `retain.parse` resolves the directory with `kimiSessionDir` and passes that (the devin-cli
@@ -261,25 +279,30 @@ function parseEvent(rawLine: string): KimiWireEvent | undefined {
  */
 export function readKimiTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
-  let remaining = MAX_SESSION_CHARS;
+  const budget = { remaining: MAX_SESSION_CHARS, items: MAX_SESSION_ITEMS };
   for (const agentId of agentIds(path)) {
     const wire = join(path, AGENTS_DIR, agentId, WIRE_LOG);
-    const events: KimiWireEvent[] = [];
-    for (const rawLine of readJsonl(wire)) {
-      remaining -= rawLine.length;
-      if (remaining < 0) break;
-      const event = parseEvent(rawLine);
-      if (event) events.push(event);
+    function* events(): Generator<KimiWireEvent> {
+      for (const rawLine of readJsonl(wire)) {
+        const event = parseEvent(rawLine);
+        if (event) yield event;
+      }
     }
-    for (const turn of readKimiWire(events)) turns.push(turn);
-    if (remaining < 0) {
+    for (const turn of kimiTurns(events(), budget)) {
+      budget.remaining -= turn.content.length;
+      if (budget.remaining < 0 || --budget.items < 0) break;
+      turns.push(turn);
+    }
+    if (budget.remaining < 0 || budget.items < 0) {
       // Same contract as core/jsonl.ts: over the cap is reported, never dropped in silence.
-      log.warn(HARNESS, "session exceeds the wire-log budget — later agents were not read", {
+      log.warn(HARNESS, "session exceeds the retained-content budget — later agents were not read", {
         sessionDir: path,
         stoppedAt: wire,
       });
       break;
     }
   }
+  if (turns.every(turn => turn.timestamp !== undefined))
+    turns.sort((a, b) => Date.parse(a.timestamp!) - Date.parse(b.timestamp!));
   return turns;
 }

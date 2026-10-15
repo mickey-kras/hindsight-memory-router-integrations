@@ -34,12 +34,28 @@ export function harnessTransport(harness: string | undefined): RouterTransport {
 }
 
 // Aggregated context may contain memory from any readable bank.
-export function managedReadScope(harness: string | undefined, directory: string) {
+export function managedReadScope(harness: string | undefined, directory: string, sessionRoot?: string) {
   const transport = harnessTransport(harness);
+  const bankId = managedBank(harness, directory);
+  let workspace: string;
+  let location: string;
+  try {
+    location = realpathSync(directory);
+    workspace = sessionRoot ? realpathSync(sessionRoot) : location;
+  } catch {
+    throw new AccessDeniedError();
+  }
+  if (
+    sessionRoot &&
+    ((location !== workspace && !location.startsWith(workspace + sep)) || managedBank(harness, sessionRoot) !== bankId)
+  ) {
+    throw new AccessDeniedError();
+  }
   return {
     transport,
     endpoint: transport.baseUrl,
-    bankId: managedBank(harness, directory),
+    workspace,
+    bankId,
     identity: transport.authorizationIdentity(),
     banks: visibleBanks(transport.access).sort(),
   };

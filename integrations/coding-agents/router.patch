@@ -1,6 +1,6 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..36aaad6
+index 0000000..8780820
 --- /dev/null
 +++ b/DEVIATIONS.md
 @@ -0,0 +1,39 @@
@@ -36,7 +36,7 @@ index 0000000..36aaad6
 +
 +New upstream append capability, retry budgets, query bounds, page scoping and document freshness reads use the existing guarded client. Version probing accepts GET /v1/version and falls back to /version; authorization failures remain terminal. Router error bodies are redacted, so a 404 cannot latch page support off based on its upstream body.
 +
-+Grok tool-hook context is stored privately and delivered only after managed credentials and the current project mapping are validated. Its handoff key includes endpoint, primary bank, workspace, session, a hash of the actual effective principal and the complete managed read-bank scope. Every bank that could contribute to aggregated memory is freshly authorized before delivery; scope/principal changes and server revocations reject the handoff. The effective endpoint and project mapping are resolved again after awaited reads and grant probes. Authorization failures discard it permanently. Tokens never enter identity keys. Pending context uses immutable blocks with atomic claims per publication; concurrent tools may deliver separate blocks, and waiting-block deduplication is best-effort. Delivery reads at most 64 blocks per event, leaving later blocks for subsequent events; terminal denial discards the bound scope's pending snapshot. Session caches retain attempt counters and lifecycle flags, never memory content.
++Grok tool-hook context is stored privately and delivered only after managed credentials and the current project mapping are validated. Its handoff key includes endpoint, primary bank, the canonical physical path of the recorded session root, session, a hash of the actual effective principal and the complete managed read-bank scope. Moving into a subdirectory preserves the handoff only while both the live directory and recorded root remain authorized for the same bank and the live directory remains physically inside that root. Every bank that could contribute to aggregated memory is freshly authorized before delivery; scope/principal changes and server revocations reject the handoff. The effective endpoint, physical workspace and project mapping are resolved again after awaited reads and grant probes. Authorization failures discard it permanently. Tokens never enter identity keys. Pending context uses immutable blocks with atomic claims per publication; concurrent tools may deliver separate blocks, and waiting-block deduplication is best-effort. Delivery reads at most 64 blocks per event, leaving later blocks for subsequent events; terminal denial discards the bound scope's pending snapshot. Session caches retain attempt counters and lifecycle flags, never memory content.
 +
 +New Kimi, WorkBuddy, CodeBuddy and TraeCode entries use managed identity and branded registration names. Trae workspace MCP files are written only by explicit transactional installation for operator-mapped projects; hooks only report the workspace-MCP gate. Global settings and workspace SQLite enable switches remain user-managed.
 +
@@ -8799,7 +8799,7 @@ index 1382140..ea01e67 100644
  
  /** Is `dir` the repo itself or somewhere inside it? */
 diff --git a/src/core/hook.ts b/src/core/hook.ts
-index 57ea089..c9bffeb 100644
+index 57ea089..c110b7c 100644
 --- a/src/core/hook.ts
 +++ b/src/core/hook.ts
 @@ -1,3 +1,6 @@
@@ -8948,8 +8948,8 @@ index 57ea089..c9bffeb 100644
    }
 +  if (spec.toolHook?.accept(ev)) {
 +    if (!sessionId) return;
-+    const scope = managedReadScope(cfg.routerHarness, cwd);
-+    const key = pendingContextKey(scope.endpoint, scope.bankId, cwd, sessionId, scope);
++    const scope = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
++    const key = pendingContextKey(scope.endpoint, scope.bankId, scope.workspace, sessionId, scope);
 +    if (!hasPendingContext(spec.harness, key)) return;
 +    try {
 +      // Aggregated memory can contain any readable bank. A guarded GET 404 means the authorized
@@ -8957,9 +8957,9 @@ index 57ea089..c9bffeb 100644
 +      for (const bank of scope.banks) {
 +        await scope.transport.request(scope.transport.bankUrl(bank, "/documents?limit=1"));
 +      }
-+      const current = managedReadScope(cfg.routerHarness, cwd);
++      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
 +      if (scope.transport.authorizationIdentity() !== scope.identity ||
-+          pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key) throw new AccessDeniedError();
++          pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key) throw new AccessDeniedError();
 +    } catch (error) {
 +      if (error instanceof AccessDeniedError) discardPendingContext(spec.harness, key);
 +      throw error;
@@ -8987,7 +8987,7 @@ index 57ea089..c9bffeb 100644
      startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
    }
  
-+  const handoffScope = spec.toolHook && sessionId ? (client.readScope?.() ?? managedReadScope(cfg.routerHarness, cwd)) : undefined;
++  const handoffScope = spec.toolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
    const output = await buildHookOutput({ harness: spec.harness, prompt, cfg, client, cacheFile });
    // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
    // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
@@ -8998,11 +8998,11 @@ index 57ea089..c9bffeb 100644
 -  if (context && spec.toolHook && sessionId) {
 -    stashPendingContext(spec.harness, sessionId, context);
 +  if (context && spec.toolHook && sessionId && handoffScope) {
-+    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, cwd, sessionId, handoffScope);
-+    const current = managedReadScope(cfg.routerHarness, cwd);
++    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
++    const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
 +    const clientScope = client.readScope?.() ?? current;
-+    if (pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key ||
-+        pendingContextKey(clientScope.endpoint, clientScope.bankId, cwd, sessionId, clientScope) !== key) throw new AccessDeniedError();
++    if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
++        pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) throw new AccessDeniedError();
 +    stashPendingContext(spec.harness, key, context);
      context = undefined;
    }
@@ -10840,7 +10840,7 @@ index efe1ce8..93978d3 100644
          /* best-effort: a cursor that cannot be written costs a replace, never data */
        }
 diff --git a/src/core/session-start.ts b/src/core/session-start.ts
-index 5cc323b..ef5e3fc 100644
+index 5cc323b..967fad8 100644
 --- a/src/core/session-start.ts
 +++ b/src/core/session-start.ts
 @@ -1,3 +1,6 @@
@@ -10985,7 +10985,7 @@ index 5cc323b..ef5e3fc 100644
        observationScopes: cfg.observationScopes,
      });
  
-+    const handoffScope = spec.deferContextToToolHook && sessionId ? (client.readScope?.() ?? managedReadScope(cfg.routerHarness, cwd)) : undefined;
++    const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
      const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
      // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
      // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
@@ -10998,11 +10998,11 @@ index 5cc323b..ef5e3fc 100644
 -    if (spec.deferContextToToolHook && out.additionalContext && sessionId) {
 -      stashPendingContext(harness, sessionId, out.additionalContext);
 +    if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
-+      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, cwd, sessionId, handoffScope);
-+      const current = managedReadScope(cfg.routerHarness, cwd);
++      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
++      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
 +      const clientScope = client.readScope?.() ?? current;
-+      if (pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key ||
-+          pendingContextKey(clientScope.endpoint, clientScope.bankId, cwd, sessionId, clientScope) !== key) return;
++      if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
++          pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
 +      stashPendingContext(harness, key, out.additionalContext);
        out.additionalContext = undefined;
      }
@@ -11272,17 +11272,48 @@ index b008ab4..58aa351 100644
              .join(", ")
        );
 diff --git a/src/core/traecode-mcp.ts b/src/core/traecode-mcp.ts
-index 7526361..f2c5273 100644
+index 7526361..2528928 100644
 --- a/src/core/traecode-mcp.ts
 +++ b/src/core/traecode-mcp.ts
-@@ -1,3 +1,6 @@
+@@ -1,5 +1,8 @@
 +import { managedBank, managedToolPrefix } from "@memory-router/coding-agents/runtime";
 +import { toolBrand } from "@memory-router/shared/tool-prefix";
 +import { readPrivateFile, writePrivateFileAtomic, sessionStateFile } from "./private-state";
  /**
-  * TraeCode's per-repo workspace MCP registration — why it exists and why the hook writes it.
+- * TraeCode's per-repo workspace MCP registration — why it exists and why the hook writes it.
++ * TraeCode's per-repo workspace MCP registration.
   *
-@@ -39,7 +42,7 @@ import { fileURLToPath } from "node:url";
+  * TraeCode launches USER-level MCP servers (Trae CN's `<userData>/User/mcp.json`) with the
+  * ELECTRON PROCESS's cwd — the user's home directory, not the workspace the agent is chatting in.
+@@ -11,25 +14,9 @@
+  * reads a per-workspace `<repo>/.trae/mcp.json` (verified in the Trae CN bundle: workspace-folder
+  * managers join each folder's `.trae/mcp.json` under the `mcp.config.ws<n>.` scope key, parse the
+  * SAME `mcpServers` top-level object as the user file, keep `{command, args, cwd, env}` for stdio
+- * servers, and hot-reload the file with a 200ms debounce). So the SessionStart hook — which knows
+- * the repo AND runs only where memory is actually live (the caller derives the bank and applies
+- * opt-in first) — makes sure that file registers our server pinned to THIS repo:
+- *   {"mcpServers":{"hindsight":{"command":"node","args":["<dist>/mcp-server.js"],
+- *     "env":{"HINDSIGHT_MCP_HARNESS":"traecode","HINDSIGHT_MCP_PROJECT_CWD":"<repo>"}}}}
++ * servers, and hot-reload the file with a 200ms debounce).
+  *
+- * Fidelity rules, in order: never throw; never touch a foreign "hindsight" entry (same ownership
+- * check the installer applies to user-level files); never clobber the rest of the document; and
+- * rewrite only on a real diff so the hook is idempotent. The registration carries an absolute,
+- * machine-specific path, so a repo .gitignore that does not already ignore the file gets the one
+- * line that keeps it out of version control — but only when a .gitignore already exists: creating
+- * one is a bigger statement about the repo than a hook should make.
+- *
+- * The installer pre-writes the same registration (and seeds the workspace enable switch below) for
+- * every repo in `mapPathToBank` — it runs unsandboxed, while Trae's hook sandbox denies file
+- * creation in the workspace and (observed live, 2026-09-21) drops sandbox.json rules aimed at
+- * Trae's own storage. The hook stays as a best-effort top-up for repos opted in after the last
+- * install; because both paths check before writing, whichever lands first leaves the other a
+- * read-only no-op.
++ * The installer writes registrations for every repo in `mapPathToBank`.
+  */
+ import { execFileSync } from "node:child_process";
+ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+@@ -39,7 +26,7 @@ import { fileURLToPath } from "node:url";
  import { diag } from "./diag";
  import { isOurMcpEntry } from "./util";
  
@@ -11291,7 +11322,7 @@ index 7526361..f2c5273 100644
  const MCP_FILE_REL = join(".trae", "mcp.json");
  
  /** Where the packaged `dist/mcp-server.js` sits: a sibling of this module in the flat `dist/`
-@@ -96,7 +99,7 @@ export const traecodeUserSettingsPath = (home: string): string =>
+@@ -96,7 +83,7 @@ export const traecodeUserSettingsPath = (home: string): string =>
   *  runtime, mirroring auto-update's state precedent (a runtime replace resets them, which at worst
   *  costs one extra hint). Reads and writes here are sandbox-approved via the install-time rule. */
  export const gateStateFileFor = (dist: string): string =>
@@ -11300,7 +11331,7 @@ index 7526361..f2c5273 100644
  
  function gateStateFile(): string {
    return gateStateFileFor(bundledDistDir());
-@@ -107,7 +110,7 @@ type GateStateOpts = { stateFile?: string };
+@@ -107,7 +94,7 @@ type GateStateOpts = { stateFile?: string };
  
  function readGateState(opts: GateStateOpts = {}): GateState {
    try {
@@ -11309,7 +11340,7 @@ index 7526361..f2c5273 100644
    } catch {
      return {};
    }
-@@ -157,7 +160,7 @@ export function enableWorkspaceMcpSetting(settingsPath: string): boolean {
+@@ -157,7 +144,7 @@ export function enableWorkspaceMcpSetting(settingsPath: string): boolean {
   *  cannot read the settings file. Never throws. */
  export function markWorkspaceMcpEnabled(opts: GateStateOpts = {}): void {
    try {
@@ -11318,7 +11349,7 @@ index 7526361..f2c5273 100644
        opts.stateFile ?? gateStateFile(),
        JSON.stringify({ ...readGateState(opts), workspaceMcpEnabled: true }, null, 2) + "\n"
      );
-@@ -180,7 +183,7 @@ export function workspaceMcpHint(
+@@ -180,7 +167,7 @@ export function workspaceMcpHint(
      if (typeof state.lastHint === "number" && now - state.lastHint < HINT_MIN_INTERVAL_MS) {
        return undefined;
      }
@@ -11327,7 +11358,15 @@ index 7526361..f2c5273 100644
        opts.stateFile ?? gateStateFile(),
        JSON.stringify({ ...state, lastHint: now }, null, 2) + "\n"
      );
-@@ -224,9 +227,9 @@ export function ensureTraecodeWorkspaceMcp(
+@@ -216,27 +203,25 @@ function ensureGitignored(repo: string): void {
+   writeFileSync(gitignore, current + addition);
+ }
+ 
+-/** Ensure `<repo>/.trae/mcp.json` registers the hindsight MCP server for THIS repo, seed the
+- *  workspace's per-server enable switch (below), then report whichever blocker still hides the
+- *  tools: the global workspace-MCP gate first, else a seed failure. undefined = nothing to say.
+- *  Never throws. */
+ export function ensureTraecodeWorkspaceMcp(
    cwd: string,
    opts: { home?: string; dist?: string; stateFile?: string } = {}
  ): string | undefined {
@@ -11340,7 +11379,11 @@ index 7526361..f2c5273 100644
  }
  
  /** The registration itself — merge-not-clobber, foreign entries untouched, idempotent. Never
-@@ -237,6 +240,8 @@ export function registerTraecodeWorkspaceMcp(
+  *  throws, never rewrites anything but our own entry, and does nothing when already correct.
+- *  Returns what happened: the installer reports it per opted-in repo; the hook ignores it. */
++ *  Returns what happened: the installer reports it per opted-in repo. */
+ export function registerTraecodeWorkspaceMcp(
+   cwd: string,
    opts: { home?: string; dist?: string } = {}
  ): "registered" | "current" | "skipped" | "failed" {
    try {
@@ -11349,7 +11392,7 @@ index 7526361..f2c5273 100644
      const home = opts.home ?? homedir();
      // Trae launched the USER-level server from home — that is exactly the registration we are
      // repairing; writing a workspace file into $HOME would create a pseudo-workspace there.
-@@ -309,6 +314,8 @@ export function removeTraecodeWorkspaceMcpEntry(
+@@ -309,6 +294,8 @@ export function removeTraecodeWorkspaceMcpEntry(
    opts: { home?: string } = {}
  ): boolean {
    try {
@@ -11358,7 +11401,7 @@ index 7526361..f2c5273 100644
      const home = opts.home ?? homedir();
      if (!cwd || !isAbsolute(cwd) || dirname(cwd) === cwd || cwd === home) return false;
      const file = join(cwd, MCP_FILE_REL);
-@@ -321,8 +328,13 @@ export function removeTraecodeWorkspaceMcpEntry(
+@@ -321,8 +308,13 @@ export function removeTraecodeWorkspaceMcpEntry(
      const servers = doc.mcpServers;
      if (!servers || typeof servers !== "object" || Array.isArray(servers)) return false;
      const record = servers as Record<string, unknown>;
@@ -11374,7 +11417,20 @@ index 7526361..f2c5273 100644
      if (Object.keys(record).length === 0) delete doc.mcpServers; // an empty husk carries no information
      if (Object.keys(doc).length === 0) rmSync(file);
      else writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
-@@ -350,7 +362,7 @@ const ENABLED_KEY_PREFIX = "icubeAgentExtension.enabled.mcp.config.ws0.";
+@@ -338,19 +330,14 @@ export function removeTraecodeWorkspaceMcpEntry(
+ // only when ITS OWN switch for this window is on — and that switch defaults to off, persisted in
+ // the window's storage DB: `<userData>/User/workspaceStorage/<hash>/state.vscdb`, ItemTable key
+ // `icubeAgentExtension.enabled.mcp.config.ws0.<server>` (ws0 = the single root folder), value the
+-// TEXT "true" that Trae's MCP panel writes when someone flips it by hand. Flipping by hand per
+-// repo is exactly the manual step this integration must not have, so the SessionStart hook writes
+-// the key itself: find the storage dir whose workspace.json points at this repo, and set it when
+-// it is not already "true". Verified against a live Trae CN install (key absent → tools hidden;
+-// panel toggle → TEXT "true" in that row). Effect starts with the NEXT window — Trae holds the
+-// table in memory for the running one — which matches when the registration lands anyway.
++// TEXT "true" that Trae's MCP panel writes when someone flips it by hand.
+ 
+ const WORKSPACE_STORAGE_REL = join("User", "workspaceStorage");
+ const ENABLED_KEY_PREFIX = "icubeAgentExtension.enabled.mcp.config.ws0.";
  const SQLITE_TIMEOUT_MS = 5_000;
  
  /** The ItemTable key Trae persists for this server's per-workspace switch. */
@@ -11383,7 +11439,7 @@ index 7526361..f2c5273 100644
  
  export const traecodeWorkspaceStorageDir = (home: string): string =>
    join(traecodeUserDataDir(home), WORKSPACE_STORAGE_REL);
-@@ -475,7 +487,7 @@ export function workspaceEnableHint(
+@@ -475,7 +462,7 @@ export function workspaceEnableHint(
      ) {
        return undefined;
      }
@@ -11628,6 +11684,289 @@ index 364253d..6b2fa68 100644
  });
  
  describe("readDshEvents", () => {
+diff --git a/src/core/transcript-kimi.test.ts b/src/core/transcript-kimi.test.ts
+index 90c1bcf..22c9602 100644
+--- a/src/core/transcript-kimi.test.ts
++++ b/src/core/transcript-kimi.test.ts
+@@ -1,7 +1,10 @@
+ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+ import { tmpdir } from "node:os";
+ import { join } from "node:path";
+-import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { buildRetain } from "./retain-hook";
++import { memoryCursorStore } from "./retain-cursor";
++import { memoryUsageCursorStore } from "./usage";
+ import { kimiSessionDir, readKimiTranscript, readKimiWire } from "./transcript-kimi";
+ import type { KimiWireEvent } from "./transcript-kimi";
+ 
+@@ -293,6 +296,112 @@ describe("readKimiWire", () => {
+ });
+ 
+ describe("readKimiTranscript", () => {
++  it("reads late turns after more than 32MiB of discarded results, reasoning and telemetry", () => {
++    const noise = "x".repeat(1024 * 1024);
++    writeWire("main", [
++      ...Array.from({ length: 34 }, (_, i) => i % 3 === 0
++        ? { type: "llm.request", body: noise }
++        : i % 3 === 1 ? loop({ type: "tool.result", result: noise }, i)
++        : loop({ type: "content.part", stepUuid: "reasoning", part: { type: "think", text: noise } }, i)),
++      { type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text: "late prompt" }], time: 100 },
++      loop({ type: "content.part", stepUuid: "late", part: { type: "text", text: "late reply" } }, 200),
++    ]);
++    expect(readKimiTranscript(root).map(turn => turn.content)).toEqual(["late prompt", "late reply"]);
++  });
++
++  it("bounds retained normalized content across agents", () => {
++    writeWire("main", [{ type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text: "x".repeat(20 * 1024 * 1024) }], time: 100 }]);
++    writeWire("agent-1", [loop({ type: "content.part", stepUuid: "large", part: { type: "text", text: "y".repeat(20 * 1024 * 1024) } }, 200)]);
++    const turns = readKimiTranscript(root);
++    expect(turns).toHaveLength(1);
++    expect(turns[0].content.length).toBe(20 * 1024 * 1024);
++  });
++
++  it("bounds an unfinished assistant step across many text records", () => {
++    writeWire("main", Array.from({ length: 34 }, () => loop({ type: "content.part", stepUuid: "unbounded", part: { type: "text", text: "x".repeat(1024 * 1024) } }, 100)));
++    expect(readKimiTranscript(root)).toEqual([]);
++  });
++
++  it("bounds the number of retained tiny turns across agents", () => {
++    writeWire("main", Array.from({ length: 100_001 }, (_, time) => ({ type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text: "x" }], time })));
++    writeWire("agent-1", [loop({ type: "tool.call", name: "Bash", args: {} }, 200_000)]);
++    const turns = readKimiTranscript(root);
++    expect(turns).toHaveLength(100_000);
++    expect(turns.every(turn => turn.content === "x")).toBe(true);
++  });
++
++  it("bounds tiny buffered text fragments even before a step produces a turn", () => {
++    writeWire("main", Array.from({ length: 100_001 }, () => loop({ type: "content.part", stepUuid: "tiny", part: { type: "text", text: "" } }, 100)));
++    writeWire("agent-1", [loop({ type: "tool.call", name: "Bash", args: {} }, 200)]);
++    expect(readKimiTranscript(root)).toEqual([]);
++  });
++
++  it("does not spend the item budget on discarded records", () => {
++    writeWire("main", [
++      ...Array.from({ length: 100_001 }, (_, i) => i % 3 === 0 ? { type: "llm.request" }
++        : i % 3 === 1 ? loop({ type: "tool.result", result: "" }, i)
++        : loop({ type: "content.part", part: { type: "think", text: "" } }, i)),
++      { type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text: "survives" }], time: 200_000 },
++    ]);
++    expect(readKimiTranscript(root).map(turn => turn.content)).toEqual(["survives"]);
++  });
++
++  it("appends main and subagent growth across Stops and replays a failed append unchanged", async () => {
++    const prompt = (text: string, time: number) => ({ type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text }], time });
++    const main = [prompt("start", 100), prompt("main work", 300)];
++    const agent = [loop({ type: "tool.call", name: "Bash", args: { command: "agent work" } }, 200)];
++    writeWire("main", main); writeWire("agent-1", agent);
++    const retain = vi.fn().mockResolvedValue(undefined);
++    const client = { bank: "A", retain, supportsAppendRetain: async () => true, bankUrl: (suffix: string) => suffix,
++      req: vi.fn(async () => new Response('{"status":"completed"}')) };
++    const cursors = memoryCursorStore();
++    const usageCursors = memoryUsageCursorStore();
++    const stop = () => buildRetain({ harness: "kimi-code", sessionId: "growing", transcriptPath: root, readTranscript: readKimiTranscript, client, cursors, usageCursors });
++    await stop();
++    expect(retain.mock.calls[0][5].updateMode).toBeUndefined();
++    expect(retain.mock.calls[0][0]).toContain("agent work");
++    main.push(prompt("main later", 400)); writeWire("main", main);
++    await stop();
++    expect(retain.mock.calls[1][5].updateMode).toBe("append");
++    expect(retain.mock.calls[1][0].split("\n").map((line: string) => JSON.parse(line).content)).toEqual(["main later"]);
++    agent.push(loop({ type: "tool.call", name: "Bash", args: { command: "agent later" } }, 500)); writeWire("agent-1", agent);
++    retain.mockRejectedValueOnce(new Error("connection failed"));
++    await stop();
++    expect(cursors.read("growing")?.pending).toHaveLength(1);
++    const failed = retain.mock.calls[2];
++    await stop();
++    expect(retain.mock.calls[3]).toEqual(failed);
++    expect(cursors.read("growing")?.pending?.length ?? 0).toBe(0);
++    await stop();
++    expect(retain).toHaveBeenCalledTimes(4);
++    client.req.mockResolvedValueOnce(new Response('{"status":"failed"}'));
++    main.push(prompt("after lost acknowledgement", 600)); writeWire("main", main);
++    await stop();
++    expect(retain).toHaveBeenCalledTimes(5);
++    expect(retain.mock.calls[4][5].updateMode).toBeUndefined();
++    expect(retain.mock.calls[4][0]).toContain("main later");
++    expect(retain.mock.calls[4][0]).toContain("agent later");
++  });
++
++  it.each(["late", "tied", "malformed", "edited"])("replaces safely when %s records change the retained prefix", async (kind) => {
++    const prompt = (text: string, time: number) => ({ type: "turn.prompt", origin: { kind: "user" }, input: [{ type: "text", text }], time });
++    const main = [prompt("main", 100)];
++    writeWire("main", main);
++    writeWire("agent-1", [loop({ type: "tool.call", name: "Bash", args: { command: "agent" } }, 200)]);
++    const retain = vi.fn().mockResolvedValue(undefined);
++    const client = { bank: "A", retain, supportsAppendRetain: async () => true, bankUrl: (suffix: string) => suffix,
++      req: vi.fn(async () => new Response('{"status":"completed"}')) };
++    const cursors = memoryCursorStore();
++    const stop = () => buildRetain({ harness: "kimi-code", sessionId: kind, transcriptPath: root, readTranscript: readKimiTranscript, client, cursors, usageCursors: memoryUsageCursorStore() });
++    await stop();
++    if (kind === "edited") main[0] = prompt("edited main", 100);
++    else main.push(prompt("new main", kind === "late" ? 150 : kind === "tied" ? 200 : 1e100));
++    writeWire("main", main);
++    await stop();
++    expect(retain).toHaveBeenCalledTimes(2);
++    expect(retain.mock.calls[1][5].updateMode).toBeUndefined();
++    expect(retain.mock.calls[1][0]).toContain(kind === "edited" ? "edited main" : "new main");
++  });
+   it("reads every agent's wire log in agent order — main first, then agent-<n> numerically", () => {
+     writeWire("main", [
+       {
+diff --git a/src/core/transcript-kimi.ts b/src/core/transcript-kimi.ts
+index b89f63a..9395130 100644
+--- a/src/core/transcript-kimi.ts
++++ b/src/core/transcript-kimi.ts
+@@ -66,7 +66,7 @@ const SESSION_PREFIX = "session_";
+ const MAIN_AGENT = "main";
+ 
+ /**
+- * Most wire-log text one Stop may decode across ALL of a session's agents.
++ * Most conversation text retained or buffered in an unfinished step across a session's agents.
+  *
+  * `readJsonl` streams and bounds nothing by design (#4380): memory is the largest record plus
+  * whatever the reader keeps, and a per-file cap was removed because a sliding tail window shifts
+@@ -77,9 +77,13 @@ const MAIN_AGENT = "main";
+  * DIRECTORY: one wire.jsonl per agent, and a swarm session on this machine has 61 of them under a
+  * single session. Bounding the sum is therefore a cross-file concern that no per-file reader can
+  * express. The budget is the same order as the old per-file cap — it keeps a hook process near
+- * ~100MB — and it is spent in agent order, so `main` is always read whole.
++ * ~100MB — and it is spent in agent order. Discarded tool output, reasoning and telemetry do not
++ * consume the budget. A streamed text step is bounded before normalization so it cannot grow
++ * without limit while waiting for its final part. Completed turns and buffered text fragments
++ * also share a 100,000-item limit to bound object and array overhead for tiny records.
+  */
+ const MAX_SESSION_CHARS = 32 * 1024 * 1024;
++const MAX_SESSION_ITEMS = 100_000;
+ 
+ /** Structural subset of one nested loop event (`context.append_loop_event.event`). */
+ interface KimiLoopEvent {
+@@ -160,16 +164,20 @@ export function kimiPromptText(input: unknown): string {
+  * the same function serves a file, a stream, or a backfill. Never throws on malformed entries.
+  */
+ export function readKimiWire(events: readonly KimiWireEvent[]): TransportTurn[] {
+-  const turns: TransportTurn[] = [];
++  return [...kimiTurns(events || [])];
++}
++
++function* kimiTurns(events: Iterable<KimiWireEvent>, budget?: { remaining: number; items: number }): Generator<TransportTurn> {
+   // One assistant message is streamed as N `content.part` records sharing a stepUuid. Buffer them
+   // so a step renders as one turn: the JSONL transcript is chunked a turn per line server-side, and
+   // a sentence split across four lines is four fragments to the extractor.
+-  let step: { uuid: string; texts: string[]; stamp: { timestamp?: string } } | undefined;
++  let step: { uuid: string; texts: string[]; chars: number; stamp: { timestamp?: string } } | undefined;
+   const flushStep = () => {
+     if (!step) return;
+     const content = stripInjectedMemory(step.texts.join("\n")).trim();
+-    if (content) turns.push({ role: "assistant", content, ...step.stamp });
++    const turn = content ? { role: "assistant" as const, content, ...step.stamp } : undefined;
+     step = undefined;
++    return turn;
+   };
+ 
+   for (const event of events || []) {
+@@ -177,11 +185,12 @@ export function readKimiWire(events: readonly KimiWireEvent[]): TransportTurn[]
+     const stamp = stampOf(event);
+ 
+     if (event.type === "turn.prompt") {
+-      flushStep();
++      const pending = flushStep();
++      if (pending) yield pending;
+       // Kimi drives itself through the same record: only `user` is a human — see the module doc.
+       if (event.origin?.kind !== "user") continue;
+       const content = stripInjectedMemory(kimiPromptText(event.input)).trim();
+-      if (content) turns.push({ role: "user", content, ...stamp });
++      if (content) yield { role: "user", content, ...stamp };
+       continue;
+     }
+     // Everything else conversational is nested. `context.append_message` is deliberately not a
+@@ -194,19 +203,29 @@ export function readKimiWire(events: readonly KimiWireEvent[]): TransportTurn[]
+       // `think` parts are the model's reasoning — dropped, like Claude `thinking`.
+       if (loop.part?.type !== "text" || typeof loop.part.text !== "string") continue;
+       const uuid = typeof loop.stepUuid === "string" ? loop.stepUuid : "";
+-      if (step && step.uuid !== uuid) flushStep();
+-      if (!step) step = { uuid, texts: [], stamp };
++      if (step && step.uuid !== uuid) {
++        const pending = flushStep();
++        if (pending) yield pending;
++      }
++      if (!step) step = { uuid, texts: [], chars: 0, stamp };
++      step.chars += loop.part.text.length + (step.texts.length ? 1 : 0);
++      if (budget && step.chars > budget.remaining) {
++        budget.remaining = -1;
++        return;
++      }
++      if (budget && --budget.items < 0) return;
+       step.texts.push(loop.part.text);
+     } else if (loop.type === "tool.call") {
+-      flushStep(); // a step's prose precedes the calls it made
++      const pending = flushStep();
++      if (pending) yield pending;
+       if (typeof loop.name !== "string" || !loop.name) continue;
+-      turns.push({ role: "action", content: actionLine(loop.name, loop.args), ...stamp });
++      yield { role: "action", content: actionLine(loop.name, loop.args), ...stamp };
+     }
+     // step.begin / step.end: loop bookkeeping. tool.result: raw tool output, which the shared
+     // `actionLine` convention keeps out of the bank (see transcript-util.ts).
+   }
+-  flushStep();
+-  return turns;
++  const pending = flushStep();
++  if (pending) yield pending;
+ }
+ 
+ /** Agent directories in a stable, readable order: the main loop first, then `agent-<n>` by number
+@@ -251,8 +270,7 @@ function parseEvent(rawLine: string): KimiWireEvent | undefined {
+ }
+ 
+ /**
+- * Read a whole Kimi session — every agent's wire log, concatenated in agent order — into one
+- * normalized transcript.
++ * Read a whole Kimi session into one normalized transcript, ordered by valid record timestamps.
+  *
+  * `path` is the SESSION DIRECTORY, not a file: Kimi's Stop payload has no transcript path, so
+  * `retain.parse` resolves the directory with `kimiSessionDir` and passes that (the devin-cli
+@@ -261,25 +279,30 @@ function parseEvent(rawLine: string): KimiWireEvent | undefined {
+  */
+ export function readKimiTranscript(path: string): TransportTurn[] {
+   const turns: TransportTurn[] = [];
+-  let remaining = MAX_SESSION_CHARS;
++  const budget = { remaining: MAX_SESSION_CHARS, items: MAX_SESSION_ITEMS };
+   for (const agentId of agentIds(path)) {
+     const wire = join(path, AGENTS_DIR, agentId, WIRE_LOG);
+-    const events: KimiWireEvent[] = [];
+-    for (const rawLine of readJsonl(wire)) {
+-      remaining -= rawLine.length;
+-      if (remaining < 0) break;
+-      const event = parseEvent(rawLine);
+-      if (event) events.push(event);
++    function* events(): Generator<KimiWireEvent> {
++      for (const rawLine of readJsonl(wire)) {
++        const event = parseEvent(rawLine);
++        if (event) yield event;
++      }
++    }
++    for (const turn of kimiTurns(events(), budget)) {
++      budget.remaining -= turn.content.length;
++      if (budget.remaining < 0 || --budget.items < 0) break;
++      turns.push(turn);
+     }
+-    for (const turn of readKimiWire(events)) turns.push(turn);
+-    if (remaining < 0) {
++    if (budget.remaining < 0 || budget.items < 0) {
+       // Same contract as core/jsonl.ts: over the cap is reported, never dropped in silence.
+-      log.warn(HARNESS, "session exceeds the wire-log budget — later agents were not read", {
++      log.warn(HARNESS, "session exceeds the retained-content budget — later agents were not read", {
+         sessionDir: path,
+         stoppedAt: wire,
+       });
+       break;
+     }
+   }
++  if (turns.every(turn => turn.timestamp !== undefined))
++    turns.sort((a, b) => Date.parse(a.timestamp!) - Date.parse(b.timestamp!));
+   return turns;
+ }
 diff --git a/src/core/transcript-util.ts b/src/core/transcript-util.ts
 index 107e827..d91d83c 100644
 --- a/src/core/transcript-util.ts
@@ -11691,10 +12030,10 @@ index dbc9254..e07ac87 100644
  /**
 diff --git a/src/core/turn-journal-policy.test.ts b/src/core/turn-journal-policy.test.ts
 new file mode 100644
-index 0000000..d8788b3
+index 0000000..43bf2e7
 --- /dev/null
 +++ b/src/core/turn-journal-policy.test.ts
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,699 @@
 +import { managedReadScope } from "@memory-router/coding-agents/runtime";
 +import { pendingContextKey, stashPendingContext } from "./session-cache";
 +import { runSessionStartHook } from "./session-start";
@@ -12081,14 +12420,16 @@ index 0000000..d8788b3
 +    else if (change === "mapping") config.principals.zcode.mapPathToBank[approved] = "B";
 +    else if (change === "scope") config.principals.zcode.additionalReadBanks = ["A"];
 +    else if (change === "workspace") {
-+      const nested = join(approved, "nested");
-+      mkdirSync(nested);
-+      input.stdin = JSON.stringify({ session_id: sessionId, cwd: nested, tool: true });
++      const other = join(root, "other-workspace");
++      mkdirSync(other);
++      config.principals.zcode.mapPathToBank[other] = "A";
++      input.stdin = JSON.stringify({ session_id: sessionId, cwd: other, tool: true });
 +    } else input.stdin = JSON.stringify({ session_id: "another-session", cwd: approved, tool: true });
 +    writeFileSync(managedPath, JSON.stringify(config));
 +    fetch.mockClear();
 +    fetch.mockResolvedValue(Response.json({ items: [] }));
-+    await runHook(hook, clients().makePrompt);
++    if (change === "workspace") await expect(runHook(hook, clients().makePrompt)).rejects.toThrow("memory access denied");
++    else await runHook(hook, clients().makePrompt);
 +    expect(process.stdout.write).not.toHaveBeenCalled();
 +    expect(fetch).not.toHaveBeenCalled();
 +    writeFileSync(managedPath, original);
@@ -12194,6 +12535,202 @@ index 0000000..d8788b3
 +    input.stdin = JSON.stringify({ session_id: sessionId, cwd: approved, tool: true });
 +    await runHook(hook, clients().makePrompt);
 +    expect(out).not.toHaveBeenCalled();
++  });
++});
++
++
++describe("Grok handoff across working-directory changes", () => {
++  const grok = HOOK_HARNESSES["grok-build"];
++
++  beforeEach(() => {
++    const config = JSON.parse(readFileSync(managedPath, "utf8"));
++    config.principals["grok-build"] = config.principals.zcode;
++    writeFileSync(managedPath, JSON.stringify(config));
++    configure({ codebaseSurvey: false });
++  });
++
++  function grokEvent(cwd: string, tool = false) {
++    input.stdin = JSON.stringify({ sessionId, cwd, prompt, hookEventName: tool ? "post_tool_use" : "user_prompt_submit" });
++  }
++
++  async function produce(source: string, cwd = approved) {
++    grokEvent(cwd);
++    if (source === "SessionStart") {
++      await runSessionStartHook(grok.sessionStart, () => ({
++        ...clients().makePrompt(), listDocumentIds: async () => new Set<string>(),
++      }));
++    } else await runHook(grok.prompt, clients().makePrompt);
++    vi.mocked(process.stdout.write).mockClear();
++  }
++
++  it.each(["SessionStart", "UserPromptSubmit"])("delivers %s context after cd into a project subdirectory, once", async (source) => {
++    const nested = join(approved, "src");
++    mkdirSync(nested);
++    await produce(source);
++    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
++    grokEvent(nested, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    const output = JSON.parse(String(vi.mocked(process.stdout.write).mock.calls[0]?.[0] ?? "null"));
++    expect(output?.hookSpecificOutput).toMatchObject({ hookEventName: "PostToolUse", additionalContext: expect.any(String) });
++    expect(output.hookSpecificOutput.additionalContext.length).toBeGreaterThan(0);
++    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
++      "https://router.example.test/v1/default/banks/A/documents?limit=1",
++      "https://router.example.test/v1/default/banks/B/documents?limit=1",
++    ]);
++    vi.mocked(process.stdout.write).mockClear();
++    grokEvent(approved, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).not.toHaveBeenCalled();
++  });
++
++  it("shares one handoff between SessionStart at root, a prompt in a subdirectory, and a root tool event", async () => {
++    const nested = join(approved, "src");
++    mkdirSync(nested);
++    await produce("SessionStart");
++    await produce("UserPromptSubmit", nested);
++    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
++    grokEvent(approved, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).toHaveBeenCalledOnce();
++    vi.mocked(process.stdout.write).mockClear();
++    grokEvent(nested, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).not.toHaveBeenCalled();
++  });
++
++  it("discards the original handoff when its anchor mapping is removed during awaited probes", async () => {
++    const nested = join(approved, "src");
++    mkdirSync(nested);
++    await produce("UserPromptSubmit");
++    const original = readFileSync(managedPath, "utf8");
++    const config = JSON.parse(original);
++    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
++      config.principals["grok-build"].mapPathToBank = { [nested]: "A" };
++      writeFileSync(managedPath, JSON.stringify(config));
++      return Response.json({ items: [] });
++    });
++    grokEvent(nested, true);
++    await expect(runHook(grok.prompt, clients().makePrompt)).rejects.toThrow("memory access denied");
++    expect(process.stdout.write).not.toHaveBeenCalled();
++    writeFileSync(managedPath, original);
++    fetch.mockResolvedValue(Response.json({ items: [] }));
++    grokEvent(approved, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).not.toHaveBeenCalled();
++  });
++
++  it.each(["SessionStart", "UserPromptSubmit"])("delivers %s context from a stable root alias to its physical descendant", async (source) => {
++    const physical = join(approved, "project");
++    const nested = join(physical, "src");
++    const alias = join(root, "session-root");
++    mkdirSync(nested, { recursive: true });
++    symlinkSync(physical, alias);
++    await produce(source, alias);
++    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
++    grokEvent(nested, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).toHaveBeenCalledOnce();
++    vi.mocked(process.stdout.write).mockClear();
++    grokEvent(alias, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).not.toHaveBeenCalled();
++  });
++
++  it.each([
++    ["SessionStart", "before", "alias"], ["UserPromptSubmit", "before", "alias"],
++    ["SessionStart", "before", "physical"], ["UserPromptSubmit", "before", "physical"],
++    ["SessionStart", "during", "alias"], ["UserPromptSubmit", "during", "alias"],
++  ])("keeps %s context out of a replacement workspace when its root alias changes %s probes (%s cwd)", async (source, when, spelling) => {
++    const first = join(approved, "first");
++    const second = join(approved, "second");
++    const alias = join(root, "session-root");
++    mkdirSync(first);
++    mkdirSync(second);
++    symlinkSync(first, alias);
++    await produce(source, alias);
++    const retarget = () => { rmSync(alias); symlinkSync(second, alias); };
++    if (when === "before") retarget();
++    let changed = when === "before";
++    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
++      if (!changed) { retarget(); changed = true; }
++      return Response.json({ items: [] });
++    });
++    grokEvent(spelling === "physical" ? second : alias, true);
++    const attempt = runHook(grok.prompt, clients().makePrompt);
++    if (when === "during") await expect(attempt).rejects.toThrow("memory access denied");
++    else await attempt;
++    expect(process.stdout.write).not.toHaveBeenCalled();
++    if (when === "before") expect(fetch).not.toHaveBeenCalled();
++    else {
++      rmSync(alias);
++      symlinkSync(first, alias);
++      grokEvent(alias, true);
++      await runHook(grok.prompt, clients().makePrompt);
++      expect(process.stdout.write).not.toHaveBeenCalled();
++    }
++  });
++
++  it.each(["SessionStart", "UserPromptSubmit"])("does not publish %s context into a replacement root while its client read awaits", async (source) => {
++    const first = join(approved, "first");
++    const second = join(approved, "second");
++    const alias = join(root, "session-root");
++    mkdirSync(first);
++    mkdirSync(second);
++    symlinkSync(first, alias);
++    const scope = managedReadScope("grok-build", alias);
++    const makeClient = () => ({
++      ...clients().makePrompt(),
++      listDocumentIds: async () => new Set<string>(),
++      readScope: () => ({ endpoint: scope.endpoint, bankId: scope.bankId, identity: scope.identity, banks: scope.banks }),
++      listPages: async () => { rmSync(alias); symlinkSync(second, alias); return []; },
++    });
++    grokEvent(alias);
++    if (source === "SessionStart") await runSessionStartHook(grok.sessionStart, makeClient);
++    else await expect(runHook(grok.prompt, makeClient)).rejects.toThrow("memory access denied");
++    vi.mocked(process.stdout.write).mockClear();
++    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
++    grokEvent(alias, true);
++    await runHook(grok.prompt, clients().makePrompt);
++    expect(process.stdout.write).not.toHaveBeenCalled();
++  });
++
++  it.each(["unmapped", "different bank", "another workspace", "symlink escape"])("does not deliver old workspace memory after moving into %s", async (boundary) => {
++    await produce("UserPromptSubmit");
++    const next = join(root, "other-workspace");
++    mkdirSync(next);
++    const config = JSON.parse(readFileSync(managedPath, "utf8"));
++    let cwd = next;
++    if (boundary === "different bank") {
++      cwd = join(approved, "different-bank");
++      mkdirSync(cwd);
++      config.principals["grok-build"].mapPathToBank[cwd] = "B";
++    } else if (boundary !== "unmapped") {
++      config.principals["grok-build"].mapPathToBank[next] = "A";
++      if (boundary === "symlink escape") {
++        cwd = join(approved, "escape");
++        symlinkSync(next, cwd);
++      }
++    }
++    writeFileSync(managedPath, JSON.stringify(config));
++    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
++    grokEvent(cwd, true);
++    await expect(runHook(grok.prompt, clients().makePrompt)).rejects.toThrow("memory access denied");
++    expect(process.stdout.write).not.toHaveBeenCalled();
++    expect(fetch).not.toHaveBeenCalled();
++  });
++
++  it("rechecks the recorded root's current mapping instead of using its cached authorization", async () => {
++    const nested = join(approved, "src");
++    mkdirSync(nested);
++    await produce("UserPromptSubmit");
++    const config = JSON.parse(readFileSync(managedPath, "utf8"));
++    config.principals["grok-build"].mapPathToBank = { [nested]: "A" };
++    writeFileSync(managedPath, JSON.stringify(config));
++    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [] }));
++    grokEvent(nested, true);
++    await expect(runHook(grok.prompt, clients().makePrompt)).rejects.toThrow("memory access denied");
++    expect(process.stdout.write).not.toHaveBeenCalled();
++    expect(fetch).not.toHaveBeenCalled();
 +  });
 +});
 diff --git a/src/core/turn-journal.test.ts b/src/core/turn-journal.test.ts

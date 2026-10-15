@@ -452,7 +452,7 @@ export async function runSessionStartHook(
       observationScopes: cfg.observationScopes,
     });
 
-    const handoffScope = spec.deferContextToToolHook && sessionId ? (client.readScope?.() ?? managedReadScope(cfg.routerHarness, cwd)) : undefined;
+    const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
     const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
     // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
     // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
@@ -462,11 +462,11 @@ export async function runSessionStartHook(
       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
     }
     if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
-      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, cwd, sessionId, handoffScope);
-      const current = managedReadScope(cfg.routerHarness, cwd);
+      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
+      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
       const clientScope = client.readScope?.() ?? current;
-      if (pendingContextKey(current.endpoint, current.bankId, cwd, sessionId, current) !== key ||
-          pendingContextKey(clientScope.endpoint, clientScope.bankId, cwd, sessionId, clientScope) !== key) return;
+      if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
+          pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
       stashPendingContext(harness, key, out.additionalContext);
       out.additionalContext = undefined;
     }
