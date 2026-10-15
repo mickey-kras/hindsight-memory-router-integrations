@@ -85,7 +85,7 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
     const output = new PassThrough();
     child.stdout = output;
     const kill = vi.spyOn(child, "kill").mockReturnValue(true);
-    const spawnImpl = vi.fn<typeof spawn>().mockReturnValue(child);
+    const spawnImpl = vi.fn<typeof spawn>().mockReturnValue(child) as unknown as typeof spawn;
     try {
       let settled = false;
       const result = npmViewVersion(IDENTITY, spawnImpl).then((version) => { settled = true; return version; });

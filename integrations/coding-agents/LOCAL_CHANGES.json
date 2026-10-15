@@ -42,7 +42,7 @@
   "src/core/knowledge-tools.ts": "710295f813259bc63065d8f88c1a612db1f6804c854e80ad8e6cecdaa9018f3d",
   "src/core/legacy.test.ts": "abd72ae1bcae22fa16d81ee614bd27bba183b55e6a6bfb11e74b8f109cff51b2",
   "src/core/log.ts": "ea003845166f03709f98cc2514e05237612d09852156ab27bdbb8df2a08cebd7",
-  "src/core/logging-privacy.test.ts": "3622adc03ca3f9a0d18894f1330b2bb2a192150cdffc6bc097c338575620271e",
+  "src/core/logging-privacy.test.ts": "201a0809a1fb71474e468588079ae9c8590629bc6dfd27e449a93829a0982ade",
   "src/core/missions.test.ts": "0441f84aa5ca4f8c6b0b1a4a79254477ca8401fe0984ee1e1e453bf84f900620",
   "src/core/private-state.test.ts": "3dbe458ba56ed609c2ad8fd0503223c3c28fef0976e97732de6942eb720134bf",
   "src/core/private-state.ts": "0c36fc2d7e3d48d3fafdeda6be29986fe9454dba93347e9ba2df4f60a4212922",
