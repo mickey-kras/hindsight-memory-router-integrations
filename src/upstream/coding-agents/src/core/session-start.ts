@@ -407,77 +407,71 @@ export async function runSessionStartHook(
   // so its hooks are a no-op — it must not re-seed/re-survey its own survey session.
   if (process.env.HINDSIGHT_DISABLE_HOOKS) return;
 
-  // Whole-body try/catch (unlike runHook/runRetainHook, which only guard individual steps): a
-  // throw here happens during session bootstrap, before the agent has done anything — more
-  // disruptive than a failure mid-prompt — so nothing in this function may ever escape it.
-  try {
-    const ev = readHookEvent(spec.harness);
-    if (!ev) return;
-    if (spec.accept && !spec.accept(ev)) return;
-    const { harness } = spec;
-    const { cwd: rawCwd, sessionId } = spec.parse(ev);
-    const cwd = rawCwd || process.cwd();
+  // Propagate failures to the shared lifecycle entrypoint for sanitized diagnostics and exit status.
+  const ev = readHookEvent(spec.harness);
+  if (!ev) return;
+  if (spec.accept && !spec.accept(ev)) return;
+  const { harness } = spec;
+  const { cwd: rawCwd, sessionId } = spec.parse(ev);
+  const cwd = rawCwd || process.cwd();
 
-    let cfg = loadConfig({ harness });
-    setLogLevel(cfg.logLevel);
-    syncCompanionSkill(harness); // keep the installed skill current with the package version
-    if (cfg.disabled) return;
-    // …and keep the package itself current. AFTER the disabled check, unlike the skill sync above:
-    // `disabled` means an inert plugin, and a network call plus a background npm install is not
-    // inert. It also keeps the two harness families symmetric — the plugin hosts never construct a
-    // RuntimeCore when disabled (harness/plugin-entry.ts), so they already skip this.
-    // Detached and rate-limited to once a day; the update lands for the NEXT session.
-    void maybeAutoUpdate(cfg);
+  let cfg = loadConfig({ harness });
+  setLogLevel(cfg.logLevel);
+  syncCompanionSkill(harness); // keep the installed skill current with the package version
+  if (cfg.disabled) return;
+  // …and keep the package itself current. AFTER the disabled check, unlike the skill sync above:
+  // `disabled` means an inert plugin, and a network call plus a background npm install is not
+  // inert. It also keeps the two harness families symmetric — the plugin hosts never construct a
+  // RuntimeCore when disabled (harness/plugin-entry.ts), so they already skip this.
+  // Detached and rate-limited to once a day; the update lands for the NEXT session.
+  void maybeAutoUpdate(cfg);
 
-    // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
-    // same bank however far the agent navigates (#3563).
-    const sessionRoot = sessionRootDir(harness, sessionId, cwd);
-    const derived = deriveBankIdOrSkip(cfg, cwd, harness, sessionRoot);
-    if (derived === null) return; // repository unidentifiable: no bank, no seed, no injection
-    const resolved = applyBankConfig(cfg, derived, cwd);
-    cfg = resolved.cfg;
-    const bankId = resolved.bankId;
-    if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
-    // Memory is live HERE — the one point where registering the host's per-repo MCP access is
-    // correct: the caller of an opt-out repo must not gain a config file it never asked for.
-    const mcpHint = spec.ensureMcpRegistration?.(cwd);
-    // Daemon mode: warm it up now, before the user has typed anything. The start itself is
-    // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
-    // cold one keeps coming up in the background and is picked up by a later turn.
-    await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
-    const client = makeClient({
-      routerHarness: cfg.routerHarness,
-      apiUrl: cfg.apiUrl,
-      apiToken: cfg.apiToken,
-      bank: bankId,
-      maxParallelRetains: cfg.maxParallelRetains,
-      observationScopes: cfg.observationScopes,
-    });
+  // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
+  // same bank however far the agent navigates (#3563).
+  const sessionRoot = sessionRootDir(harness, sessionId, cwd);
+  const derived = deriveBankIdOrSkip(cfg, cwd, harness, sessionRoot);
+  if (derived === null) return; // repository unidentifiable: no bank, no seed, no injection
+  const resolved = applyBankConfig(cfg, derived, cwd);
+  cfg = resolved.cfg;
+  const bankId = resolved.bankId;
+  if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+  // Memory is live HERE — the one point where registering the host's per-repo MCP access is
+  // correct: the caller of an opt-out repo must not gain a config file it never asked for.
+  const mcpHint = spec.ensureMcpRegistration?.(cwd);
+  // Daemon mode: warm it up now, before the user has typed anything. The start itself is
+  // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
+  // cold one keeps coming up in the background and is picked up by a later turn.
+  await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
+  const client = makeClient({
+    routerHarness: cfg.routerHarness,
+    apiUrl: cfg.apiUrl,
+    apiToken: cfg.apiToken,
+    bank: bankId,
+    maxParallelRetains: cfg.maxParallelRetains,
+    observationScopes: cfg.observationScopes,
+  });
 
-    const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
-    const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
-    // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
-    // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
-    if (mcpHint)
-      out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix)}` : renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix);
-    if (out.deferInitialReflect && sessionId) {
-      writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
-    }
-    if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
-      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
-      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
-      const clientScope = client.readScope?.() ?? current;
-      if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
-          pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
-      stashPendingContext(harness, key, out.additionalContext);
-      out.additionalContext = undefined;
-    }
-    // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
-    const payload = spec.emit(out);
-    if (out.systemMessage || out.additionalContext) {
-      process.stdout.write(JSON.stringify(payload));
-    }
-  } catch {
-    /* SessionStart must never throw and break the session */
+  const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
+  const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
+  // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
+  // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
+  if (mcpHint)
+    out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix)}` : renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix);
+  if (out.deferInitialReflect && sessionId) {
+    writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
+  }
+  if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
+    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
+    const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
+    const clientScope = client.readScope?.() ?? current;
+    if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
+        pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
+    stashPendingContext(harness, key, out.additionalContext);
+    out.additionalContext = undefined;
+  }
+  // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
+  const payload = spec.emit(out);
+  if (out.systemMessage || out.additionalContext) {
+    process.stdout.write(JSON.stringify(payload));
   }
 }

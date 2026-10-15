@@ -1356,37 +1356,42 @@ it("the packaged Grok hook rejects a changed effective human principal with the 
   expect(changed.requests).toEqual([]);
 }, 15_000);
 
-it.each(["denied", "unexpected"])(
-  "the packaged Codex prompt observes %s rejection without leaking diagnostics",
-  (kind) => {
-    const dir = setup();
-    execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
-    const normalPath = join(dir, "normal.json");
-    writeFileSync(normalPath, JSON.stringify({ autoSeed: false, retainSessions: false }));
-    const entry = join(dir, "package/dist/codex-hook.js");
-    const launch = `
-    const originalTrim = String.prototype.trim;
-    String.prototype.trim = function () {
-      if (process.env.HOOK_FAILURE_KIND === 'unexpected' && String(this) === 'TRIGGER_REJECTION')
-        throw new Error('SECRET_REJECTION_TOKEN=' + 'x'.repeat(10000));
-      return originalTrim.call(this);
+it.each([
+  ["codex-hook.js", "denied"],
+  ["codex-hook.js", "unexpected"],
+  ["codex-sessionstart-hook.js", "denied"],
+  ["codex-sessionstart-hook.js", "unexpected"],
+])("the packaged %s observes %s rejection without leaking diagnostics", (entrypoint, kind) => {
+  const dir = setup();
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+  const normalPath = join(dir, "normal.json");
+  writeFileSync(normalPath, JSON.stringify({ autoSeed: false, retainSessions: false }));
+  const entry = join(dir, "package/dist", entrypoint);
+  const launch = `
+    const originalParse = JSON.parse;
+    JSON.parse = function (...args) {
+      const value = originalParse(...args);
+      if (process.env.HOOK_FAILURE_KIND === 'unexpected' && value?.session_id === 'failure-test')
+        Object.defineProperty(value, 'cwd', { get() {
+          throw new Error('SECRET_REJECTION_TOKEN=' + 'x'.repeat(10000));
+        }});
+      return value;
     };
     globalThis.fetch = async () => new Response('SECRET_403_BODY', { status: 403 });
     import(${JSON.stringify(entry)});
   `;
-    const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", launch], {
-      cwd: dir,
-      input: JSON.stringify({ cwd: dir, session_id: "failure-test", prompt: "TRIGGER_REJECTION" }),
-      env: { ...process.env, HINDSIGHT_CONFIG: normalPath, HOOK_FAILURE_KIND: kind, TMPDIR: dir },
-      encoding: "utf8",
-      timeout: 10_000,
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("[memory-router] Hook failed; memory context unavailable.\n");
-  },
-);
+  const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", launch], {
+    cwd: dir,
+    input: JSON.stringify({ cwd: dir, session_id: "failure-test", prompt: "TRIGGER_REJECTION" }),
+    env: { ...process.env, HINDSIGHT_CONFIG: normalPath, HOOK_FAILURE_KIND: kind, TMPDIR: dir, HOME: dir },
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("[memory-router] Hook failed; memory context unavailable.\n");
+});
 
 it("the packaged manual seed command reports an unavailable executable without claiming seeding", () => {
   const dir = setup();

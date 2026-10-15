@@ -1,6 +1,6 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..7f96f92
+index 0000000..d39218f
 --- /dev/null
 +++ b/DEVIATIONS.md
 @@ -0,0 +1,45 @@
@@ -46,7 +46,7 @@ index 0000000..7f96f92
 +
 +Multi-source conversation retention preserves rollout contributions in their original order and rereads their sources when rebuilding the shared document. Sources must remain readable, including replies previously retained before their transcript was flushed. Reconstruction supports up to 16 source references and refuses any decoded source or assembled document exceeding 32 MiB of serialized turns or 100,000 turns. Missing or ambiguous sources, unknown legacy continuation boundaries, moving copied prefixes and exceeded limits stop the write with a diagnostic instead of replacing the document with incomplete data. Single-source and persistent-runtime retention retain their existing size behavior.
 +
-+Hook lifecycle entrypoints observe rejected work, emit one fixed stderr diagnostic and exit 1 without adding protocol stdout. Authorization denial remains terminal. Seed launch waits only for the child spawn/error event; failure is reported without raw exception text, and manual success means launched, not extraction complete.
++SessionStart propagates failures to the shared lifecycle entrypoint. Hook lifecycle entrypoints observe rejected work, emit one fixed stderr diagnostic and exit 1 without adding protocol stdout. Authorization denial remains terminal. Seed launch waits only for the child spawn/error event; failure is reported without raw exception text, and manual success means launched, not extraction complete.
 +
 +Sync requires a confirmed zero active-operation count. Unavailable or malformed operation probes remain unknown; background settlement retries for up to 15 minutes and reports unconfirmed settlement at timeout. Authorization denial remains terminal.
 diff --git a/LICENSE b/LICENSE
@@ -11857,7 +11857,7 @@ index efe1ce8..93978d3 100644
          /* best-effort: a cursor that cannot be written costs a replace, never data */
        }
 diff --git a/src/core/session-start.ts b/src/core/session-start.ts
-index 5cc323b..d7db35a 100644
+index 5cc323b..6bba2ac 100644
 --- a/src/core/session-start.ts
 +++ b/src/core/session-start.ts
 @@ -1,3 +1,6 @@
@@ -12026,40 +12026,140 @@ index 5cc323b..d7db35a 100644
  
    // The old per-agent plugin keeps running next to this one until the user removes it — say so
    // where they will see it. Only Claude Code had that plugin.
-@@ -436,6 +446,7 @@ export async function runSessionStartHook(
-     // cold one keeps coming up in the background and is picked up by a later turn.
-     await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
-     const client = makeClient({
-+      routerHarness: cfg.routerHarness,
-       apiUrl: cfg.apiUrl,
-       apiToken: cfg.apiToken,
-       bank: bankId,
-@@ -443,16 +454,22 @@ export async function runSessionStartHook(
-       observationScopes: cfg.observationScopes,
-     });
+@@ -397,70 +407,71 @@ export async function runSessionStartHook(
+   // so its hooks are a no-op — it must not re-seed/re-survey its own survey session.
+   if (process.env.HINDSIGHT_DISABLE_HOOKS) return;
  
-+    const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
-     const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
-     // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
-     // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
-     if (mcpHint)
+-  // Whole-body try/catch (unlike runHook/runRetainHook, which only guard individual steps): a
+-  // throw here happens during session bootstrap, before the agent has done anything — more
+-  // disruptive than a failure mid-prompt — so nothing in this function may ever escape it.
+-  try {
+-    const ev = readHookEvent(spec.harness);
+-    if (!ev) return;
+-    if (spec.accept && !spec.accept(ev)) return;
+-    const { harness } = spec;
+-    const { cwd: rawCwd, sessionId } = spec.parse(ev);
+-    const cwd = rawCwd || process.cwd();
++  // Propagate failures to the shared lifecycle entrypoint for sanitized diagnostics and exit status.
++  const ev = readHookEvent(spec.harness);
++  if (!ev) return;
++  if (spec.accept && !spec.accept(ev)) return;
++  const { harness } = spec;
++  const { cwd: rawCwd, sessionId } = spec.parse(ev);
++  const cwd = rawCwd || process.cwd();
+ 
+-    let cfg = loadConfig({ harness });
+-    setLogLevel(cfg.logLevel);
+-    syncCompanionSkill(harness); // keep the installed skill current with the package version
+-    if (cfg.disabled) return;
+-    // …and keep the package itself current. AFTER the disabled check, unlike the skill sync above:
+-    // `disabled` means an inert plugin, and a network call plus a background npm install is not
+-    // inert. It also keeps the two harness families symmetric — the plugin hosts never construct a
+-    // RuntimeCore when disabled (harness/plugin-entry.ts), so they already skip this.
+-    // Detached and rate-limited to once a day; the update lands for the NEXT session.
+-    void maybeAutoUpdate(cfg);
++  let cfg = loadConfig({ harness });
++  setLogLevel(cfg.logLevel);
++  syncCompanionSkill(harness); // keep the installed skill current with the package version
++  if (cfg.disabled) return;
++  // …and keep the package itself current. AFTER the disabled check, unlike the skill sync above:
++  // `disabled` means an inert plugin, and a network call plus a background npm install is not
++  // inert. It also keeps the two harness families symmetric — the plugin hosts never construct a
++  // RuntimeCore when disabled (harness/plugin-entry.ts), so they already skip this.
++  // Detached and rate-limited to once a day; the update lands for the NEXT session.
++  void maybeAutoUpdate(cfg);
+ 
+-    // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
+-    // same bank however far the agent navigates (#3563).
+-    const sessionRoot = sessionRootDir(harness, sessionId, cwd);
+-    const derived = deriveBankIdOrSkip(cfg, cwd, harness, sessionRoot);
+-    if (derived === null) return; // repository unidentifiable: no bank, no seed, no injection
+-    const resolved = applyBankConfig(cfg, derived, cwd);
+-    cfg = resolved.cfg;
+-    const bankId = resolved.bankId;
+-    if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+-    // Memory is live HERE — the one point where registering the host's per-repo MCP access is
+-    // correct: the caller of an opt-out repo must not gain a config file it never asked for.
+-    const mcpHint = spec.ensureMcpRegistration?.(cwd);
+-    // Daemon mode: warm it up now, before the user has typed anything. The start itself is
+-    // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
+-    // cold one keeps coming up in the background and is picked up by a later turn.
+-    await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
+-    const client = makeClient({
+-      apiUrl: cfg.apiUrl,
+-      apiToken: cfg.apiToken,
+-      bank: bankId,
+-      maxParallelRetains: cfg.maxParallelRetains,
+-      observationScopes: cfg.observationScopes,
+-    });
++  // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
++  // same bank however far the agent navigates (#3563).
++  const sessionRoot = sessionRootDir(harness, sessionId, cwd);
++  const derived = deriveBankIdOrSkip(cfg, cwd, harness, sessionRoot);
++  if (derived === null) return; // repository unidentifiable: no bank, no seed, no injection
++  const resolved = applyBankConfig(cfg, derived, cwd);
++  cfg = resolved.cfg;
++  const bankId = resolved.bankId;
++  if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
++  // Memory is live HERE — the one point where registering the host's per-repo MCP access is
++  // correct: the caller of an opt-out repo must not gain a config file it never asked for.
++  const mcpHint = spec.ensureMcpRegistration?.(cwd);
++  // Daemon mode: warm it up now, before the user has typed anything. The start itself is
++  // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
++  // cold one keeps coming up in the background and is picked up by a later turn.
++  await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
++  const client = makeClient({
++    routerHarness: cfg.routerHarness,
++    apiUrl: cfg.apiUrl,
++    apiToken: cfg.apiToken,
++    bank: bankId,
++    maxParallelRetains: cfg.maxParallelRetains,
++    observationScopes: cfg.observationScopes,
++  });
+ 
+-    const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
+-    // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
+-    // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
+-    if (mcpHint)
 -      out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${mcpHint}` : mcpHint;
-+      out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix)}` : renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix);
-     if (out.deferInitialReflect && sessionId) {
-       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
-     }
+-    if (out.deferInitialReflect && sessionId) {
+-      writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
+-    }
 -    if (spec.deferContextToToolHook && out.additionalContext && sessionId) {
 -      stashPendingContext(harness, sessionId, out.additionalContext);
-+    if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
-+      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
-+      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
-+      const clientScope = client.readScope?.() ?? current;
-+      if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
-+          pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
-+      stashPendingContext(harness, key, out.additionalContext);
-       out.additionalContext = undefined;
-     }
-     // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
+-      out.additionalContext = undefined;
+-    }
+-    // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
+-    const payload = spec.emit(out);
+-    if (out.systemMessage || out.additionalContext) {
+-      process.stdout.write(JSON.stringify(payload));
+-    }
+-  } catch {
+-    /* SessionStart must never throw and break the session */
++  const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
++  const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
++  // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
++  // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
++  if (mcpHint)
++    out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix)}` : renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix);
++  if (out.deferInitialReflect && sessionId) {
++    writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
++  }
++  if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
++    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
++    const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
++    const clientScope = client.readScope?.() ?? current;
++    if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
++        pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
++    stashPendingContext(harness, key, out.additionalContext);
++    out.additionalContext = undefined;
++  }
++  // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
++  const payload = spec.emit(out);
++  if (out.systemMessage || out.additionalContext) {
++    process.stdout.write(JSON.stringify(payload));
+   }
+ }
 diff --git a/src/core/skill-sync.ts b/src/core/skill-sync.ts
 index 93025b5..c4437d2 100644
 --- a/src/core/skill-sync.ts
