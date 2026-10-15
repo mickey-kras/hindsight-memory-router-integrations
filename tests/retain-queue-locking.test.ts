@@ -44,9 +44,20 @@ function writer(mode: "append" | "rewrite" | "normal", maxItems = 1) {
       process.stdout.write("accepted\\n");
     } catch (error) { process.stdout.write(error.code + "\\n"); }
   `;
-  const child = spawn(process.execPath, ["--experimental-transform-types", "--input-type=module", "-e", source], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = spawn(
+    process.execPath,
+    [
+      "--experimental-transform-types",
+      "--experimental-loader",
+      new URL("./helpers/typescript-source-loader.mjs", import.meta.url).href,
+      "--input-type=module",
+      "-e",
+      source,
+    ],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   let output = "";
   let stderr = "";
   let reportPaused: () => void;
@@ -152,12 +163,12 @@ describe.skipIf(process.platform === "win32")("queue lock process ownership", ()
     const first = writer("rewrite", 2);
     try {
       await first.paused;
-      expect(readdirSync(directory)).toContain("hindsight-retain-queue.main.jsonl.tmp");
+      expect(readdirSync(directory).filter((name) => name.endsWith(".tmp"))).toHaveLength(1);
       first.child.kill("SIGKILL");
       await first.done;
       expect(await writer("normal", 2).done).toBe("accepted\n");
       expect(items().map((item) => item.content)).toEqual(["existing", "normal"]);
-      expect(readdirSync(directory)).not.toContain("hindsight-retain-queue.main.jsonl.tmp");
+      expect(readdirSync(directory).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     } finally {
       first.child.kill("SIGKILL");
       await first.done;
