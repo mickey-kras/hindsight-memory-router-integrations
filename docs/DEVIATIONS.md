@@ -17,7 +17,7 @@ Base: `vectorize-io/hindsight` OpenClaw integration `v1.0.0`.
 
 Reused source: `src/upstream/src/{retain-queue,session-patterns,types}.ts`.
 
-OpenClaw direct runtime dependencies: `@vectorize-io/hindsight-agent-sdk@0.1.1` and `fs-native-extensions@^1.5.1`. `@vectorize-io/hindsight-client@1.0.0` is a transitive SDK dependency and a direct development dependency, not a direct runtime dependency.
+OpenClaw direct production dependencies: `@vectorize-io/hindsight-agent-sdk@0.1.1`, `@vectorize-io/hindsight-client@1.0.0` and `fs-native-extensions@^1.5.1`. The client package supplies types required by the exported TypeScript declarations, including `MinScores`.
 
 Dependency declarations and exact resolved versions are authoritative in each package's `package.json` and `npm-shrinkwrap.json`. See the [dependency inventory](DEVELOPMENT.md#dependency-inventory).
 
@@ -27,6 +27,6 @@ Router revision 4 shares transport and bank checks with coding-agents. Page read
 
 Session patterns use global replacements and a literal sentinel lookup; wildcard matching is unchanged. `src/upstream/SHA256SUMS` remains the pristine upstream manifest.
 
-The Agent SDK remains 0.1.1. Its client dependency is overridden to 1.0.0 after verifying its constructor and schema factory exports. The plugin uses only the SDK tool definitions; every executor is replaced by the guarded router transport.
+The Agent SDK remains 0.1.1. The repository overrides its client dependency to 1.0.0 after verifying its constructor and schema factory exports. The plugin uses only the SDK tool definitions; every executor is replaced by the guarded router transport.
 
 OpenClaw's new native memory-provider registration remains outside the router-owned entrypoint; the explicit managed tools stay registered. Its ended-transcript context type is imported, while the hook retains only its supplied message payload.
