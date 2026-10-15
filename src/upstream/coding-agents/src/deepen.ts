@@ -35,7 +35,7 @@ import {
 } from "./core/survey-lease";
 import { buildPageTrigger } from "./core/missions";
 import { HindsightClient } from "./core/hindsight";
-import { DEEPEN_DIFF_TARGET } from "./core/status";
+import { DEEPEN_DIFF_TARGET, waitForSettlement } from "./core/status";
 import type { ChatSession } from "./core/types";
 import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
@@ -290,17 +290,7 @@ async function main() {
     // The drain above only covers operations THIS run enqueued — consolidation and the template's
     // page refreshes run server-side on their own schedule. `synced` requires ZERO active ops, so
     // wait (bounded) for the bank to fully settle before declaring the run complete.
-    const settleDeadline = Date.now() + 15 * 60 * 1000;
-    for (;;) {
-      const active = await client.activeOperations().catch(() => 0);
-      if (active === 0) break;
-      if (Date.now() > settleDeadline) {
-        log(`[deepen] ${active} server-side op(s) still active at settle timeout — proceeding`);
-        break;
-      }
-      log(`[deepen] waiting for ${active} server-side op(s) to settle …`);
-      await new Promise((r) => setTimeout(r, 5000));
-    }
+    const settled = await waitForSettlement(client, log);
     // (knowledge pages need no separate pass: configureBank seeds them through the knowledge-base
     // API every run, matched by name — syncStatus's `synced` stays sound because it also requires
     // the gitlog seed present AND zero active extraction operations.)
@@ -311,9 +301,10 @@ async function main() {
       ms: Date.now() - t0,
       newChats: sessions.length,
       failures,
+      settled,
     });
     log(
-      `\n✅ deepen complete in ${((Date.now() - t0) / 1000).toFixed(1)}s${failures ? ` (${failures} items failed to enqueue)` : ""}.`
+      `\ndeepen complete in ${((Date.now() - t0) / 1000).toFixed(1)}s${settled ? "" : " (settlement unconfirmed)"}${failures ? ` (${failures} items failed to enqueue)` : ""}.`
     );
   } finally {
     releaseLease(lease);
