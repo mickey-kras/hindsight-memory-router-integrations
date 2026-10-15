@@ -48,6 +48,12 @@ jobs:
           cache: npm
           cache-dependency-path: npm-shrinkwrap.json
 
+      - name: Install npm packaging and audit client
+        # Keep builds, test packs, release packs and audits on the reviewed npm.
+        run: |
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = 11.19.1
+
       - run: npm ci
       - run: npm ci --prefix src/upstream/coding-agents
       - run: npm run lint
@@ -62,11 +68,6 @@ jobs:
       - run: node scripts/verify-coding-upstream.mjs
       - run: node scripts/verify-openclaw-overlay.mjs
       - run: node --test scripts/verify-vendored-files.test.mjs
-      - name: Install supported audit client
-        # npm < 11 audits through the retired /audits/quick endpoint (HTTP 400
-        # "endpoint is being retired"); npm 11 queries the supported bulk
-        # advisory endpoint. Upgrade once so every later audit step benefits.
-        run: npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
       - name: Install release tools
         run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Audit release tools
@@ -235,9 +236,10 @@ jobs:
         # packages/ is gitignored; the smoke gate packs from source and pins
         # the bytes against PACKAGE_SHA256 before testing them.
         run: |
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = 11.19.1
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
-          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
           npm run build
           npm run build:coding-agents
           mkdir -p packages
