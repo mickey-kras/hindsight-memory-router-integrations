@@ -114,7 +114,7 @@ async function settleWithinHookBudget(work: Promise<void>): Promise<boolean> {
  * at its boundary and never calls Hindsight directly.
  */
 export function createClineHooks(
-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript">,
+  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "hasSession">,
   configuredSessionId?: string,
   sessionStart?: Promise<void>
 ) {
@@ -139,7 +139,9 @@ export function createClineHooks(
       const user = latestUserMessage(snapshot.messages);
       if (!user) return undefined;
       const id = sessionId(snapshot, configuredSessionId);
-      if (injectedPrompts.get(id) !== user.id) {
+      // Capacity denial or eviction invalidates prompt deduplication: the same host
+      // message must get another admission attempt once a slot becomes available.
+      if (injectedPrompts.get(id) !== user.id || !core.hasSession(id)) {
         injectedPrompts.delete(id);
         injectedPrompts.set(id, user.id);
         if (injectedPrompts.size > MAX_RUNTIME_SESSIONS) {

@@ -6471,8 +6471,52 @@ index 9a1ec42..23b1835 100644
  }
  
  /* c8 ignore start */
+diff --git a/src/cline.test.ts b/src/cline.test.ts
+index d6e9c8e..9d4da1f 100644
+--- a/src/cline.test.ts
++++ b/src/cline.test.ts
+@@ -12,6 +12,7 @@ describe("Cline native plugin adapter", () => {
+   it("injects the shared RuntimeCore context once for each new user message", async () => {
+     const onPrompt = vi.fn(async () => {});
+     const core = {
++      hasSession: vi.fn(() => true),
+       onPrompt,
+       getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
+       onTranscript: vi.fn(async () => {}),
+@@ -39,6 +40,7 @@ describe("Cline native plugin adapter", () => {
+       releaseSessionStart = resolve;
+     });
+     const core = {
++      hasSession: vi.fn(() => true),
+       onPrompt: vi.fn(async () => {}),
+       getInjection: vi.fn(() => undefined),
+       onTranscript: vi.fn(async () => {}),
+@@ -60,6 +62,7 @@ describe("Cline native plugin adapter", () => {
+     "does not let a slow shared reflect exceed Cline's sandbox hook budget",
+     async () => {
+       const core = {
++        hasSession: vi.fn(() => true),
+         onPrompt: vi.fn(() => new Promise<void>(() => {})),
+         getInjection: vi.fn(() => undefined),
+         onTranscript: vi.fn(async () => {}),
+@@ -82,6 +85,7 @@ describe("Cline native plugin adapter", () => {
+     "does not let a cold daemon start exceed Cline's sandbox hook budget",
+     async () => {
+       const core = {
++        hasSession: vi.fn(() => true),
+         onPrompt: vi.fn(async () => {}),
+         getInjection: vi.fn(() => undefined),
+         onTranscript: vi.fn(async () => {}),
+@@ -100,6 +104,7 @@ describe("Cline native plugin adapter", () => {
+ 
+   it("retains only user-visible text and excludes tool arguments/results", async () => {
+     const core = {
++      hasSession: vi.fn(() => true),
+       onPrompt: vi.fn(async () => {}),
+       getInjection: vi.fn(() => undefined),
+       onTranscript: vi.fn(async () => {}),
 diff --git a/src/cline.ts b/src/cline.ts
-index 0050fc1..cb1b7f6 100644
+index 0050fc1..7b82934 100644
 --- a/src/cline.ts
 +++ b/src/cline.ts
 @@ -7,7 +7,7 @@
@@ -6484,7 +6528,12 @@ index 0050fc1..cb1b7f6 100644
  import type { TransportTurn } from "./core/chat";
  import { diag } from "./core/diag";
  
-@@ -118,7 +118,7 @@ export function createClineHooks(
+@@ -114,11 +114,11 @@ async function settleWithinHookBudget(work: Promise<void>): Promise<boolean> {
+  * at its boundary and never calls Hindsight directly.
+  */
+ export function createClineHooks(
+-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript">,
++  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "hasSession">,
    configuredSessionId?: string,
    sessionStart?: Promise<void>
  ) {
@@ -6493,14 +6542,16 @@ index 0050fc1..cb1b7f6 100644
    let sessionStartAwaited = false;
    return {
      async beforeModel({
-@@ -139,9 +139,13 @@ export function createClineHooks(
+@@ -139,9 +139,15 @@ export function createClineHooks(
        const user = latestUserMessage(snapshot.messages);
        if (!user) return undefined;
        const id = sessionId(snapshot, configuredSessionId);
 -      const promptKey = `${id}:${user.id}`;
 -      if (!injectedPrompts.has(promptKey)) {
 -        injectedPrompts.add(promptKey);
-+      if (injectedPrompts.get(id) !== user.id) {
++      // Capacity denial or eviction invalidates prompt deduplication: the same host
++      // message must get another admission attempt once a slot becomes available.
++      if (injectedPrompts.get(id) !== user.id || !core.hasSession(id)) {
 +        injectedPrompts.delete(id);
 +        injectedPrompts.set(id, user.id);
 +        if (injectedPrompts.size > MAX_RUNTIME_SESSIONS) {
@@ -6510,7 +6561,7 @@ index 0050fc1..cb1b7f6 100644
          const prompt = user.content
            .filter((part) => part.type === "text" && part.text)
            .map((part) => part.text!)
-@@ -180,16 +184,15 @@ export function createClineHooks(
+@@ -180,16 +186,15 @@ export function createClineHooks(
      async afterRun({ snapshot }: { snapshot: ClineSnapshot }): Promise<void> {
        const turns = clineTranscript(snapshot.messages);
        // afterRun: the run has ended, so the last turn is complete.
@@ -11497,10 +11548,10 @@ index 0000000..53f119e
 +});
 diff --git a/src/core/runtime-lifecycle.test.ts b/src/core/runtime-lifecycle.test.ts
 new file mode 100644
-index 0000000..6671f4e
+index 0000000..942649e
 --- /dev/null
 +++ b/src/core/runtime-lifecycle.test.ts
-@@ -0,0 +1,355 @@
+@@ -0,0 +1,377 @@
 +import { afterEach, describe, expect, it, vi } from "vitest";
 +import { resolveConfig } from "./config";
 +import type { HindsightClient } from "./hindsight";
@@ -11615,9 +11666,31 @@ index 0000000..6671f4e
 +    expect(f.core.hasSession("shutdown")).toBe(false);
 +  });
 +
++  it("retries the same Cline message after capacity denial without duplicating admitted recall", async () => {
++    const f = fixture();
++    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onPrompt(`active-${i}`, "prompt");
++    const onPrompt = vi.spyOn(f.core, "onPrompt");
++    const hooks = createClineHooks(f.core);
++    const input = { snapshot: { agentId: "retry", messages: [{ id: "same-message", role: "user" as const, content: [{ type: "text", text: "recall my context" }], createdAt: 1 }] }, request: { messages: [] } };
++    expect(await hooks.beforeModel(input)).toBeUndefined();
++    expect(f.core.hasSession("retry")).toBe(false);
++    expect(onPrompt).toHaveBeenCalledTimes(1);
++    f.core.disposeSession("active-0");
++    const admitted = await hooks.beforeModel(input);
++    expect(f.core.hasSession("retry")).toBe(true);
++    expect(admitted?.messages.at(-1)?.content[0].text).toContain("private memory");
++    expect(onPrompt).toHaveBeenCalledTimes(2);
++    await hooks.beforeModel(input);
++    expect(onPrompt).toHaveBeenCalledTimes(2);
++    f.core.disposeSession("retry");
++    await hooks.beforeModel(input);
++    expect(f.core.hasSession("retry")).toBe(true);
++    expect(onPrompt).toHaveBeenCalledTimes(3);
++  });
++
 +  it("bounds Cline deduplication and remembers only the current prompt per session", async () => {
 +    const onPrompt = vi.fn(async () => {});
-+    const hooks = createClineHooks({ onPrompt, getInjection: () => undefined, onTranscript: async () => {} });
++    const hooks = createClineHooks({ onPrompt, getInjection: () => undefined, onTranscript: async () => {}, hasSession: () => true });
 +    const prompt = async (session: string, id: string): Promise<void> => {
 +      await hooks.beforeModel({ snapshot: { agentId: session, messages: [{ id, role: "user", content: [{ type: "text", text: "prompt" }], createdAt: 1 }] }, request: { messages: [] } });
 +    };

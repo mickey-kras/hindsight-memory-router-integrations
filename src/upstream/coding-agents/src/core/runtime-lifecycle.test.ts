@@ -112,9 +112,31 @@ describe("bounded runtime lifecycle", () => {
     expect(f.core.hasSession("shutdown")).toBe(false);
   });
 
+  it("retries the same Cline message after capacity denial without duplicating admitted recall", async () => {
+    const f = fixture();
+    for (let i = 0; i < MAX_RUNTIME_SESSIONS; i++) await f.core.onPrompt(`active-${i}`, "prompt");
+    const onPrompt = vi.spyOn(f.core, "onPrompt");
+    const hooks = createClineHooks(f.core);
+    const input = { snapshot: { agentId: "retry", messages: [{ id: "same-message", role: "user" as const, content: [{ type: "text", text: "recall my context" }], createdAt: 1 }] }, request: { messages: [] } };
+    expect(await hooks.beforeModel(input)).toBeUndefined();
+    expect(f.core.hasSession("retry")).toBe(false);
+    expect(onPrompt).toHaveBeenCalledTimes(1);
+    f.core.disposeSession("active-0");
+    const admitted = await hooks.beforeModel(input);
+    expect(f.core.hasSession("retry")).toBe(true);
+    expect(admitted?.messages.at(-1)?.content[0].text).toContain("private memory");
+    expect(onPrompt).toHaveBeenCalledTimes(2);
+    await hooks.beforeModel(input);
+    expect(onPrompt).toHaveBeenCalledTimes(2);
+    f.core.disposeSession("retry");
+    await hooks.beforeModel(input);
+    expect(f.core.hasSession("retry")).toBe(true);
+    expect(onPrompt).toHaveBeenCalledTimes(3);
+  });
+
   it("bounds Cline deduplication and remembers only the current prompt per session", async () => {
     const onPrompt = vi.fn(async () => {});
-    const hooks = createClineHooks({ onPrompt, getInjection: () => undefined, onTranscript: async () => {} });
+    const hooks = createClineHooks({ onPrompt, getInjection: () => undefined, onTranscript: async () => {}, hasSession: () => true });
     const prompt = async (session: string, id: string): Promise<void> => {
       await hooks.beforeModel({ snapshot: { agentId: session, messages: [{ id, role: "user", content: [{ type: "text", text: "prompt" }], createdAt: 1 }] }, request: { messages: [] } });
     };
