@@ -44,7 +44,7 @@ function assertTrustedAncestors(path: string): void {
   }
 }
 
-export function privateQueueDirectory(path: string, create = false): void {
+export function openPrivateQueueDirectory(path: string, create = false): number {
   assertQueuePlatform();
   // A trailing slash or dot must not turn the leaf into a followed ancestor.
   path = resolve(path);
@@ -60,9 +60,15 @@ export function privateQueueDirectory(path: string, create = false): void {
     assertOwned(info);
     if (!info.isDirectory()) throw new Error("Retain queue requires a directory");
     if ((info.mode & 0o7777) !== 0o700) fchmodSync(fd, 0o700);
-  } finally {
+    return fd;
+  } catch (error) {
     closeSync(fd);
+    throw error;
   }
+}
+
+export function privateQueueDirectory(path: string, create = false): void {
+  closeSync(openPrivateQueueDirectory(path, create));
 }
 
 // Caller owns the descriptor, including across awaited OS locks.

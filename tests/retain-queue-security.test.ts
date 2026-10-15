@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
+  appendFileSync,
   chmodSync,
   closeSync,
   constants,
@@ -32,7 +33,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 vi.mock("node:crypto", async (importOriginal) => {
   const crypto = await importOriginal<typeof import("node:crypto")>();
-  return { ...crypto, randomUUID: vi.fn(crypto.randomUUID) };
+  return { ...crypto, randomUUID: vi.fn(crypto.randomUUID), randomBytes: vi.fn(crypto.randomBytes) };
 });
 
 let directory: string;
@@ -43,6 +44,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.resetAllMocks();
   vi.unstubAllGlobals();
   rmSync(directory, { recursive: true, force: true });
 });
@@ -300,5 +302,108 @@ describe("private retain queue paths", () => {
     } finally {
       closeSync(fd);
     }
+  });
+});
+
+describe("private corrupt-record recovery paths", () => {
+  function prepare(): { queue: RetainQueue; original: string; recovery: string; pending: string; snapshot: string } {
+    const queue = new RetainQueue({ filePath: queueFile });
+    queue.enqueue("bank", { content: "valid" });
+    appendFileSync(queueFile, "broken\n");
+    const info = statSync(queueFile, { bigint: true });
+    const source = createHash("sha256").update(`${info.dev}:${info.ino}:${info.birthtimeNs}`).digest("hex");
+    const recovery = `${queueFile}.recovery`;
+    return {
+      queue,
+      original: readFileSync(queueFile, "utf8"),
+      recovery,
+      pending: join(recovery, "pending"),
+      snapshot: join(recovery, `${source}.jsonl`),
+    };
+  }
+
+  it.each(["recovery", "pending"])("rejects a symlink %s directory without modifying its target", (which) => {
+    const paths = prepare();
+    const target = join(directory, "target");
+    mkdirSync(target, { mode: 0o755 });
+    if (which === "pending") mkdirSync(paths.recovery, { mode: 0o700 });
+    symlinkSync(target, paths[which as "recovery" | "pending"]);
+    expect(() => paths.queue.removeMany([])).toThrow();
+    expect(statSync(target).mode & 0o777).toBe(0o755);
+    expect(readdirSync(target)).toEqual([]);
+    expect(readFileSync(queueFile, "utf8")).toBe(paths.original);
+  });
+
+  it.each(["symlink", "hardlink"])("rejects a %s recovery snapshot before changing active bytes", (kind) => {
+    const paths = prepare();
+    mkdirSync(paths.recovery, { mode: 0o700 });
+    const target = join(directory, "target");
+    writeFileSync(target, "broken\n", { mode: 0o644 });
+    if (kind === "symlink") symlinkSync(target, paths.snapshot);
+    else linkSync(target, paths.snapshot);
+    expect(() => paths.queue.removeMany([])).toThrow();
+    expect(readFileSync(target, "utf8")).toBe("broken\n");
+    expect(statSync(target).mode & 0o777).toBe(0o644);
+    expect(readFileSync(queueFile, "utf8")).toBe(paths.original);
+  });
+
+  it("rejects hardlinked unfinished snapshots during cleanup", () => {
+    const paths = prepare();
+    mkdirSync(paths.pending, { recursive: true, mode: 0o700 });
+    const target = join(directory, "target");
+    writeFileSync(target, "untouched", { mode: 0o644 });
+    const temporary = join(paths.pending, `retain-${"a".repeat(32)}.tmp`);
+    linkSync(target, temporary);
+    expect(() => paths.queue.removeMany([])).toThrow("singly linked");
+    expect(statSync(target).nlink).toBe(2);
+    expect(statSync(target).mode & 0o777).toBe(0o644);
+    expect(readFileSync(queueFile, "utf8")).toBe(paths.original);
+  });
+
+  it("rejects a colliding recovery temporary symlink without modifying its target", () => {
+    const paths = prepare();
+    mkdirSync(paths.pending, { recursive: true, mode: 0o700 });
+    const target = join(directory, "target");
+    writeFileSync(target, "untouched", { mode: 0o644 });
+    const bytes = Buffer.alloc(16, 1);
+    vi.mocked(randomBytes).mockReturnValueOnce(bytes as never);
+    symlinkSync(target, join(paths.pending, `retain-${bytes.toString("hex")}.tmp`));
+    expect(() => paths.queue.removeMany([])).toThrow();
+    expect(readFileSync(target, "utf8")).toBe("untouched");
+    expect(statSync(target).mode & 0o777).toBe(0o644);
+    expect(readFileSync(queueFile, "utf8")).toBe(paths.original);
+  });
+
+  it.each(["recovery", "pending", "snapshot"])("rejects foreign-owned %s before chmod or rewrite", async (which) => {
+    const paths = prepare();
+    mkdirSync(paths.pending, { recursive: true, mode: 0o700 });
+    writeFileSync(paths.snapshot, "broken\n", { mode: 0o644 });
+    const target = paths[which as "recovery" | "pending" | "snapshot"];
+    chmodSync(target, which === "snapshot" ? 0o644 : 0o755);
+    const info = statSync(target);
+    const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(fstatSync).mockImplementation(((fd: number, options?: { bigint?: boolean }) => {
+      const actual = fs.fstatSync(fd, options as { bigint: false });
+      if (Number(actual.ino) === info.ino) return Object.assign(actual, { uid: (process.geteuid?.() ?? 0) + 1 });
+      return actual;
+    }) as typeof fstatSync);
+    expect(() => paths.queue.removeMany([])).toThrow("another user");
+    expect(statSync(target).mode & 0o777).toBe(which === "snapshot" ? 0o644 : 0o755);
+    expect(readFileSync(queueFile, "utf8")).toBe(paths.original);
+  });
+
+  it("tightens permissive recovery directories and snapshots before retry", () => {
+    const paths = prepare();
+    mkdirSync(paths.pending, { recursive: true, mode: 0o700 });
+    writeFileSync(paths.snapshot, "broken\n", { mode: 0o666 });
+    chmodSync(paths.recovery, 0o777);
+    chmodSync(paths.pending, 0o777);
+    chmodSync(paths.snapshot, 0o666);
+    paths.queue.removeMany([]);
+    expect(statSync(paths.recovery).mode & 0o777).toBe(0o700);
+    expect(statSync(paths.pending).mode & 0o777).toBe(0o700);
+    expect(statSync(paths.snapshot).mode & 0o777).toBe(0o600);
+    expect(readFileSync(paths.snapshot, "utf8")).toBe("broken\n");
+    expect(paths.queue.peek()[0].content).toBe("valid");
   });
 });

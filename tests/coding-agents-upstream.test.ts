@@ -11,6 +11,7 @@ import { HindsightClient, RateLimitedError } from "../src/upstream/coding-agents
 import { buildHookOutput } from "../src/upstream/coding-agents/src/core/hook";
 import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/knowledge-tools";
 import { readSessionCache, writeSessionCache } from "../src/upstream/coding-agents/src/core/session-cache";
+import { buildSessionStartContext } from "../src/upstream/coding-agents/src/core/session-start";
 import { run as install, parseJsonc } from "../src/upstream/coding-agents/src/installer";
 import { selectTools } from "../src/upstream/coding-agents/src/mcp-server";
 import { stageNativeKeychain } from "../src/upstream/coding-agents/src/native-storage";
@@ -157,6 +158,23 @@ it("upstream client requires a known harness and discards all reads on authoriza
     bank: "A",
   });
   await expect(client.reflect("q", { timeoutMs: 100 })).rejects.toThrow();
+});
+
+it("fetches freshly authorized page lists even when roster injection cadence is above one", async () => {
+  const dir = setup();
+  const cacheFile = join(dir, "cache.json");
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ roots: [] }));
+  const client = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A" });
+  const cfg = resolveConfig({ autoInject: "none", pageRefreshEveryTurns: 100 });
+  await buildHookOutput({ harness: "codex", prompt: "first prompt", cfg, client, cacheFile });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(readSessionCache(cacheFile).pages).toBeUndefined();
+  fetch.mockResolvedValue(new Response("forbidden", { status: 403 }));
+  await expect(buildHookOutput({ harness: "codex", prompt: "next prompt", cfg, client, cacheFile })).rejects.toThrow(
+    "memory access denied",
+  );
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(() => client.assertAuthorized()).toThrow("memory access denied");
 });
 
 it("drops cached memory and suppresses successful reflect when page access is denied", async () => {
@@ -1181,7 +1199,11 @@ it.each([undefined, "abc_"])("brands the packaged manual seed CLI for %s", (pref
   const seedPath = join(dir, "package/dist/hindsight-seed.js");
   const script = `
     const child = require("node:child_process");
-    child.spawn = () => ({ on() {}, unref() {} });
+    child.spawn = () => {
+      const launched = new child.ChildProcess();
+      queueMicrotask(() => launched.emit("spawn"));
+      return launched;
+    };
     require("node:module").syncBuiltinESMExports();
     process.argv = [process.execPath, ${JSON.stringify(seedPath)}, "seed", "--repo", ${JSON.stringify(dir)}];
     import(${JSON.stringify(seedPath)});
@@ -1193,7 +1215,7 @@ it.each([undefined, "abc_"])("brands the packaged manual seed CLI for %s", (pref
     timeout: 10000,
   });
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain(`${prefix ? "abc" : "Hindsight"} is learning this repo`);
+  expect(result.stdout).toContain(`${prefix ? "abc" : "Hindsight"} background seed launched`);
   if (prefix) expect(result.stdout).not.toContain("Hindsight");
 });
 it.each([undefined, "abc_"])("brands MCP startup failure after configuration initializes for %s", (prefix) => {
@@ -1350,3 +1372,76 @@ it("the packaged Grok hook rejects a changed effective human principal with the 
   expect(changed.stdout).toBe("");
   expect(changed.requests).toEqual([]);
 }, 15_000);
+
+it.each([
+  ["codex-hook.js", "denied"],
+  ["codex-hook.js", "unexpected"],
+  ["codex-sessionstart-hook.js", "denied"],
+  ["codex-sessionstart-hook.js", "unexpected"],
+])("the packaged %s observes %s rejection without leaking diagnostics", (entrypoint, kind) => {
+  const dir = setup();
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+  const normalPath = join(dir, "normal.json");
+  writeFileSync(normalPath, JSON.stringify({ autoSeed: false, retainSessions: false }));
+  const entry = join(dir, "package/dist", entrypoint);
+  const launch = `
+    const originalParse = JSON.parse;
+    JSON.parse = function (...args) {
+      const value = originalParse(...args);
+      if (process.env.HOOK_FAILURE_KIND === 'unexpected' && value?.session_id === 'failure-test')
+        Object.defineProperty(value, 'cwd', { get() {
+          throw new Error('SECRET_REJECTION_TOKEN=' + 'x'.repeat(10000));
+        }});
+      return value;
+    };
+    globalThis.fetch = async () => new Response('SECRET_403_BODY', { status: 403 });
+    import(${JSON.stringify(entry)});
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", launch], {
+    cwd: dir,
+    input: JSON.stringify({ cwd: dir, session_id: "failure-test", prompt: "TRIGGER_REJECTION" }),
+    env: { ...process.env, HINDSIGHT_CONFIG: normalPath, HOOK_FAILURE_KIND: kind, TMPDIR: dir, HOME: dir },
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("[memory-router] Hook failed; memory context unavailable.\n");
+});
+
+it("the packaged manual seed command reports an unavailable executable without claiming seeding", () => {
+  const dir = setup();
+  execFileSync("tar", ["-xzf", codingAgentsPackage(), "-C", dir]);
+  const result = spawnSync(
+    process.execPath,
+    [join(dir, "package/dist/hindsight-seed.js"), "seed", "--repo", process.cwd()],
+    {
+      env: { ...process.env, PATH: dir },
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("Background seed launch failed.\n");
+  expect(result.stderr).toBe("[memory-router] Background seed launch failed.\n");
+});
+
+it("session-start does not claim learning after seed launch fails", async () => {
+  const dir = setup();
+  const output = await buildSessionStartContext({
+    cwd: dir,
+    bankId: "A",
+    harness: "codex",
+    cfg: resolveConfig({ autoSeed: true, codebaseSurvey: false, gitIngest: "none" }),
+    client: {
+      listDocumentIds: async () => new Set<string>(),
+      listPages: async () => ({ items: [] }),
+    },
+    hasGit: () => true,
+    startSeed: async () => false,
+  });
+  expect(output.systemMessage).toContain("Background seed launch failed.");
+  expect(output.systemMessage).not.toContain("is learning");
+});

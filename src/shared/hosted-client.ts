@@ -93,16 +93,21 @@ function queryString(query: object): string {
   return encoded ? `?${encoded}` : "";
 }
 
-async function objectResponse(response: Response): Promise<FacadeObject> {
+async function objectResponse(response: Response, signal: AbortSignal): Promise<FacadeObject> {
   if (response.status === 404) throw new RouterRequestError(404);
-  if (!response.body) return {};
+  if (!response.body) {
+    signal.throwIfAborted();
+    return {};
+  }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let bytes = 0;
   let text = "";
   try {
+    signal.throwIfAborted();
     while (true) {
       const part = await reader.read();
+      signal.throwIfAborted();
       if (part.done) break;
       bytes += part.value.byteLength;
       if (bytes > MAX_RESPONSE_BYTES) throw new RouterRequestError(502);
@@ -114,7 +119,9 @@ async function objectResponse(response: Response): Promise<FacadeObject> {
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new RouterRequestError(502);
     return data as FacadeObject;
   } catch {
-    await reader.cancel().catch(() => undefined);
+    // Cancellation closes the stream immediately; underlying cleanup may never settle.
+    void reader.cancel().catch(() => undefined);
+    signal.throwIfAborted();
     throw new RouterRequestError(502);
   } finally {
     reader.releaseLock();
@@ -157,12 +164,13 @@ export class HostedRouterClient {
     }
     if (serialized !== undefined && Buffer.byteLength(serialized) > MAX_BODY_BYTES) throw new RouterRequestError(413);
     const deadline = AbortSignal.timeout(15_000);
+    const signal = options?.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
     const response = await this.#transport.request(this.#transport.bankUrl(bank, suffix), {
       method,
       body: serialized,
-      signal: options?.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
+      signal,
     });
-    return objectResponse(response);
+    return objectResponse(response, signal);
   }
 
   retain(bank: string, body: RetainRequest, options?: RequestOptions): Promise<FacadeObject> {
