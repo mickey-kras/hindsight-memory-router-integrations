@@ -30,6 +30,7 @@
   "src/core/hindsight.pages.test.ts": "3caf39ebbb00f955d7284934777a98d58e2b204ad1cf0b71e15dc1d31c3b8b0e",
   "src/core/hindsight.ts": "9f7c275325ac41a025027ba3d3082ee94d1421616b87673efc96dd7b8495551a",
   "src/core/history.ts": "00056c0d305959be78e51e1504cc7b3e7621090cb21fc1da94164aec75b27fd9",
+  "src/core/hook.test.ts": "afa804eefdfabf195eac1160f91474bacbd305b1df56231e7df176165073b95d",
   "src/core/hook.ts": "0ab9b0250e3e632032241fa4e64673d0f2d58fd826dbcf086574a4ea6c870f60",
   "src/core/host-client.test.ts": "403073def6910b696ae2e7d7634001b544aa610ce5373a170058f9f00b8cadfc",
   "src/core/host-client.ts": "d9f7b6a62cc01bfe1ed7ef41a35704d0ef57ac9b735af785fa393543f23a7f89",
@@ -45,9 +46,11 @@
   "src/core/retain-hook.ts": "79d4e683c243b0cec0556a62448b920a51a9e7eed532153c5ee66e1fa79169d0",
   "src/core/router-client.test.ts": "07c8d50fb021c6b864f531f97ac9f8ac1ba763b879ed1e408916f033908888f4",
   "src/core/router-survey.test.ts": "8b1519c9f6fc489566633e88d45f7d803d5826c2bad5d806c00277f24834f4c0",
+  "src/core/runtime.test.ts": "9e34d701b07fc231db98cc4d22c96485c726533e61e1ee3746e62511a1767bf6",
   "src/core/runtime.ts": "352118d76278eb51de53f742c4774608f6ccd35dbb63477a647b0e33132d5088",
   "src/core/seed.test.ts": "e0e550b1ecd728d2fead882177e90bb4395d290f8faf9ce8815f52449b8bd48b",
   "src/core/seed.ts": "6cf9011122bfba2b6ad65ec1764e34119d62c86ea13bbeebeb3b9b464df88403",
+  "src/core/session-cache.test.ts": "f9fad8ed768312fe75f5a797102dafef6721ada8d2b96653ef0d11651a111542",
   "src/core/session-cache.ts": "d3a0e67cd0fe2e54c57326b99158a1eee2fe5bd30260e09e914679153d85ce8f",
   "src/core/session-start.ts": "68ee4413f663e8b350f7166617dae3751059b33c22fe56ff2513fc48bf3a4ac7",
   "src/core/skill-sync.ts": "2245feafa7b75270133d9c40b984c45d70196bab44e5e611cef737fa6e5099e2",
@@ -99,5 +102,5 @@
   "src/native-storage.ts": "79f7d5c85333fe05ca980d0b7df4625d26bcbdcf235b35e12cb4494471b81f68",
   "src/status.ts": "e0a58022cc7de9dc9b05ec5e5b5a4bf69ac23cc3a767abc96a02b0192923d340",
   "tsconfig.json": "802c9711dba558694282bad5145a71f0fc09fb3bd47e1141dffd00fb99416af9",
-  "vitest.config.ts": "4bf0996dd6111015fb890ff6bab21f02d0a46f1537fcd0a1b51f0c2a8080335b"
+  "vitest.config.ts": "8412eb41e8952474507b6e05257f8295b28c97c49cea87560d4b1bb334a772dc"
 }

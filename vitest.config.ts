@@ -19,7 +19,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: [...coverageConfigDefaults.exclude, "src/upstream/**"],
+      exclude: [...coverageConfigDefaults.exclude, "src/upstream/coding-agents/**"],
       thresholds: {
         lines: 90,
         statements: 90,
