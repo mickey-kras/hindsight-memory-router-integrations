@@ -25,6 +25,7 @@ import {
   mkdirSync,
   openSync,
   readSync,
+  readdirSync,
 } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { isUtf8 } from "node:buffer";
@@ -302,6 +303,17 @@ export class RetainQueue {
     mkdirSync(recoveryDir, { recursive: true, mode: 0o700 });
     if (!lstatSync(recoveryDir).isDirectory()) throw new Error("retain recovery path must be a directory");
     chmodSync(recoveryDir, 0o700);
+    // The caller holds the queue mutation lock. Clean only our unfinished
+    // snapshots, without scanning committed archives or following symlinks.
+    const pendingDir = join(recoveryDir, "pending");
+    mkdirSync(pendingDir, { mode: 0o700, recursive: true });
+    if (!lstatSync(pendingDir).isDirectory()) throw new Error("retain recovery pending path must be a directory");
+    chmodSync(pendingDir, 0o700);
+    for (const entry of readdirSync(pendingDir, { withFileTypes: true })) {
+      if (entry.isFile() && /^retain-[a-f0-9]{32}\.tmp$/.test(entry.name)) {
+        unlinkSync(join(pendingDir, entry.name));
+      }
+    }
     const recoveryPath = join(recoveryDir, `${contents.source}.jsonl`);
     let priorLength = 0;
     if (existsSync(recoveryPath)) {
@@ -315,7 +327,7 @@ export class RetainQueue {
       priorLength = prior.length;
     }
     if (priorLength !== contents.bytes.length) {
-      const tmpPath = join(recoveryDir, `${randomBytes(16).toString("hex")}.tmp`);
+      const tmpPath = join(pendingDir, `retain-${randomBytes(16).toString("hex")}.tmp`);
       const fd = openSync(tmpPath, "wx", 0o600);
       try {
         try {
@@ -342,6 +354,7 @@ export class RetainQueue {
     } finally {
       closeSync(fd);
     }
+    syncDirectory(pendingDir);
     syncDirectory(recoveryDir);
     syncDirectory(dirname(recoveryDir));
     this.options.onCorruption?.(contents.counts);

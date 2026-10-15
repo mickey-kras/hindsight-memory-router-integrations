@@ -494,7 +494,9 @@ describe("RetainCoordinator", () => {
     const replay = makeStack({ queueDir });
     await replay.retain.flushQueues();
     const recoveryDir = `${queueFile}.recovery`;
-    expect(readFileSync(join(recoveryDir, readdirSync(recoveryDir)[0]), "utf8")).toBe(`${JSON.stringify(item)}\n`);
+    expect(
+      readFileSync(join(recoveryDir, readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))[0]), "utf8"),
+    ).toBe(`${JSON.stringify(item)}\n`);
     expect(replay.fakeClients.get("main")?.retains).toHaveLength(0);
   });
 
@@ -521,12 +523,14 @@ describe("RetainCoordinator", () => {
       ["second", "replace"],
     ]);
     const recoveryDir = `${queueFile}.recovery`;
-    expect(readFileSync(join(recoveryDir, readdirSync(recoveryDir)[0]), "utf8")).toBe(original);
+    expect(
+      readFileSync(join(recoveryDir, readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))[0]), "utf8"),
+    ).toBe(original);
     expect(log.error).toHaveBeenCalledExactlyOnceWith(
       "retain queue recovery preserved corrupt records: malformed-json=1, invalid-shape=1",
     );
     await makeStack({ queueDir, logger: log }).retain.flushQueues();
-    expect(readdirSync(recoveryDir)).toHaveLength(1);
+    expect(readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))).toHaveLength(1);
   });
 
   it("persists replay attempts and abandons a poison item after five failures", async () => {
@@ -717,7 +721,9 @@ describe("RetainCoordinator", () => {
         .sort(),
     ).toEqual(["new-0", "new-1", "new-2", "new-3", "new-4", "old"]);
     const recoveryDir = `${queueFile}.recovery`;
-    expect(readFileSync(join(recoveryDir, readdirSync(recoveryDir)[0]), "utf8")).toContain("broken\n");
+    expect(
+      readFileSync(join(recoveryDir, readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))[0]), "utf8"),
+    ).toContain("broken\n");
   });
   it("does not deserialize backlog records while accepting subsequent outage writes", async () => {
     const stack = makeStack({

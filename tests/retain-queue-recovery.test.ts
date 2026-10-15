@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RetainQueueStorage } from "../src/shared/retain-queue-storage.js";
 import { type QueuedRetain, RetainQueue } from "../src/upstream/src/retain-queue.js";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -104,7 +105,7 @@ describe("retain queue corrupt-record recovery", () => {
     if (process.platform !== "win32") {
       expect(statSync(`${filePath}.recovery`).mode & 0o777).toBe(0o700);
       for (const name of readdirSync(`${filePath}.recovery`)) {
-        expect(statSync(join(`${filePath}.recovery`, name)).mode & 0o777).toBe(0o600);
+        expect(statSync(join(`${filePath}.recovery`, name)).mode & 0o777).toBe(name === "pending" ? 0o700 : 0o600);
       }
     }
   });
@@ -203,7 +204,7 @@ describe("retain queue corrupt-record recovery", () => {
     },
   );
 
-  it.each(process.platform === "win32" ? [0, 1] : [0, 1, 2, 3])(
+  it.each(process.platform === "win32" ? [0, 1] : [0, 1, 2, 3, 4])(
     "keeps original bytes when durability barrier %i fails",
     async (barrier) => {
       const original = `${line(item("first"))}broken\n`;
@@ -250,7 +251,10 @@ describe("retain queue corrupt-record recovery", () => {
     });
     expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("active rewrite failed");
     vi.mocked(renameSync).mockReset();
-    const recovery = join(`${filePath}.recovery`, readdirSync(`${filePath}.recovery`)[0]);
+    const recovery = join(
+      `${filePath}.recovery`,
+      readdirSync(`${filePath}.recovery`).find((name) => name.endsWith(".jsonl")) ?? "missing",
+    );
     writeFileSync(recovery, "changed");
     expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("does not match queued bytes");
     expect(readFileSync(filePath, "utf8")).toBe(original);
@@ -274,7 +278,7 @@ describe("retain queue corrupt-record recovery", () => {
     expect(() => new RetainQueue({ filePath }).removeMany([])).toThrow("archive replacement failed");
     expect(recoveries()).toEqual([Buffer.from(original)]);
     expect(readFileSync(filePath, "utf8")).toBe(`${original}bad-B\n`);
-    expect(readdirSync(`${filePath}.recovery`)).toHaveLength(1);
+    expect(readdirSync(join(`${filePath}.recovery`, "pending"))).toHaveLength(0);
 
     vi.mocked(renameSync).mockReset();
     new RetainQueue({ filePath }).ensureOperationId("first", "operation");
@@ -293,6 +297,61 @@ describe("retain queue corrupt-record recovery", () => {
     expect(recoveries()).toHaveLength(2);
     expect(recoveries()).toEqual(expect.arrayContaining([Buffer.from(original), next]));
   });
+
+  it.skipIf(process.platform === "win32")(
+    "cleans owned unfinished snapshots after repeated crashes before commit",
+    async () => {
+      const original = `${line(item("first"))}bad-A\n`;
+      writeFileSync(filePath, original);
+      expect(() =>
+        new RetainQueue({
+          filePath,
+          onCorruption: () => {
+            throw new Error("before rewrite");
+          },
+        }).removeMany([]),
+      ).toThrow("before rewrite");
+      appendFileSync(filePath, "bad-B\n");
+      const pending = join(`${filePath}.recovery`, "pending");
+      const unrelated = "notes.tmp";
+      const symlink = `retain-${"a".repeat(32)}.tmp`;
+      writeFileSync(join(pending, unrelated), "unrelated");
+      symlinkSync(filePath, join(pending, symlink));
+      const source = `
+      import fs from "node:fs";
+      import { syncBuiltinESMExports } from "node:module";
+      import { RetainQueue } from ${JSON.stringify(new URL("../src/upstream/src/retain-queue.ts", import.meta.url).href)};
+      import { RetainQueueStorage } from ${JSON.stringify(new URL("../src/shared/retain-queue-storage.ts", import.meta.url).href)};
+      const rename = fs.renameSync;
+      fs.renameSync = (source, destination) => {
+        if (String(source).includes("/pending/")) process.kill(process.pid, "SIGKILL");
+        rename(source, destination);
+      };
+      syncBuiltinESMExports();
+      const storage = new RetainQueueStorage(${JSON.stringify(directory)});
+      await storage.transaction(() => new RetainQueue({ filePath: ${JSON.stringify(filePath)} }).removeMany([]));
+    `;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(() =>
+          execFileSync(process.execPath, ["--experimental-transform-types", "--input-type=module", "-e", source], {
+            stdio: "pipe",
+          }),
+        ).toThrow(expect.objectContaining({ signal: "SIGKILL" }));
+        expect(readFileSync(filePath, "utf8")).toBe(`${original}bad-B\n`);
+        expect(recoveries()).toEqual([Buffer.from(original)]);
+        expect(
+          readdirSync(pending, { withFileTypes: true }).filter(
+            (entry) => entry.isFile() && entry.name.startsWith("retain-"),
+          ),
+        ).toHaveLength(1);
+      }
+      await new RetainQueueStorage(directory).transaction(() => new RetainQueue({ filePath }).removeMany([]));
+      expect(recoveries()).toEqual([Buffer.from(`${original}bad-B\n`)]);
+      expect(readdirSync(pending).sort()).toEqual([unrelated, symlink].sort());
+      expect(readFileSync(join(pending, unrelated), "utf8")).toBe("unrelated");
+      expect(new RetainQueue({ filePath }).peek()[0].id).toBe("first");
+    },
+  );
 
   it.skipIf(process.platform === "win32")("does not follow a preexisting recovery temporary symlink", () => {
     const original = `${line(item("first"))}broken\n`;
