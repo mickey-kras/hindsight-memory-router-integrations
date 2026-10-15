@@ -2,7 +2,7 @@
 
 [Documentation](README.md) | [Repository](../README.md)
 
-Requires Node.js 22 or later. From the repository root:
+Requires Node.js 22.12.0 or later. From the repository root:
 
 ```sh
 npm ci
@@ -31,7 +31,7 @@ See [upstream upgrades](UPGRADING.md), [deviations](DEVIATIONS.md), [dependency 
 
 | Package | Direct runtime declarations | Development declarations |
 | --- | --- | --- |
-| OpenClaw | `@vectorize-io/hindsight-agent-sdk`, `fs-native-extensions` | `@biomejs/biome`, `@types/node`, `@vectorize-io/hindsight-client`, `@vitest/coverage-v8`, `aislop`, `typescript`, `vitest` |
+| OpenClaw | `@vectorize-io/hindsight-agent-sdk`, `@vectorize-io/hindsight-client`, `fs-native-extensions` | `@biomejs/biome`, `@types/node`, `@vitest/coverage-v8`, `aislop`, `typescript`, `vitest` |
 | Coding agents | `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml`, `zod` | `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript`, `vitest` |
 
-The OpenClaw SDK's transitive `@vectorize-io/hindsight-client` is overridden to `1.0.0` and is also a direct development dependency. Coding-agent overrides cover `@opencode/plugin > @opentelemetry/core`, `esbuild`, `fast-uri`, `hono`, `http-cache-semantics`, `ip-address`, `postcss` and `vite`; their ranges are listed in [vendored deviations](../src/upstream/coding-agents/DEVIATIONS.md). Bundled JavaScript and platform-native secure-storage dependencies have different packaging requirements. Consult the manifests and shrinkwraps for current declared ranges and resolved transitive/platform packages.
+OpenClaw declares `@vectorize-io/hindsight-client@1.0.0` as a direct production dependency because its exported TypeScript declarations import client types. The repository also overrides the SDK's transitive client to `1.0.0`. Coding-agent overrides cover `@opencode/plugin > @opentelemetry/core`, `esbuild`, `fast-uri`, `hono`, `http-cache-semantics`, `ip-address`, `postcss` and `vite`; their ranges are listed in [vendored deviations](../src/upstream/coding-agents/DEVIATIONS.md). Bundled JavaScript and platform-native secure-storage dependencies have different packaging requirements. Consult the manifests and shrinkwraps for current declared ranges and resolved transitive/platform packages.
