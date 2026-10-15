@@ -3,6 +3,8 @@ export default defineConfig({
   resolve: { alias: { "@memory-router": new URL("../../../src", import.meta.url).pathname } },
   test: {
     include: [
+      "src/core/status.test.ts",
+      "src/core/seed.test.ts",
       "src/core/runtime.test.ts",
       "src/core/hook.test.ts",
       "src/core/session-cache.test.ts",

@@ -17,10 +17,9 @@ Base: `vectorize-io/hindsight` OpenClaw integration `v1.0.0`.
 
 Reused source: `src/upstream/src/{retain-queue,session-patterns,types}.ts`.
 
-Published dependencies:
+OpenClaw direct runtime dependencies: `@vectorize-io/hindsight-agent-sdk@0.1.1` and `fs-native-extensions@^1.5.1`. `@vectorize-io/hindsight-client@1.0.0` is a transitive SDK dependency and a direct development dependency, not a direct runtime dependency.
 
-- `@vectorize-io/hindsight-client@1.0.0`
-- `@vectorize-io/hindsight-agent-sdk@0.1.1`
+Dependency declarations and exact resolved versions are authoritative in each package's `package.json` and `npm-shrinkwrap.json`. See the [dependency inventory](DEVELOPMENT.md#dependency-inventory).
 
 Not retained: dynamic bank derivation, per-user channel banks, setup/backfill CLIs, local daemon, embedded model configuration, sender-prefix parsing.
 

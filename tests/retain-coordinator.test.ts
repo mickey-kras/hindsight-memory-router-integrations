@@ -1,4 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,6 +112,29 @@ describe("RetainCoordinator", () => {
     const backendOutcome = await retain.retain("backend", { content: "work" });
     expect(backendOutcome.bank).toBe("dev");
     expect(fakeClients.get("backend")?.retains[0].bank).toBe("dev");
+  });
+
+  it("discovers and replays the normalized queue directory after symlink-parent traversal", async () => {
+    const safe = join(queueDir, "safe");
+    const other = join(queueDir, "other");
+    mkdirSync(join(safe, "queue"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "child"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "queue"), { mode: 0o700 });
+    symlinkSync(join(other, "child"), join(safe, "link"));
+    let fail = true;
+    const { retain, fakeClients } = makeStack({
+      queueDir: `${safe}/link/../queue`,
+      behavior: () => {
+        if (fail) throw httpError(503);
+      },
+    });
+    await expect(retain.retain("main", { content: "pending" })).resolves.toMatchObject({ queued: true });
+    expect(readdirSync(join(safe, "queue"))).toContain("hindsight-retain-queue.main.jsonl");
+    fail = false;
+    await retain.flushQueues();
+    expect(fakeClients.get("main")?.retains).toEqual([expect.objectContaining({ content: "pending", bank: "main" })]);
+    expect(readdirSync(join(safe, "queue"))).not.toContain("hindsight-retain-queue.main.jsonl");
+    expect(readdirSync(join(other, "queue"))).toEqual([]);
   });
 
   it("preserves an existing backlog when another coordinator opens its directory", async () => {
@@ -479,7 +511,7 @@ describe("RetainCoordinator", () => {
     expect(replay.fakeClients.get("main")?.retains).toHaveLength(0);
   });
 
-  it("does not replay an item with an invalid update mode", async () => {
+  it("recovers an item with an invalid update mode without replaying it", async () => {
     const first = makeStack({
       queueDir,
       behavior: () => {
@@ -493,8 +525,43 @@ describe("RetainCoordinator", () => {
     writeFileSync(queueFile, `${JSON.stringify(item)}\n`);
     const replay = makeStack({ queueDir });
     await replay.retain.flushQueues();
-    expect(readFileSync(queueFile, "utf8").trim()).not.toBe("");
+    const recoveryDir = `${queueFile}.recovery`;
+    expect(
+      readFileSync(join(recoveryDir, readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))[0]), "utf8"),
+    ).toBe(`${JSON.stringify(item)}\n`);
     expect(replay.fakeClients.get("main")?.retains).toHaveLength(0);
+  });
+
+  it("preserves corrupt bytes during replay and logs only counts and classification", async () => {
+    const failing = makeStack({
+      queueDir,
+      behavior: () => {
+        throw httpError(503);
+      },
+    });
+    await failing.retain.retain("main", { content: "first", documentId: "document", updateMode: "append" });
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    const corrupt = 'private broken transcript\r\n{"content":"private invalid record"}\n';
+    appendFileSync(queueFile, corrupt);
+    await failing.retain.retain("main", { content: "second", documentId: "document", updateMode: "replace" });
+    const log = { warn: vi.fn(), error: vi.fn() };
+    const replay = makeStack({ queueDir, logger: log });
+    await replay.retain.flushQueues();
+    expect(
+      replay.fakeClients.get("main")?.retains.map(({ content, options }) => [content, options?.updateMode]),
+    ).toEqual([
+      ["first", "append"],
+      ["second", "replace"],
+    ]);
+    const recoveryDir = `${queueFile}.recovery`;
+    expect(
+      readFileSync(join(recoveryDir, readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))[0]), "utf8"),
+    ).toBe(corrupt);
+    expect(log.error).toHaveBeenCalledExactlyOnceWith(
+      "retain queue recovery preserved corrupt records: malformed-json=1, invalid-shape=1",
+    );
+    await makeStack({ queueDir, logger: log }).retain.flushQueues();
+    expect(readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))).toHaveLength(1);
   });
 
   it("persists replay attempts and abandons a poison item after five failures", async () => {
@@ -670,6 +737,8 @@ describe("RetainCoordinator", () => {
       },
     });
     await failing.retain.retain("main", { content: "old" });
+    const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+    appendFileSync(queueFile, "broken\n");
     const replay = makeStack({ queueDir, queueMaxItems: 10 });
     await Promise.all([
       replay.retain.flushQueues(),
@@ -682,6 +751,10 @@ describe("RetainCoordinator", () => {
         ?.retains.map((item) => item.content)
         .sort(),
     ).toEqual(["new-0", "new-1", "new-2", "new-3", "new-4", "old"]);
+    const recoveryDir = `${queueFile}.recovery`;
+    expect(
+      readFileSync(join(recoveryDir, readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))[0]), "utf8"),
+    ).toBe("broken\n");
   });
   it("does not deserialize backlog records while accepting subsequent outage writes", async () => {
     const stack = makeStack({

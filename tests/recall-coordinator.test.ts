@@ -11,7 +11,10 @@ it("uses one item-text precedence for display, dedupe, and budgeting", () => {
 });
 
 function fakeClient(
-  perBank: Record<string, { results: RecallItem[]; delayMs?: number } | { error: Error & { statusCode?: number } }>,
+  perBank: Record<
+    string,
+    { results?: RecallItem[]; delayMs?: number } | { response: unknown } | { error: Error & { statusCode?: number } }
+  >,
 ): RouterClient & {
   calls: Array<{ bank: string; options?: { maxTokens?: number } }>;
 } {
@@ -29,6 +32,10 @@ function fakeClient(
       }
       if ("error" in behavior) {
         throw behavior.error;
+      }
+      if ("response" in behavior) {
+        // Deliberately model untrusted JSON that violates the client declaration.
+        return behavior.response as Awaited<ReturnType<RouterClient["recall"]>>;
       }
       if (behavior.delayMs) {
         await new Promise((resolve) => setTimeout(resolve, behavior.delayMs));
@@ -304,11 +311,64 @@ describe("RecallCoordinator", () => {
   });
 
   it("handles missing result arrays", async () => {
+    const result = await new RecallCoordinator().recall(fakeClient({ main: {} }), {
+      query: "q",
+      banks: ["main"],
+      timeoutMs: 1000,
+    });
+    expect(result).toEqual({ results: [], partial: false, failedBanks: [] });
+  });
+
+  it.each([
+    { name: "object-valued results", response: { results: { text: "private payload" } } },
+    { name: "null collection", response: { results: null } },
+    { name: "string collection", response: { results: "private payload" } },
+    { name: "null entry", response: { results: [{ text: "discard whole bank" }, null] } },
+    { name: "string entry", response: { results: ["private payload"] } },
+    { name: "number entry", response: { results: [42] } },
+    { name: "boolean entry", response: { results: [true] } },
+    { name: "array entry", response: { results: [[{ text: "private payload" }]] } },
+    { name: "null response", response: null },
+    { name: "array response", response: [] },
+    { name: "string response", response: "private payload" },
+  ])("isolates $name as a sanitized failed bank", async ({ response }) => {
     const result = await new RecallCoordinator().recall(
-      fakeClient({ main: { results: undefined as unknown as RecallItem[] } }),
-      { query: "q", banks: ["main"], timeoutMs: 1000 },
+      fakeClient({ healthy: { results: [{ text: "ok", score: 1 }] }, malformed: { response } }),
+      { query: "q", banks: ["malformed", "healthy"], timeoutMs: 1000, maxTokens: 100 },
     );
-    expect(result.results).toEqual([]);
+    expect(result).toEqual({ results: [{ text: "ok", score: 1 }], partial: true, failedBanks: ["malformed"] });
+  });
+
+  it.each([401, 403])("still fails closed on HTTP %i alongside a malformed bank", async (statusCode) => {
+    const client = fakeClient({
+      malformed: { response: { results: [null] } },
+      healthy: { results: [{ text: "private memory" }] },
+      denied: { error: httpError(statusCode) },
+    });
+    await expect(
+      new RecallCoordinator().recall(client, {
+        query: "q",
+        banks: ["malformed", "healthy", "denied"],
+        timeoutMs: 1000,
+      }),
+    ).rejects.toThrow(RecallAuthorizationError);
+  });
+
+  it("preserves structured results and nullable metadata while isolating malformed banks", async () => {
+    const structured: RecallItem = { id: "structured", metadata: { tags: ["a"] }, document_id: null, score: 1 };
+    const client = fakeClient({
+      malformed: { response: { results: {} } },
+      healthy: { results: [{ id: "lower", score: 0.5 }, structured] },
+    });
+    const request = { query: "q", banks: ["malformed", "healthy"], timeoutMs: 1000 };
+    const coordinator = new RecallCoordinator();
+    expect(await coordinator.recall(client, request)).toEqual({
+      results: [structured, { id: "lower", score: 0.5 }],
+      partial: true,
+      failedBanks: ["malformed"],
+    });
+    const tokens = Math.ceil(JSON.stringify({ results: [structured] }, null, 2).length / 4);
+    expect((await coordinator.recall(client, { ...request, maxTokens: tokens })).results).toEqual([structured]);
   });
 });
 
