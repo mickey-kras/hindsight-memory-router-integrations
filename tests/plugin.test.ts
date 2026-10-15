@@ -407,6 +407,7 @@ describe("plugin wiring", () => {
     const sessionEnd = api.handlers.get("session_end");
     if (!handler || !sessionEnd) throw new Error("retain hooks not registered");
     return {
+      api,
       retain,
       sink,
       event: { messages: [{ role: "user", content: "remember this exact turn" }] },
@@ -445,6 +446,29 @@ describe("plugin wiring", () => {
       expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
     },
   );
+
+  it.each([
+    [new Error("secret-bearing failure"), "operation_failed", "retain failed: memory operation failed"],
+    [new RetainAuthorizationError("main"), "access_denied", "retain denied: retain authorization denied for bank main"],
+  ])("reports a shared retain failure once: %s", async (error, errorClass, message) => {
+    const { api, handler, sessionEnd, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const context = { agentId: "main", sessionKey: "shared-failure" };
+    const first = handler(event, context);
+    const duplicate = handler(event, context);
+    const ending = sessionEnd(event, context);
+    await Promise.resolve();
+    expect(retain).toHaveBeenCalledTimes(1);
+    deferred.reject(error);
+    await Promise.all([first, duplicate, ending]);
+    expect(auditRecords(api)).toEqual([
+      expect.objectContaining({ principal: "main", op: "retain", outcome: "failure", errorClass }),
+    ]);
+    expect(api.logger.error).toHaveBeenCalledExactlyOnceWith(message);
+    await handler(event, context);
+    expect(retain).toHaveBeenCalledTimes(2);
+  });
 
   it("retries a failed overlapping transcript without requiring session teardown", async () => {
     const { handler, event, retain } = retainIdentityFixture();

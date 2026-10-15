@@ -395,6 +395,19 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
     { requests: Map<string, Promise<void>>; nextOrdinal: number; retainedOrdinal: number; ended: boolean }
   >();
 
+  const reportFailure = (principal: string, error: unknown): void => {
+    audit({ principal, op: "retain", outcome: "failure", errorClass: memoryOperationErrorClass(error) });
+    if (isIdentityError(error)) {
+      log.warn(`retain skipped: ${(error as Error).message}`);
+      return;
+    }
+    if (error instanceof RetainAuthorizationError) {
+      log.error(`retain denied: ${error.message}`);
+      return;
+    }
+    log.error(`retain failed: ${memoryErrorMessage(error)}`);
+  };
+
   const runRetain = async (
     event: PluginHookEvent,
     ctx: PluginHookAgentContext | undefined,
@@ -460,6 +473,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
             log.warn(`retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`);
           }
         })
+        .catch((error: unknown) => reportFailure(principal, error))
         .finally(() => {
           session.requests.delete(digest);
           if (session.requests.size === 0) {
@@ -470,16 +484,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
       session.requests.set(digest, work);
       await work;
     } catch (error) {
-      audit({ principal, op: "retain", outcome: "failure", errorClass: memoryOperationErrorClass(error) });
-      if (isIdentityError(error)) {
-        log.warn(`retain skipped: ${(error as Error).message}`);
-        return;
-      }
-      if (error instanceof RetainAuthorizationError) {
-        log.error(`retain denied: ${error.message}`);
-        return;
-      }
-      log.error(`retain failed: ${memoryErrorMessage(error)}`);
+      reportFailure(principal, error);
     } finally {
       if (hookName === "session_end" && digestKey && !inFlight.has(digestKey)) {
         retainedDigests.delete(digestKey);
