@@ -407,6 +407,7 @@ describe("plugin wiring", () => {
     const sessionEnd = api.handlers.get("session_end");
     if (!handler || !sessionEnd) throw new Error("retain hooks not registered");
     return {
+      api,
       retain,
       sink,
       event: { messages: [{ role: "user", content: "remember this exact turn" }] },
@@ -414,6 +415,147 @@ describe("plugin wiring", () => {
       sessionEnd,
     };
   }
+
+  function deferredRetain() {
+    let resolve!: (value: { queued: boolean; bank: string }) => void;
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<{ queued: boolean; bank: string }>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it.each(["agent_end", "session_end"])(
+    "coalesces overlapping identical hooks starting with %s and preserves fresh documents after teardown",
+    async (firstHook) => {
+      const { handler, sessionEnd, event, retain } = retainIdentityFixture();
+      const deferred = deferredRetain();
+      retain.mockReturnValueOnce(deferred.promise);
+      const context = { agentId: "main", sessionKey: "overlap" };
+      const first = (firstHook === "agent_end" ? handler : sessionEnd)(event, context);
+      const ending = sessionEnd(event, context);
+      const duplicate = handler(event, context);
+      await Promise.resolve();
+      expect(retain).toHaveBeenCalledTimes(1);
+
+      deferred.resolve({ queued: false, bank: "main" });
+      await Promise.all([first, ending, duplicate]);
+      await handler(event, context);
+      expect(retain).toHaveBeenCalledTimes(2);
+      expect(retain.mock.calls[0][1].documentId).not.toBe(retain.mock.calls[1][1].documentId);
+    },
+  );
+
+  it.each([
+    [new Error("secret-bearing failure"), "operation_failed", "retain failed: memory operation failed"],
+    [new RetainAuthorizationError("main"), "access_denied", "retain denied: retain authorization denied for bank main"],
+  ])("reports a shared retain failure once: %s", async (error, errorClass, message) => {
+    const { api, handler, sessionEnd, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const context = { agentId: "main", sessionKey: "shared-failure" };
+    const first = handler(event, context);
+    const duplicate = handler(event, context);
+    const ending = sessionEnd(event, context);
+    await Promise.resolve();
+    expect(retain).toHaveBeenCalledTimes(1);
+    deferred.reject(error);
+    await Promise.all([first, duplicate, ending]);
+    expect(auditRecords(api)).toEqual([
+      expect.objectContaining({ principal: "main", op: "retain", outcome: "failure", errorClass }),
+    ]);
+    expect(api.logger.error).toHaveBeenCalledExactlyOnceWith(message);
+    await handler(event, context);
+    expect(retain).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a failed overlapping transcript without requiring session teardown", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const context = { agentId: "main", sessionKey: "retry" };
+    const first = handler(event, context);
+    const duplicate = handler(event, context);
+    await Promise.resolve();
+    expect(retain).toHaveBeenCalledTimes(1);
+    deferred.reject(new Error("failed retain"));
+    await Promise.all([first, duplicate]);
+    await handler(event, context);
+    await handler(event, context);
+    expect(retain).toHaveBeenCalledTimes(2);
+  });
+
+  it("delivers changed content independently and defers teardown until every active retain settles", async () => {
+    const { handler, sessionEnd, event, retain } = retainIdentityFixture();
+    const firstRetain = deferredRetain();
+    const changedRetain = deferredRetain();
+    retain.mockReturnValueOnce(firstRetain.promise).mockReturnValueOnce(changedRetain.promise);
+    const context = { agentId: "main", sessionKey: "changed" };
+    const changed = { messages: [...event.messages, { role: "assistant", content: "a new answer" }] };
+    const first = handler(event, context);
+    const update = handler(changed, context);
+    const ending = sessionEnd(changed, context);
+    await Promise.resolve();
+    expect(retain).toHaveBeenCalledTimes(2);
+
+    // The changed transcript completes while the original is still unresolved.
+    changedRetain.resolve({ queued: true, bank: "main" });
+    await Promise.all([update, ending]);
+    const lateDuplicate = handler(event, context);
+    await Promise.resolve();
+    expect(retain).toHaveBeenCalledTimes(2);
+    firstRetain.resolve({ queued: false, bank: "main" });
+    await Promise.all([first, lateDuplicate]);
+    expect(retain.mock.calls.map(([, request]) => JSON.parse(request.content))).toEqual([
+      event.messages,
+      changed.messages,
+    ]);
+    await handler(changed, context);
+    expect(retain).toHaveBeenCalledTimes(3);
+    expect(new Set(retain.mock.calls.map(([, request]) => request.documentId)).size).toBe(3);
+  });
+
+  it("does not let a late older retain rearm the newest completed transcript", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const context = { agentId: "main", sessionKey: "completion-order" };
+    const changed = { messages: [{ role: "user", content: "different turn" }] };
+    const first = handler(event, context);
+    await handler(changed, context);
+    deferred.resolve({ queued: false, bank: "main" });
+    await first;
+    await handler(changed, context);
+    expect(retain).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries failed coalesced work without blocking changed content", async () => {
+    const { handler, sessionEnd, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const context = { agentId: "main", sessionKey: "failed" };
+    const changed = { messages: [{ role: "user", content: "different turn" }] };
+    const first = handler(event, context);
+    const duplicate = sessionEnd(event, context);
+    await handler(changed, context);
+    expect(retain).toHaveBeenCalledTimes(2);
+    deferred.reject(new Error("failed retain"));
+    await Promise.all([first, duplicate]);
+    await handler(event, context);
+    expect(retain).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps overlapping exact principal/session tuples independent", async () => {
+    const { handler, event, retain } = retainIdentityFixture();
+    const deferred = deferredRetain();
+    retain.mockReturnValueOnce(deferred.promise);
+    const first = handler(event, { agentId: "a", sessionKey: "b:c" });
+    await handler(event, { agentId: "a:b", sessionKey: "c" });
+    expect(retain.mock.calls.map(([principal]) => principal)).toEqual(["a", "a:b"]);
+    deferred.resolve({ queued: false, bank: "main" });
+    await first;
+  });
 
   it("retains a revisited session in a new document after digest-state eviction", async () => {
     const { handler, event, retain } = retainIdentityFixture();
@@ -989,5 +1131,186 @@ describe("plugin wiring", () => {
         errorClass: "router_request_failed",
       }),
     ]);
+  });
+
+  describe("retain replay lifecycle", () => {
+    let api: FakeApi;
+    let stack: RoutingStack;
+    let service: FakeApi["services"][number];
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      api = makeApi(queueDir);
+      stack = instrumentedStack(queueDir, { constructed: [], recalls: [], retains: [] });
+      stack.config.retainQueueFlushIntervalMs = 100;
+      registerWithStack(api, stack);
+      service = api.services[0];
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("owns one interval across concurrent starts, repeated stops and restart", async () => {
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
+      await Promise.all([service.start(), service.start(), service.start()]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await Promise.all([service.stop(), service.stop()]);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledTimes(3);
+      await service.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it.each(["rejection", "synchronous throw"])(
+      "observes an initial %s and retries without duplicate timers",
+      async (failure) => {
+        const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
+        const secretError = new Error(`private transcript ${TOKEN_MAIN}`);
+        if (failure === "rejection") flush.mockRejectedValueOnce(secretError);
+        else
+          flush.mockImplementationOnce(() => {
+            throw secretError;
+          });
+        await service.start();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(api.logger.error).toHaveBeenCalledExactlyOnceWith("retain queue flush failed: memory operation failed");
+        expect(vi.getTimerCount()).toBe(1);
+        await service.start();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(flush).toHaveBeenCalledTimes(2);
+        await service.stop();
+        expect(vi.getTimerCount()).toBe(0);
+      },
+    );
+
+    it("unwinds a failed timer setup and allows a subsequent start", async () => {
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
+      vi.spyOn(globalThis, "setInterval").mockImplementationOnce(() => {
+        throw new Error("timer unavailable");
+      });
+      await expect(service.start()).rejects.toThrow("timer unavailable");
+      expect(flush).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      await service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledOnce();
+      await service.stop();
+    });
+
+    it("returns from startup while replay is deferred and never overlaps interval flushes", async () => {
+      let complete!: () => void;
+      const replay = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockReturnValueOnce(replay).mockResolvedValue(undefined);
+      await service.start();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(flush).toHaveBeenCalledTimes(1);
+      complete();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await service.stop();
+    });
+
+    it("waits for active replay and serializes starts arriving during stop", async () => {
+      let complete!: () => void;
+      const replay = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockReturnValueOnce(replay).mockResolvedValue(undefined);
+      await service.start();
+      let stopped = false;
+      const stop = service.stop().then(() => {
+        stopped = true;
+      });
+      const restart = Promise.all([service.start(), service.start()]);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(stopped).toBe(false);
+      expect(flush).toHaveBeenCalledTimes(1);
+      complete();
+      await stop;
+      await restart;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(1);
+      expect(api.logger.warn).not.toHaveBeenCalled();
+      await service.stop();
+    });
+
+    it.each(["completion", "timeout"])("honors the latest stop when a restart waits for replay %s", async (outcome) => {
+      let complete!: () => void;
+      const replay = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockReturnValueOnce(replay).mockResolvedValue(undefined);
+      await service.start();
+      const firstStop = service.stop();
+      const restart = service.start();
+      const lastStop = service.stop();
+      if (outcome === "completion") complete();
+      else await vi.advanceTimersByTimeAsync(1000);
+      await Promise.all([firstStop, restart, lastStop]);
+      expect(vi.getTimerCount()).toBe(0);
+      complete();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(flush).toHaveBeenCalledTimes(1);
+      await service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await service.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("bounds shutdown, preserves pending durable work and owns unfinished replay across restart", async () => {
+      const client = stack.clients.forAgent(stack.credentials.resolve("main"));
+      const retain = vi
+        .spyOn(client, "retain")
+        .mockRejectedValueOnce(Object.assign(new Error("unavailable"), { statusCode: 503 }));
+      await stack.retain.retain("main", { content: "durable pending transcript" });
+      const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
+      let complete!: () => void;
+      retain.mockImplementation(
+        () =>
+          new Promise<Record<string, unknown>>((resolve) => {
+            complete = () => resolve({});
+          }),
+      );
+      const flush = vi.spyOn(stack.retain, "flushQueues");
+      await service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(retain).toHaveBeenCalledTimes(2);
+      let stopped = false;
+      const stop = Promise.all([service.stop(), service.stop()]).then(() => {
+        stopped = true;
+      });
+      await vi.advanceTimersByTimeAsync(999);
+      expect(stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await stop;
+      expect(vi.getTimerCount()).toBe(0);
+      expect(JSON.parse(readFileSync(queueFile, "utf8")).content).toBe("durable pending transcript");
+      expect(api.logger.warn).toHaveBeenCalledExactlyOnceWith(
+        "retain queue shutdown wait expired; active replay may finish after stop",
+      );
+      await service.start();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(flush).toHaveBeenCalledTimes(1);
+      complete();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(existsSync(queueFile)).toBe(false);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await service.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });

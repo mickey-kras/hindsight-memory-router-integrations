@@ -59,6 +59,9 @@ function refresh(directory, number, head, base, output) {
   }
   if (!changed.length || changed.some((path) => !INPUTS.includes(path)))
     throw new Error("Unexpected dependency input files");
+  if (run("npm", ["--version"]).trim() !== "11.19.1") {
+    throw new Error("Dependency preparation requires npm 11.19.1");
+  }
   for (const path of MANIFESTS) {
     validateManifest(JSON.parse(run("git", ["show", `${base}:${path}`])), JSON.parse(read(path)));
   }

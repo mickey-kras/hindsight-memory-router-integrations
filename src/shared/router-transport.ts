@@ -172,12 +172,16 @@ export class RouterTransport {
     const listing = assertAuthorizedUrl(url, method, this.baseUrl, this.access);
     const response = await this.send(url, init, token);
     if (response.status === 401 || response.status === 403) {
+      const error = response.status === 401 ? this.#unauthorizedError() : new AccessDeniedError();
       this.#deniedToken = token;
-      this.#deniedError = response.status === 401 ? this.#unauthorizedError() : new AccessDeniedError();
-      throw this.#deniedError;
+      this.#deniedError = error;
+      // Observe cleanup failures without waiting for an underlying source to finish.
+      void response.body?.cancel().catch(() => undefined);
+      throw error;
     }
     // Never expose server error bodies, which may echo credentials or bank existence.
     if (!response.ok && (response.status !== 404 || method !== "GET")) {
+      void response.body?.cancel().catch(() => undefined);
       throw new RouterRequestError(
         response.status,
         response.status === 429 ? boundedRetryAfterMs(response.headers.get("retry-after")) : 0,
@@ -186,11 +190,16 @@ export class RouterTransport {
     if (listing && response.ok) {
       return filterVisibleBanks(response, this.access);
     }
-    return response.status === 404 ? new Response(null, { status: 404 }) : response;
+    if (response.status === 404) {
+      void response.body?.cancel().catch(() => undefined);
+      return new Response(null, { status: 404 });
+    }
+    return response;
   }
 
   private async send(url: string, init: RequestInit, token: string): Promise<Response> {
     try {
+      init.signal?.throwIfAborted();
       const signal = init.signal ?? AbortSignal.timeout(15_000);
       const dispatcher = signalOnlyDispatcher();
       return await this.#send(url, {
@@ -211,6 +220,7 @@ export class RouterTransport {
         signal,
       } as RequestInit);
     } catch (error) {
+      init.signal?.throwIfAborted();
       // Log only the error class (TypeError/TimeoutError/AbortError/...), never the message:
       // fetch messages can embed the URL or token. Undifferentiated 503s otherwise hide
       // DNS/TLS/timeout anomalies from local logs.
