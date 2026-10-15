@@ -1,9 +1,10 @@
+import { RouterRequestError } from "@memory-router/shared/router-transport";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { syncStatus, DEEPEN_DIFF_TARGET, type StatusClient } from "./status";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { syncStatus, waitForSettlement, DEEPEN_DIFF_TARGET, type StatusClient } from "./status";
 
 /** Build a StatusClient stub; per-tag doc sets, overridable listPages/activeOperations. */
 function stubClient(opts: {
@@ -28,6 +29,7 @@ function stubClient(opts: {
 let dir: string | undefined;
 
 afterEach(() => {
+  vi.useRealTimers();
   if (dir) rmSync(dir, { recursive: true, force: true });
   dir = undefined;
 });
@@ -100,7 +102,7 @@ describe("syncStatus", () => {
     expect(s.synced).toBe(false);
   });
 
-  it("fail-open: an activeOperations rejection yields activeOps null and does NOT block synced", async () => {
+  it("an unavailable operation count blocks sync even with existing git and pages", async () => {
     const client = stubClient({
       gitIds: ["gitlog:repo"],
       activeOperations: async () => {
@@ -109,8 +111,7 @@ describe("syncStatus", () => {
     });
     const s = await syncStatus(client, "bank-1");
     expect(s.activeOps).toBeNull();
-    // (activeOps ?? 0) === 0 — an unreportable count doesn't gate completion.
-    expect(s.synced).toBe(true);
+    expect(s.synced).toBe(false);
   });
 
   it("fail-open: a source:chat listDocumentIds rejection yields chatDocs 0, no throw", async () => {
@@ -179,4 +180,99 @@ describe("syncStatus", () => {
     expect(s.gitDiffTarget).toBe(2);
     expect(s.gitlogPresent).toBe(true);
   });
+});
+
+it("sync recovers only after an explicit zero count following a polling timeout", async () => {
+  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
+    .mockRejectedValueOnce(new DOMException("request timed out", "TimeoutError"))
+    .mockResolvedValueOnce(2)
+    .mockResolvedValueOnce(0);
+  const client = stubClient({ gitIds: ["gitlog:repo"], activeOperations });
+  expect(await syncStatus(client, "bank")).toMatchObject({ gitlogPresent: true, pagesCount: 1, activeOps: null, synced: false });
+  expect(await syncStatus(client, "bank")).toMatchObject({ activeOps: 2, synced: false });
+  expect(await syncStatus(client, "bank")).toMatchObject({ activeOps: 0, synced: true });
+});
+
+it.each([401, 403])("sync propagates authorization denial from operation polling (%s)", async (statusCode) => {
+  const denied = Object.assign(new Error("memory access denied"), { statusCode });
+  const client = stubClient({ gitIds: ["gitlog:repo"], activeOperations: async () => { throw denied; } });
+  await expect(syncStatus(client, "bank")).rejects.toBe(denied);
+});
+
+it.each(["source:chat", "pages", "source:upload", "source:survey-baseline"])(
+  "sync cannot report success after authorization denial in %s", async (probe) => {
+    const denied = Object.assign(new Error("memory access denied"), { statusCode: 403 });
+    const client = stubClient({
+      listDocumentIds: async (tag) => { if (tag === probe) throw denied; return new Set(["gitlog:repo"]); },
+      listPages: async () => { if (probe === "pages") throw denied; return { items: [{ id: "p1" }] }; },
+    });
+    await expect(syncStatus(client, "bank", "/repo")).rejects.toBe(denied);
+  }
+);
+
+it("settlement retries failed and timed-out probes until completion is established", async () => {
+  vi.useFakeTimers();
+  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
+    .mockRejectedValueOnce(new Error("secret-bearing upstream failure"))
+    .mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"))
+    .mockResolvedValueOnce(1)
+    .mockResolvedValueOnce(0);
+  const log = vi.fn<(message: string) => void>();
+  const pending = waitForSettlement({ activeOperations }, log, 20_000);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(activeOperations).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(await pending).toBe(true);
+  expect(activeOperations).toHaveBeenCalledTimes(4);
+  expect(log.mock.calls.flat().join()).not.toContain("secret-bearing");
+});
+
+it.each([null, 3])("settlement remains unconfirmed at its deadline with count %s", async (active) => {
+  vi.useFakeTimers();
+  const activeOperations = vi.fn<StatusClient["activeOperations"]>().mockImplementation(async () => {
+    if (active === null) throw new Error("upstream unavailable");
+    return active;
+  });
+  const log = vi.fn<(message: string) => void>();
+  const pending = waitForSettlement({ activeOperations }, log, 6000);
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(await pending).toBe(false);
+  expect(activeOperations).toHaveBeenCalledTimes(2);
+  expect(activeOperations).toHaveBeenNthCalledWith(2, 1000);
+  expect(log.mock.calls.at(-1)?.[0]).toContain("settlement unconfirmed at timeout");
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([401, 403])("settlement stops immediately on authorization denial (%s)", async (statusCode) => {
+  vi.useFakeTimers();
+  const denied = Object.assign(new Error("memory access denied"), { statusCode });
+  const activeOperations = vi.fn<StatusClient["activeOperations"]>().mockRejectedValue(denied);
+  await expect(waitForSettlement({ activeOperations }, vi.fn())).rejects.toBe(denied);
+  expect(activeOperations).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+
+it("settlement honors bounded rate-limit delay before recovering", async () => {
+  vi.useFakeTimers();
+  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
+    .mockRejectedValueOnce(new RouterRequestError(429, 60_000))
+    .mockResolvedValueOnce(0);
+  const pending = waitForSettlement({ activeOperations }, vi.fn(), 90_000);
+  await vi.advanceTimersByTimeAsync(59_999);
+  expect(activeOperations).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await pending).toBe(true);
+  expect(activeOperations).toHaveBeenCalledTimes(2);
+});
+
+it("rate-limit delay cannot extend the settlement deadline", async () => {
+  vi.useFakeTimers();
+  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
+    .mockRejectedValue(new RouterRequestError(429, 60_000));
+  const pending = waitForSettlement({ activeOperations }, vi.fn(), 10_000);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(await pending).toBe(false);
+  expect(activeOperations).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });
