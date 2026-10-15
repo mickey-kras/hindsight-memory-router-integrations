@@ -32,6 +32,10 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 
 - Malformed JSON, invalid UTF-8 and invalid record shapes are never replayed. Before a queue rewrite, only their exact original bytes are preserved in a private snapshot under `<queue-file>.recovery/`, retaining duplicate corrupt records and their relative order. Valid records and the gaps they occupied are omitted; their FIFO order and configured age limit remain enforced in the active queue. A failed rewrite followed by appends extends the same source-generation snapshot after verifying the existing corrupt-byte prefix; retries do not duplicate prior corrupt records. Recovery flushes the committed file and directory entries before changing the active queue. Queue and recovery access require Linux with enforced POSIX file permissions; other platforms fail closed. Failures preserve the active queue. Snapshots require manual inspection and recovery, with original operation IDs preserved where available; they are never replayed automatically. Corrupt-byte recovery files intentionally remain until manually removed, outside active queue capacity/age limits, and must be protected and managed with the queue directory.
 
+## Persistent coding-agent sessions
+
+Each workspace runtime keeps at most 256 sessions. Completed sessions are released on host disposal; otherwise clean idle sessions are evicted as new sessions arrive. Active work and failed-write buffers stay pinned. If all slots are pinned, new sessions skip automatic memory with a `session_capacity_reached` diagnostic until a slot becomes available. Resumed evicted sessions replace their full transcript and must pass the host's ownership checks again. Local usage counters restart after eviction.
+
 ## Audit logs
 
 Every memory operation emits a single-line JSON audit record (principal, op, bank, outcome, bounded error

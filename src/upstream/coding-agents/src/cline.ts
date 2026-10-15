@@ -7,7 +7,7 @@
  * guarantee as every other Hindsight harness. The memory behaviour itself stays in RuntimeCore.
  */
 import { resolveHostMemory } from "./core/host-client";
-import { RuntimeCore } from "./core/runtime";
+import { MAX_RUNTIME_SESSIONS, RuntimeCore } from "./core/runtime";
 import type { TransportTurn } from "./core/chat";
 import { diag } from "./core/diag";
 
@@ -114,11 +114,11 @@ async function settleWithinHookBudget(work: Promise<void>): Promise<boolean> {
  * at its boundary and never calls Hindsight directly.
  */
 export function createClineHooks(
-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript">,
+  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "hasSession">,
   configuredSessionId?: string,
   sessionStart?: Promise<void>
 ) {
-  const injectedPrompts = new Set<string>();
+  const injectedPrompts = new Map<string, string>();
   let sessionStartAwaited = false;
   return {
     async beforeModel({
@@ -139,9 +139,15 @@ export function createClineHooks(
       const user = latestUserMessage(snapshot.messages);
       if (!user) return undefined;
       const id = sessionId(snapshot, configuredSessionId);
-      const promptKey = `${id}:${user.id}`;
-      if (!injectedPrompts.has(promptKey)) {
-        injectedPrompts.add(promptKey);
+      // Capacity denial or eviction invalidates prompt deduplication: the same host
+      // message must get another admission attempt once a slot becomes available.
+      if (injectedPrompts.get(id) !== user.id || !core.hasSession(id)) {
+        injectedPrompts.delete(id);
+        injectedPrompts.set(id, user.id);
+        if (injectedPrompts.size > MAX_RUNTIME_SESSIONS) {
+          const oldest = injectedPrompts.keys().next().value;
+          if (oldest !== undefined) injectedPrompts.delete(oldest);
+        }
         const prompt = user.content
           .filter((part) => part.type === "text" && part.text)
           .map((part) => part.text!)
@@ -180,8 +186,7 @@ export function createClineHooks(
     async afterRun({ snapshot }: { snapshot: ClineSnapshot }): Promise<void> {
       const turns = clineTranscript(snapshot.messages);
       // afterRun: the run has ended, so the last turn is complete.
-      if (turns.length)
-        await core.onTranscript(sessionId(snapshot, configuredSessionId), turns, true);
+      await core.onTranscript(sessionId(snapshot, configuredSessionId), turns, true);
     },
   };
 }

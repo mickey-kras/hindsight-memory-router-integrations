@@ -140,7 +140,12 @@ function createRuntime(core: RuntimeCore) {
     // The Stop-equivalent these hosts otherwise lack: `session.idle` fires once the assistant has
     // finished, which is the only moment the completed exchange is readable. Without it a session's
     // last turn — usually its conclusion — was never retained at all.
-    event: async (input: { event?: { type?: string; properties?: { sessionID?: string } } }) => {
+    event: async (input: { event?: { type?: string; properties?: { sessionID?: string; info?: { id?: string } } } }) => {
+      if (input?.event?.type === "session.deleted") {
+        const id = input.event.properties?.info?.id;
+        if (id) core.disposeSession(id);
+        return;
+      }
       if (input?.event?.type !== "session.idle") return;
       const sid = input.event.properties?.sessionID;
       if (!sid) return;
