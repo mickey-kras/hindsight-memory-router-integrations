@@ -41,6 +41,7 @@ Read-only page tools require an explicit assigned `bankId`.
 See [queue limits and locking](BEHAVIOR.md) before sharing a queue directory.
 
 Retain queues: `~/.openclaw/data/hindsight-retain-queue/`. Revoked/moved bank entries remain queued for operator review.
+The replay service starts without waiting for delivery and logs background failures before retrying on its interval. Repeated starts share one interval and one active replay. Stop disables scheduling and waits at most one second; active replay may finish afterward, while pending records stay on disk. Restart does not overlap an unfinished replay.
 Queued transcripts are plaintext JSONL (mode 0600) and never expire by default (`retainQueueMaxAgeMs: -1`); the plugin warns loudly at startup while retention is unbounded.
 Set a positive `retainQueueMaxAgeMs` to bound retention (`0` expires records older than the cleanup time; it does not disable enqueue), and use full-disk encryption for at-rest confidentiality - the plugin does not encrypt queue contents.
 An item with 5 transient replay failures (network/408/429/5xx) is abandoned: dropped from the queue and reported through the coordinator's `onAbandon` handler. Authorization, changed-bank and other permanent failures do not increment this counter; they stop that queue's replay for operator review. Configured age cleanup can still remove expired records.
