@@ -463,3 +463,32 @@ it("preserves transient baseline/document probe fallback in SessionStart", async
   expect(startSeed).toHaveBeenCalledOnce(); expect(startSurvey).toHaveBeenCalledOnce();
   expect(output.deferInitialReflect).toBe(false);
 });
+
+it.each([
+  null, {}, { operations: {} }, { operations: [null] },
+  { operations: [{ status: 3 }] }, { operations: [{}] },
+  { operations: [{ status: "" }] },
+])("operation polling rejects malformed responses instead of reporting zero: %j", async (body) => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(body));
+  await expect(client().activeOperations()).rejects.toMatchObject({ statusCode: 502 });
+});
+
+it("operation polling rejects malformed JSON with a sanitized error", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("secret body"));
+  await expect(client().activeOperations()).rejects.toThrow("memory request failed (502)");
+});
+
+it.each(["operations", "items"])("operation polling counts only nonterminal %s", async (key) => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ [key]: [
+    { status: "completed" }, { status: "failed" }, { status: "cancelled" }, { status: "running" },
+  ] }));
+  expect(await client().activeOperations()).toBe(1);
+});
+
+it("operation polling leaves rate-limit retry to its caller", async () => {
+  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, {
+    status: 429, headers: { "retry-after": "60" },
+  }));
+  await expect(client().activeOperations()).rejects.toMatchObject({ statusCode: 429 });
+  expect(send).toHaveBeenCalledOnce();
+});

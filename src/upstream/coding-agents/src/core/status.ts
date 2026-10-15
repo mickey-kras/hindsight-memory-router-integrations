@@ -14,6 +14,7 @@
  * trickle deliberately does NOT gate `synced` — it deepens across sessions and is a bonus, not a
  * prerequisite.
  */
+import { isAuthorizationError } from "@memory-router/shared/request-error";
 import { execFileSync } from "node:child_process";
 import { commitsSince, repoNameOf } from "./git";
 import { parsePageList } from "./knowledge-injection";
@@ -24,7 +25,36 @@ export interface StatusClient {
   listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
-  activeOperations(): Promise<number>;
+  activeOperations(timeoutMs?: number): Promise<number>;
+}
+
+function unavailable(error: unknown): null {
+  if (isAuthorizationError(error)) throw error;
+  return null;
+}
+
+/** Wait for a positively observed idle bank; unavailable probes remain unknown. */
+export async function waitForSettlement(
+  client: Pick<StatusClient, "activeOperations">,
+  log: (message: string) => void,
+  maxMs: number = 15 * 60 * 1000
+): Promise<boolean> {
+  const deadline = Date.now() + maxMs;
+  let active: number | null = null;
+  while (Date.now() < deadline) {
+    active = await client.activeOperations(Math.min(15_000, deadline - Date.now())).catch(unavailable);
+    if (active === 0) return true;
+    if (Date.now() >= deadline) break;
+    log(
+      active === null
+        ? "[deepen] operation status unavailable; retrying settlement check"
+        : `[deepen] waiting for ${active} server-side op(s) to settle`
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(5000, deadline - Date.now())));
+  }
+  const state = active === null ? "operation status unavailable" : `${active} server-side op(s) still active`;
+  log(`[deepen] settlement unconfirmed at timeout (${state})`);
+  return false;
 }
 
 /** How much recent history the deepen engine targets with per-commit diffs. */
@@ -65,12 +95,18 @@ export async function syncStatus(
   const gitIds = await client.listDocumentIds("source:git", "all_strict");
   const chatIds = await client
     .listDocumentIds("source:chat", "all_strict")
-    .catch(() => new Set<string>());
-  const pages = parsePageList(await client.listPages().catch(() => null));
-  const activeOps = await client.activeOperations().catch(() => null);
+    .catch((error: unknown) => {
+      unavailable(error);
+      return new Set<string>();
+    });
+  const pages = parsePageList(await client.listPages().catch(unavailable));
+  const activeOps = await client.activeOperations().catch(unavailable);
   const uploads = await client
     .listDocumentIds("source:upload", "all_strict")
-    .catch(() => new Set<string>());
+    .catch((error: unknown) => {
+      unavailable(error);
+      return new Set<string>();
+    });
   const surveyDocs = SURVEY_DOC_IDS.filter((id) => uploads.has(id)).length;
 
   // Survey observability: the survey-baseline:<sha> markers Chris's re-survey mechanism writes.
@@ -90,7 +126,8 @@ export async function syncStatus(
         surveyBaseline = best.sha;
         surveyCommitsBehind = best.behind;
       }
-    } catch {
+    } catch (error: unknown) {
+      unavailable(error);
       /* fail open — survey state is informational */
     }
   }
@@ -120,6 +157,6 @@ export async function syncStatus(
     synced:
       gitlogPresent &&
       (client.knowledgePagesSupported === false || pages.length > 0) &&
-      (activeOps ?? 0) === 0,
+      activeOps === 0,
   };
 }

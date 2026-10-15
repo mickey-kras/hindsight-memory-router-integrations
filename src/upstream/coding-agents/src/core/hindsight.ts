@@ -608,17 +608,26 @@ export class HindsightClient {
 
   /** Count of operations still ACTIVE on this bank — the list includes terminal ops (completed/
    *  failed/cancelled), so filter by status. Powers syncStatus's "extractions drained" check. */
-  async activeOperations(): Promise<number> {
-    const r = await this.req("GET", this.bankUrl("/operations"));
+  async activeOperations(timeoutMs: number = 15_000): Promise<number> {
+    // The settlement loop owns retries and its deadline, including rate limiting.
+    const r = await this.req("GET", this.bankUrl("/operations"), undefined, [429], timeoutMs);
+    if (!r.ok) throw new RouterRequestError(r.status);
     try {
-      const j = (await r.json()) as {
-        operations?: { status?: string }[];
-        items?: { status?: string }[];
-      };
-      const ops = j.operations ?? j.items ?? [];
-      return ops.filter((o) => !TERMINAL.has((o?.status || "").toLowerCase())).length;
+      const body: unknown = await r.json();
+      if (!body || typeof body !== "object" || Array.isArray(body)) throw new RouterRequestError(502);
+      const { operations, items } = body as Record<string, unknown>;
+      const ops = operations ?? items;
+      if (!Array.isArray(ops)) throw new RouterRequestError(502);
+      let active = 0;
+      for (const op of ops as unknown[]) {
+        if (!op || typeof op !== "object" || !("status" in op) || typeof op.status !== "string" || !op.status) {
+          throw new RouterRequestError(502);
+        }
+        if (!TERMINAL.has(op.status.toLowerCase())) active++;
+      }
+      return active;
     } catch {
-      return 0;
+      throw new RouterRequestError(502);
     }
   }
 
