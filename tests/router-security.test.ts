@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { harnessTransport, managedBank, managedSettings } from "../src/coding-agents/runtime.js";
+import { harnessTransport, managedBank, managedReadScope, managedSettings } from "../src/coding-agents/runtime.js";
 import { AccessDeniedError, classifyOperation, requireBank, visibleBanks } from "../src/shared/bank-access.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { readAcrossBanks } from "../src/shared/read-execution.js";
@@ -63,6 +63,26 @@ function transport(send = vi.fn<typeof fetch>().mockResolvedValue(Response.json(
 }
 
 describe("managed harness identities", () => {
+  it("canonicalizes opaque bank IDs by ordinal order regardless of configured read-bank order", () => {
+    const path = setup();
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    config.principals.codex.additionalReadBanks = ["z", "_bank", ":bank", "Z", "-bank", "a", ".bank", "0bank", "A"];
+    writeFileSync(path, JSON.stringify(config));
+    const directory = join(dirname(path), "approved");
+    const first = managedReadScope("codex", directory, directory);
+    expect(first.banks).toEqual(["-bank", ".bank", "0bank", ":bank", "A", "Z", "_bank", "a", "z"]);
+    config.principals.codex.additionalReadBanks.reverse();
+    writeFileSync(path, JSON.stringify(config));
+    const reordered = managedReadScope("codex", directory, directory);
+    expect(reordered).toMatchObject({
+      endpoint: first.endpoint,
+      workspace: first.workspace,
+      identity: first.identity,
+      bankId: first.bankId,
+      banks: first.banks,
+    });
+  });
+
   it("binds distinct harness principals to distinct credentials", async () => {
     setup();
     const send = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}));
