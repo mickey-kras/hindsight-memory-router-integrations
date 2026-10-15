@@ -175,7 +175,7 @@ export async function buildSessionStartContext(args: {
   harness?: string;
   stateDir?: string;
   hasGit?: (dir: string) => boolean;
-  startSeed?: (repoDir: string, opts?: { limit?: number; harness?: string }) => void;
+  startSeed?: (repoDir: string, opts?: { limit?: number; harness?: string }) => void | Promise<boolean>;
   startSurvey?: typeof startCodebaseSurvey;
   headSha?: (dir: string) => string | null;
   commitsSince?: (dir: string, sinceSha: string) => number | null;
@@ -187,6 +187,7 @@ export async function buildSessionStartContext(args: {
   const t0 = Date.now();
   let cold: boolean | undefined; // undefined = not checked (autoSeed off / non-git / unreachable)
   let gitDocIds: Set<string> | undefined; // the cold-check's doc set, reused by the banner's git note
+  let seedLaunched: boolean | undefined;
   let bankEmpty = false; // true only when the server confirmed the bank holds no documents
   const harness = args.harness ?? "claude-code";
   const hasGit = args.hasGit ?? hasGitHistory;
@@ -278,7 +279,7 @@ export async function buildSessionStartContext(args: {
           // Pass the ASKING harness through: without it deepen.js falls back to the config
           // loader's harness default and misfiles this session's survey + git history into the
           // wrong bank (e.g. `opencode::<project>` for a claude-code session). See #3247.
-          startSeed(cwd, { limit: cfg.seedLimit, harness });
+          seedLaunched = (await startSeed(cwd, { limit: cfg.seedLimit, harness })) !== false;
           // Cold iff the bank has zero source:git docs and no survey baseline (an undefined result
           // — server error — is NOT treated as cold; we never surveyed/noted on an unconfirmed-empty
           // bank).
@@ -293,7 +294,7 @@ export async function buildSessionStartContext(args: {
               const sha = resolveHeadSha(cwd);
               if (started && sha) recordSurveyBaseline(sha);
             }
-            diag(harness, "seed_started", { bank: bankId });
+            if (seedLaunched !== false) diag(harness, "seed_started", { bank: bankId });
           } else if (cfg.codebaseSurvey !== false && cfg.surveyRefreshCommits > 0) {
             // WARM bank: re-run the survey once enough commits have accrued since the last one, so
             // structural pages track an evolving architecture. Branch-robust: read the
@@ -378,7 +379,8 @@ export async function buildSessionStartContext(args: {
       cold: cold === true,
     }).catch((error) => { if (error instanceof AccessDeniedError) throw error; return undefined; });
   }
-  systemMessage = buildSeedBanner(bankId, cold === true, gitNote, cfg.toolPrefix);
+  systemMessage = buildSeedBanner(bankId, cold === true && seedLaunched === true, gitNote, cfg.toolPrefix);
+  if (seedLaunched === false) systemMessage += "\nBackground seed launch failed.";
 
   // The old per-agent plugin keeps running next to this one until the user removes it — say so
   // where they will see it. Only Claude Code had that plugin.
@@ -405,77 +407,71 @@ export async function runSessionStartHook(
   // so its hooks are a no-op — it must not re-seed/re-survey its own survey session.
   if (process.env.HINDSIGHT_DISABLE_HOOKS) return;
 
-  // Whole-body try/catch (unlike runHook/runRetainHook, which only guard individual steps): a
-  // throw here happens during session bootstrap, before the agent has done anything — more
-  // disruptive than a failure mid-prompt — so nothing in this function may ever escape it.
-  try {
-    const ev = readHookEvent(spec.harness);
-    if (!ev) return;
-    if (spec.accept && !spec.accept(ev)) return;
-    const { harness } = spec;
-    const { cwd: rawCwd, sessionId } = spec.parse(ev);
-    const cwd = rawCwd || process.cwd();
+  // Propagate failures to the shared lifecycle entrypoint for sanitized diagnostics and exit status.
+  const ev = readHookEvent(spec.harness);
+  if (!ev) return;
+  if (spec.accept && !spec.accept(ev)) return;
+  const { harness } = spec;
+  const { cwd: rawCwd, sessionId } = spec.parse(ev);
+  const cwd = rawCwd || process.cwd();
 
-    let cfg = loadConfig({ harness });
-    setLogLevel(cfg.logLevel);
-    syncCompanionSkill(harness); // keep the installed skill current with the package version
-    if (cfg.disabled) return;
-    // …and keep the package itself current. AFTER the disabled check, unlike the skill sync above:
-    // `disabled` means an inert plugin, and a network call plus a background npm install is not
-    // inert. It also keeps the two harness families symmetric — the plugin hosts never construct a
-    // RuntimeCore when disabled (harness/plugin-entry.ts), so they already skip this.
-    // Detached and rate-limited to once a day; the update lands for the NEXT session.
-    void maybeAutoUpdate(cfg);
+  let cfg = loadConfig({ harness });
+  setLogLevel(cfg.logLevel);
+  syncCompanionSkill(harness); // keep the installed skill current with the package version
+  if (cfg.disabled) return;
+  // …and keep the package itself current. AFTER the disabled check, unlike the skill sync above:
+  // `disabled` means an inert plugin, and a network call plus a background npm install is not
+  // inert. It also keeps the two harness families symmetric — the plugin hosts never construct a
+  // RuntimeCore when disabled (harness/plugin-entry.ts), so they already skip this.
+  // Detached and rate-limited to once a day; the update lands for the NEXT session.
+  void maybeAutoUpdate(cfg);
 
-    // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
-    // same bank however far the agent navigates (#3563).
-    const sessionRoot = sessionRootDir(harness, sessionId, cwd);
-    const derived = deriveBankIdOrSkip(cfg, cwd, harness, sessionRoot);
-    if (derived === null) return; // repository unidentifiable: no bank, no seed, no injection
-    const resolved = applyBankConfig(cfg, derived, cwd);
-    cfg = resolved.cfg;
-    const bankId = resolved.bankId;
-    if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
-    // Memory is live HERE — the one point where registering the host's per-repo MCP access is
-    // correct: the caller of an opt-out repo must not gain a config file it never asked for.
-    const mcpHint = spec.ensureMcpRegistration?.(cwd);
-    // Daemon mode: warm it up now, before the user has typed anything. The start itself is
-    // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
-    // cold one keeps coming up in the background and is picked up by a later turn.
-    await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
-    const client = makeClient({
-      routerHarness: cfg.routerHarness,
-      apiUrl: cfg.apiUrl,
-      apiToken: cfg.apiToken,
-      bank: bankId,
-      maxParallelRetains: cfg.maxParallelRetains,
-      observationScopes: cfg.observationScopes,
-    });
+  // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
+  // same bank however far the agent navigates (#3563).
+  const sessionRoot = sessionRootDir(harness, sessionId, cwd);
+  const derived = deriveBankIdOrSkip(cfg, cwd, harness, sessionRoot);
+  if (derived === null) return; // repository unidentifiable: no bank, no seed, no injection
+  const resolved = applyBankConfig(cfg, derived, cwd);
+  cfg = resolved.cfg;
+  const bankId = resolved.bankId;
+  if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+  // Memory is live HERE — the one point where registering the host's per-repo MCP access is
+  // correct: the caller of an opt-out repo must not gain a config file it never asked for.
+  const mcpHint = spec.ensureMcpRegistration?.(cwd);
+  // Daemon mode: warm it up now, before the user has typed anything. The start itself is
+  // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
+  // cold one keeps coming up in the background and is picked up by a later turn.
+  await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
+  const client = makeClient({
+    routerHarness: cfg.routerHarness,
+    apiUrl: cfg.apiUrl,
+    apiToken: cfg.apiToken,
+    bank: bankId,
+    maxParallelRetains: cfg.maxParallelRetains,
+    observationScopes: cfg.observationScopes,
+  });
 
-    const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
-    const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
-    // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
-    // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
-    if (mcpHint)
-      out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix)}` : renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix);
-    if (out.deferInitialReflect && sessionId) {
-      writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
-    }
-    if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
-      const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
-      const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
-      const clientScope = client.readScope?.() ?? current;
-      if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
-          pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
-      stashPendingContext(harness, key, out.additionalContext);
-      out.additionalContext = undefined;
-    }
-    // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
-    const payload = spec.emit(out);
-    if (out.systemMessage || out.additionalContext) {
-      process.stdout.write(JSON.stringify(payload));
-    }
-  } catch {
-    /* SessionStart must never throw and break the session */
+  const handoffScope = spec.deferContextToToolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
+  const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
+  // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
+  // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
+  if (mcpHint)
+    out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix)}` : renderBrandText(mcpHint, toolBrand(cfg.toolPrefix).prefix);
+  if (out.deferInitialReflect && sessionId) {
+    writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
+  }
+  if (spec.deferContextToToolHook && out.additionalContext && sessionId && handoffScope) {
+    const key = pendingContextKey(handoffScope.endpoint, handoffScope.bankId, handoffScope.workspace, sessionId, handoffScope);
+    const current = managedReadScope(cfg.routerHarness, cwd, sessionRoot);
+    const clientScope = client.readScope?.() ?? current;
+    if (pendingContextKey(current.endpoint, current.bankId, current.workspace, sessionId, current) !== key ||
+        pendingContextKey(clientScope.endpoint, clientScope.bankId, handoffScope.workspace, sessionId, clientScope) !== key) return;
+    stashPendingContext(harness, key, out.additionalContext);
+    out.additionalContext = undefined;
+  }
+  // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
+  const payload = spec.emit(out);
+  if (out.systemMessage || out.additionalContext) {
+    process.stdout.write(JSON.stringify(payload));
   }
 }
