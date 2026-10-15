@@ -460,6 +460,7 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   let flushTimer: ReturnType<typeof setInterval> | undefined;
   let activeFlush: Promise<void> | undefined;
   let stopping: Promise<void> | undefined;
+  let runningRequested = false;
   const flush = (): void => {
     if (activeFlush) return;
     activeFlush = Promise.resolve()
@@ -474,13 +475,15 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   api.registerService({
     id: PLUGIN_ID,
     async start() {
+      runningRequested = true;
       if (stopping) await stopping;
-      if (flushTimer) return;
+      if (!runningRequested || flushTimer) return;
       flushTimer = setInterval(flush, config.retainQueueFlushIntervalMs ?? RUNTIME_DEFAULTS.retainQueueFlushIntervalMs);
       flushTimer.unref?.();
       flush();
     },
     async stop() {
+      runningRequested = false;
       if (stopping) return stopping;
       if (flushTimer) {
         clearInterval(flushTimer);

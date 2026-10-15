@@ -1104,6 +1104,30 @@ describe("plugin wiring", () => {
       await service.stop();
     });
 
+    it.each(["completion", "timeout"])("honors the latest stop when a restart waits for replay %s", async (outcome) => {
+      let complete!: () => void;
+      const replay = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const flush = vi.spyOn(stack.retain, "flushQueues").mockReturnValueOnce(replay).mockResolvedValue(undefined);
+      await service.start();
+      const firstStop = service.stop();
+      const restart = service.start();
+      const lastStop = service.stop();
+      if (outcome === "completion") complete();
+      else await vi.advanceTimersByTimeAsync(1000);
+      await Promise.all([firstStop, restart, lastStop]);
+      expect(vi.getTimerCount()).toBe(0);
+      complete();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(flush).toHaveBeenCalledTimes(1);
+      await service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(flush).toHaveBeenCalledTimes(2);
+      await service.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
     it("bounds shutdown, preserves pending durable work and owns unfinished replay across restart", async () => {
       const client = stack.clients.forAgent(stack.credentials.resolve("main"));
       const retain = vi
