@@ -70,7 +70,7 @@ const NUMERIC_FIELDS = new Set([
   "ms", "chars", "count", "turns", "timeoutMs", "pages", "newChats", "failures",
   "hostCatalog", "hindsight", "commits",
 ]);
-const BOOLEAN_FIELDS = new Set(["cold", "wired", "hasSession", "appendSupported", "retry"]);
+const BOOLEAN_FIELDS = new Set(["cold", "wired", "hasSession", "appendSupported", "retry", "settled"]);
 const ERROR_CLASSES = ["timeout", "aborted", "connection_refused", "dns_failure", "operation_failed"] as const;
 type ErrorClass = (typeof ERROR_CLASSES)[number];
 

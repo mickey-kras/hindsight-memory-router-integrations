@@ -1,11 +1,12 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import { diag, parseHookEvent } from "./diag";
 import { HindsightClient, ReflectError } from "./hindsight";
 import { buildHookOutput } from "./hook";
+import { buildKnowledgeTools } from "./knowledge-tools";
 import { log, setLogLevel } from "./log";
 import { buildRetain } from "./retain-hook";
 import { RuntimeCore } from "./runtime";
@@ -120,6 +121,28 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
     expect(contents(ordinary)).toContain("reflection notice delivered");
   });
 
+  it("reports unknown sync status and foreground errors without persisting their content", async () => {
+    const instance = client();
+    const documents = vi.spyOn(instance, "listDocumentIds").mockImplementation(async (tag) =>
+      new Set(tag === "source:git" ? [`gitlog:${basename(root)}`] : []));
+    const failure = new Error(FAILURE, { cause: Object.assign(new Error(PROMPT), { code: "ECONNREFUSED" }) });
+    const operations = vi.spyOn(instance, "activeOperations").mockRejectedValue(failure);
+    const tool = buildKnowledgeTools(instance, "A", { repoDir: root })
+      .find((entry) => entry.name.endsWith("_sync_status"))!;
+    const unknown = await tool.handler({});
+    expect(unknown.isError).toBeFalsy();
+    expect(JSON.parse(unknown.content[0].text)).toMatchObject({ activeOps: null, synced: false });
+    operations.mockResolvedValueOnce(0);
+    const settled = await tool.handler({});
+    expect(settled.isError).toBeFalsy();
+    expect(JSON.parse(settled.content[0].text)).toMatchObject({ activeOps: 0, synced: true });
+    documents.mockRejectedValueOnce(failure);
+    const failed = await tool.handler({});
+    expect(failed.isError).toBe(true);
+    expect(JSON.parse(failed.content[0].text).error).toContain(FAILURE);
+    expect(JSON.parse(failed.content[0].text).error).toContain("ECONNREFUSED");
+  });
+
   it.each(["retain", "idle"] as const)("preserves bounded transport categories through the %s failure path", async (path) => {
     const instance = client();
     const cause = Object.assign(new Error(ANSWER), { code: "ECONNREFUSED" });
@@ -145,15 +168,18 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
   it("filters arbitrary extras in both sinks and unsafe config validation values", () => {
     const extra = { prompt: PROMPT, answer: ANSWER, error: new Error(FAILURE), session: IDENTITY,
       bank: IDENTITY, path: IDENTITY, apiUrl: IDENTITY, nested: { text: ANSWER },
-      count: 3, ms: 12, cold: true, mode: "append", chars: ANSWER, errorClass: FAILURE };
+      count: 3, ms: 12, cold: true, settled: false, mode: "append", chars: ANSWER, errorClass: FAILURE };
     diag("codex", "retain_failed", extra);
     log.warn("codex", "session write-back failed", extra);
     parseHookEvent("codex", FAILURE);
     resolveConfig({ pages: { [PROMPT]: { source_query: ANSWER } },
       customPages: { [IDENTITY]: { source_query: "", tags: [ANSWER] } } });
-    expect(records()[0]).toMatchObject({ count: 3, ms: 12, cold: true, mode: "append", errorClass: "operation_failed" });
+    expect(records()[0]).toMatchObject({ count: 3, ms: 12, cold: true, settled: false, mode: "append", errorClass: "operation_failed" });
     expect(records()[0]).not.toHaveProperty("chars");
     expect(contents(ordinary)).toContain('"count":3');
+    expect(contents(ordinary)).toContain('"settled":false');
     expect(contents(ordinary)).toContain("ignoring invalid customPages entry");
+    diag("deepen", "deepen_done", { settled: ANSWER });
+    expect(records().at(-1)).not.toHaveProperty("settled");
   });
 });
