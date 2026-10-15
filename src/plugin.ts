@@ -390,6 +390,23 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
   const ignorePatterns = compileSessionPatterns(config.ignoreSessionPatterns ?? []);
   const statelessPatterns = compileSessionPatterns(config.statelessSessionPatterns ?? []);
   const retainedDigests = new Map<string, string>();
+  const inFlight = new Map<
+    string,
+    { requests: Map<string, Promise<void>>; nextOrdinal: number; retainedOrdinal: number; ended: boolean }
+  >();
+
+  const reportFailure = (principal: string, error: unknown): void => {
+    audit({ principal, op: "retain", outcome: "failure", errorClass: memoryOperationErrorClass(error) });
+    if (isIdentityError(error)) {
+      log.warn(`retain skipped: ${(error as Error).message}`);
+      return;
+    }
+    if (error instanceof RetainAuthorizationError) {
+      log.error(`retain denied: ${error.message}`);
+      return;
+    }
+    log.error(`retain failed: ${memoryErrorMessage(error)}`);
+  };
 
   const runRetain = async (
     event: PluginHookEvent,
@@ -415,39 +432,61 @@ function registerRetainHooks(api: MoltbotPluginAPI, stack: RoutingStack): void {
       }
       digestKey = JSON.stringify([credentials.principalId, sessionKey ?? null]);
       const digest = createHash("sha256").update(transcript).digest("hex");
+      let active = inFlight.get(digestKey);
+      if (active && hookName === "session_end") active.ended = true;
       if (retainedDigests.get(digestKey) === digest) {
         return;
       }
-      const scopeId = createHash("sha256").update(digestKey).digest("hex");
-      const outcome = await stack.retain.retain(credentials.principalId, {
-        content: transcript,
-        documentId: `openclaw:${scopeId}:${randomUUID()}`,
-        context: config.retainContext ?? DEFAULT_RETAIN_CONTEXT,
-        metadata: {
-          source: config.retainSource ?? RUNTIME_DEFAULTS.retainSource,
-          agent: credentials.principalId,
-          hook: hookName,
-        },
-        tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.principalId}`],
-      });
-      setBounded(retainedDigests, digestKey, digest);
-      audit({ principal, op: "retain", outcome: "success", bankId: outcome.bank });
-      if (outcome.queued) {
-        log.warn(`retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`);
+      const existing = active?.requests.get(digest);
+      if (existing) {
+        await existing;
+        return;
       }
+      if (!active) {
+        active = { requests: new Map(), nextOrdinal: 0, retainedOrdinal: -1, ended: hookName === "session_end" };
+        inFlight.set(digestKey, active);
+      }
+      const session = active;
+      const key = digestKey;
+      const scopeId = createHash("sha256").update(key).digest("hex");
+      const ordinal = session.nextOrdinal++;
+      const work = Promise.resolve()
+        .then(async () => {
+          const outcome = await stack.retain.retain(credentials.principalId, {
+            content: transcript,
+            documentId: `openclaw:${scopeId}:${randomUUID()}`,
+            context: config.retainContext ?? DEFAULT_RETAIN_CONTEXT,
+            metadata: {
+              source: config.retainSource ?? RUNTIME_DEFAULTS.retainSource,
+              agent: credentials.principalId,
+              hook: hookName,
+            },
+            tags: [...(config.retainTags ?? []), "source_system:openclaw", `agent:${credentials.principalId}`],
+          });
+          // An older request may finish after a newer transcript was retained.
+          if (ordinal > session.retainedOrdinal) {
+            session.retainedOrdinal = ordinal;
+            setBounded(retainedDigests, key, digest);
+          }
+          audit({ principal, op: "retain", outcome: "success", bankId: outcome.bank });
+          if (outcome.queued) {
+            log.warn(`retain buffered for agent ${credentials.principalId} (bank: ${outcome.bank})`);
+          }
+        })
+        .catch((error: unknown) => reportFailure(principal, error))
+        .finally(() => {
+          session.requests.delete(digest);
+          if (session.requests.size === 0) {
+            inFlight.delete(key);
+            if (session.ended) retainedDigests.delete(key);
+          }
+        });
+      session.requests.set(digest, work);
+      await work;
     } catch (error) {
-      audit({ principal, op: "retain", outcome: "failure", errorClass: memoryOperationErrorClass(error) });
-      if (isIdentityError(error)) {
-        log.warn(`retain skipped: ${(error as Error).message}`);
-        return;
-      }
-      if (error instanceof RetainAuthorizationError) {
-        log.error(`retain denied: ${error.message}`);
-        return;
-      }
-      log.error(`retain failed: ${memoryErrorMessage(error)}`);
+      reportFailure(principal, error);
     } finally {
-      if (hookName === "session_end" && digestKey) {
+      if (hookName === "session_end" && digestKey && !inFlight.has(digestKey)) {
         retainedDigests.delete(digestKey);
       }
     }
