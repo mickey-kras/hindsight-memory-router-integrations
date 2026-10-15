@@ -611,7 +611,7 @@ export class HindsightClient {
   async activeOperations(timeoutMs: number = 15_000): Promise<number> {
     // The settlement loop owns retries and its deadline, including rate limiting.
     const r = await this.req("GET", this.bankUrl("/operations"), undefined, [429], timeoutMs);
-    if (!r.ok) throw new RouterRequestError(r.status);
+    if (!r.ok) throw new RouterRequestError(r.status, boundedRetryAfterMs(r.headers.get("retry-after")));
     try {
       const body: unknown = await r.json();
       if (!body || typeof body !== "object" || Array.isArray(body)) throw new RouterRequestError(502);

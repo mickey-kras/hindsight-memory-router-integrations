@@ -1,3 +1,4 @@
+import { RouterRequestError } from "@memory-router/shared/router-transport";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -247,6 +248,31 @@ it.each([401, 403])("settlement stops immediately on authorization denial (%s)",
   const denied = Object.assign(new Error("memory access denied"), { statusCode });
   const activeOperations = vi.fn<StatusClient["activeOperations"]>().mockRejectedValue(denied);
   await expect(waitForSettlement({ activeOperations }, vi.fn())).rejects.toBe(denied);
+  expect(activeOperations).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+
+it("settlement honors bounded rate-limit delay before recovering", async () => {
+  vi.useFakeTimers();
+  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
+    .mockRejectedValueOnce(new RouterRequestError(429, 60_000))
+    .mockResolvedValueOnce(0);
+  const pending = waitForSettlement({ activeOperations }, vi.fn(), 90_000);
+  await vi.advanceTimersByTimeAsync(59_999);
+  expect(activeOperations).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await pending).toBe(true);
+  expect(activeOperations).toHaveBeenCalledTimes(2);
+});
+
+it("rate-limit delay cannot extend the settlement deadline", async () => {
+  vi.useFakeTimers();
+  const activeOperations = vi.fn<StatusClient["activeOperations"]>()
+    .mockRejectedValue(new RouterRequestError(429, 60_000));
+  const pending = waitForSettlement({ activeOperations }, vi.fn(), 10_000);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(await pending).toBe(false);
   expect(activeOperations).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
 });

@@ -14,6 +14,7 @@
  * trickle deliberately does NOT gate `synced` — it deepens across sessions and is a bonus, not a
  * prerequisite.
  */
+import { RouterRequestError } from "@memory-router/shared/router-transport";
 import { isAuthorizationError } from "@memory-router/shared/request-error";
 import { execFileSync } from "node:child_process";
 import { commitsSince, repoNameOf } from "./git";
@@ -41,7 +42,13 @@ export async function waitForSettlement(
   const deadline = Date.now() + maxMs;
   let active: number | null = null;
   while (Date.now() < deadline) {
-    active = await client.activeOperations(Math.min(15_000, deadline - Date.now())).catch(unavailable);
+    let retryMs = 5000;
+    active = await client.activeOperations(Math.min(15_000, deadline - Date.now())).catch((error: unknown) => {
+      if (error instanceof RouterRequestError && error.statusCode === 429) {
+        retryMs = Math.max(retryMs, error.retryAfterMs);
+      }
+      return unavailable(error);
+    });
     if (active === 0) return true;
     if (Date.now() >= deadline) break;
     log(
@@ -49,7 +56,7 @@ export async function waitForSettlement(
         ? "[deepen] operation status unavailable; retrying settlement check"
         : `[deepen] waiting for ${active} server-side op(s) to settle`
     );
-    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(5000, deadline - Date.now())));
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(retryMs, deadline - Date.now())));
   }
   const state = active === null ? "operation status unavailable" : `${active} server-side op(s) still active`;
   log(`[deepen] settlement unconfirmed at timeout (${state})`);

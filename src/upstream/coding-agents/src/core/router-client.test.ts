@@ -489,6 +489,6 @@ it("operation polling leaves rate-limit retry to its caller", async () => {
   const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, {
     status: 429, headers: { "retry-after": "60" },
   }));
-  await expect(client().activeOperations()).rejects.toMatchObject({ statusCode: 429 });
+  await expect(client().activeOperations()).rejects.toMatchObject({ statusCode: 429, retryAfterMs: 60_000 });
   expect(send).toHaveBeenCalledOnce();
 });
