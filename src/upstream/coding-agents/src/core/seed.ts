@@ -14,14 +14,16 @@ import { fileURLToPath } from "node:url";
 
 export const DEFAULT_SEED_LIMIT = 300;
 
+type SeedSpawn = (...args: Parameters<typeof realSpawn>) => ReturnType<typeof realSpawn>;
+
 /** Spawn a DETACHED background run of the deepen engine for `repoDir`. Idempotent server-side
  *  (per-bank lock + dedup by document id), so firing it every session start is safe — each run does
- *  only the missing work (cold seed, new conversations, the next diff-deepening batch). Fire-and-forget:
- *  the child outlives this process; extraction is server-side/async so nothing here blocks. Never throws. */
-export function startBackgroundSeed(
+ *  only the missing work (cold seed, new conversations, the next diff-deepening batch). The child outlives this process.
+ *  Await only OS launch confirmation, not extraction; true means launched, never seeded. Never rejects. */
+export async function startBackgroundSeed(
   repoDir: string,
-  opts: { limit?: number; harness?: string; enginePath?: string; spawn?: typeof realSpawn } = {}
-): void {
+  opts: { limit?: number; harness?: string; enginePath?: string; spawn?: SeedSpawn } = {}
+): Promise<boolean> {
   try {
     const spawnFn = opts.spawn ?? realSpawn;
     const enginePath =
@@ -45,13 +47,19 @@ export function startBackgroundSeed(
         windowsHide: true,
       }
     );
-    // spawn() failures (ENOENT/EACCES/fd exhaustion/sandboxed environments) often arrive
-    // ASYNCHRONOUSLY as an 'error' event on the child, not as a synchronous throw — an
-    // unhandled 'error' event would crash the caller. Swallow it: fire-and-forget best-effort.
-    child.on("error", () => {});
-    child.unref();
+    return await new Promise<boolean>((resolve) => {
+      child.once("error", () => {
+        process.stderr.write("[memory-router] Background seed launch failed.\n");
+        resolve(false);
+      });
+      child.once("spawn", () => {
+        child.unref();
+        resolve(true);
+      });
+    });
   } catch {
-    /* best-effort: a failed spawn must not break the caller */
+    process.stderr.write("[memory-router] Background seed launch failed.\n");
+    return false;
   }
 }
 
@@ -61,7 +69,7 @@ export interface SeedControlResult {
 }
 
 /** Execute a seed-control command. Pure-ish: bank + connection are passed in; spawn + stateDir injectable. */
-export function seedControl(
+export async function seedControl(
   command: string,
   args: {
     repo: string;
@@ -69,14 +77,17 @@ export function seedControl(
     toolPrefix?: string;
     limit?: number;
     harness?: string;
-    spawn?: typeof realSpawn;
+    spawn?: SeedSpawn;
   }
-): SeedControlResult {
+): Promise<SeedControlResult> {
   if (command === "seed") {
-    startBackgroundSeed(args.repo, { limit: args.limit, spawn: args.spawn, harness: args.harness });
+    const launched = await startBackgroundSeed(args.repo, {
+      limit: args.limit, spawn: args.spawn, harness: args.harness,
+    });
+    if (!launched) return { ok: false, message: "Background seed launch failed." };
     return {
       ok: true,
-      message: `🧠 ${toolBrand(args.toolPrefix).displayName} is learning this repo → memory bank “${args.bankId}”`,
+      message: `🧠 ${toolBrand(args.toolPrefix).displayName} background seed launched for memory bank “${args.bankId}”`,
     };
   }
   return { ok: false, message: "usage: hindsight-seed seed --repo <dir>" };

@@ -1,9 +1,11 @@
+import { ChildProcess, type spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import { diag, parseHookEvent } from "./diag";
+import * as git from "./git";
 import { HindsightClient, ReflectError } from "./hindsight";
 import { buildHookOutput } from "./hook";
 import * as hookLifecycle from "./hook";
@@ -11,6 +13,7 @@ import { buildKnowledgeTools } from "./knowledge-tools";
 import { log, setLogLevel } from "./log";
 import { buildRetain } from "./retain-hook";
 import { RuntimeCore } from "./runtime";
+import * as seed from "./seed";
 import * as sessionStart from "./session-start";
 import * as companionSkill from "./skill-sync";
 import { writeSessionCache } from "./session-cache";
@@ -163,6 +166,62 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
       }
       expect(stdout).not.toHaveBeenCalled();
       expect(stderr).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["absent", "working"] as const)(
+    "preserves private lifecycle and model context after seed launch fails with notifier %s", async (mode) => {
+      vi.spyOn(companionSkill, "syncCompanionSkill").mockImplementation(() => {});
+      vi.spyOn(git, "hasGitHistory").mockReturnValue(true);
+      const startSeed = seed.startBackgroundSeed;
+      const spawnFailure = vi.fn<typeof spawn>().mockImplementation(() => {
+        const child = new ChildProcess();
+        queueMicrotask(() => child.emit("error", new Error(FAILURE)));
+        return child;
+      });
+      const launch = vi.spyOn(seed, "startBackgroundSeed").mockImplementation((repo, opts) =>
+        startSeed(repo, { ...opts, spawn: spawnFailure }));
+      const sessionOutputs = vi.spyOn(sessionStart, "buildSessionStartContext");
+      const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      const instance = client();
+      vi.spyOn(instance, "listDocumentIds").mockResolvedValue(new Set());
+      vi.spyOn(instance, "hasDocuments").mockResolvedValue(false);
+      const runtime = new RuntimeCore(instance, IDENTITY, resolveConfig({
+        logLevel: level, autoUpdate: false, autoSeed: true, codebaseSurvey: false, gitIngest: "none",
+      }), "codex", root);
+      const notify = vi.fn<(title: string, message: string) => void>();
+      if (mode === "working") runtime.setNotifier(notify);
+
+      await runtime.seedIfCold(root);
+      const output = await sessionOutputs.mock.results[0].value;
+      expect(launch).toHaveBeenCalledOnce();
+      expect(output.systemMessage).toContain("Background seed launch failed.");
+      expect(output.systemMessage).toContain(IDENTITY);
+      expect(output.systemMessage).not.toContain("is learning");
+      expect(output.additionalContext).toContain("hindsight_search_knowledge_pages");
+      expect(output.deferInitialReflect).toBe(true);
+      expect(records()).toContainEqual(expect.objectContaining({ event: "session_start", cold: true }));
+      expect(records().some((entry) => entry.event === "seed_started")).toBe(false);
+      if (mode === "working") {
+        expect(notify).toHaveBeenCalledExactlyOnceWith("Hindsight", expect.stringContaining(IDENTITY));
+        expect(notify.mock.calls[0][1]).toContain("Background seed launch failed.");
+        expect(notify.mock.calls[0][1]).not.toContain("is learning");
+        expect(contents(ordinary)).toContain("session notice dispatched");
+      } else {
+        expect(notify).not.toHaveBeenCalled();
+        expect(contents(ordinary)).toContain("session notice not dispatched: host notifier unavailable");
+      }
+
+      await runtime.onPrompt(IDENTITY, PROMPT);
+      expect(instance.reflect).not.toHaveBeenCalled();
+      expect(runtime.getInjection(IDENTITY)).toContain("hindsight_search_knowledge_pages");
+      expect(records()).toContainEqual(expect.objectContaining({ event: "reflect_deferred_new_bank" }));
+      await runtime.onPrompt(IDENTITY, PROMPT);
+      expect(instance.reflect).toHaveBeenCalledOnce();
+      expect(runtime.getInjection(IDENTITY)).toContain(ANSWER);
+      expect(stdout).not.toHaveBeenCalled();
+      expect(stderr).toHaveBeenCalledExactlyOnceWith("[memory-router] Background seed launch failed.\n");
     }
   );
 

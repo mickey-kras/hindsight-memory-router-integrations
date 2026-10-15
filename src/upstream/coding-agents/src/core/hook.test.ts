@@ -7,6 +7,7 @@ import { buildHookOutput, runHook } from "./hook";
 import { diagFilePath } from "./diag";
 import { ReflectError } from "./hindsight";
 import { buildReflectQuery } from "./inject";
+import { AccessDeniedError } from "@memory-router/shared/bank-access";
 
 let root: string;
 let cacheFile: string;
@@ -14,6 +15,13 @@ let cacheFile: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "hs-hook-"));
   cacheFile = join(root, "cache", "session.json");
+  const config = join(root, "managed.json");
+  writeFileSync(config, JSON.stringify({
+    routerUrl: "https://router.test",
+    principals: { "claude-code": { writeBank: "bank-1", tokenEnv: "RUNTIME_TEST_TOKEN" }, dsh: { writeBank: "bank-1", tokenEnv: "RUNTIME_TEST_TOKEN" } },
+  }));
+  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", config);
+  vi.stubEnv("RUNTIME_TEST_TOKEN", `mr_runtime_${"a".repeat(64)}`);
 });
 
 afterEach(() => {
@@ -61,6 +69,21 @@ function makeClient(
 }
 
 describe("buildHookOutput", () => {
+  it.each(["reflect", "listPages"] as const)("authorization denial from %s rejects the entire turn", async (method) => {
+    const client = makeClient({
+      [method]: vi.fn(async () => { throw new AccessDeniedError(); }),
+    });
+    await expect(buildHookOutput({
+      harness: "claude-code",
+      prompt: MATCHING_PROMPT,
+      cfg: resolveConfig({}),
+      client,
+      cacheFile,
+    })).rejects.toThrow("memory access denied");
+    expect(existsSync(cacheFile)).toBe(false);
+    expect(client.searchKnowledgePages).not.toHaveBeenCalled();
+    expect(client.recallObservations).not.toHaveBeenCalled();
+  });
   it("turn 1: injects the reflect answer wrapped in the system-injection preamble", async () => {
     const cfg = resolveConfig({});
     const client = makeClient();
@@ -76,7 +99,8 @@ describe("buildHookOutput", () => {
     expect(existsSync(cacheFile)).toBe(true);
     const cached = JSON.parse(readFileSync(cacheFile, "utf8"));
     expect(cached.turns).toBe(1);
-    expect(cached.reflectAnswer).toBe("REFLECT_ANSWER");
+    expect(cached.reflectAnswer).toBe("");
+    expect(readFileSync(cacheFile, "utf8")).not.toContain("REFLECT_ANSWER");
   });
 
   it("reflect runs ONCE per session: cached on turn 1, not called again on turn 2", async () => {
@@ -701,10 +725,10 @@ describe("buildHookOutput", () => {
     expect(result.context).not.toContain("hindsight_read_knowledge_page p1");
     expect(result.context).toContain("Automatically retrieved by Hindsight");
     expect(result.context).toContain("REFLECT_ANSWER");
-    // The roster is cached for the cadence-based refresh.
+    // Managed state persists lifecycle markers, never bank content or the roster.
     const cached = JSON.parse(readFileSync(cacheFile, "utf8"));
-    expect(cached.pages.atTurn).toBe(1);
-    expect(cached.pages.list).toEqual([{ id: "p1", title: "Uploader guide" }]);
+    expect(cached.pages).toBeUndefined();
+    expect(readFileSync(cacheFile, "utf8")).not.toContain("Uploader guide");
   });
 
   it("pages with content are NEVER auto-injected, even for an unrelated prompt", async () => {
@@ -800,7 +824,7 @@ describe("buildHookOutput", () => {
     }
   });
 
-  it("re-fetches pages every pageRefreshEveryTurns turns, serving the cache in between", async () => {
+  it("re-fetches authorized pages every turn and ignores legacy cached memory", async () => {
     const cfg = resolveConfig({ pageRefreshEveryTurns: 2 });
     const client = makeClient();
     // Seed the cache so this session already has pages from turn 1.
@@ -813,17 +837,8 @@ describe("buildHookOutput", () => {
         pages: { atTurn: 1, list: [{ id: "p1", title: "Uploader guide", content: PAGE_CONTENT }] },
       })
     );
-    // turn 2: 2 - 1 < 2 -> cache is fresh, no fetch
-    await buildHookOutput({
-      harness: "claude-code",
-      prompt: UNRELATED_PROMPT,
-      cfg,
-      client,
-      cacheFile,
-    });
-    expect(client.listPages).not.toHaveBeenCalled();
-    // turn 3: 3 - 1 >= 2 -> stale, re-fetched
-    await buildHookOutput({
+    // Legacy bank content must be discarded even inside the old refresh cadence.
+    const output = await buildHookOutput({
       harness: "claude-code",
       prompt: UNRELATED_PROMPT,
       cfg,
@@ -831,6 +846,17 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(client.listPages).toHaveBeenCalledTimes(1);
+    expect(output.context).not.toContain("CACHED");
+    expect(output.context).not.toContain(PAGE_CONTENT);
+    // Every later turn checks the current roster again.
+    await buildHookOutput({
+      harness: "claude-code",
+      prompt: UNRELATED_PROMPT,
+      cfg,
+      client,
+      cacheFile,
+    });
+    expect(client.listPages).toHaveBeenCalledTimes(2);
   });
 });
 

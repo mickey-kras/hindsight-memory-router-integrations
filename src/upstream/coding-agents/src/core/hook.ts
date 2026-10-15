@@ -526,7 +526,7 @@ export async function runHook(
   // per-bank lock makes this a no-op — but a session that predates installation never received
   // SessionStart. This limited fallback heals that case without duplicating any survey logic.
   if (cfg.autoSeed !== false && !existsSync(cacheFile)) {
-    startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
+    await startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
 
   const handoffScope = spec.toolHook && sessionId ? managedReadScope(cfg.routerHarness, cwd, sessionRoot) : undefined;
@@ -539,7 +539,7 @@ export async function runHook(
     client.knowledgePagesSupported !== false &&
     output.pages.length === 0
   ) {
-    startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
+    await startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
   let context = output.context;
   if (context && spec.toolHook && sessionId && handoffScope) {

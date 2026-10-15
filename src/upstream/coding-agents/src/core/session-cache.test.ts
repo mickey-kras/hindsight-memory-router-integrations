@@ -1,5 +1,7 @@
-import { rmSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fileCursorStore,
   readSessionCache,
@@ -9,14 +11,15 @@ import {
 } from "./session-cache";
 
 const HARNESS = "codex-cursor-test";
-const sessions = ["s1", "s2"];
+let root: string;
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "session-cache-"));
+  vi.stubEnv("TMPDIR", root);
+});
 
 afterEach(() => {
-  for (const s of sessions) {
-    rmSync(sessionCacheFile(HARNESS, s), { force: true });
-    rmSync(sessionCacheFile(HARNESS, s).replace(/\.json$/, ".retain.json"), { force: true });
-    rmSync(sessionCacheFile(HARNESS, s).replace(/\.json$/, ".root"), { force: true });
-  }
+  vi.unstubAllEnvs();
+  rmSync(root, { recursive: true, force: true });
 });
 
 describe("fileCursorStore", () => {
@@ -72,7 +75,7 @@ describe("fileCursorStore", () => {
     const file = sessionCacheFile(HARNESS, "s1");
     writeSessionCache(file, { turns: 3, reflectAnswer: "already ran" });
     fileCursorStore(HARNESS).write("s1", { turns: 2, fingerprint: "f", bank: "b1" });
-    expect(readSessionCache(file)).toEqual({ turns: 3, reflectAnswer: "already ran" });
+    expect(readSessionCache(file)).toEqual({ turns: 3, reflectAnswer: "" });
   });
 
   it("never exposes a half-written cursor", () => {
@@ -116,5 +119,23 @@ describe("sessionRootDir", () => {
     // Non-hook entry points (statusline, MCP) resolve a directory, not a session.
     expect(sessionRootDir(HARNESS, undefined, "/work/one")).toBe("/work/one");
     expect(sessionRootDir(HARNESS, "", "/work/one")).toBe("/work/one");
+  });
+});
+
+
+describe("managed session cache", () => {
+  it("keeps only lifecycle markers when writing and reading legacy bank content", () => {
+    const file = sessionCacheFile(HARNESS, "s1");
+    const lifecycle = { turns: 2, reflectAttempts: 1, deferInitialReflect: true };
+    const legacy = {
+      ...lifecycle,
+      reflectAnswer: "private synthesis",
+      pages: { atTurn: 2, list: [{ id: "private-page", title: "private title" }] },
+    };
+    writeSessionCache(file, legacy);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ ...lifecycle, reflectAnswer: "" });
+    // Previously persisted state is also sanitized before a prompt can reuse it.
+    writeFileSync(file, JSON.stringify(legacy));
+    expect(readSessionCache(file)).toEqual({ ...lifecycle, reflectAnswer: "" });
   });
 });

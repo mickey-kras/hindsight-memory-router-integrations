@@ -1,4 +1,13 @@
-import { appendFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,6 +112,29 @@ describe("RetainCoordinator", () => {
     const backendOutcome = await retain.retain("backend", { content: "work" });
     expect(backendOutcome.bank).toBe("dev");
     expect(fakeClients.get("backend")?.retains[0].bank).toBe("dev");
+  });
+
+  it("discovers and replays the normalized queue directory after symlink-parent traversal", async () => {
+    const safe = join(queueDir, "safe");
+    const other = join(queueDir, "other");
+    mkdirSync(join(safe, "queue"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "child"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "queue"), { mode: 0o700 });
+    symlinkSync(join(other, "child"), join(safe, "link"));
+    let fail = true;
+    const { retain, fakeClients } = makeStack({
+      queueDir: `${safe}/link/../queue`,
+      behavior: () => {
+        if (fail) throw httpError(503);
+      },
+    });
+    await expect(retain.retain("main", { content: "pending" })).resolves.toMatchObject({ queued: true });
+    expect(readdirSync(join(safe, "queue"))).toContain("hindsight-retain-queue.main.jsonl");
+    fail = false;
+    await retain.flushQueues();
+    expect(fakeClients.get("main")?.retains).toEqual([expect.objectContaining({ content: "pending", bank: "main" })]);
+    expect(readdirSync(join(safe, "queue"))).not.toContain("hindsight-retain-queue.main.jsonl");
+    expect(readdirSync(join(other, "queue"))).toEqual([]);
   });
 
   it("preserves an existing backlog when another coordinator opens its directory", async () => {

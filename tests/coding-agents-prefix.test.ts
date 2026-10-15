@@ -218,7 +218,8 @@ it.each(["disabled", "unavailable"])("brands Dsh %s tool responses from the regi
       callback({
         tools: {
           register(definition) {
-            if (definition.name === "abc_reflect") execute = definition.execute;
+            const tool = definition as { name: string; execute: NonNullable<typeof execute> };
+            if (tool.name === "abc_reflect") execute = tool.execute;
           },
           schemas: () => [],
         },

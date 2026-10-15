@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { readdirSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { type QueuedRetain, type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
 import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
 import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
+import { privateQueueDirectory } from "./private-queue-files.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
 import { QUEUE_FILE_PREFIX, QUEUE_FILE_SUFFIX, RetainQueueStorage } from "./retain-queue-storage.js";
 export { RetainQueueBusyError, RetainQueueCapacityError } from "./retain-queue-storage.js";
@@ -63,9 +64,9 @@ export class RetainCoordinator {
     this.credentials = options.credentials;
     this.clients = options.clients;
     if (!isAbsolute(options.queueDir)) throw new TypeError("queueDir must be absolute");
-    this.queueDir = options.queueDir;
+    this.queueDir = resolve(options.queueDir);
     this.storage = new RetainQueueStorage(this.queueDir, options.queueMaxItems, options.queueMaxBytes);
-    mkdirSync(this.queueDir, { recursive: true, mode: 0o700 });
+    privateQueueDirectory(this.queueDir, true);
     this.queueMaxAgeMs = options.queueMaxAgeMs ?? -1;
     this.log = options.logger;
     this.onAbandon = options.onAbandon ?? ((item, attempts) => this.log.error(retainAbandonNotice(item, attempts)));
