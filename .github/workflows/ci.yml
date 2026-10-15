@@ -70,6 +70,7 @@ jobs:
       - run: npm run format:check
       # The clean build in Vitest checks root source; retain test and upstream checks.
       - run: npm exec -- tsc --noEmit -p tsconfig.test.json
+      - run: npm exec -- tsc --noEmit -p tsconfig.integration.json
       - name: Tests and coverage
         run: npm run test:coverage
       - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
