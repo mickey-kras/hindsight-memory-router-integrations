@@ -142,8 +142,9 @@ export function buildKnowledgeTools(
         "Report whether this repo's memory bank is in sync: gitlog seed present, how much recent " +
         "history has been deepened with full diffs, conversations ingested, knowledge pages " +
         "created, and extractions still running. `synced: true` means the seeded memory is fully " +
-        "queryable. Ingestion is automatic and background — if not synced, it is in progress; " +
-        "nothing to run.",
+        "queryable. A positive activeOps count means operations are running; activeOps: null " +
+        "means operation status is unavailable. synced: false does not establish progress. " +
+        "Ingestion is automatic and background; nothing to run.",
       inputSchema: {},
       annotations: READ_ONLY_ANNOTATIONS,
       handler: async () => {
