@@ -22,7 +22,7 @@ import type { Config } from "./config";
 import { maybeAutoUpdate } from "./auto-update";
 import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
-import { describeError, log, setLogLevel } from "./log";
+import { log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
 import { buildKnowledgePreamble } from "./knowledge-injection";
 import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
@@ -280,7 +280,7 @@ export class RuntimeCore {
       turns = await this.fetchTranscript(sessionId);
     } catch (e) {
       diag(this.harness, "idle_fetch_failed", {
-        error: describeError(e),
+        error: e,
         session: sessionId,
       });
       return;
@@ -379,7 +379,7 @@ export class RuntimeCore {
       .catch((e) =>
         diag(this.harness, "retain_failed", {
           ms: Date.now() - t0,
-          error: describeError(e),
+          error: e,
           session: sessionId,
           trigger,
         })

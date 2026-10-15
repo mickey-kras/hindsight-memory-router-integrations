@@ -7,6 +7,7 @@ import { diag, parseHookEvent } from "./diag";
 import { HindsightClient, ReflectError } from "./hindsight";
 import { buildHookOutput } from "./hook";
 import { log, setLogLevel } from "./log";
+import { buildRetain } from "./retain-hook";
 import { RuntimeCore } from "./runtime";
 import { writeSessionCache } from "./session-cache";
 
@@ -43,6 +44,7 @@ beforeEach(() => {
   vi.stubEnv("TMPDIR", root);
   vi.stubEnv("HINDSIGHT_DIAG_FILE", diagnostic);
   vi.stubEnv("HINDSIGHT_LOG_FILE", ordinary);
+  vi.stubEnv("HINDSIGHT_USAGE_FILE", join(root, "usage.jsonl"));
   vi.stubEnv("HINDSIGHT_LOG_LEVEL", "");
   const managed = join(root, "managed.json");
   writeFileSync(managed, JSON.stringify({ routerUrl: "https://router.test", principals: {
@@ -116,6 +118,28 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
     expect(runtime.getInjection(IDENTITY)).toContain(ANSWER);
     expect(notify).toHaveBeenCalled();
     expect(contents(ordinary)).toContain("reflection notice delivered");
+  });
+
+  it.each(["retain", "idle"] as const)("preserves bounded transport categories through the %s failure path", async (path) => {
+    const instance = client();
+    const cause = Object.assign(new Error(ANSWER), { code: "ECONNREFUSED" });
+    const failure = new Error(FAILURE, { cause });
+    if (path === "retain") {
+      vi.spyOn(instance, "supportsAppendRetain").mockResolvedValue(false);
+      const retain = vi.spyOn(instance, "retain").mockRejectedValue(failure);
+      await buildRetain({ harness: "codex", sessionId: IDENTITY, transcriptPath: join(root, "transcript"),
+        client: instance, readTranscript: () => [{ role: "user", content: PROMPT }] });
+      expect(retain).toHaveBeenCalledOnce();
+      expect(contents(ordinary)).toContain('"errorClass":"connection_refused"');
+    } else {
+      const runtime = new RuntimeCore(instance, "A", resolveConfig({ logLevel: level }), "codex", root);
+      runtime.setTranscriptSource(async () => { throw failure; });
+      await runtime.onSessionIdle(IDENTITY);
+    }
+    expect(records()).toContainEqual(expect.objectContaining({
+      event: path === "retain" ? "retain_failed" : "idle_fetch_failed", errorClass: "connection_refused",
+    }));
+    if (level === "debug") expect(contents(ordinary)).toContain('"errorClass":"connection_refused"');
   });
 
   it("filters arbitrary extras in both sinks and unsafe config validation values", () => {

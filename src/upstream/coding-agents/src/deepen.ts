@@ -41,7 +41,7 @@ import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
 import { buildRetainStamp } from "./core/retain-stamp";
-import { describeError, setLogLevel } from "./core/log";
+import { setLogLevel } from "./core/log";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
 
@@ -321,7 +321,7 @@ async function main() {
 main().catch((e) => {
   diag("deepen", "deepen_failed", {
     bank: FINAL_BANK,
-    error: describeError(e),
+    error: e,
   });
   console.error("deepen failed:", (e as Error).message || e);
   if (lease) releaseLease(lease);

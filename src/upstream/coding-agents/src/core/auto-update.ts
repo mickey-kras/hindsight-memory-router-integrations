@@ -47,7 +47,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config";
-import { describeError, log } from "./log";
+import { log } from "./log";
 import { binOnPath } from "./util";
 
 export const PACKAGE_NAME = "@vectorize-io/hindsight-coding-agents";
@@ -299,11 +299,11 @@ export async function npmViewVersion(
     let out = "";
     let settled = false;
     let deadline: ReturnType<typeof setTimeout> | undefined;
-    const done = (v: string, reason?: string) => {
+    const done = (v: string, reason?: unknown) => {
       if (settled) return;
       settled = true;
       if (deadline) clearTimeout(deadline);
-      if (reason) log.info("auto-update", "version check failed", { error: reason });
+      if (reason !== undefined) log.info("auto-update", "version check failed", { error: reason });
       resolve(v);
     };
     try {
@@ -317,9 +317,9 @@ export async function npmViewVersion(
         out += d;
       });
       // An unhandled pipe 'error' would crash the session-start hook.
-      child.stdout?.on("error", (e) => done("", describeError(e)));
+      child.stdout?.on("error", (e) => done("", e));
       // ENOENT / EACCES: npm is not where PATH said it was.
-      child.on("error", (e) => done("", describeError(e)));
+      child.on("error", (e) => done("", e));
       // close, not exit: stdout must have fully arrived before the parse.
       child.on("close", (code, signal) => {
         if (code !== 0) return done("", `npm view exited ${code ?? signal}`);
@@ -346,7 +346,7 @@ export async function npmViewVersion(
         done("", "npm view never exited — hard deadline");
       }, NPM_VIEW_HARD_DEADLINE_MS);
     } catch (e) {
-      done("", describeError(e));
+      done("", e);
     }
   });
 }

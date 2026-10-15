@@ -47,7 +47,6 @@ import { z } from "zod";
 import type { Plugin } from "@opencode/plugin";
 
 import { resolveHostMemory } from "../core/host-client";
-import { describeError } from "../core/log";
 import { diag } from "../core/diag";
 import { RuntimeCore } from "../core/runtime";
 import type { ToolSpec } from "../core/knowledge-tools";
@@ -142,7 +141,7 @@ async function registerCompanionSkill(ctx: Opencode2Context, harness: string): P
     );
     diag(harness, "skill_registered", { id: skillId });
   } catch (e) {
-    diag(harness, "skill_register_failed", { error: describeError(e) });
+    diag(harness, "skill_register_failed", { error: e });
   }
 }
 
@@ -218,7 +217,7 @@ export async function wireOpencode2Runtime(
     diag(harness, "idle_stream_closed", {});
     // A stream that DIES takes write-back with it silently, which is exactly the failure a
     // memory-less session must not be able to hide, so it goes in the diagnostic trail too.
-  })().catch((e) => diag(harness, "idle_stream_failed", { error: describeError(e) }));
+  })().catch((e) => diag(harness, "idle_stream_failed", { error: e }));
 
   return () => events.abort();
 }
