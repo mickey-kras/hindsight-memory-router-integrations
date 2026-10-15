@@ -791,9 +791,20 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
   },
 };
 
+// Hook failures must not print raw exceptions or inject diagnostics into protocol stdout.
+// Exit one (ordinary hook failure, never a host blocking decision) with no extra stdout.
+async function runHookEntrypoint(run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch {
+    process.stderr.write("[memory-router] Hook failed; memory context unavailable.\n");
+    process.exitCode = 1;
+  }
+}
+
 export const runHarnessSessionStart = (harness: HookHarnessName): Promise<void> =>
-  runSessionStartHook(HOOK_HARNESSES[harness].sessionStart);
+  runHookEntrypoint(() => runSessionStartHook(HOOK_HARNESSES[harness].sessionStart));
 export const runHarnessPrompt = (harness: HookHarnessName): Promise<void> =>
-  runHook(HOOK_HARNESSES[harness].prompt);
+  runHookEntrypoint(() => runHook(HOOK_HARNESSES[harness].prompt));
 export const runHarnessRetain = (harness: HookHarnessName): Promise<void> =>
-  runRetainHook(HOOK_HARNESSES[harness].retain);
+  runHookEntrypoint(() => runRetainHook(HOOK_HARNESSES[harness].retain));
