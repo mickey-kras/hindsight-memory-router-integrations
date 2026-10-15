@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { type QueuedRetain, type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
 import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
@@ -64,7 +64,7 @@ export class RetainCoordinator {
     this.credentials = options.credentials;
     this.clients = options.clients;
     if (!isAbsolute(options.queueDir)) throw new TypeError("queueDir must be absolute");
-    this.queueDir = options.queueDir;
+    this.queueDir = resolve(options.queueDir);
     this.storage = new RetainQueueStorage(this.queueDir, options.queueMaxItems, options.queueMaxBytes);
     privateQueueDirectory(this.queueDir, true);
     this.queueMaxAgeMs = options.queueMaxAgeMs ?? -1;

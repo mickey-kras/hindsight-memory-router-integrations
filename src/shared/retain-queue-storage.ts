@@ -1,5 +1,5 @@
 import { closeSync, constants, fstatSync, readdirSync, readSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { tryLock } from "fs-native-extensions";
 import { openPrivateQueueFile, removePrivateQueueFile } from "./private-queue-files.js";
@@ -69,6 +69,7 @@ export class RetainQueueStorage {
     readonly maxItems = DEFAULT_QUEUE_MAX_ITEMS,
     readonly maxBytes = DEFAULT_QUEUE_MAX_BYTES,
   ) {
+    this.directory = resolve(directory);
     for (const [key, value] of [
       ["queueMaxItems", maxItems],
       ["queueMaxBytes", maxBytes],

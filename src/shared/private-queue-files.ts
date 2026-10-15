@@ -13,7 +13,7 @@ import {
   writeFileSync,
   type Stats,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 function assertPlatform(): void {
   if ((process.platform !== "linux" && process.platform !== "darwin") || !process.geteuid) {
@@ -43,9 +43,10 @@ function assertTrustedAncestors(path: string): void {
   }
 }
 
-/** Tighten legacy paths before opening any payload or lock inside them. */
 export function privateQueueDirectory(path: string, create = false): void {
   assertPlatform();
+  // A trailing slash or dot must not turn the leaf into a followed ancestor.
+  path = resolve(path);
   // Parent directories must not let a different user replace the private leaf.
   assertTrustedAncestors(dirname(path));
   if (create) {
@@ -63,8 +64,9 @@ export function privateQueueDirectory(path: string, create = false): void {
   }
 }
 
-/** Caller owns the returned descriptor, including across awaited OS locks. */
+// Caller owns the descriptor, including across awaited OS locks.
 export function openPrivateQueueFile(path: string, flags: number): number {
+  path = resolve(path);
   privateQueueDirectory(dirname(path));
   const fd = openSync(path, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
   try {
@@ -84,6 +86,7 @@ export function isMissingQueueFile(error: unknown): boolean {
 }
 
 export function removePrivateQueueFile(path: string): void {
+  path = resolve(path);
   let fd: number;
   try {
     fd = openPrivateQueueFile(path, constants.O_RDONLY);
@@ -99,6 +102,7 @@ export function removePrivateQueueFile(path: string): void {
 }
 
 export function writePrivateQueueFile(path: string, body: string): void {
+  path = resolve(path);
   // Validate the destination even when replacing it. No destructive open flags.
   try {
     closeSync(openPrivateQueueFile(path, constants.O_RDONLY));

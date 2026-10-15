@@ -124,13 +124,82 @@ describe("private retain queue paths", () => {
     expect(readFileSync(queueFile, "utf8")).toBe("new\n");
   });
 
-  it("rejects symlink directories without tightening their targets", () => {
-    const target = join(directory, "target");
-    mkdirSync(target, { mode: 0o755 });
-    const link = join(directory, "link");
-    symlinkSync(target, link);
-    expect(() => privateQueueDirectory(link, true)).toThrow();
-    expect(statSync(target).mode & 0o777).toBe(0o755);
+  it.each(["", "/", "///", "/.", "/./"])(
+    "rejects symlink directories with suffix %j without tightening targets",
+    (suffix) => {
+      const target = join(directory, "target");
+      mkdirSync(target, { mode: 0o755 });
+      const link = join(directory, "link");
+      symlinkSync(target, link);
+      expect(() => privateQueueDirectory(link + suffix, true)).toThrow();
+      expect(statSync(target).mode & 0o777).toBe(0o755);
+    },
+  );
+
+  it("accepts an owned directory with trailing separators", () => {
+    chmodSync(directory, 0o755);
+    privateQueueDirectory(`${directory}///`, true);
+    expect(statSync(directory).mode & 0o777).toBe(0o700);
+  });
+
+  it.each(["helpers", "queue"])("normalizes %s paths consistently before validation and mutation", (api) => {
+    const safe = join(directory, "safe");
+    const other = join(directory, "other");
+    mkdirSync(join(safe, "queue"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "child"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "queue"), { mode: 0o700 });
+    chmodSync(join(other, "queue"), 0o777);
+    symlinkSync(join(other, "child"), join(safe, "link"));
+    const path = `${safe}/link/../queue/payload`;
+    const expected = join(safe, "queue", "payload");
+    const unintended = join(other, "queue", "payload");
+    writeFileSync(unintended, "untouched", { mode: 0o644 });
+    if (api === "helpers") {
+      const fd = openPrivateQueueFile(path, constants.O_CREAT | constants.O_WRONLY);
+      try {
+        writeFileSync(fd, "created");
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(expected, "utf8")).toBe("created");
+      writePrivateQueueFile(path, "rewritten");
+      expect(readFileSync(expected, "utf8")).toBe("rewritten");
+      removePrivateQueueFile(path);
+    } else {
+      const queue = new RetainQueue({ filePath: path });
+      queue.enqueue("bank", { content: "retained" });
+      const [item] = queue.peek();
+      expect(item.content).toBe("retained");
+      queue.ensureOperationId(item.id, "durable");
+      expect(JSON.parse(readFileSync(expected, "utf8"))).toMatchObject({ operationId: "durable" });
+      queue.remove(item.id);
+    }
+    expect(readdirSync(join(safe, "queue"))).toEqual([]);
+    expect(readdirSync(join(other, "queue"))).toEqual(["payload"]);
+    expect(readFileSync(unintended, "utf8")).toBe("untouched");
+    expect(statSync(unintended).mode & 0o777).toBe(0o644);
+    expect(statSync(join(other, "queue")).mode & 0o777).toBe(0o777);
+  });
+
+  it("counts capacity and cleans temporary files in the normalized storage directory", async () => {
+    const safe = join(directory, "safe");
+    const other = join(directory, "other");
+    mkdirSync(join(safe, "queue"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "child"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(other, "queue"), { mode: 0o700 });
+    symlinkSync(join(other, "child"), join(safe, "link"));
+    const raw = `${safe}/link/../queue`;
+    const storage = new RetainQueueStorage(raw, 1);
+    const filePath = join(raw, "hindsight-retain-queue.main.jsonl");
+    const queue = new RetainQueue({ filePath, capacity: storage });
+    writeFileSync(`${filePath}.orphan.tmp`, "stale");
+    await storage.transaction(() => queue.enqueue("bank", { content: "first" }));
+    await expect(storage.transaction(() => queue.enqueue("bank", { content: "second" }))).rejects.toMatchObject({
+      code: "RETAIN_QUEUE_CAPACITY",
+    });
+    expect(queue.peek().map((item) => item.content)).toEqual(["first"]);
+    expect(readdirSync(join(safe, "queue")).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    expect(readdirSync(join(other, "queue"))).toEqual([]);
   });
 
   it("rejects writable non-sticky ancestors", () => {
