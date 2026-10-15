@@ -149,12 +149,10 @@ export class RuntimeCore {
         client: this.client,
         harness: this.harness,
       });
-      // The seed note is user-facing; opencode has no visible-system channel at load, so surface it
-      // on stderr (shows in the plugin log / console) rather than dropping it.
-      // Banner: via the host's toast API when available (stderr corrupts the TUI); always logged.
+      // Surface the seed note through the host's toast API when available; its text stays out of logs.
       if (out.systemMessage) {
         const plain = stripVTControlCharacters(out.systemMessage);
-        log.info(this.harness, plain);
+        log.info(this.harness, "session notice delivered");
         const title = toolBrand(this.cfg.toolPrefix).displayName;
         this.notify?.(title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
       }
@@ -212,7 +210,7 @@ export class RuntimeCore {
     // renders inside the TUI input line. The shared output owns when a notice exists.
     if (output.notice) {
       const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
-      log.info(this.harness, "reflect goal", { preview });
+      log.info(this.harness, "reflection notice delivered");
       this.notify?.(`${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
     }
     const block = blocks.filter(Boolean).join("\n\n");

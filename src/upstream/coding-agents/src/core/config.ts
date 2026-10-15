@@ -378,15 +378,14 @@ function resolvePageTrigger(raw: RawConfig): {
   if (raw.pageTriggerType !== undefined && raw.pageTriggerType !== "cron")
     log.warn(
       "config",
-      `ignoring pageTriggerType=${JSON.stringify(raw.pageTriggerType)} — ` +
-        "expected cron|auto-refresh|manual"
+      "ignoring invalid pageTriggerType — expected cron|auto-refresh|manual"
     );
   const cron = raw.pageTriggerCron?.trim();
   if (!cron) return { type: "cron", cron: DEFAULT_PAGE_TRIGGER_CRON };
   if (!isHashedCron(cron) || parseHashedCron(cron)) return { type: "cron", cron };
   log.warn(
     "config",
-    `pageTriggerCron ${JSON.stringify(cron)} has a malformed hashed field — ` +
+    "pageTriggerCron has a malformed hashed field — " +
       'write `H` or `H(<lo>-<hi>)` within the field\'s own range, e.g. "H H(0-5) * * *" — ' +
       `falling back to ${JSON.stringify(DEFAULT_PAGE_TRIGGER_CRON)}`
   );
@@ -397,8 +396,8 @@ function resolvePageTrigger(raw: RawConfig): {
  * Validate `pages`, dropping anything unusable with a warning.
  *
  * A key matching no seeded page is the mistake worth catching loudly: it reads as having disabled
- * or reworded something and silently does nothing, so the warning names it alongside the set that
- * would have worked. Values are checked for the same reason — `{"source_query": 5}` would
+ * or reworded something and silently does nothing, so the warning names the permitted set.
+ * Values are checked for the same reason — `{"source_query": 5}` would
  * otherwise travel and become a page whose description is `5`.
  */
 function resolvePages(raw: RawConfig["pages"]): PagesConfig {
@@ -411,7 +410,7 @@ function resolvePages(raw: RawConfig["pages"]): PagesConfig {
     if (!PAGE_NAMES.some((known) => known.toLowerCase() === name.trim().toLowerCase())) {
       log.warn(
         "config",
-        `ignoring pages[${JSON.stringify(name)}] — no seeded page has that name; ` +
+        "ignoring unknown pages entry — no seeded page has that name; " +
           `expected one of: ${PAGE_NAMES.join(", ")}`
       );
       continue;
@@ -430,7 +429,7 @@ function resolvePages(raw: RawConfig["pages"]): PagesConfig {
     }
     log.warn(
       "config",
-      `ignoring pages[${JSON.stringify(name)}]=${JSON.stringify(entry)} — ` +
+      "ignoring invalid pages entry — " +
         'expected false, or {"source_query": "<your question>"}'
     );
   }
@@ -456,7 +455,7 @@ function resolveCustomPages(raw: RawConfig["customPages"]): CustomPagesConfig {
     if (PAGE_NAMES.some((known) => known.toLowerCase() === name.toLowerCase())) {
       log.warn(
         "config",
-        `ignoring customPages[${JSON.stringify(rawName)}] — that is a seeded page; ` +
+        "ignoring customPages entry with a seeded page name; " +
           "reword it under `pages` instead"
       );
       continue;
@@ -468,7 +467,7 @@ function resolveCustomPages(raw: RawConfig["customPages"]): CustomPagesConfig {
     if (typeof query !== "string" || !query.trim()) {
       log.warn(
         "config",
-        `ignoring customPages[${JSON.stringify(rawName)}]=${JSON.stringify(entry)} — ` +
+        "ignoring invalid customPages entry — " +
           'expected {"source_query": "<your question>"}'
       );
       continue;
@@ -503,7 +502,7 @@ function resolveReflectBudget(raw: RawConfig): "low" | "mid" | "high" {
   if (value === undefined) return "high";
   if (typeof value === "string" && (REFLECT_BUDGETS as readonly string[]).includes(value))
     return value as "low" | "mid" | "high";
-  log.warn("config", `ignoring reflectBudget=${JSON.stringify(value)} — expected low|mid|high`);
+  log.warn("config", "ignoring invalid reflectBudget — expected low|mid|high");
   return "high";
 }
 

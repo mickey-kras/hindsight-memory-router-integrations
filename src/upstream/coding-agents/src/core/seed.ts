@@ -27,7 +27,7 @@ export function startBackgroundSeed(
     const enginePath =
       opts.enginePath ?? join(dirname(fileURLToPath(import.meta.url)), "deepen.js");
     const limit = opts.limit ?? DEFAULT_SEED_LIMIT;
-    // The engine writes the leveled plugin.log itself (core/log.ts), so the child's stdio can be
+    // The engine writes lifecycle diagnostics itself, so the child's stdio can be
     // fully detached — no fd redirect to manage.
     const child = spawnFn(
       "node",

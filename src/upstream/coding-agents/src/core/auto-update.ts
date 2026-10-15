@@ -303,7 +303,7 @@ export async function npmViewVersion(
       if (settled) return;
       settled = true;
       if (deadline) clearTimeout(deadline);
-      if (reason) log.info("auto-update", `version check failed: ${reason}`);
+      if (reason) log.info("auto-update", "version check failed", { error: reason });
       resolve(v);
     };
     try {
@@ -423,7 +423,7 @@ export async function maybeAutoUpdate(
         return "";
       }
 
-      log.info("auto-update", `updating the Hindsight runtime ${current} -> ${latest}`);
+      log.info("auto-update", "updating the Hindsight runtime");
       const child = spawnNpm(
         opts.spawn ?? realSpawn,
         "npx",
@@ -437,7 +437,7 @@ export async function maybeAutoUpdate(
       // A spawn failure (no npx on PATH, EACCES) arrives asynchronously as an 'error' event; an
       // unhandled one would take the session start down with it.
       child.on("error", (e) => {
-        log.warn("auto-update", `update spawn failed: ${e.message}`);
+        log.warn("auto-update", "update spawn failed", { error: e });
         releaseUpdateLock(lock);
       });
       child.unref();

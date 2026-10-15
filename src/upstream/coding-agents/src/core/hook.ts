@@ -29,7 +29,7 @@ import { deriveBankIdOrSkip } from "./bank";
 import type { Config } from "./config";
 import { applyBankConfig, loadConfig } from "./config";
 import { diag, diagFilePath, readHookEvent } from "./diag";
-import { describeError, log, setLogLevel } from "./log";
+import { log, setLogLevel } from "./log";
 import { startBackgroundSeed } from "./seed";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient, ReflectError } from "./hindsight";
@@ -170,7 +170,7 @@ async function injectPages(
     return hits.length ? formatPageFallback(hits, lead, managedToolPrefix(harness)) : null;
   } catch (e) {
     if (e instanceof AccessDeniedError) throw e;
-    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
+    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: e });
     return undefined;
   }
 }
@@ -193,7 +193,7 @@ async function injectRecall(
     return observations.length ? formatRecallFallback(observations, lead, managedToolPrefix(harness)) : null;
   } catch (e) {
     if (e instanceof AccessDeniedError) throw e;
-    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
+    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: e });
     return undefined;
   }
 }
@@ -270,7 +270,7 @@ export async function buildHookOutput(args: {
   if (deferInitialReflect) {
     // A new bank has no useful history yet. Do not burn the once-per-session synthesis on prompt
     // one; this marker is deliberately consumed below so prompt two remains eligible to reflect.
-    diag(harness, "reflect_deferred_new_bank", { query: prompt.slice(0, 80) });
+    diag(harness, "reflect_deferred_new_bank");
   } else if (cfg.autoInject === "pages" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     reflectAttempts++;
@@ -319,10 +319,6 @@ export async function buildHookOutput(args: {
       diag(harness, reflectAnswer ? "reflect_ok" : "reflect_empty", {
         ms: Date.now() - t0,
         chars: reflectAnswer.length,
-        query: prompt.slice(0, 80),
-        // Verbatim injected synthesis — the ONLY durable record of what the agent actually saw
-        // (post-mortems otherwise depend on the harness happening to persist hook context).
-        answer: reflectAnswer.slice(0, 8000),
       });
     } catch (e) {
       if (e instanceof AccessDeniedError) throw e;
@@ -338,15 +334,13 @@ export async function buildHookOutput(args: {
           : resolveInjection(undefined, reflectAttempts);
       reflectFailed = true;
       log.warn(harness, "reflect failed — session runs without memory", {
-        error: describeError(e),
+        error: e,
       });
       diag(harness, "reflect_failed", {
         ms: Date.now() - t0,
-        bank: client.bank,
         timeoutMs,
-        // Wider than describeError's default: the server's error body is the useful part.
-        error: describeError(e, 1500),
-        query: prompt.slice(0, 80),
+        status: e instanceof ReflectError ? e.status : undefined,
+        error: e,
       });
       if (e instanceof ReflectError && e.fallbackEligible) {
         fallback = await reflectFallback(harness, prompt, client, cfg.injectTimeoutMs);
@@ -372,7 +366,7 @@ export async function buildHookOutput(args: {
         client.knowledgePagesSupported === false ? "knowledge_pages_unavailable" : "pages_failed",
         {
           ms: Date.now() - t0,
-          error: describeError(e),
+          error: e,
         }
       );
     }
