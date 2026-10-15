@@ -190,11 +190,27 @@ describe("plugin wiring", () => {
     }
   });
 
-  it("rejects ambiguous principal maps and invalid numeric limits", () => {
+  it("accepts zero queue age but expires outage writes before a later replay", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 429 }));
+    const stack = buildRoutingStack(
+      { ...pluginConfig(queueDir), retainQueueMaxAgeMs: 0 },
+      { warn: vi.fn(), error: vi.fn() },
+    );
+    expect(await stack.retain.retain("main", { content: "queued before cleanup" })).toMatchObject({ queued: true });
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1000);
+    await stack.retain.flushQueues();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(queueDir, "hindsight-retain-queue.main.jsonl"))).toBe(false);
+  });
+
+  it("rejects the unsupported principals alias and invalid numeric limits", () => {
     const config = pluginConfig(queueDir);
     const logger = { warn: vi.fn(), error: vi.fn() };
     expect(() => buildRoutingStack({ ...config, principals: config.agents }, logger)).toThrow(
-      "configure agents or principals, not both",
+      "principals is unsupported in OpenClaw; configure agents",
+    );
+    expect(() => buildRoutingStack({ ...config, agents: undefined, principals: config.agents }, logger)).toThrow(
+      "principals is unsupported in OpenClaw; configure agents",
     );
     expect(() => buildRoutingStack({ ...config, recallTimeoutMs: 0 }, logger)).toThrow(
       "recallTimeoutMs must be a positive integer",
