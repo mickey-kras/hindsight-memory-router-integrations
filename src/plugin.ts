@@ -248,8 +248,8 @@ export function buildRoutingStack(
     error(msg: string): void;
   },
 ): RoutingStack {
-  if (config.agents && config.principals) {
-    throw new TypeError("configure agents or principals, not both");
+  if (Object.hasOwn(config, "principals")) {
+    throw new TypeError("principals is unsupported in OpenClaw; configure agents");
   }
   for (const [name, value] of [
     ["recallTimeoutMs", config.recallTimeoutMs],
@@ -271,7 +271,7 @@ export function buildRoutingStack(
   }
   const credentials = new PrincipalCredentialResolver({
     ...config,
-    principals: config.agents ?? config.principals,
+    principals: config.agents,
   });
   credentials.validateConfiguredPrincipals();
   const clients = new AuthenticatedClientFactory({

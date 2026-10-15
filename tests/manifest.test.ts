@@ -21,6 +21,11 @@ describe("openclaw.plugin.json", () => {
     expect(manifest.configSchema.required).toEqual(["routerUrl", "agents"]);
   });
 
+  it("rejects the unsupported principals alias in the schema", () => {
+    expect(manifest.configSchema.additionalProperties).toBe(false);
+    expect(manifest.configSchema.properties).not.toHaveProperty("principals");
+  });
+
   it("advertises the knowledge tool contract", () => {
     expect(manifest.contracts.tools).toContain("agent_knowledge_recall");
     expect(manifest.contracts.tools).toContain("agent_knowledge_ingest");
