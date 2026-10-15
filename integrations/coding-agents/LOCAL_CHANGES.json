@@ -19,7 +19,7 @@
   "src/core/bank.ts": "99cbe23ab3487c4d2d50bc21670072b062d7d8cfd1b4dbad23399cd56a590cba",
   "src/core/brand.ts": "95f6d73f96477f1eb190255aaa0fc33f2fe5a3416ffc6be7f8bf475f50873f43",
   "src/core/branding.test.ts": "7a398c0b4a04d2ce8d8014c23fc08ecd504a80ba964380a3b694ac546e555ca8",
-  "src/core/chat.test.ts": "074775538961f47de3abeb22735c6b58e1def0629572cc29ec1aae253fecd892",
+  "src/core/chat.test.ts": "469a2c712f99fef47c0d2a895ada039cb8fa9f26e61441622b203ff0ab77d993",
   "src/core/chat.ts": "bb113d5338a8e6900ee6531cda5a22a6adadaf251d4b8a98bc337b79ac046a0c",
   "src/core/config.ts": "a044502dd3ae1b3d92d7e8de309279398567a64e67694e20c4cbbeac421df928",
   "src/core/daemon.test.ts": "d5b96e81748185c9a4f1fdc1b517d969094f3f2fad9ef2acb42c2b2bd4159dbb",

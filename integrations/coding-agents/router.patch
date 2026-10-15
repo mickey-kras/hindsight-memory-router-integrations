@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..6cf2151
+index 0000000..353f2bf
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,42 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -13,6 +13,7 @@ index 0000000..6cf2151
 +- 401/403 are terminal; upstream credential retry is replaced by runtime environment resolution on each request.
 +- Optional human mode resolves a short-lived session from native OS secure storage on every request. Browser login uses the router's loopback OIDC/PKCE exchange; sign-out revokes and deletes the session. Persistent application credentials remain separate.
 +- Redirects and raw server error bodies are blocked. Automatic upstream replacement and installer token migration are disabled.
++- Diagnostic and ordinary log files use an allowlist of timing, counts, booleans and bounded classifications at every verbosity. Prompts, answers, failure text, identifiers, paths, URLs and arbitrary progress messages are omitted; no content-debug mode is provided. Existing log files are not purged by an upgrade.
 +- Transcript parsing, provenance tags, retain payloads, hooks, and harness adapters retain upstream behavior.
 +- Manual document ingestion uses the shared exact-title hash identity. Legacy IDs remain untouched; see the root README migration note.
 +- `src/core/inject.ts` rewords the reflect rendering rules to "commit, PR and issue ids": the upstream "commit/PR/issue" slash token trips the Memory Router encoded-payload request scan, which rejects the reflect query with 422 suspicious_content.
@@ -6477,8 +6478,74 @@ index 0050fc1..43ed7d6 100644
    return new RuntimeCore(client, bankId, cfg, HARNESS, dir);
  }
  
+diff --git a/src/core/auto-update.ts b/src/core/auto-update.ts
+index 93474de..4923ae4 100644
+--- a/src/core/auto-update.ts
++++ b/src/core/auto-update.ts
+@@ -47,7 +47,7 @@ import { homedir, tmpdir } from "node:os";
+ import { dirname, join } from "node:path";
+ import { fileURLToPath } from "node:url";
+ import type { Config } from "./config";
+-import { describeError, log } from "./log";
++import { log } from "./log";
+ import { binOnPath } from "./util";
+ 
+ export const PACKAGE_NAME = "@vectorize-io/hindsight-coding-agents";
+@@ -299,11 +299,11 @@ export async function npmViewVersion(
+     let out = "";
+     let settled = false;
+     let deadline: ReturnType<typeof setTimeout> | undefined;
+-    const done = (v: string, reason?: string) => {
++    const done = (v: string, reason?: unknown) => {
+       if (settled) return;
+       settled = true;
+       if (deadline) clearTimeout(deadline);
+-      if (reason) log.info("auto-update", `version check failed: ${reason}`);
++      if (reason !== undefined) log.info("auto-update", "version check failed", { error: reason });
+       resolve(v);
+     };
+     try {
+@@ -317,9 +317,9 @@ export async function npmViewVersion(
+         out += d;
+       });
+       // An unhandled pipe 'error' would crash the session-start hook.
+-      child.stdout?.on("error", (e) => done("", describeError(e)));
++      child.stdout?.on("error", (e) => done("", e));
+       // ENOENT / EACCES: npm is not where PATH said it was.
+-      child.on("error", (e) => done("", describeError(e)));
++      child.on("error", (e) => done("", e));
+       // close, not exit: stdout must have fully arrived before the parse.
+       child.on("close", (code, signal) => {
+         if (code !== 0) return done("", `npm view exited ${code ?? signal}`);
+@@ -346,7 +346,7 @@ export async function npmViewVersion(
+         done("", "npm view never exited — hard deadline");
+       }, NPM_VIEW_HARD_DEADLINE_MS);
+     } catch (e) {
+-      done("", describeError(e));
++      done("", e);
+     }
+   });
+ }
+@@ -423,7 +423,7 @@ export async function maybeAutoUpdate(
+         return "";
+       }
+ 
+-      log.info("auto-update", `updating the Hindsight runtime ${current} -> ${latest}`);
++      log.info("auto-update", "updating the Hindsight runtime");
+       const child = spawnNpm(
+         opts.spawn ?? realSpawn,
+         "npx",
+@@ -437,7 +437,7 @@ export async function maybeAutoUpdate(
+       // A spawn failure (no npx on PATH, EACCES) arrives asynchronously as an 'error' event; an
+       // unhandled one would take the session start down with it.
+       child.on("error", (e) => {
+-        log.warn("auto-update", `update spawn failed: ${e.message}`);
++        log.warn("auto-update", "update spawn failed", { error: e });
+         releaseUpdateLock(lock);
+       });
+       child.unref();
 diff --git a/src/core/bank.ts b/src/core/bank.ts
-index 0a31a6b..4582fb2 100644
+index 0a31a6b..83cad48 100644
 --- a/src/core/bank.ts
 +++ b/src/core/bank.ts
 @@ -1,3 +1,4 @@
@@ -6603,6 +6670,18 @@ index 0a31a6b..4582fb2 100644
  }
  
  /**
+@@ -386,9 +365,9 @@ export function deriveBankIdOrSkip(
+     if (!(error instanceof BankResolutionError)) throw error;
+     log.warn(harness, "bank unresolved: skipping (repository could not be identified)", {
+       directory,
+-      error: error.message,
++      error,
+     });
+-    diag(harness, "bank_unresolved", { directory, error: error.message });
++    diag(harness, "bank_unresolved", { directory, error });
+     return null;
+   }
+ }
 diff --git a/src/core/brand.ts b/src/core/brand.ts
 index b5c8436..56d2401 100644
 --- a/src/core/brand.ts
@@ -6716,7 +6795,7 @@ index 0000000..23f282e
 +  expect(current).toContain("Managed setup and updates");
 +});
 diff --git a/src/core/chat.test.ts b/src/core/chat.test.ts
-index 8fe5792..953fdcb 100644
+index 8fe5792..514938e 100644
 --- a/src/core/chat.test.ts
 +++ b/src/core/chat.test.ts
 @@ -1,4 +1,6 @@
@@ -6804,7 +6883,7 @@ index 8fe5792..953fdcb 100644
 +        expect(f.documents.get("A")).toEqual(["A1", "B1"]);
 +        expect(f.retain).toHaveBeenCalledTimes(writes);
 +        expect(f.cursors.read("rollouts")).toEqual(before);
-+        expect(warning).toHaveBeenCalledWith("codex", "session write-back failed", expect.objectContaining({ error: expect.any(String) }));
++        expect(warning).toHaveBeenCalledWith("codex", "session write-back failed", expect.objectContaining({ error: expect.any(Error) }));
 +      } finally { warning.mockRestore(); }
 +    });
 +  });
@@ -7307,7 +7386,7 @@ index 8d60c72..a6c4bb1 100644
    };
    /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */
 diff --git a/src/core/config.ts b/src/core/config.ts
-index fe2f5b4..c60adc5 100644
+index fe2f5b4..277e09c 100644
 --- a/src/core/config.ts
 +++ b/src/core/config.ts
 @@ -1,3 +1,5 @@
@@ -7348,7 +7427,81 @@ index fe2f5b4..c60adc5 100644
    apiUrl: string;
    apiToken?: string;
    apiPort: number;
-@@ -589,18 +587,13 @@ function resolveAutoInject(raw: RawConfig): AutoInject {
+@@ -380,15 +378,14 @@ function resolvePageTrigger(raw: RawConfig): {
+   if (raw.pageTriggerType !== undefined && raw.pageTriggerType !== "cron")
+     log.warn(
+       "config",
+-      `ignoring pageTriggerType=${JSON.stringify(raw.pageTriggerType)} — ` +
+-        "expected cron|auto-refresh|manual"
++      "ignoring invalid pageTriggerType — expected cron|auto-refresh|manual"
+     );
+   const cron = raw.pageTriggerCron?.trim();
+   if (!cron) return { type: "cron", cron: DEFAULT_PAGE_TRIGGER_CRON };
+   if (!isHashedCron(cron) || parseHashedCron(cron)) return { type: "cron", cron };
+   log.warn(
+     "config",
+-    `pageTriggerCron ${JSON.stringify(cron)} has a malformed hashed field — ` +
++    "pageTriggerCron has a malformed hashed field — " +
+       'write `H` or `H(<lo>-<hi>)` within the field\'s own range, e.g. "H H(0-5) * * *" — ' +
+       `falling back to ${JSON.stringify(DEFAULT_PAGE_TRIGGER_CRON)}`
+   );
+@@ -399,8 +396,8 @@ function resolvePageTrigger(raw: RawConfig): {
+  * Validate `pages`, dropping anything unusable with a warning.
+  *
+  * A key matching no seeded page is the mistake worth catching loudly: it reads as having disabled
+- * or reworded something and silently does nothing, so the warning names it alongside the set that
+- * would have worked. Values are checked for the same reason — `{"source_query": 5}` would
++ * or reworded something and silently does nothing, so the warning names the permitted set.
++ * Values are checked for the same reason — `{"source_query": 5}` would
+  * otherwise travel and become a page whose description is `5`.
+  */
+ function resolvePages(raw: RawConfig["pages"]): PagesConfig {
+@@ -413,7 +410,7 @@ function resolvePages(raw: RawConfig["pages"]): PagesConfig {
+     if (!PAGE_NAMES.some((known) => known.toLowerCase() === name.trim().toLowerCase())) {
+       log.warn(
+         "config",
+-        `ignoring pages[${JSON.stringify(name)}] — no seeded page has that name; ` +
++        "ignoring unknown pages entry — no seeded page has that name; " +
+           `expected one of: ${PAGE_NAMES.join(", ")}`
+       );
+       continue;
+@@ -432,7 +429,7 @@ function resolvePages(raw: RawConfig["pages"]): PagesConfig {
+     }
+     log.warn(
+       "config",
+-      `ignoring pages[${JSON.stringify(name)}]=${JSON.stringify(entry)} — ` +
++      "ignoring invalid pages entry — " +
+         'expected false, or {"source_query": "<your question>"}'
+     );
+   }
+@@ -458,7 +455,7 @@ function resolveCustomPages(raw: RawConfig["customPages"]): CustomPagesConfig {
+     if (PAGE_NAMES.some((known) => known.toLowerCase() === name.toLowerCase())) {
+       log.warn(
+         "config",
+-        `ignoring customPages[${JSON.stringify(rawName)}] — that is a seeded page; ` +
++        "ignoring customPages entry with a seeded page name; " +
+           "reword it under `pages` instead"
+       );
+       continue;
+@@ -470,7 +467,7 @@ function resolveCustomPages(raw: RawConfig["customPages"]): CustomPagesConfig {
+     if (typeof query !== "string" || !query.trim()) {
+       log.warn(
+         "config",
+-        `ignoring customPages[${JSON.stringify(rawName)}]=${JSON.stringify(entry)} — ` +
++        "ignoring invalid customPages entry — " +
+           'expected {"source_query": "<your question>"}'
+       );
+       continue;
+@@ -505,7 +502,7 @@ function resolveReflectBudget(raw: RawConfig): "low" | "mid" | "high" {
+   if (value === undefined) return "high";
+   if (typeof value === "string" && (REFLECT_BUDGETS as readonly string[]).includes(value))
+     return value as "low" | "mid" | "high";
+-  log.warn("config", `ignoring reflectBudget=${JSON.stringify(value)} — expected low|mid|high`);
++  log.warn("config", "ignoring invalid reflectBudget — expected low|mid|high");
+   return "high";
+ }
+ 
+@@ -589,18 +586,13 @@ function resolveAutoInject(raw: RawConfig): AutoInject {
  export function resolveConfig(raw: RawConfig = {}): Config {
    const serverMode = ["cloud", "self-hosted", "daemon"].includes(raw.serverMode as string)
      ? (raw.serverMode as "cloud" | "self-hosted" | "daemon")
@@ -7370,7 +7523,7 @@ index fe2f5b4..c60adc5 100644
      apiToken: raw.apiToken || undefined,
      apiPort,
      daemonIdleTimeout: raw.daemonIdleTimeout,
-@@ -752,7 +745,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
+@@ -752,7 +744,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
   * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
   * does not survive flattening into one env var. They stay file-only.
   */
@@ -7379,7 +7532,7 @@ index fe2f5b4..c60adc5 100644
    serverMode: "HINDSIGHT_SERVER_MODE",
    apiUrl: "HINDSIGHT_API_URL",
    apiToken: "HINDSIGHT_API_TOKEN",
-@@ -871,7 +864,10 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
+@@ -871,7 +863,10 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
    // "opencode", whose silent default misfiled every other harness's background seed into an
    // `opencode::<project>` bank (#3247). An explicit `harness:` in the config file still wins.
    if (!raw.harness && o.harness) raw.harness = o.harness;
@@ -7391,7 +7544,7 @@ index fe2f5b4..c60adc5 100644
  }
  
  /** Bank-resolution fields are meaningless inside a `banks.<id>` section (they can't change the id
-@@ -886,7 +882,7 @@ const BANK_OVERRIDE_EXCLUDED = [
+@@ -886,7 +881,7 @@ const BANK_OVERRIDE_EXCLUDED = [
    // only ever arrive too late to matter — strip them rather than let them read as effective.
    "optInOnly",
    "optInPaths",
@@ -7400,7 +7553,7 @@ index fe2f5b4..c60adc5 100644
  ] as const;
  
  /**
-@@ -905,7 +901,7 @@ export function applyBankConfig(
+@@ -905,7 +900,7 @@ export function applyBankConfig(
    // adding a second thing eight call sites must remember — and that gate is known to stop the run
    // before anything creates a bank.
    if (directory !== undefined && !isOptedIn(cfg, directory))
@@ -7409,7 +7562,7 @@ index fe2f5b4..c60adc5 100644
    const byPath = directory === undefined ? undefined : pathSection(cfg, cfg.paths, directory);
    if (byPath) {
      // A path entry never renames the bank: only `banks.<id>` may, below.
-@@ -913,13 +909,13 @@ export function applyBankConfig(
+@@ -913,13 +908,13 @@ export function applyBankConfig(
      cfg = { ...cfg, ...resolvePartial(cfg, rest as RawConfig) };
    }
    const section = cfg.banks[resolvedId];
@@ -8124,10 +8277,34 @@ index 094fd10..8491fb5 100644
 +  if (cfg.serverMode !== "self-hosted") throw new AccessDeniedError();
  }
 diff --git a/src/core/diag.ts b/src/core/diag.ts
-index 1016616..cce7410 100644
+index 1016616..e2be4f6 100644
 --- a/src/core/diag.ts
 +++ b/src/core/diag.ts
-@@ -44,8 +44,8 @@ export function parseHookEvent(harness: string, raw: string): Record<string, unk
+@@ -9,7 +9,7 @@
+  */
+ import { readFileSync } from "node:fs";
+ import { join } from "node:path";
+-import { appendLogLine, log, logsDir } from "./log";
++import { appendLogLine, log, logMetadata, logsDir } from "./log";
+ 
+ /** Where the JSONL trail lands. Exported so a failure notice can name the file to open. */
+ export function diagFilePath(): string {
+@@ -17,11 +17,12 @@ export function diagFilePath(): string {
+ }
+ 
+ export function diag(harness: string, event: string, extra: Record<string, unknown> = {}): void {
+-  log.debug(harness, `diag:${event}`, extra); // debug level shows the full story in ONE file
+   try {
++    const metadata = logMetadata(extra);
++    log.debug(harness, `diag:${event}`, metadata);
+     appendLogLine(
+       diagFilePath(),
+-      JSON.stringify({ ts: new Date().toISOString(), harness, event, ...extra }) + "\n"
++      JSON.stringify({ ts: new Date().toISOString(), harness, event, ...metadata }) + "\n"
+     );
+   } catch {
+     /* diagnostics must not break the agent */
+@@ -44,8 +45,8 @@ export function parseHookEvent(harness: string, raw: string): Record<string, unk
      const ev: unknown = JSON.parse(text);
      if (ev && typeof ev === "object" && !Array.isArray(ev)) return ev as Record<string, unknown>;
      diag(harness, "hook_input_invalid", { error: "not a JSON object" });
@@ -9323,8 +9500,35 @@ index 1382140..ea01e67 100644
  }
  
  /** Is `dir` the repo itself or somewhere inside it? */
+diff --git a/src/core/hook.test.ts b/src/core/hook.test.ts
+index 98a832a..7cdb25a 100644
+--- a/src/core/hook.test.ts
++++ b/src/core/hook.test.ts
+@@ -194,7 +194,7 @@ describe("buildHookOutput", () => {
+     }
+   });
+ 
+-  it("reflect_failed records the bank, the deadline, and the server's full error body", async () => {
++  it("reflect_failed records the deadline and a bounded failure class", async () => {
+     const diagFile = join(root, "diag.log");
+     vi.stubEnv("HINDSIGHT_DIAG_FILE", diagFile);
+     const body = `{"detail":"${"x".repeat(400)} upstream LLM rejected the turn"}`;
+@@ -219,10 +219,10 @@ describe("buildHookOutput", () => {
+       .split("\n")
+       .map((line) => JSON.parse(line))
+       .find((entry) => entry.event === "reflect_failed");
+-    expect(failed.bank).toBe("coding-agent::demo");
++    expect(failed.bank).toBeUndefined();
+     expect(failed.timeoutMs).toBe(20_000);
+-    // Past describeError's default 200-char cut, where the root cause usually sits.
+-    expect(failed.error).toContain("upstream LLM rejected the turn");
++    expect(failed.errorClass).toBe("operation_failed");
++    expect(failed.error).toBeUndefined();
+   });
+ 
+   it("the notice fires on the turns reflect ran, and stops once the retries are spent", async () => {
 diff --git a/src/core/hook.ts b/src/core/hook.ts
-index 57ea089..757eb37 100644
+index 57ea089..7575e6a 100644
 --- a/src/core/hook.ts
 +++ b/src/core/hook.ts
 @@ -1,3 +1,6 @@
@@ -9334,6 +9538,15 @@ index 57ea089..757eb37 100644
  /**
   * Shared runtime for HOOK-based harnesses (Claude Code, Codex, Cursor CLI, ...).
   *
+@@ -26,7 +29,7 @@ import { deriveBankIdOrSkip } from "./bank";
+ import type { Config } from "./config";
+ import { applyBankConfig, loadConfig } from "./config";
+ import { diag, diagFilePath, readHookEvent } from "./diag";
+-import { describeError, log, setLogLevel } from "./log";
++import { log, setLogLevel } from "./log";
+ import { startBackgroundSeed } from "./seed";
+ import type { ClientOpts } from "./hindsight";
+ import { HindsightClient, ReflectError } from "./hindsight";
 @@ -46,6 +49,9 @@ import {
    sessionCacheFile,
    sessionRootDir,
@@ -9360,37 +9573,75 @@ index 57ea089..757eb37 100644
  
  /**
   * What to cache for a once-per-session auto-injection, given what the source returned.
-@@ -159,8 +167,9 @@ async function injectPages(
+@@ -159,9 +167,10 @@ async function injectPages(
      // How MANY pages come back is the client's `pageSearchLimit`, shared with the MCP tool.
      const hits = await client.searchKnowledgePages(prompt.slice(0, 500), { timeoutMs });
      diag(harness, event, { ms: Date.now() - t0, count: hits.length });
 -    return hits.length ? formatPageFallback(hits, lead) : null;
 +    return hits.length ? formatPageFallback(hits, lead, managedToolPrefix(harness)) : null;
    } catch (e) {
+-    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
 +    if (e instanceof AccessDeniedError) throw e;
-     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
++    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: e });
      return undefined;
    }
-@@ -181,8 +190,9 @@ async function injectRecall(
+ }
+@@ -181,9 +190,10 @@ async function injectRecall(
      // What is asked for — types, token budget, everything — is the client's `recallOptions`.
      const observations = await client.recallObservations(boundRecallQuery(prompt), { timeoutMs });
      diag(harness, event, { ms: Date.now() - t0, count: observations.length });
 -    return observations.length ? formatRecallFallback(observations, lead) : null;
 +    return observations.length ? formatRecallFallback(observations, lead, managedToolPrefix(harness)) : null;
    } catch (e) {
+-    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
 +    if (e instanceof AccessDeniedError) throw e;
-     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
++    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: e });
      return undefined;
    }
-@@ -315,6 +325,7 @@ export async function buildHookOutput(args: {
-         answer: reflectAnswer.slice(0, 8000),
+ }
+@@ -260,7 +270,7 @@ export async function buildHookOutput(args: {
+   if (deferInitialReflect) {
+     // A new bank has no useful history yet. Do not burn the once-per-session synthesis on prompt
+     // one; this marker is deliberately consumed below so prompt two remains eligible to reflect.
+-    diag(harness, "reflect_deferred_new_bank", { query: prompt.slice(0, 80) });
++    diag(harness, "reflect_deferred_new_bank");
+   } else if (cfg.autoInject === "pages" && reflectAnswer === undefined) {
+     reflectRanThisTurn = true;
+     reflectAttempts++;
+@@ -309,12 +319,9 @@ export async function buildHookOutput(args: {
+       diag(harness, reflectAnswer ? "reflect_ok" : "reflect_empty", {
+         ms: Date.now() - t0,
+         chars: reflectAnswer.length,
+-        query: prompt.slice(0, 80),
+-        // Verbatim injected synthesis — the ONLY durable record of what the agent actually saw
+-        // (post-mortems otherwise depend on the harness happening to persist hook context).
+-        answer: reflectAnswer.slice(0, 8000),
        });
      } catch (e) {
 +      if (e instanceof AccessDeniedError) throw e;
        // A failure is RETRYABLE, not an answer — `resolveInjection` leaves it unresolved until the
        // budget is spent. Caching "" here meant one timeout on the session's first prompt disabled
        // synthesis for the ENTIRE session, and against a real server a reflect near the timeout is a
-@@ -355,6 +366,7 @@ export async function buildHookOutput(args: {
+@@ -327,15 +334,13 @@ export async function buildHookOutput(args: {
+           : resolveInjection(undefined, reflectAttempts);
+       reflectFailed = true;
+       log.warn(harness, "reflect failed — session runs without memory", {
+-        error: describeError(e),
++        error: e,
+       });
+       diag(harness, "reflect_failed", {
+         ms: Date.now() - t0,
+-        bank: client.bank,
+         timeoutMs,
+-        // Wider than describeError's default: the server's error body is the useful part.
+-        error: describeError(e, 1500),
+-        query: prompt.slice(0, 80),
++        status: e instanceof ReflectError ? e.status : undefined,
++        error: e,
+       });
+       if (e instanceof ReflectError && e.fallbackEligible) {
+         fallback = await reflectFallback(harness, prompt, client, cfg.injectTimeoutMs);
+@@ -355,12 +360,13 @@ export async function buildHookOutput(args: {
        pages = parsePageList(await client.listPages());
        diag(harness, "pages_ok", { ms: Date.now() - t0, count: pages.length });
      } catch (e) {
@@ -9398,7 +9649,14 @@ index 57ea089..757eb37 100644
        diag(
          harness,
          client.knowledgePagesSupported === false ? "knowledge_pages_unavailable" : "pages_failed",
-@@ -379,7 +391,7 @@ export async function buildHookOutput(args: {
+         {
+           ms: Date.now() - t0,
+-          error: describeError(e),
++          error: e,
+         }
+       );
+     }
+@@ -379,7 +385,7 @@ export async function buildHookOutput(args: {
    // ran. No cadence re-injection: replaying the turn-1 synthesis at arbitrary later turns reads
    // as random noise once the session drifts, and the agent holds hindsight_reflect for a FRESH
    // pass if compaction or drift makes it need memory again.
@@ -9407,7 +9665,7 @@ index 57ea089..757eb37 100644
    // Knowledge pages are NOT auto-injected: the agent pulls them through
    // hindsight_search_knowledge_pages when a question warrants it — an unprompted injection on
    // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
-@@ -388,6 +400,7 @@ export async function buildHookOutput(args: {
+@@ -388,6 +394,7 @@ export async function buildHookOutput(args: {
      blocks.push(
        buildRosterRefresh(pages, {
          reflectOnNewGoals: cfg.autoInject !== "reflect",
@@ -9415,7 +9673,7 @@ index 57ea089..757eb37 100644
          extra: cfg.toolGuideExtra,
        })
      );
-@@ -403,14 +416,14 @@ export async function buildHookOutput(args: {
+@@ -403,14 +410,14 @@ export async function buildHookOutput(args: {
      // source answered and point at the diag file, but that read as an error on a turn that
      // worked; reflect_failed + reflect_fallback_* in the diag trail carry the details.
    } else if (reflectRanThisTurn && reflectAnswer) {
@@ -9433,7 +9691,7 @@ index 57ea089..757eb37 100644
        `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;
    } else if (reflectFailed) {
      // The failure is already in the diag trail and plugin.log, but both are files nobody is
-@@ -418,7 +431,7 @@ export async function buildHookOutput(args: {
+@@ -418,7 +425,7 @@ export async function buildHookOutput(args: {
      // One terse line pointing at the trail — not an explanation, and not advice to the agent:
      // this fires only on a turn that actually attempted a source, so at most
      // HOOK_INJECT_ATTEMPTS times per session.
@@ -9442,7 +9700,7 @@ index 57ea089..757eb37 100644
    }
  
    return { context: kept.length ? kept.join("\n\n") : undefined, notice, pages };
-@@ -436,16 +449,10 @@ export async function runHook(
+@@ -436,16 +443,10 @@ export async function runHook(
    if (!ev) return;
    if (spec.accept && !spec.accept(ev)) return;
    const { prompt: rawPrompt, cwd: rawCwd, sessionId } = spec.parse(ev);
@@ -9460,7 +9718,7 @@ index 57ea089..757eb37 100644
  
    let cfg = loadConfig({ harness: spec.harness });
    setLogLevel(cfg.logLevel);
-@@ -454,14 +461,6 @@ export async function runHook(
+@@ -454,14 +455,6 @@ export async function runHook(
      return;
    }
  
@@ -9475,7 +9733,7 @@ index 57ea089..757eb37 100644
    const out = (context: string | undefined, notice?: string) =>
      process.stdout.write(JSON.stringify(spec.emit(context ?? "", notice, ev)));
  
-@@ -475,8 +474,50 @@ export async function runHook(
+@@ -475,8 +468,50 @@ export async function runHook(
      log.debug(spec.harness, "hook skipped: bank disabled via banks override", { bank: bankId });
      return;
    }
@@ -9527,7 +9785,7 @@ index 57ea089..757eb37 100644
      apiToken: cfg.apiToken,
      bank: bankId,
      maxParallelRetains: cfg.maxParallelRetains,
-@@ -494,6 +535,7 @@ export async function runHook(
+@@ -494,6 +529,7 @@ export async function runHook(
      startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
    }
  
@@ -9535,7 +9793,7 @@ index 57ea089..757eb37 100644
    const output = await buildHookOutput({ harness: spec.harness, prompt, cfg, client, cacheFile });
    // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
    // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
-@@ -506,8 +548,13 @@ export async function runHook(
+@@ -506,8 +542,13 @@ export async function runHook(
      startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
    }
    let context = output.context;
@@ -9982,6 +10240,268 @@ index 62c74d1..b625c6f 100644
    });
  
    it("reads the Codex plugin's config too", () => {
+diff --git a/src/core/log.ts b/src/core/log.ts
+index b9efa62..d76287e 100644
+--- a/src/core/log.ts
++++ b/src/core/log.ts
+@@ -7,7 +7,7 @@
+  *          without touching config ("debug" | "info" | "warn" | "error")
+  *
+  * Line format: `<iso> LEVEL [scope] message {extra-json}` — greppable, tail-able. At "debug",
+- * every diag event is mirrored here too, so one file tells the whole story. Never throws: logging
++ * every diag event is mirrored here too. Both files retain metadata only. Never throws: logging
+  * must not break the agent.
+  */
+ import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
+  * Every log this plugin keeps (plugin.log, diag.jsonl, usage.jsonl) lives here.
+  *
+  * They used to be split between `/tmp/hindsight-plugin.log` and `$TMPDIR/hindsight-coding-agent/`:
+- * the first is shared by every user on the machine (and the lines carry queries and code), both are
++ * the first is shared by every user on the machine, both are
+  * wiped on reboot, which loses exactly the history usage stats are for, and neither was bounded. A
+  * sibling of the staged runtime (`~/.hindsight/coding-agents`), not a child of it: `update`
+  * replaces that directory wholesale. Scratch state (session cache, cursors, locks) stays in the OS
+@@ -33,7 +33,7 @@ export const LOG_MAX_BYTES = 10 * 1024 * 1024;
+ 
+ /**
+  * Append to a log file, rotating it first once it has reached LOG_MAX_BYTES. Throws — callers are
+- * the fail-open wrappers. The directory is owner-only: these lines carry prompts, queries and code.
++ * the fail-open wrappers. The directory is owner-only even though diagnostics omit content.
+  *
+  * Rotation is not coordinated across processes (every hook is its own process). Two that rotate at
+  * once can push the just-restarted file over `.1`, losing one old generation — a bounded,
+@@ -66,13 +66,52 @@ export function logFilePath(): string {
+   return process.env.HINDSIGHT_LOG_FILE || join(logsDir(), "plugin.log");
+ }
+ 
++const NUMERIC_FIELDS = new Set([
++  "ms", "chars", "count", "turns", "timeoutMs", "pages", "newChats", "failures",
++  "hostCatalog", "hindsight", "commits",
++]);
++const BOOLEAN_FIELDS = new Set(["cold", "wired", "hasSession", "appendSupported", "retry"]);
++const ERROR_CLASSES = ["timeout", "aborted", "connection_refused", "dns_failure", "operation_failed"] as const;
++type ErrorClass = (typeof ERROR_CLASSES)[number];
++
++/** Classify failures without rendering messages, stacks, URLs or arbitrary cause values. */
++function errorClass(value: unknown): ErrorClass {
++  const seen = new Set<unknown>();
++  let error: unknown = value;
++  while (error && typeof error === "object" && !seen.has(error) && seen.size < 8) {
++    seen.add(error);
++    const detail = error as { name?: unknown; code?: unknown; timedOut?: unknown; cause?: unknown };
++    if (detail.timedOut === true || detail.name === "TimeoutError" || detail.code === "ETIMEDOUT") return "timeout";
++    if (detail.name === "AbortError") return "aborted";
++    if (detail.code === "ECONNREFUSED") return "connection_refused";
++    if (detail.code === "ENOTFOUND" || detail.code === "EAI_AGAIN") return "dns_failure";
++    error = detail.cause;
++  }
++  return "operation_failed";
++}
++
++/** Shared allowlist for both sinks. Unknown fields and all free-form text are discarded. */
++export function logMetadata(extra: Record<string, unknown> = {}): Record<string, number | boolean | string> {
++  const safe: Record<string, number | boolean | string> = {};
++  for (const [key, value] of Object.entries(extra)) {
++    if (NUMERIC_FIELDS.has(key) && typeof value === "number" && Number.isFinite(value)) safe[key] = value;
++    else if (key === "status" && typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599) safe[key] = value;
++    else if (BOOLEAN_FIELDS.has(key) && typeof value === "boolean") safe[key] = value;
++    else if (key === "mode" && (value === "append" || value === "replace" || value === "skip")) safe[key] = value;
++    else if (key === "error") safe.errorClass = errorClass(value);
++    else if (key === "errorClass" && ERROR_CLASSES.some((known) => known === value)) safe.errorClass = String(value);
++  }
++  return safe;
++}
++
+ function write(level: LogLevel, scope: string, msg: string, extra?: Record<string, unknown>): void {
+   if (WEIGHT[level] < WEIGHT[current]) return;
+   try {
++    const metadata = logMetadata(extra);
+     appendLogLine(
+       logFilePath(),
+       `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${scope}] ${msg}` +
+-        (extra && Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : "") +
++        (Object.keys(metadata).length ? ` ${JSON.stringify(metadata)}` : "") +
+         "\n"
+     );
+   } catch {
+@@ -95,9 +134,8 @@ export const log = {
+  * Render a thrown value with its `cause` chain.
+  *
+  * Node's fetch reports EVERY transport failure as the bare string "fetch failed" and hides the real
+- * reason (ECONNREFUSED, ENOTFOUND, a TLS error, a timeout) on `error.cause`. Logging only the
+- * message turned a one-line diagnosis — "nothing is listening on the configured apiUrl" — into an
+- * investigation, so every network failure we record goes through this instead.
++ * reason (ECONNREFUSED, ENOTFOUND, a TLS error, a timeout) on `error.cause`. This is for foreground
++ * error descriptions, never log messages. Durable diagnostics classify errors without their text.
+  */
+ export function describeError(value: unknown, maxChars = 200): string {
+   const parts: string[] = [];
+diff --git a/src/core/logging-privacy.test.ts b/src/core/logging-privacy.test.ts
+new file mode 100644
+index 0000000..0534904
+--- /dev/null
++++ b/src/core/logging-privacy.test.ts
+@@ -0,0 +1,159 @@
++import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { resolveConfig } from "./config";
++import { diag, parseHookEvent } from "./diag";
++import { HindsightClient, ReflectError } from "./hindsight";
++import { buildHookOutput } from "./hook";
++import { log, setLogLevel } from "./log";
++import { buildRetain } from "./retain-hook";
++import { RuntimeCore } from "./runtime";
++import { writeSessionCache } from "./session-cache";
++
++const PROMPT = "PROMPT_CANARY_private_question";
++const ANSWER = "ANSWER_CANARY_private_memory";
++const FAILURE = "FAILURE_CANARY_private_response";
++const IDENTITY = "IDENTITY_CANARY_private_path";
++let root: string;
++let diagnostic: string;
++let ordinary: string;
++
++function contents(path: string): string {
++  return existsSync(path) ? readFileSync(path, "utf8") : "";
++}
++
++function records(): Record<string, unknown>[] {
++  return contents(diagnostic).trim().split("\n").filter(Boolean)
++    .map((line) => JSON.parse(line) as Record<string, unknown>);
++}
++
++function client(): HindsightClient {
++  const instance = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A" });
++  vi.spyOn(instance, "reflect").mockResolvedValue(ANSWER);
++  vi.spyOn(instance, "listPages").mockResolvedValue({ items: [{ id: IDENTITY, name: ANSWER }] });
++  vi.spyOn(instance, "searchKnowledgePages").mockResolvedValue([]);
++  vi.spyOn(instance, "recallObservations").mockResolvedValue([]);
++  return instance;
++}
++
++beforeEach(() => {
++  root = mkdtempSync(join(tmpdir(), "logging-privacy-"));
++  diagnostic = join(root, "diag.jsonl");
++  ordinary = join(root, "plugin.log");
++  vi.stubEnv("TMPDIR", root);
++  vi.stubEnv("HINDSIGHT_DIAG_FILE", diagnostic);
++  vi.stubEnv("HINDSIGHT_LOG_FILE", ordinary);
++  vi.stubEnv("HINDSIGHT_USAGE_FILE", join(root, "usage.jsonl"));
++  vi.stubEnv("HINDSIGHT_LOG_LEVEL", "");
++  const managed = join(root, "managed.json");
++  writeFileSync(managed, JSON.stringify({ routerUrl: "https://router.test", principals: {
++    codex: { tokenEnv: "LOGGING_TEST_TOKEN", writeBank: "A", mapPathToBank: { [root]: "A" } },
++  } }));
++  vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", managed);
++  vi.stubEnv("LOGGING_TEST_TOKEN", `mr_codex_${"b".repeat(64)}`);
++});
++
++afterEach(() => {
++  try {
++    for (const file of [diagnostic, ordinary]) {
++      for (const canary of [PROMPT, ANSWER, FAILURE, IDENTITY]) expect(contents(file)).not.toContain(canary);
++    }
++  } finally {
++    setLogLevel("info");
++    vi.unstubAllEnvs();
++    vi.restoreAllMocks();
++    rmSync(root, { recursive: true, force: true });
++  }
++});
++
++describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) => {
++  beforeEach(() => setLogLevel(level));
++
++  it("keeps successful reflection content in the injection and out of both log files", async () => {
++    const output = await buildHookOutput({ harness: "codex", prompt: PROMPT,
++      cfg: resolveConfig(), client: client(), cacheFile: join(root, "session.json") });
++    expect(output.context).toContain(ANSWER);
++    expect(records()).toContainEqual(expect.objectContaining({ event: "reflect_ok", chars: ANSWER.length }));
++    expect(records().find((entry) => entry.event === "reflect_ok")).not.toHaveProperty("query");
++    if (level === "debug") expect(contents(ordinary)).toContain("diag:reflect_ok");
++  });
++
++  it("records failed reflect, fallback and page reads without their error messages or causes", async () => {
++    const instance = client();
++    const failure = new Error(FAILURE, { cause: Object.assign(new Error(PROMPT), { code: "ECONNREFUSED" }) });
++    vi.mocked(instance.reflect).mockRejectedValue(new ReflectError(FAILURE, 503, false));
++    vi.mocked(instance.searchKnowledgePages).mockRejectedValue(failure);
++    vi.mocked(instance.recallObservations).mockRejectedValue(failure);
++    vi.mocked(instance.listPages).mockRejectedValue(failure);
++    await buildHookOutput({ harness: "codex", prompt: PROMPT, cfg: resolveConfig(),
++      client: instance, cacheFile: join(root, "session.json") });
++    expect(records()).toEqual(expect.arrayContaining([
++      expect.objectContaining({ event: "reflect_failed", timeoutMs: 20_000, status: 503, errorClass: "operation_failed" }),
++      expect.objectContaining({ event: "reflect_fallback_pages_failed", errorClass: "connection_refused" }),
++      expect.objectContaining({ event: "reflect_fallback_observations_failed", errorClass: "connection_refused" }),
++      expect.objectContaining({ event: "pages_failed", errorClass: "connection_refused" }),
++    ]));
++    expect(contents(ordinary)).toContain("reflect failed");
++  });
++
++  it.each(["pages", "recall"] as const)("omits failed %s injection content", async (autoInject) => {
++    const instance = client();
++    vi.mocked(instance.searchKnowledgePages).mockRejectedValue(FAILURE);
++    vi.mocked(instance.recallObservations).mockRejectedValue({ message: FAILURE, code: ANSWER, cause: PROMPT });
++    await buildHookOutput({ harness: "codex", prompt: PROMPT, cfg: resolveConfig({ autoInject }),
++      client: instance, cacheFile: join(root, "session.json") });
++    expect(records()).toContainEqual(expect.objectContaining({ event: `inject_${autoInject}_failed`, errorClass: "operation_failed" }));
++  });
++
++  it("omits deferred prompts and persistent-runtime notice previews", async () => {
++    const cacheFile = join(root, "deferred.json");
++    writeSessionCache(cacheFile, { deferInitialReflect: true });
++    await buildHookOutput({ harness: "codex", prompt: PROMPT, cfg: resolveConfig(), client: client(), cacheFile });
++    expect(records()).toContainEqual(expect.objectContaining({ event: "reflect_deferred_new_bank" }));
++    const runtime = new RuntimeCore(client(), "A", resolveConfig({ logLevel: level }), "codex", root);
++    const notify = vi.fn<(title: string, message: string) => void>();
++    runtime.setNotifier(notify);
++    await runtime.onPrompt(IDENTITY, PROMPT);
++    expect(runtime.getInjection(IDENTITY)).toContain(ANSWER);
++    expect(notify).toHaveBeenCalled();
++    expect(contents(ordinary)).toContain("reflection notice delivered");
++  });
++
++  it.each(["retain", "idle"] as const)("preserves bounded transport categories through the %s failure path", async (path) => {
++    const instance = client();
++    const cause = Object.assign(new Error(ANSWER), { code: "ECONNREFUSED" });
++    const failure = new Error(FAILURE, { cause });
++    if (path === "retain") {
++      vi.spyOn(instance, "supportsAppendRetain").mockResolvedValue(false);
++      const retain = vi.spyOn(instance, "retain").mockRejectedValue(failure);
++      await buildRetain({ harness: "codex", sessionId: IDENTITY, transcriptPath: join(root, "transcript"),
++        client: instance, readTranscript: () => [{ role: "user", content: PROMPT }] });
++      expect(retain).toHaveBeenCalledOnce();
++      expect(contents(ordinary)).toContain('"errorClass":"connection_refused"');
++    } else {
++      const runtime = new RuntimeCore(instance, "A", resolveConfig({ logLevel: level }), "codex", root);
++      runtime.setTranscriptSource(async () => { throw failure; });
++      await runtime.onSessionIdle(IDENTITY);
++    }
++    expect(records()).toContainEqual(expect.objectContaining({
++      event: path === "retain" ? "retain_failed" : "idle_fetch_failed", errorClass: "connection_refused",
++    }));
++    if (level === "debug") expect(contents(ordinary)).toContain('"errorClass":"connection_refused"');
++  });
++
++  it("filters arbitrary extras in both sinks and unsafe config validation values", () => {
++    const extra = { prompt: PROMPT, answer: ANSWER, error: new Error(FAILURE), session: IDENTITY,
++      bank: IDENTITY, path: IDENTITY, apiUrl: IDENTITY, nested: { text: ANSWER },
++      count: 3, ms: 12, cold: true, mode: "append", chars: ANSWER, errorClass: FAILURE };
++    diag("codex", "retain_failed", extra);
++    log.warn("codex", "session write-back failed", extra);
++    parseHookEvent("codex", FAILURE);
++    resolveConfig({ pages: { [PROMPT]: { source_query: ANSWER } },
++      customPages: { [IDENTITY]: { source_query: "", tags: [ANSWER] } } });
++    expect(records()[0]).toMatchObject({ count: 3, ms: 12, cold: true, mode: "append", errorClass: "operation_failed" });
++    expect(records()[0]).not.toHaveProperty("chars");
++    expect(contents(ordinary)).toContain('"count":3');
++    expect(contents(ordinary)).toContain("ignoring invalid customPages entry");
++  });
++});
 diff --git a/src/core/missions.test.ts b/src/core/missions.test.ts
 index 52242f3..aa639d8 100644
 --- a/src/core/missions.test.ts
@@ -10518,10 +11038,10 @@ index 0cf18f5..da7c3c1 100644
    /** The server answered that it can take appends. Cached so later write-backs skip the probe. */
    appendSupported?: boolean;
 diff --git a/src/core/retain-hook.ts b/src/core/retain-hook.ts
-index 0507e5e..e6fd285 100644
+index 0507e5e..b985ad1 100644
 --- a/src/core/retain-hook.ts
 +++ b/src/core/retain-hook.ts
-@@ -13,6 +13,7 @@
+@@ -13,12 +13,13 @@
   * without stdin; `runRetainHook` is thin plumbing around it, mirroring `runHook`/`buildHookOutput`
   * in core/hook.ts.
   */
@@ -10529,6 +11049,13 @@ index 0507e5e..e6fd285 100644
  import { deriveBankIdOrSkip } from "./bank";
  import { retainLiveSession } from "./chat";
  import { applyBankConfig, loadConfig } from "./config";
+ import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
+ import { diag, readHookEvent } from "./diag";
+-import { describeError, log, setLogLevel } from "./log";
++import { log, setLogLevel } from "./log";
+ import type { ClientOpts } from "./hindsight";
+ import { HindsightClient } from "./hindsight";
+ import type { RetainCursorStore } from "./retain-cursor";
 @@ -113,6 +114,7 @@ export async function buildRetain(args: {
    retryUntil?: number;
    /** Resolved bank, recorded on the usage line. */
@@ -10553,7 +11080,7 @@ index 0507e5e..e6fd285 100644
      turns,
      cursors: args.usageCursors ?? fileUsageCursorStore(harness),
      lastTurnComplete: true,
-@@ -162,6 +166,8 @@ export async function buildRetain(args: {
+@@ -162,15 +166,17 @@ export async function buildRetain(args: {
        stamp: args.stamp,
        retryUntil: args.retryUntil,
        transcriptPath,
@@ -10562,6 +11089,17 @@ index 0507e5e..e6fd285 100644
      });
      diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
    } catch (e) {
+     log.warn(harness, "session write-back failed", {
+-      error: describeError(e),
++      error: e,
+     });
+     diag(harness, "retain_failed", {
+       ms: Date.now() - t0,
+-      error: describeError(e),
++      error: e,
+       session: sessionId,
+     });
+   }
 @@ -201,21 +207,7 @@ export async function runRetainHook(
    setLogLevel(cfg.logLevel);
    if (cfg.disabled) return;
@@ -11180,7 +11718,7 @@ index 0000000..53f119e
 +  expect(spawn).not.toHaveBeenCalled();
 +});
 diff --git a/src/core/runtime.ts b/src/core/runtime.ts
-index a2c1afe..5594b35 100644
+index a2c1afe..54f26dd 100644
 --- a/src/core/runtime.ts
 +++ b/src/core/runtime.ts
 @@ -1,3 +1,5 @@
@@ -11189,6 +11727,15 @@ index a2c1afe..5594b35 100644
  /**
   * Host adapter runtime for PERSISTENT-PLUGIN harnesses (opencode, opencode2, Kilo, Cline, dsh, pi,
   * Prime Agent — every host that loads us once and keeps us). It delegates SessionStart and
+@@ -20,7 +22,7 @@ import type { Config } from "./config";
+ import { maybeAutoUpdate } from "./auto-update";
+ import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
+ import { diag } from "./diag";
+-import { describeError, log, setLogLevel } from "./log";
++import { log, setLogLevel } from "./log";
+ import type { HindsightClient } from "./hindsight";
+ import { buildKnowledgePreamble } from "./knowledge-injection";
+ import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
 @@ -89,6 +91,7 @@ export class RuntimeCore {
    toolSpecs(): ToolSpec[] {
      return buildKnowledgeTools(this.client, this.bankId, {
@@ -11197,20 +11744,26 @@ index a2c1afe..5594b35 100644
        harness: this.harness,
        pageTrigger: buildPageTrigger(this.cfg),
        reflectTimeoutMs: this.cfg.reflectToolTimeoutMs,
-@@ -150,9 +153,10 @@ export class RuntimeCore {
-       // on stderr (shows in the plugin log / console) rather than dropping it.
-       // Banner: via the host's toast API when available (stderr corrupts the TUI); always logged.
+@@ -146,13 +149,12 @@ export class RuntimeCore {
+         client: this.client,
+         harness: this.harness,
+       });
+-      // The seed note is user-facing; opencode has no visible-system channel at load, so surface it
+-      // on stderr (shows in the plugin log / console) rather than dropping it.
+-      // Banner: via the host's toast API when available (stderr corrupts the TUI); always logged.
++      // Surface the seed note through the host's toast API when available; its text stays out of logs.
        if (out.systemMessage) {
 -        const plain = out.systemMessage.replace(/\x1b\[[0-9;]*m/g, "");
-+        const plain = stripVTControlCharacters(out.systemMessage);
-         log.info(this.harness, plain);
+-        log.info(this.harness, plain);
 -        this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
++        const plain = stripVTControlCharacters(out.systemMessage);
++        log.info(this.harness, "session notice delivered");
 +        const title = toolBrand(this.cfg.toolPrefix).displayName;
 +        this.notify?.(title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
        }
        this.deferInitialReflect = out.deferInitialReflect === true;
      } catch {
-@@ -168,6 +172,8 @@ export class RuntimeCore {
+@@ -168,6 +170,8 @@ export class RuntimeCore {
    async onPrompt(sessionId: string | undefined, prompt: string): Promise<void> {
      if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
      if (!sessionId || !prompt.trim()) return;
@@ -11219,7 +11772,7 @@ index a2c1afe..5594b35 100644
      const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
      this.turnCount.set(sessionId, turns);
  
-@@ -196,6 +202,7 @@ export class RuntimeCore {
+@@ -196,6 +200,7 @@ export class RuntimeCore {
        blocks.push(
          buildKnowledgePreamble(output.pages, {
            reflectOnNewGoals: this.cfg.autoInject !== "reflect",
@@ -11227,19 +11780,20 @@ index a2c1afe..5594b35 100644
            extra: this.cfg.toolGuideExtra,
          })
        );
-@@ -204,9 +211,9 @@ export class RuntimeCore {
+@@ -204,9 +209,9 @@ export class RuntimeCore {
      // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
      // renders inside the TUI input line. The shared output owns when a notice exists.
      if (output.notice) {
 -      const preview = output.notice.replace(/\s+/g, " ").trim().slice(0, 140);
-+      const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
-       log.info(this.harness, "reflect goal", { preview });
+-      log.info(this.harness, "reflect goal", { preview });
 -      this.notify?.("Hindsight · recalled past decisions", preview);
++      const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
++      log.info(this.harness, "reflection notice delivered");
 +      this.notify?.(`${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
      }
      const block = blocks.filter(Boolean).join("\n\n");
      this.injection.set(sessionId, block);
-@@ -221,6 +228,7 @@ export class RuntimeCore {
+@@ -221,6 +226,7 @@ export class RuntimeCore {
     * session's `chat.message`/onPrompt, so `lastInjection` is this turn's block.
     */
    getInjection(sessionId: string | undefined): string | undefined {
@@ -11247,7 +11801,16 @@ index a2c1afe..5594b35 100644
      const keyed = sessionId ? this.injection.get(sessionId) : undefined;
      return keyed ?? this.lastInjection ?? undefined;
    }
-@@ -295,6 +303,7 @@ export class RuntimeCore {
+@@ -274,7 +280,7 @@ export class RuntimeCore {
+       turns = await this.fetchTranscript(sessionId);
+     } catch (e) {
+       diag(this.harness, "idle_fetch_failed", {
+-        error: describeError(e),
++        error: e,
+         session: sessionId,
+       });
+       return;
+@@ -295,6 +301,7 @@ export class RuntimeCore {
        harness: this.harness,
        sessionId,
        bankId: this.bankId,
@@ -11255,8 +11818,17 @@ index a2c1afe..5594b35 100644
        turns,
        cursors: this.usageCursors,
        lastTurnComplete,
+@@ -372,7 +379,7 @@ export class RuntimeCore {
+       .catch((e) =>
+         diag(this.harness, "retain_failed", {
+           ms: Date.now() - t0,
+-          error: describeError(e),
++          error: e,
+           session: sessionId,
+           trigger,
+         })
 diff --git a/src/core/seed.ts b/src/core/seed.ts
-index 96380ee..ca307d5 100644
+index 96380ee..9b3bce2 100644
 --- a/src/core/seed.ts
 +++ b/src/core/seed.ts
 @@ -7,8 +7,8 @@
@@ -11269,6 +11841,15 @@ index 96380ee..ca307d5 100644
  import { dirname, join } from "node:path";
  import { fileURLToPath } from "node:url";
  
+@@ -27,7 +27,7 @@ export function startBackgroundSeed(
+     const enginePath =
+       opts.enginePath ?? join(dirname(fileURLToPath(import.meta.url)), "deepen.js");
+     const limit = opts.limit ?? DEFAULT_SEED_LIMIT;
+-    // The engine writes the leveled plugin.log itself (core/log.ts), so the child's stdio can be
++    // The engine writes lifecycle diagnostics itself, so the child's stdio can be
+     // fully detached — no fd redirect to manage.
+     const child = spawnFn(
+       "node",
 @@ -66,15 +66,17 @@ export function seedControl(
    args: {
      repo: string;
@@ -11954,7 +12535,7 @@ index b008ab4..58aa351 100644
              .join(", ")
        );
 diff --git a/src/core/traecode-mcp.ts b/src/core/traecode-mcp.ts
-index 7526361..2528928 100644
+index 7526361..86a1e48 100644
 --- a/src/core/traecode-mcp.ts
 +++ b/src/core/traecode-mcp.ts
 @@ -1,5 +1,8 @@
@@ -12074,6 +12655,15 @@ index 7526361..2528928 100644
      const home = opts.home ?? homedir();
      // Trae launched the USER-level server from home — that is exactly the registration we are
      // repairing; writing a workspace file into $HOME would create a pseudo-workspace there.
+@@ -293,7 +278,7 @@ export function registerTraecodeWorkspaceMcp(
+   } catch (e) {
+     diag("traecode", "workspace_mcp_register_failed", {
+       cwd,
+-      error: e instanceof Error ? e.message : String(e),
++      error: e,
+     });
+     return "failed";
+   }
 @@ -309,6 +294,8 @@ export function removeTraecodeWorkspaceMcpEntry(
    opts: { home?: string } = {}
  ): boolean {
@@ -12121,6 +12711,15 @@ index 7526361..2528928 100644
  
  export const traecodeWorkspaceStorageDir = (home: string): string =>
    join(traecodeUserDataDir(home), WORKSPACE_STORAGE_REL);
+@@ -454,7 +441,7 @@ export function ensureWorkspaceMcpEnabled(
+   } catch (e) {
+     diag("traecode", "workspace_mcp_enabled_seed_failed", {
+       cwd,
+-      error: e instanceof Error ? e.message : String(e),
++      error: e,
+     });
+     return "failed";
+   }
 @@ -475,7 +462,7 @@ export function workspaceEnableHint(
      ) {
        return undefined;
@@ -12348,6 +12947,19 @@ index 77e5bea..ae463c4 100644
  export function readDcodeTranscript(path: string): TransportTurn[] {
    const turns: TransportTurn[] = [];
    for (const rawLine of readJsonl(path)) {
+diff --git a/src/core/transcript-devin.ts b/src/core/transcript-devin.ts
+index 1e49fd5..e1f111f 100644
+--- a/src/core/transcript-devin.ts
++++ b/src/core/transcript-devin.ts
+@@ -114,7 +114,7 @@ export function readDevinTranscript(
+   } catch (error) {
+     // A corrupt file or a Devin storage-schema change surfaces here instead of masquerading as an
+     // empty conversation.
+-    diag("devin-cli", "session_db_read_failed", { dbPath, error: String(error) });
++    diag("devin-cli", "session_db_read_failed", { dbPath, error });
+     return [];
+   } finally {
+     try {
 diff --git a/src/core/transcript-dsh.test.ts b/src/core/transcript-dsh.test.ts
 index 364253d..6b2fa68 100644
 --- a/src/core/transcript-dsh.test.ts
@@ -12649,6 +13261,19 @@ index b89f63a..9395130 100644
 +    turns.sort((a, b) => Date.parse(a.timestamp!) - Date.parse(b.timestamp!));
    return turns;
  }
+diff --git a/src/core/transcript-qwen.ts b/src/core/transcript-qwen.ts
+index 49baa22..d60596a 100644
+--- a/src/core/transcript-qwen.ts
++++ b/src/core/transcript-qwen.ts
+@@ -187,7 +187,7 @@ export function readQwenTranscript(path: string): TransportTurn[] {
+     log.warn("qwen-code", "transcript read failed — retaining what was parsed", {
+       path,
+       turns: turns.length,
+-      error: err instanceof Error ? err.message : String(err),
++      error: err,
+     });
+   }
+   return turns;
 diff --git a/src/core/transcript-util.ts b/src/core/transcript-util.ts
 index 107e827..d91d83c 100644
 --- a/src/core/transcript-util.ts
@@ -13863,10 +14488,32 @@ index da7d888..a6bb009 100644
        const entry = hooks.hooks[hook.event][0].hooks[0];
        expect(entry.command).toBe(`node "\${PLUGIN_ROOT}/dist/${hook.entry}"`);
 diff --git a/src/deepen.ts b/src/deepen.ts
-index f044545..f3225cd 100644
+index f044545..d01aa9c 100644
 --- a/src/deepen.ts
 +++ b/src/deepen.ts
-@@ -121,7 +121,8 @@ async function main() {
+@@ -41,7 +41,7 @@ import { pool } from "./core/util";
+ import { getHarness, HARNESS_NAMES } from "./harness/registry";
+ import { diag } from "./core/diag";
+ import { buildRetainStamp } from "./core/retain-stamp";
+-import { describeError, log as plog, setLogLevel } from "./core/log";
++import { setLogLevel } from "./core/log";
+ 
+ const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
+ 
+@@ -89,11 +89,9 @@ if (!REPO || !BANK) {
+ }
+ 
+ setLogLevel(cfg.logLevel);
+-// Foreground runs (benchmark/e2e) read stdout; background runs are followed via the leveled
+-// plugin.log — every engine line goes to both.
++// Foreground progress stays on stdout; durable diagnostics record lifecycle metadata separately.
+ const log = (m: string) => {
+   console.log(`${new Date().toISOString()} ${m}`);
+-  plog.info("deepen", m);
+ };
+ 
+ // ── per-bank lease: concurrent session starts must not double-ingest ─────────────
+@@ -121,7 +119,8 @@ async function main() {
    try {
      const harness = await getHarness(HARNESS);
      const client = new HindsightClient({
@@ -13876,6 +14523,15 @@ index f044545..f3225cd 100644
        apiToken: API_TOKEN,
        bank: FINAL_BANK!,
        // Names the repository in every seeded page's query, so page synthesis can tell this
+@@ -322,7 +321,7 @@ async function main() {
+ main().catch((e) => {
+   diag("deepen", "deepen_failed", {
+     bank: FINAL_BANK,
+-    error: describeError(e),
++    error: e,
+   });
+   console.error("deepen failed:", (e as Error).message || e);
+   if (lease) releaseLease(lease);
 diff --git a/src/docs-freshness.test.ts b/src/docs-freshness.test.ts
 index c393112..d2b1632 100644
 --- a/src/docs-freshness.test.ts
@@ -14224,7 +14880,7 @@ index 1556b0e..d537083 100644
      // Each user turn: recall on the prompt; the injection it builds is pushed by system.transform.
      "chat.message": async (input: { sessionID?: string }, output: { parts: Part[] }) => {
 diff --git a/src/harness/opencode2.ts b/src/harness/opencode2.ts
-index 40fc16a..1cf0c66 100644
+index 40fc16a..d9969e8 100644
 --- a/src/harness/opencode2.ts
 +++ b/src/harness/opencode2.ts
 @@ -1,3 +1,5 @@
@@ -14233,7 +14889,15 @@ index 40fc16a..1cf0c66 100644
  /**
   * opencode2 (opencode v2) harness adapter — full parity with the v1 opencode plugin.
   *
-@@ -77,7 +79,6 @@ const IDLE_EVENTS = new Set([
+@@ -45,7 +47,6 @@ import { z } from "zod";
+ import type { Plugin } from "@opencode/plugin";
+ 
+ import { resolveHostMemory } from "../core/host-client";
+-import { describeError } from "../core/log";
+ import { diag } from "../core/diag";
+ import { RuntimeCore } from "../core/runtime";
+ import type { ToolSpec } from "../core/knowledge-tools";
+@@ -77,7 +78,6 @@ const IDLE_EVENTS = new Set([
  
  /** The companion skill's directory name everywhere else (core/skill-dirs.ts), reused as the id and
   *  name this host registers it under so the two routes name the same skill. */
@@ -14241,7 +14905,7 @@ index 40fc16a..1cf0c66 100644
  
  /** Structural subset of the v2 event envelope we act on. */
  interface Oc2Event {
-@@ -132,13 +133,14 @@ function toOpencode2Tool(spec: ToolSpec) {
+@@ -132,15 +132,16 @@ function toOpencode2Tool(spec: ToolSpec) {
   * carry every field the host requires.
   */
  async function registerCompanionSkill(ctx: Opencode2Context, harness: string): Promise<void> {
@@ -14257,9 +14921,21 @@ index 40fc16a..1cf0c66 100644
 -    diag(harness, "skill_registered", { id: SKILL_ID });
 +    diag(harness, "skill_registered", { id: skillId });
    } catch (e) {
-     diag(harness, "skill_register_failed", { error: describeError(e) });
+-    diag(harness, "skill_register_failed", { error: describeError(e) });
++    diag(harness, "skill_register_failed", { error: e });
    }
-@@ -227,7 +229,7 @@ export async function wireOpencode2Runtime(
+ }
+ 
+@@ -216,7 +217,7 @@ export async function wireOpencode2Runtime(
+     diag(harness, "idle_stream_closed", {});
+     // A stream that DIES takes write-back with it silently, which is exactly the failure a
+     // memory-less session must not be able to hide, so it goes in the diagnostic trail too.
+-  })().catch((e) => diag(harness, "idle_stream_failed", { error: describeError(e) }));
++  })().catch((e) => diag(harness, "idle_stream_failed", { error: e }));
+ 
+   return () => events.abort();
+ }
+@@ -227,7 +228,7 @@ export async function wireOpencode2Runtime(
   */
  export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
    return {
@@ -14268,7 +14944,7 @@ index 40fc16a..1cf0c66 100644
      async setup(ctx) {
        // v2 splits v1's single `{worktree, directory}` into a session cwd plus the project root;
        // `location.directory` is the worktree analogue, so it keeps precedence (and the same
-@@ -237,10 +239,10 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
+@@ -237,10 +238,10 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
          directory: ctx.location?.project?.directory,
        });
        const dir = projectDir || process.cwd();
@@ -14297,7 +14973,7 @@ index 1e1a731..67ac548 100644
  }
  
 diff --git a/src/harness/plugin-entry.ts b/src/harness/plugin-entry.ts
-index 90f45ce..c86e8eb 100644
+index 90f45ce..d10dd98 100644
 --- a/src/harness/plugin-entry.ts
 +++ b/src/harness/plugin-entry.ts
 @@ -40,10 +40,10 @@ export function createPluginEntry(harness: string): Plugin {
@@ -14313,6 +14989,19 @@ index 90f45ce..c86e8eb 100644
      const core = new RuntimeCore(client, bankId, cfg, harness, dir);
      // Visible presence via the host's own notice API (POST /tui/show-toast) — never stderr, which
      // these TUIs render at the cursor, wedging text against the input bar.
+@@ -64,10 +64,10 @@ export function createPluginEntry(harness: string): Plugin {
+             .then((r: unknown) => {
+               const err = (r as { error?: unknown })?.error;
+               if (err)
+-                log.debug(harness, "toast rejected", { error: JSON.stringify(err).slice(0, 200) });
++                log.debug(harness, "toast rejected", { error: err });
+             })
+             .catch((e: unknown) =>
+-              log.debug(harness, "toast failed", { error: String(e).slice(0, 120) })
++              log.debug(harness, "toast failed", { error: e })
+             );
+         }, wait).unref?.();
+       });
 diff --git a/src/hindsight-seed.ts b/src/hindsight-seed.ts
 index d3e9f9c..06cc2d9 100644
 --- a/src/hindsight-seed.ts
@@ -17368,7 +18057,7 @@ index 9b72278..f954d3a 100644
 +  ]
  }
 diff --git a/vitest.config.ts b/vitest.config.ts
-index 68a1104..82b6fe7 100644
+index 68a1104..ef2ae40 100644
 --- a/vitest.config.ts
 +++ b/vitest.config.ts
 @@ -1,21 +1,5 @@
@@ -17393,5 +18082,5 @@ index 68a1104..82b6fe7 100644
 -    },
 -  },
 +  resolve: { alias: { "@memory-router": new URL("../../../src", import.meta.url).pathname } },
-+  test: { include: ["src/core/chat.test.ts", "src/core/retain-cursor.test.ts", "src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
++  test: { include: ["src/core/logging-privacy.test.ts", "src/core/chat.test.ts", "src/core/retain-cursor.test.ts", "src/core/usage.test.ts", "src/core/daemon.test.ts", "src/core/router-client.test.ts", "src/installer-managed.test.ts", "src/installer-branding.test.ts", "src/core/branding.test.ts", "src/core/private-state.test.ts", "src/core/turn-journal.test.ts", "src/core/turn-journal-policy.test.ts", "src/core/router-survey.test.ts", "src/core/transcript*.test.ts", "src/core/missions.test.ts", "src/core/uuid.test.ts", "src/core/jsonl.test.ts", "src/core/retain-stamp.test.ts", "src/harness/registry.test.ts", "src/harness/hook-lifecycle.test.ts", "src/harness/plugin-entry.test.ts"] },
  });

@@ -84,7 +84,7 @@ describe("cumulative rollout retention", () => {
         expect(f.documents.get("A")).toEqual(["A1", "B1"]);
         expect(f.retain).toHaveBeenCalledTimes(writes);
         expect(f.cursors.read("rollouts")).toEqual(before);
-        expect(warning).toHaveBeenCalledWith("codex", "session write-back failed", expect.objectContaining({ error: expect.any(String) }));
+        expect(warning).toHaveBeenCalledWith("codex", "session write-back failed", expect.objectContaining({ error: expect.any(Error) }));
       } finally { warning.mockRestore(); }
     });
   });
