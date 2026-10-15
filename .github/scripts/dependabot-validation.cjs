@@ -1,3 +1,4 @@
+const { createHash } = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
@@ -80,8 +81,30 @@ async function validationEligibility(github, context, pull) {
 
 async function readFile(github, repo, path, ref) {
   const { data } = await github.rest.repos.getContent({ ...repo, path, ref });
-  if (data.type !== "file" || data.encoding !== "base64") throw new Error(`Not a regular file: ${path}`);
-  return Buffer.from(data.content, "base64").toString("utf8");
+  if (data?.type !== "file" || data.submodule_git_url !== undefined || data.target !== undefined) {
+    throw new Error(`Not a regular file: ${path}`);
+  }
+  let content = data;
+  // Contents omits bytes above 1 MiB. Resolve only the blob from this pinned
+  // path/ref response, never a moving branch or a supplied download URL.
+  if (data.encoding === "none") {
+    if (!/^[0-9a-f]{40}$/.test(data.sha) || data.content !== "" || !Number.isSafeInteger(data.size) || data.size < 0) {
+      throw new Error(`Invalid file metadata: ${path}`);
+    }
+    ({ data: content } = await github.rest.git.getBlob({ ...repo, file_sha: data.sha }));
+    if (content?.sha !== data.sha || content.size !== data.size) throw new Error(`Invalid blob metadata: ${path}`);
+  }
+  if (content.encoding !== "base64" || typeof content.content !== "string") {
+    throw new Error(`Invalid file encoding: ${path}`);
+  }
+  const encoded = content.content.replace(/[\r\n]/g, "");
+  const decoded = Buffer.from(encoded, "base64");
+  if (decoded.toString("base64") !== encoded) throw new Error(`Invalid file content: ${path}`);
+  if (data.encoding === "none") {
+    const sha = createHash("sha1").update(`blob ${decoded.length}\0`).update(decoded).digest("hex");
+    if (decoded.length !== data.size || sha !== data.sha) throw new Error(`Invalid blob content: ${path}`);
+  }
+  return decoded.toString("utf8");
 }
 
 async function runPolicy(github, repo, pull, files) {
