@@ -341,16 +341,44 @@ class DependencyPolicyTests(unittest.TestCase):
 
 
 class CIEfficiencyTests(unittest.TestCase):
-    def test_main_caches_cover_sonar_and_publish_installations(self):
-        jobs = yaml.safe_load((ROOT / MAIN).read_text())["jobs"]
-        for job_name in ["sonar", "publish"]:
+    def test_credentialed_jobs_disable_dependency_caching_and_keep_locked_installs(self):
+        for path, job_name, expected in [
+            (MAIN, "sonar", {".", "src/upstream/coding-agents"}),
+            (MAIN, "publish", {".", "src/upstream/coding-agents", ".github/scripts"}),
+            (".github/workflows/release.yml", "prepare-release", {".", "src/upstream/coding-agents", ".github/scripts"}),
+        ]:
+            with self.subTest(workflow=path, job=job_name):
+                job = yaml.safe_load((ROOT / path).read_text())["jobs"][job_name]
+                setups = [step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-node@")]
+                self.assertTrue(setups)
+                for setup in setups:
+                    self.assertNotIn("cache", setup["with"])
+                    self.assertNotIn("cache-dependency-path", setup["with"])
+                    self.assertIs(setup["with"].get("package-manager-cache"), False)
+                self.assertFalse(any(step.get("uses", "").startswith("actions/cache") for step in job["steps"]))
+                installed = set()
+                for step in job["steps"]:
+                    for line in step.get("run", "").splitlines():
+                        if not line.strip().startswith("npm ci"):
+                            continue
+                        command = shlex.split(line)
+                        if command[:2] == ["npm", "ci"]:
+                            installed.add(command[command.index("--prefix") + 1] if "--prefix" in command else ".")
+                            self.assertIn("--ignore-scripts", command)
+                self.assertEqual(installed, expected)
+
+    def test_quality_caches_cover_installed_lockfiles(self):
+        jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+        for job_name in ["checks", "combination"]:
             with self.subTest(job=job_name):
                 steps = jobs[job_name]["steps"]
-                setup = next(step for step in steps if step.get("uses", "").startswith("actions/setup-node@"))
+                setup = next(step for step in steps if step.get("with", {}).get("cache") == "npm")
                 cached = set(setup["with"].get("cache-dependency-path", "").splitlines())
                 installed = set()
                 for step in steps:
                     for line in step.get("run", "").splitlines():
+                        if not line.strip().startswith("npm ci"):
+                            continue
                         command = shlex.split(line)
                         if command[:2] != ["npm", "ci"]:
                             continue
@@ -358,8 +386,25 @@ class CIEfficiencyTests(unittest.TestCase):
                         lockfile = next(prefix / name for name in ["npm-shrinkwrap.json", "package-lock.json"]
                                         if (ROOT / prefix / name).is_file())
                         installed.add(str(lockfile))
-                self.assertTrue(installed, "Analysis and publication must retain locked dependency installation")
+                self.assertTrue(installed, "Quality jobs must retain locked dependency installation")
                 self.assertTrue(installed <= cached, f"Uncached installation lockfiles: {installed - cached}")
+
+    def test_credentialed_jobs_cannot_restore_dependency_caching(self):
+        for path, job_name, locks in [
+            (MAIN, "sonar", "npm-shrinkwrap.json\nsrc/upstream/coding-agents/npm-shrinkwrap.json\n"),
+            (MAIN, "publish", "npm-shrinkwrap.json\nsrc/upstream/coding-agents/npm-shrinkwrap.json\n.github/scripts/package-lock.json\n"),
+            (".github/workflows/release.yml", "prepare-release", "npm-shrinkwrap.json\nsrc/upstream/coding-agents/npm-shrinkwrap.json\n.github/scripts/package-lock.json\n"),
+        ]:
+            with self.subTest(workflow=path, job=job_name):
+                doc = yaml.safe_load((ROOT / path).read_text())
+                setup = next(step for step in doc["jobs"][job_name]["steps"]
+                             if step.get("uses", "").startswith("actions/setup-node@"))["with"]
+                setup["package-manager-cache"] = True
+                self.assertTrue(policy({path: yaml.safe_dump(doc)}))
+                del setup["package-manager-cache"]
+                self.assertTrue(policy({path: yaml.safe_dump(doc)}))
+                setup.update({"cache": "npm", "cache-dependency-path": locks})
+                self.assertTrue(policy({path: yaml.safe_dump(doc)}))
 
     def test_nix_source_and_dependency_hashes_remain_checked_on_cache_hits(self):
         ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
