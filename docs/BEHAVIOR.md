@@ -29,6 +29,8 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 - `retainQueueMaxItems` (1,000) and `retainQueueMaxBytes` (16 MiB) cap all principal queues in one `queueDir`. Both must be positive integers. Byte accounting includes 128 bytes per record reserved for replay metadata. A full queue rejects new outage writes with `RetainQueueCapacityError`; existing entries stay in FIFO order.
 - Queue mutations use OS-owned file locks through `fs-native-extensions`; paused writers retain ownership and crashed writers release it automatically. Writers sharing `queueDir` must use the same limits and this package version on a local filesystem with OS file-lock support. Keep the two `.retain-*.lock` files in place while any writer is running. Replay is serialized per directory; enqueue uses a separate lock. Backlogs already above the byte limit remain on disk; increase the limit to replay them.
 
+- Malformed JSON, invalid UTF-8 and invalid record shapes are never replayed. Before a queue rewrite, their original bytes (including duplicate records and line endings) are synced to private files in `<queue-file>.recovery/`. Retries reuse identical recovery snapshots. If recovery cannot be made durable, the queue rewrite fails and its original bytes stay in place. Recovery files are retained for manual inspection/recovery, are not replayed automatically, and are outside the active queue capacity/age limits. Protect and manage them with the queue directory.
+
 ## Audit logs
 
 Every memory operation emits a single-line JSON audit record (principal, op, bank, outcome, bounded error
