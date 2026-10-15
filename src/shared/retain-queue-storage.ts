@@ -2,7 +2,7 @@ import { closeSync, constants, fstatSync, readdirSync, readSync } from "node:fs"
 import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { tryLock } from "fs-native-extensions";
-import { openPrivateQueueFile, removePrivateQueueFile } from "./private-queue-files.js";
+import { assertQueuePlatform, openPrivateQueueFile, removePrivateQueueFile } from "./private-queue-files.js";
 
 export const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
 export const QUEUE_FILE_SUFFIX = ".jsonl";
@@ -115,6 +115,7 @@ export class RetainQueueStorage {
   }
 
   assertAppend(bytes: number): void {
+    assertQueuePlatform();
     const files = readdirSync(this.directory)
       .filter((name) => name.startsWith(QUEUE_FILE_PREFIX) && name.endsWith(QUEUE_FILE_SUFFIX))
       .map((name) => join(this.directory, name));

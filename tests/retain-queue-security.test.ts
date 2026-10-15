@@ -28,7 +28,7 @@ import { RetainQueue } from "../src/upstream/src/retain-queue.js";
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
-  return { ...fs, fstatSync: vi.fn(fs.fstatSync) };
+  return { ...fs, fstatSync: vi.fn(fs.fstatSync), readdirSync: vi.fn(fs.readdirSync) };
 });
 vi.mock("node:crypto", async (importOriginal) => {
   const crypto = await importOriginal<typeof import("node:crypto")>();
@@ -232,9 +232,36 @@ describe("private retain queue paths", () => {
     expect(() => privateQueueDirectory(directory)).toThrow("another user");
   });
 
-  it("explicitly rejects platforms without the supported permission contract", () => {
-    vi.stubGlobal("process", { ...process, platform: "win32" });
-    expect(() => privateQueueDirectory(directory)).toThrow("require Linux or macOS");
+  it.each(["darwin", "win32"])("rejects %s before accessing or changing queue paths", async (platform) => {
+    chmodSync(directory, 0o755);
+    writeFileSync(queueFile, "untouched", { mode: 0o644 });
+    vi.stubGlobal("process", { ...process, platform });
+    const queue = new RetainQueue({ filePath: queueFile });
+    for (const action of [
+      () => privateQueueDirectory(directory, true),
+      () => queue.enqueue("bank", { content: "bad" }),
+      () => queue.peek(),
+      () => writePrivateQueueFile(queueFile, "bad"),
+      () => removePrivateQueueFile(queueFile),
+    ])
+      expect(action).toThrow("require Linux POSIX file permissions");
+    await expect(new RetainQueueStorage(directory).transaction(() => undefined)).rejects.toThrow("require Linux");
+    expect(readFileSync(queueFile, "utf8")).toBe("untouched");
+    expect(statSync(queueFile).mode & 0o777).toBe(0o644);
+    expect(statSync(directory).mode & 0o777).toBe(0o755);
+    expect(readdirSync(directory)).toEqual(["hindsight-retain-queue.main.jsonl"]);
+  });
+
+  it.each(["darwin", "win32"])("rejects %s capacity scans before enumerating existing or missing paths", (platform) => {
+    vi.stubGlobal("process", { ...process, platform });
+    vi.mocked(readdirSync).mockClear();
+    for (const path of [directory, join(directory, "missing")]) {
+      const storage = new RetainQueueStorage(path);
+      expect(() => storage.assertAppend(1)).toThrow("require Linux POSIX file permissions");
+      const queue = new RetainQueue({ filePath: join(path, "queue.jsonl"), capacity: storage });
+      expect(() => queue.enqueue("bank", { content: "bad" })).toThrow("require Linux POSIX file permissions");
+    }
+    expect(readdirSync).not.toHaveBeenCalled();
   });
 
   it("rejects a foreign-owned file after opening without reading or changing it", async () => {

@@ -15,9 +15,11 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-function assertPlatform(): void {
-  if ((process.platform !== "linux" && process.platform !== "darwin") || !process.geteuid) {
-    throw new Error("Private retain queues require Linux or macOS POSIX file permissions");
+export function assertQueuePlatform(): void {
+  if (process.platform !== "linux" || !process.geteuid) {
+    throw new Error(
+      "Private retain queues require Linux POSIX file permissions; other platforms lack verified ACL enforcement",
+    );
   }
 }
 
@@ -32,8 +34,7 @@ function assertTrustedAncestors(path: string): void {
       const owned = entry.uid === process.geteuid?.() || entry.uid === 0;
       if (!owned) throw new Error("Retain queue requires trusted parent directories");
       if (entry.isSymbolicLink()) {
-        // Root-owned system aliases (for example macOS /var) are supported,
-        // but their resolved ancestor permissions must also be trusted.
+        // Trusted ancestor symlinks also require trusted resolved parents.
         assertTrustedAncestors(realpathSync(parent));
       } else if ((entry.mode & 0o022) !== 0 && (entry.mode & 0o1000) === 0) {
         throw new Error("Retain queue requires trusted parent directories");
@@ -44,7 +45,7 @@ function assertTrustedAncestors(path: string): void {
 }
 
 export function privateQueueDirectory(path: string, create = false): void {
-  assertPlatform();
+  assertQueuePlatform();
   // A trailing slash or dot must not turn the leaf into a followed ancestor.
   path = resolve(path);
   // Parent directories must not let a different user replace the private leaf.

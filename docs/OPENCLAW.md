@@ -52,7 +52,7 @@ via the host logger (`info` level) with `at`, `principal`, `op`, `bankId`, `outc
 
 Package versions vary by release. [Release instructions](RELEASING.md) describe source builds, SHA-256 pins and Nix hashes.
 
-Durable retain queues require Linux or macOS. Queue directories must be owned by
+Durable retain queues require Linux with enforced POSIX file permissions. Queue directories must be owned by
 this user, with trusted parent directories (root/user-owned and not writable by
 other users, except sticky directories such as `/tmp`). Existing owned queue
 directories and singly linked regular queue/lock files are tightened to `0700`
@@ -60,3 +60,8 @@ and `0600` before use. Symlinks, hardlinks, foreign-owned paths and unsupported
 platforms fail explicitly. Rewrites use exclusive random temporary files and
 atomic rename; lock files retain their OS-owned lock inodes. This protects
 against other OS users planting paths, not arbitrary code running as this user.
+
+The OpenClaw plugin fails initialization on macOS and other unsupported platforms
+before accessing queue paths. macOS ACLs can
+grant access independently of BSD mode bits; this implementation does not verify
+or remove those ACLs. See Apple's [file system access-control policy](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemDetails/FileSystemDetails.html).
