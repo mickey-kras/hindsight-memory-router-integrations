@@ -1266,3 +1266,90 @@ test("trusted policy enforces source contracts while allowing benign implementat
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("npm refresh rejects an unexpected packaging client before changing files", () => {
+  const { readFileSync, chmodSync, existsSync } = require("node:fs");
+  const directory = mkdtempSync(join(tmpdir(), "npm-preparation-version-"));
+  const source = join(directory, "source");
+  const bin = join(directory, "bin");
+  const output = join(directory, "artifacts.json");
+  const git = (...args) => execFileSync("git", args, { cwd: source, encoding: "utf8" }).trim();
+  try {
+    mkdirSync(source);
+    mkdirSync(bin);
+    writeFileSync(join(bin, "npm"), '#!/bin/sh\n[ "$1" = "--version" ] || exit 99\nprintf "11.9.0\\n"\n');
+    chmodSync(join(bin, "npm"), 0o755);
+    git("init", "--quiet");
+    git("config", "user.email", "test@example.invalid");
+    git("config", "user.name", "Test");
+    writeFileSync(join(source, "package.json"), JSON.stringify(manifest));
+    git("add", ".");
+    git("commit", "--quiet", "-m", "baseline");
+    const baseline = git("rev-parse", "HEAD");
+    const updated = JSON.stringify({ ...manifest, devDependencies: { ...manifest.devDependencies, example: "1.0.1" } });
+    writeFileSync(join(source, "package.json"), updated);
+    git("commit", "--quiet", "-am", "dependency update");
+    const revision = git("rev-parse", "HEAD");
+    assert.throws(
+      () =>
+        execFileSync(
+          process.execPath,
+          [join(__dirname, "refresh-dependency-artifacts.cjs"), source, "285", revision, baseline, output],
+          { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdio: "pipe" },
+        ),
+      (error) => error.stderr.toString().includes("Dependency preparation requires npm 11.19.1"),
+    );
+    assert.equal(git("status", "--porcelain"), "");
+    assert.equal(readFileSync(join(source, "package.json"), "utf8"), updated);
+    assert.equal(existsSync(output), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("every packaging job selects and verifies the same npm before install, tests or packing", () => {
+  const workflows = JSON.parse(
+    execFileSync(
+      "python3",
+      [
+        "-c",
+        "import json,pathlib,yaml; print(json.dumps({p.name: yaml.safe_load(p.read_text()) for p in pathlib.Path('.github/workflows').glob('*.yml')}))",
+      ],
+      { cwd: resolve(__dirname, "../.."), encoding: "utf8" },
+    ),
+  );
+  const expectedJobs = new Set([
+    "ci.yml/checks",
+    "ci.yml/combination",
+    "main.yml/publish",
+    "release.yml/prepare-release",
+    "dependabot-preparation.yml/build",
+  ]);
+  const observed = new Set();
+  for (const [name, workflow] of Object.entries(workflows)) {
+    for (const [jobName, job] of Object.entries(workflow.jobs)) {
+      const steps = job.steps || [];
+      const scripts = steps.map((step) => step.run || "");
+      if (
+        !scripts.some((script) =>
+          /(?:^\s*|="\$\(|&& )npm pack|^\s*node .*refresh-dependency-artifacts\.cjs/m.test(script),
+        )
+      )
+        continue;
+      const key = `${name}/${jobName}`;
+      observed.add(key);
+      const install = scripts.findIndex((script) => script.includes("npm install --global npm@11.19.1 "));
+      assert.notEqual(install, -1, `${key}: missing npm selection`);
+      assert.match(scripts[install], /test "\$\(npm --version\)" = 11\.19\.1/, `${key}: missing version assertion`);
+      const assertion = scripts[install].indexOf('test "$(npm --version)" = 11.19.1');
+      assert.ok(assertion > scripts[install].indexOf("npm install --global npm@11.19.1 "));
+      const earlier = [...scripts.slice(0, install), scripts[install].slice(0, assertion)].join("\n");
+      assert.doesNotMatch(
+        earlier,
+        /npm (?:ci|pack|test|run)|refresh-dependency-artifacts\.cjs/,
+        `${key}: uses npm before selection`,
+      );
+    }
+  }
+  assert.deepEqual(observed, expectedJobs);
+});
