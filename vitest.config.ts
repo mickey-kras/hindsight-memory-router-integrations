@@ -18,14 +18,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
-      include: [
-        "src/plugin.ts",
-        "src/shared/**/*.ts",
-        "src/coding-agents/**/*.ts",
-        "src/upstream/src/retain-queue.ts",
-        "src/upstream/src/session-patterns.ts",
-      ],
-      exclude: coverageConfigDefaults.exclude,
+      include: ["src/**/*.ts"],
+      exclude: [...coverageConfigDefaults.exclude, "src/upstream/coding-agents/**"],
       thresholds: {
         lines: 90,
         statements: 90,
