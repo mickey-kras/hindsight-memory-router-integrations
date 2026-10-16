@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AuthenticatedClientFactory } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RetainCoordinator } from "../src/shared/retain-coordinator.js";
-import { RetainQueue, type QueuedRetain } from "../src/upstream/src/retain-queue.js";
+import { type QueuedRetain, RetainQueue } from "../src/upstream/src/retain-queue.js";
 
 const token = `mr_test_${"a".repeat(64)}`;
 const directories: string[] = [];
