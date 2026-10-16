@@ -143,6 +143,7 @@ export class RetainCoordinator {
         )
       )
         return enqueue();
+      if (bank !== this.credentials.resolveWriteBank(principalId)) throw new RetainAuthorizationError(bank);
       try {
         await client.retain(bank, payload.content, {
           documentId: payload.documentId,
@@ -291,7 +292,8 @@ export class RetainCoordinator {
       attempts++;
       const outcome = await this.deliverQueued(principalId, client, queue, item);
       if (outcome === "stop") break;
-      if (outcome === "quarantined") blocked.push(item);
+      if (outcome === "mismatched") attempts--;
+      if (outcome === "quarantined" || outcome === "mismatched") blocked.push(item);
     }
   }
 
@@ -300,12 +302,27 @@ export class RetainCoordinator {
     client: ReturnType<AuthenticatedClientFactory["forAgent"]>,
     queue: RetainQueue,
     item: QueuedRetain,
-  ): Promise<"delivered" | "quarantined" | "stop"> {
+  ): Promise<"delivered" | "quarantined" | "mismatched" | "stop"> {
     // Preparation and acknowledgement errors are storage failures, never HTTP
     // classifications. A failed acknowledgement retains the original operation ID.
     const operationId = await this.storage.transaction(() =>
       queue.ensureOperationId(item.id, item.operationId || randomUUID()),
     );
+    // Routing may change while a previous HTTP request or storage lock is awaited.
+    // Keep local authorization failures outside the HTTP error classifier.
+    if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
+      await this.storage.transaction(() =>
+        queue.setReplayState(item.id, {
+          ...item.replayState,
+          quarantine: "bank-mismatch",
+          ...(item.replayState?.gate ? { gate: "operator" as const } : {}),
+        }),
+      );
+      this.log.error(
+        "retain replay authorization denied: bank mismatch quarantined; original bank and payload preserved",
+      );
+      return "mismatched";
+    }
     try {
       await client.retain(item.bankId, item.content, {
         documentId: item.documentId,

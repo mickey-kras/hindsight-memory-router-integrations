@@ -47,12 +47,13 @@ function stack(
 ) {
   const calls: Array<{ bank: string; content: string; options?: Record<string, unknown> }> = [];
   const logger = { warn: vi.fn(), error: vi.fn() };
-  const credentials = new PrincipalCredentialResolver({
+  const config = {
     routerUrl: "https://router.example.test",
     principals: {
       main: { token: `mr_main-key_${"a".repeat(64)}`, writeBank: options.bank ?? "bank", additionalReadBanks: [] },
     },
-  });
+  };
+  const credentials = new PrincipalCredentialResolver(config);
   const clients = new AuthenticatedClientFactory({
     routerUrl: "https://router.example.test",
     userAgent: "test/0",
@@ -74,7 +75,7 @@ function stack(
     queueMaxAgeMs: options.age,
     queueMaxItems: options.maxItems,
   });
-  return { coordinator, calls, logger };
+  return { coordinator, calls, logger, config };
 }
 
 describe("durable quarantine and ordering", () => {
@@ -498,4 +499,56 @@ it("keeps fresh work accepted under a gate protected after recovery and transien
   expect(rows()).toEqual([
     expect.objectContaining({ content: "fresh", replayAttempts: 6, replayState: { protected: true } }),
   ]);
+});
+
+it("quarantines later writes when routing changes during an earlier replay request", async () => {
+  enqueue("first", "X");
+  enqueue("later", "Y");
+  enqueue("dependent", "Y", { updateMode: "replace" });
+  const original = rows();
+  const current = stack((content) => {
+    if (content === "first") current.config.principals.main.writeBank = "new";
+  });
+  await current.coordinator.flushQueues();
+  expect(current.calls.map((call) => call.content)).toEqual(["first"]);
+  expect(rows()).toEqual([
+    expect.objectContaining({ ...original[1], replayState: { quarantine: "bank-mismatch" } }),
+    original[2],
+  ]);
+  expect(current.logger.error.mock.calls.flat().join("\n")).toContain("bank mismatch");
+  const restarted = stack(undefined, { bank: "new", age: 0 });
+  await restarted.coordinator.flushQueues();
+  expect(restarted.calls).toEqual([]);
+  expect(rows().map((item) => item.content)).toEqual(["later", "dependent"]);
+});
+
+it("turns a probe into an operator gate if routing changes while its operation ID is prepared", async () => {
+  enqueue("denied", "X", { replayState: { gate: "probe", protected: true } });
+  const current = stack();
+  const original = RetainQueue.prototype.ensureOperationId;
+  vi.spyOn(RetainQueue.prototype, "ensureOperationId").mockImplementationOnce(function (
+    this: RetainQueue,
+    id,
+    operationId,
+  ) {
+    const persisted = original.call(this, id, operationId);
+    current.config.principals.main.writeBank = "new";
+    return persisted;
+  });
+  await current.coordinator.flushQueues();
+  expect(current.calls).toEqual([]);
+  expect(rows()[0]).toMatchObject({
+    bankId: "bank",
+    operationId: "op-denied",
+    replayState: { gate: "operator", protected: true, quarantine: "bank-mismatch" },
+  });
+});
+
+it("rejects a fresh retain if routing changes while delivery preparation is awaited", async () => {
+  const current = stack();
+  const sending = current.coordinator.retain("main", { content: "fresh", documentId: "X" });
+  current.config.principals.main.writeBank = "new";
+  await expect(sending).rejects.toMatchObject({ name: "RetainAuthorizationError", bank: "bank" });
+  expect(current.calls).toEqual([]);
+  expect(rows()).toEqual([]);
 });
