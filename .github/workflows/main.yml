@@ -109,13 +109,29 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.3
-          cache: npm
-          cache-dependency-path: npm-shrinkwrap.json
 
-      - run: npm ci
-      - run: npm ci --prefix src/upstream/coding-agents
-      - name: Generate coverage for SonarQube
-        run: npm run test:coverage
+      - name: Install SonarQube analysis dependencies
+        # Coverage is reused, but this runner still needs dependency types.
+        run: |
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = 11.19.1
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
+
+      - name: Require successful coverage artifact
+        env:
+          COVERAGE_ARTIFACT_ID: ${{ needs.quality.outputs.coverage_artifact }}
+        run: test -n "$COVERAGE_ARTIFACT_ID"
+      - name: Restore verified coverage
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.quality.outputs.coverage_artifact }}
+          path: coverage
+          merge-multiple: true
+      - name: Verify coverage provenance
+        env:
+          COVERAGE_SHA: ${{ github.sha }}
+        run: node .github/scripts/coverage-artifact.cjs verify
 
       - name: Mask advertised SonarQube endpoint
         env:

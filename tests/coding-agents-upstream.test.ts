@@ -42,7 +42,6 @@ function codingAgentsPackage() {
   // packages/ is gitignored; pack the tarball from source on demand.
   if (!cachedPackage) {
     const source = new URL("../src/upstream/coding-agents", import.meta.url).pathname;
-    execFileSync("npm", ["run", "build", "--prefix", source, "--silent"], { cwd: source });
     // Not tracked in `dirs`: the cache must survive afterEach cleanup.
     const dir = mkdtempSync(join(tmpdir(), "coding-agents-pack-"));
     process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
@@ -54,7 +53,7 @@ function codingAgentsPackage() {
   return cachedPackage;
 }
 beforeAll(() => {
-  // Build and pack once; npm pack exceeds the default per-test timeout.
+  // Pack the freshly built output once; npm pack exceeds the default per-test timeout.
   codingAgentsPackage();
 }, 120000);
 function setup() {

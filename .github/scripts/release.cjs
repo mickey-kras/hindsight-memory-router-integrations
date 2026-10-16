@@ -817,7 +817,13 @@ async function retryPackages({ github, context, core, target }) {
     run_id: context.runId,
     per_page: 100,
   });
-  const retained = artifacts.find((item) => item.name === `packages-${candidate.sha}`);
+  const matching = artifacts.filter((item) => item.name === `packages-${candidate.sha}`);
+  requireValue(matching.length <= 1, "Ambiguous retained release packages");
+  const retained = matching[0];
+  requireValue(
+    !retained || (retained.workflow_run?.id === context.runId && retained.workflow_run?.head_sha === context.sha),
+    "Retained release package provenance does not match this workflow run and source snapshot",
+  );
   requireValue(!retained?.expired, "Retained release packages expired; prepare a new version");
   const tag = await tagCommit(github, context.repo, candidate.version);
   requireValue(
