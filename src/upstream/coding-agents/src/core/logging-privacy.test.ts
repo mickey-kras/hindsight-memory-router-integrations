@@ -107,6 +107,43 @@ describe.each(["info", "debug"] as const)("metadata-only logs at %s", (level) =>
     }
   });
 
+  it.each([
+    { outcome: "spawn timeout", delay: 5_000, code: null, signal: "SIGTERM", killed: true, errorClass: "timeout" },
+    { outcome: "nonzero exit", delay: 1_000, code: 1, signal: null, killed: false, errorClass: "operation_failed" },
+    { outcome: "nonzero exit after a handled signal", delay: 5_000, code: 1, signal: null, killed: true, errorClass: "operation_failed" },
+    { outcome: "early external SIGTERM", delay: 1_000, code: null, signal: "SIGTERM", killed: false, errorClass: "operation_failed" },
+    { outcome: "external SIGTERM at timeout", delay: 5_000, code: null, signal: "SIGTERM", killed: false, errorClass: "operation_failed" },
+    { outcome: "another termination signal", delay: 1_000, code: null, signal: "SIGKILL", killed: true, errorClass: "operation_failed" },
+  ])("classifies updater $outcome without retaining content", async ({ delay, code, signal, killed, errorClass }) => {
+    vi.useFakeTimers();
+    const child = new ChildProcess();
+    const output = new PassThrough();
+    child.stdout = output;
+    const kill = vi.spyOn(child, "kill").mockReturnValue(true);
+    const spawnImpl = vi.fn<typeof spawn>().mockReturnValue(child) as unknown as typeof spawn;
+    try {
+      const result = npmViewVersion(IDENTITY, spawnImpl);
+      output.write(`${PROMPT} ${ANSWER}`);
+      // Elapsed time alone does not identify a timeout: npm can fail or receive an
+      // external signal at the same time. Node sets killed only after child.kill succeeds.
+      await vi.advanceTimersByTimeAsync(delay);
+      Object.defineProperty(child, "killed", { value: killed });
+      child.emit("close", code, signal);
+      await expect(result).resolves.toBe("");
+      child.emit("error", new Error(FAILURE));
+      child.emit("close", 1, null);
+      await vi.advanceTimersByTimeAsync(6_000 - delay);
+      expect(kill).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(contents(ordinary).trim().split("\n")).toHaveLength(1);
+      expect(contents(ordinary)).toContain(`version check failed {"errorClass":"${errorClass}"}`);
+      expect(contents(diagnostic)).toBe("");
+    } finally {
+      output.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps successful reflection content in the injection and out of both log files", async () => {
     const output = await buildHookOutput({ harness: "codex", prompt: PROMPT,
       cfg: resolveConfig(), client: client(), cacheFile: join(root, "session.json") });

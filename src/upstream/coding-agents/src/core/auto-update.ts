@@ -322,7 +322,11 @@ export async function npmViewVersion(
       child.on("error", (e) => done("", e));
       // close, not exit: stdout must have fully arrived before the parse.
       child.on("close", (code, signal) => {
-        if (code !== 0) return done("", `npm view exited ${code ?? signal}`);
+        if (code !== 0) {
+          // Only spawn's timeout sends SIGTERM through this private child. An external
+          // signal leaves killed false; our hard-deadline backstop sends SIGKILL instead.
+          return done("", { timedOut: code === null && signal === "SIGTERM" && child.killed === true });
+        }
         try {
           const v = JSON.parse(out.trim()) as unknown;
           // --json on one field is a quoted string; anything else is not a version to pin.

@@ -5731,7 +5731,7 @@ index 0050fc1..7b82934 100644
 +  if (disabled) return undefined; // global switch, per-bank opt-out or optInOnly
    return new RuntimeCore(client, bankId, cfg, HARNESS, dir);
 diff --git a/src/core/auto-update.ts b/src/core/auto-update.ts
-index 93474de..98adfb1 100644
+index 93474de..8baa2b8 100644
 --- a/src/core/auto-update.ts
 +++ b/src/core/auto-update.ts
 @@ -49,3 +49,3 @@ import { fileURLToPath } from "node:url";
@@ -5749,7 +5749,7 @@ index 93474de..98adfb1 100644
 -      if (reason) log.info("auto-update", `version check failed: ${reason}`);
 +      if (reason !== undefined) log.info("auto-update", "version check failed", { error: reason });
        resolve(v);
-@@ -319,5 +319,5 @@ export async function npmViewVersion(
+@@ -319,8 +319,12 @@ export async function npmViewVersion(
        // An unhandled pipe 'error' would crash the session-start hook.
 -      child.stdout?.on("error", (e) => done("", describeError(e)));
 +      child.stdout?.on("error", (e) => done("", e));
@@ -5757,7 +5757,15 @@ index 93474de..98adfb1 100644
 -      child.on("error", (e) => done("", describeError(e)));
 +      child.on("error", (e) => done("", e));
        // close, not exit: stdout must have fully arrived before the parse.
-@@ -345,6 +345,6 @@ export async function npmViewVersion(
+       child.on("close", (code, signal) => {
+-        if (code !== 0) return done("", `npm view exited ${code ?? signal}`);
++        if (code !== 0) {
++          // Only spawn's timeout sends SIGTERM through this private child. An external
++          // signal leaves killed false; our hard-deadline backstop sends SIGKILL instead.
++          return done("", { timedOut: code === null && signal === "SIGTERM" && child.killed === true });
++        }
+         try {
+@@ -345,6 +349,6 @@ export async function npmViewVersion(
          }
 -        done("", "npm view never exited — hard deadline");
 +        done("", { timedOut: true });
@@ -5766,12 +5774,12 @@ index 93474de..98adfb1 100644
 -      done("", describeError(e));
 +      done("", e);
      }
-@@ -425,3 +425,3 @@ export async function maybeAutoUpdate(
+@@ -425,3 +429,3 @@ export async function maybeAutoUpdate(
  
 -      log.info("auto-update", `updating the Hindsight runtime ${current} -> ${latest}`);
 +      log.info("auto-update", "updating the Hindsight runtime");
        const child = spawnNpm(
-@@ -439,3 +439,3 @@ export async function maybeAutoUpdate(
+@@ -439,3 +443,3 @@ export async function maybeAutoUpdate(
        child.on("error", (e) => {
 -        log.warn("auto-update", `update spawn failed: ${e.message}`);
 +        log.warn("auto-update", "update spawn failed", { error: e });
@@ -9217,10 +9225,10 @@ index b9efa62..c038230 100644
   */
 diff --git a/src/core/logging-privacy.test.ts b/src/core/logging-privacy.test.ts
 new file mode 100644
-index 0000000..2e0e3e9
+index 0000000..bfead25
 --- /dev/null
 +++ b/src/core/logging-privacy.test.ts
-@@ -0,0 +1,354 @@
+@@ -0,0 +1,391 @@
 +import { ChildProcess, type spawn } from "node:child_process";
 +import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
@@ -9324,6 +9332,43 @@ index 0000000..2e0e3e9
 +      expect(contents(ordinary).trim().split("\n")).toHaveLength(1);
 +      expect(contents(ordinary)).toContain('version check failed {"errorClass":"timeout"}');
 +      expect(vi.getTimerCount()).toBe(0);
++    } finally {
++      output.destroy();
++      vi.useRealTimers();
++    }
++  });
++
++  it.each([
++    { outcome: "spawn timeout", delay: 5_000, code: null, signal: "SIGTERM", killed: true, errorClass: "timeout" },
++    { outcome: "nonzero exit", delay: 1_000, code: 1, signal: null, killed: false, errorClass: "operation_failed" },
++    { outcome: "nonzero exit after a handled signal", delay: 5_000, code: 1, signal: null, killed: true, errorClass: "operation_failed" },
++    { outcome: "early external SIGTERM", delay: 1_000, code: null, signal: "SIGTERM", killed: false, errorClass: "operation_failed" },
++    { outcome: "external SIGTERM at timeout", delay: 5_000, code: null, signal: "SIGTERM", killed: false, errorClass: "operation_failed" },
++    { outcome: "another termination signal", delay: 1_000, code: null, signal: "SIGKILL", killed: true, errorClass: "operation_failed" },
++  ])("classifies updater $outcome without retaining content", async ({ delay, code, signal, killed, errorClass }) => {
++    vi.useFakeTimers();
++    const child = new ChildProcess();
++    const output = new PassThrough();
++    child.stdout = output;
++    const kill = vi.spyOn(child, "kill").mockReturnValue(true);
++    const spawnImpl = vi.fn<typeof spawn>().mockReturnValue(child) as unknown as typeof spawn;
++    try {
++      const result = npmViewVersion(IDENTITY, spawnImpl);
++      output.write(`${PROMPT} ${ANSWER}`);
++      // Elapsed time alone does not identify a timeout: npm can fail or receive an
++      // external signal at the same time. Node sets killed only after child.kill succeeds.
++      await vi.advanceTimersByTimeAsync(delay);
++      Object.defineProperty(child, "killed", { value: killed });
++      child.emit("close", code, signal);
++      await expect(result).resolves.toBe("");
++      child.emit("error", new Error(FAILURE));
++      child.emit("close", 1, null);
++      await vi.advanceTimersByTimeAsync(6_000 - delay);
++      expect(kill).not.toHaveBeenCalled();
++      expect(vi.getTimerCount()).toBe(0);
++      expect(contents(ordinary).trim().split("\n")).toHaveLength(1);
++      expect(contents(ordinary)).toContain(`version check failed {"errorClass":"${errorClass}"}`);
++      expect(contents(diagnostic)).toBe("");
 +    } finally {
 +      output.destroy();
 +      vi.useRealTimers();
