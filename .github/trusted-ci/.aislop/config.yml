@@ -1,0 +1,23 @@
+ci:
+  failBelow: 100
+
+exclude:
+  - coverage
+  - dist
+  - node_modules
+  - npm-shrinkwrap.json
+  - packages
+  - src/upstream
+
+rules:
+  security/hardcoded-secret: error
+  # The required npm audit gate owns dependency findings and its narrow exception.
+  security/vulnerable-dependency: "off"
+  ai-slop/hardcoded-url: off
+
+quality:
+  maxFileLoc: 900
+  maxFunctionLoc: 150
+
+telemetry:
+  enabled: false

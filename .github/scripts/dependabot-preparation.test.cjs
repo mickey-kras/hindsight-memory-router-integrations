@@ -1319,8 +1319,11 @@ test("every packaging job selects and verifies the same npm before install, test
     ),
   );
   const expectedJobs = new Set([
-    "ci.yml/checks",
-    "ci.yml/combination",
+    ...(workflows["main.yml"].jobs.quality.uses.includes("trusted-ci.yml@")
+      ? []
+      : ["ci.yml/checks", "ci.yml/combination"]),
+    "trusted-ci.yml/build",
+    "trusted-ci.yml/combination",
     "main.yml/publish",
     "release.yml/prepare-release",
     "dependabot-preparation.yml/build",
@@ -1469,4 +1472,19 @@ test("policy propagates content and blob retrieval failures without fallback or 
     await assert.rejects(h.run, (error) => error === failure);
     assert.equal(h.requests.length, operation === "getContent" ? 0 : 1);
   }
+});
+
+// Keep the bootstrap boundary suite in an existing required workflow before the
+// immutable reusable workflows are activated.
+test("trusted scanner boundary suite passes before activation", () => {
+  execFileSync(
+    process.execPath,
+    [
+      "--test",
+      ...["identity", "scan-tree", "safe-path", "workflows"].map((name) =>
+        resolve(__dirname, `../trusted-ci/${name}.test.cjs`),
+      ),
+    ],
+    { encoding: "utf8" },
+  );
 });

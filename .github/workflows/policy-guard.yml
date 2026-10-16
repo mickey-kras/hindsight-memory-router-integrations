@@ -234,6 +234,8 @@ jobs:
                   scan_contributor_refs(path, f'{where} env {key}', str(value))
 
           def check_workflow(path, doc):
+              if approved_scanner_wrapper(path, yaml.safe_dump(doc)):
+                  return
               if path in AUTOMATION_SHAPES:
                   gate_automation(path, yaml.safe_dump(doc))
                   return
@@ -489,16 +491,12 @@ jobs:
           # text) and survive the neutralization ban like the ci.yml gates.
           AISLOP_RUN_SIGNATURES = {
               'Aislop quality gate': ('aislop:ci',),
-          POLICY_SOURCE
-
-      - name: Policy source 2
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
               'Aislop SARIF': ('aislop', '--sarif', '> aislop.sarif'),
           }
 
           def gate_aislop(path, content):
+              if approved_scanner_wrapper(path, content):
+                  return
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
@@ -524,6 +522,12 @@ jobs:
                   ('Upload Aislop SARIF', AISLOP_UPLOAD_IF),
               ):
                   step = step_named(status, name)
+          POLICY_SOURCE
+
+      - name: Policy source 2
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   if step is not None and normalize_condition(step.get('if', '')) not in (expected, expected.replace('always()', '!cancelled()')):
                       fail(f'aislop.yml: {name} if condition must stay exactly: {expected}')
               for name, needles in AISLOP_RUN_SIGNATURES.items():
@@ -545,6 +549,8 @@ jobs:
                   fail('aislop.yml: SARIF upload category must stay configured')
 
           def gate_codeql(path, content):
+              if approved_scanner_wrapper(path, content):
+                  return
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
@@ -891,12 +897,6 @@ jobs:
                   'if (latest.state !== "open" || latest.head.sha !== current.head.sha || latest.base.sha !== current.base.sha)',
               ),
               '.github/scripts/verify-prepared-policy.py': (
-          POLICY_SOURCE
-
-      - name: Policy source 3
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   'workflow = Path(__file__).resolve().parents[1] / "workflows/policy-guard.yml"',
                   'if not run.startswith(prefix) or not run.endswith("POLICY_SOURCE\\n"):',
                   'raise ValueError("Unexpected trusted policy source")',
@@ -909,22 +909,44 @@ jobs:
                   if not re.search(r'(?m)^\s*' + pattern, content):
                       fail(f'{path}: missing source safety contract: {contract}')
           AUTOMATION_SHAPES = {
-              '.github/workflows/ci.yml': ('a61ad4bd1c6a7281742a1090d48988453afadc1f89a88cae76ac7c6ecee9e55a','2b0e78b64d2a2f55ae8bf8b07c3e902dad15ba47ed66d96b5a821216917e57ed','94b99e1708f6e5fe3b78725113b4529a52768bd2972e455c5e01d69da6d53ce4','af4b2e3a471a3def863507c7f4b2bff6e9f20870ed424d4fbe32b4b1f19bed24','6afcaffa52e85b54ead0cda2122fd6cccf420c4cea40ec50d02eea8e3ca189aa','11dd037626f6a9ebfc01313ca396d46b7b963c0c370a2a3d38c4d575b787d8e6','b4b2b6359d18d81170a107431e6944dfddc49daba1f348c39095a9bcd9214ed2','c1933ebe0bfef3541249290db3cf43e407abc2c452b4f8295a4669119b03fba8','d510602234d8deae63e37b4ed575cc6d56df16792ddb46eb17e7a4fc35f360e6','8eb9a49d5364907d297539cd11e9f701619eadca0ff6463615ed4c184b543f2e',),
-              '.github/workflows/main.yml': ('656f5d9b3fefabf005d9729dac8d373bbe983f14550f3d4dd9e103df892225d8','8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e','4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd','75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746','11ebd1dbdd531ee9cd928002296cb0fce8e1e1e19204e5cc4f3e973672ad19da','39af26a5e2dd7f9fde43ffb1b0ca867d31433e1af2a00a0fdaba3016a164d2da','5cb2724f04882313fd92d84afcd5797c6ce62bbdf1183d3595f00e467c5e5c54','978986c5c4297bae695520a4ed1e17055c5fd41ade6e8afed8152a1003ec4259','f6e820ffb5bb391007a9b8e5ffc626a019233a8d9dacd2d6e173ed74faa19c16','11743111a6054b09a0f6b26014b8667565499ce2aa90c1252a17b1e84201760d','c14dd84414cd95fa0540f0e9a8d82d418bc7e3aa13366ed17443850ad0ee4a2d','63acb62bcc32e691693589147f5583b0f6903181a0272ff6685379b940b11098','f057995cab13e53280a6d2f9ba65275ec5599429d7fa2a5efe6c7fed85e2cc3b','d908ff6b8019f924567d359d63506f427a9ed308f0f030fc1fa1d59ddc087dcc','f39bbb9fb2b3a0088e93271d640e4de38940457861b9cfc83595a71cf2787df6','8999b3924049dfe9e7ac475a35e11bf7e18021f3a03098dc59662484c4562696','e6d13b3f4b346bc46528eb2cc9fd5d3174c2b5808bbceaf7ed657b5e1be61b92',),
-              '.github/workflows/release.yml': ('e20163669d0d5dd2f9e6bce99bba5a1d7af68811d0307845f294a8f74bbf2f13','da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5','2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3','6f0608e02206116936a94d1d690682e1ed024c0bd748f28b3cc28d02708b106c','40b04e291989c5a6f2fb42d72d2006b4b9cb692a9ec0615fafad8b34d615cce2','b25089c268d59c2ef1a3bdd6cff38d45e0a66d7783df15e5945380443b617341','25044af5b0e4965e298b60315c03a349ddefdaf9aae1da215ab4f140c5519caf','a5849ba2d0d95b62d6c9eaadd246bde56ebd4df2b9df38090e1e4a332dc66a8c','abe8bd3abc97d53c756756eae006c2c61a949dfb02530ae99c38e52df3e18dc2',),
+              '.github/workflows/trusted-codeql.yml': ('230f65f68125d5a4ae977e1e48b2ded28d8da8141422ef9188b56f38354e6365',),
+              '.github/workflows/trusted-ci.yml': ('aeb9368828e75ef3643323c863a853baa7addf42af46bfd9d0849db507c6e0ab',),
+              '.github/workflows/trusted-aislop.yml': ('943fdcd4e062b54cfa904ca3812774ca4798a8eed92c35cb9c097e992af748b4',),
+              '.github/workflows/ci.yml': ('a61ad4bd1c6a7281742a1090d48988453afadc1f89a88cae76ac7c6ecee9e55a','2b0e78b64d2a2f55ae8bf8b07c3e902dad15ba47ed66d96b5a821216917e57ed','94b99e1708f6e5fe3b78725113b4529a52768bd2972e455c5e01d69da6d53ce4','af4b2e3a471a3def863507c7f4b2bff6e9f20870ed424d4fbe32b4b1f19bed24','6afcaffa52e85b54ead0cda2122fd6cccf420c4cea40ec50d02eea8e3ca189aa','11dd037626f6a9ebfc01313ca396d46b7b963c0c370a2a3d38c4d575b787d8e6','b4b2b6359d18d81170a107431e6944dfddc49daba1f348c39095a9bcd9214ed2','c1933ebe0bfef3541249290db3cf43e407abc2c452b4f8295a4669119b03fba8','d510602234d8deae63e37b4ed575cc6d56df16792ddb46eb17e7a4fc35f360e6','8eb9a49d5364907d297539cd11e9f701619eadca0ff6463615ed4c184b543f2e','1260da0fbf6eb14066be840ed97568f8e248c3c09a0feb878b748213c991c12c',),
+              '.github/workflows/main.yml': ('656f5d9b3fefabf005d9729dac8d373bbe983f14550f3d4dd9e103df892225d8','8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e','4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd','75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746','11ebd1dbdd531ee9cd928002296cb0fce8e1e1e19204e5cc4f3e973672ad19da','39af26a5e2dd7f9fde43ffb1b0ca867d31433e1af2a00a0fdaba3016a164d2da','5cb2724f04882313fd92d84afcd5797c6ce62bbdf1183d3595f00e467c5e5c54','978986c5c4297bae695520a4ed1e17055c5fd41ade6e8afed8152a1003ec4259','f6e820ffb5bb391007a9b8e5ffc626a019233a8d9dacd2d6e173ed74faa19c16','11743111a6054b09a0f6b26014b8667565499ce2aa90c1252a17b1e84201760d','c14dd84414cd95fa0540f0e9a8d82d418bc7e3aa13366ed17443850ad0ee4a2d','63acb62bcc32e691693589147f5583b0f6903181a0272ff6685379b940b11098','f057995cab13e53280a6d2f9ba65275ec5599429d7fa2a5efe6c7fed85e2cc3b','d908ff6b8019f924567d359d63506f427a9ed308f0f030fc1fa1d59ddc087dcc','f39bbb9fb2b3a0088e93271d640e4de38940457861b9cfc83595a71cf2787df6','8999b3924049dfe9e7ac475a35e11bf7e18021f3a03098dc59662484c4562696','e6d13b3f4b346bc46528eb2cc9fd5d3174c2b5808bbceaf7ed657b5e1be61b92','ba514fdf2c8cfec51f66719975d584673116d9efc6e62c237e3205666e9f26d9',),
+          POLICY_SOURCE
+
+      - name: Policy source 3
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
+              '.github/workflows/release.yml': ('e20163669d0d5dd2f9e6bce99bba5a1d7af68811d0307845f294a8f74bbf2f13','da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5','2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3','6f0608e02206116936a94d1d690682e1ed024c0bd748f28b3cc28d02708b106c','40b04e291989c5a6f2fb42d72d2006b4b9cb692a9ec0615fafad8b34d615cce2','b25089c268d59c2ef1a3bdd6cff38d45e0a66d7783df15e5945380443b617341','25044af5b0e4965e298b60315c03a349ddefdaf9aae1da215ab4f140c5519caf','a5849ba2d0d95b62d6c9eaadd246bde56ebd4df2b9df38090e1e4a332dc66a8c','abe8bd3abc97d53c756756eae006c2c61a949dfb02530ae99c38e52df3e18dc2','60a6c456de88aa5cf1e498440ef3af44a2f2bfa06f06404913d0451c95c8a064',),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
               '.github/workflows/dependabot-preparation.yml': ('5782edc05e95995fa5c45f190a42707a595a633e6bf5b19430ce2e203a90a92c','c8d826e549d44cdbb850df7580e681957b76c8755510a9be7517c0978447b171','82cb9992e9aec4e8cd43a02d94cf114e95eb9421bc35acef60fd2fdb671f1d09','c5dc2fec63ea7d7f310b2c1076b21214ba6c864969d03657a83de899b030c96a','e122ae56a9db3626a2aa1c47454144741c2a61bb3914c16c0307af6534c92cd9','284be32dfbfd5211c4a7e7734a52e00a5e4ae7735549c1fd59f13280e4cec4ef','523375bdbb0d23c2e9b9137493c4f038cab0b442f4b5f99ac6910f291b0e0c8f','e041f04e059d1d5aef839e0ce78226ac710bebba175c7855f3dbdd1383f4579d','e189cc59c7ea9caed559805e7eba3422a2179efd199deb3b931f4519c22265c8',),
               '.github/workflows/dependabot-policy-tests.yml': ('157b9cac1669869fdacb9b9780bfaec7ffb5d01a63f803b3f1e09cbc7697b448','cca01ac24c69ad0d733f8df35ed213fa77dcd05ca7a2fea7ff1ff48ef7493f21',),
               '.github/workflows/dependabot-auto-merge.yml': ('fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34','602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19','ccfefaafd622388ee9362ce6b95d66079be875a6cd85684be592c6a8edb74a0e','9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff','a4b213e59f85428e8cd204c6f4d01fc45da64fa1fe5b8fb0dc1373bdae6f1907','dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f'),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3','dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05','c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9'),
               '.github/workflows/pr-branch-updater.yml': ('3afd2e64a2f2b9ca6753b18bbdc93c661435b64c2dc5ccb1170f40a14a565570','e547a3d1fef04bd9a0779c63b92d59c6a9cdb59adde74c571293c4c949ff94cb','116a2be104db278bd07aa3042aef1c36f9d0f08fb2c279c7aa6ec048155e9310','380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
-              '.github/workflows/pr-validation.yml': ('e771be1b2936354e13c4557f2f1c4702d17e44a84c492169d8c587ab741db4f3','6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a','306d0070aeb2a19b505b0dc05c2de9df2a0d3989cb19a414fb6fe8efc50af5ae','b451b158e10360d7ad8b80a0fa7ee14bbfd19555cd746fbc0b7a0e17acf5eead'),
+              '.github/workflows/pr-validation.yml': ('e771be1b2936354e13c4557f2f1c4702d17e44a84c492169d8c587ab741db4f3','6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a','306d0070aeb2a19b505b0dc05c2de9df2a0d3989cb19a414fb6fe8efc50af5ae','b451b158e10360d7ad8b80a0fa7ee14bbfd19555cd746fbc0b7a0e17acf5eead','599cd9a2b6444ab5b8b6a94476de81e893190e5117d954de2b289f47f3b37a08',),
               '.github/workflows/branch-policy.yml': ('ffaa08e4de5cb84378bae286f5329450981ec51f3451b142f36c5d1ae529941c','e08d429ddd7b64f5c01602987580adae94570d54e42623efc01f11846a44b68f','ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
           }
+          SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': 'cfe792bb08eb9006273d786fbb939fd6ba91a9292e030687bccdef3f2506b4b9', '.github/workflows/codeql.yml': '84f29bf0578ccdbba6b0c623763b590c9678ca3711716121988722534cd94ff1'}
+
+          def approved_scanner_wrapper(path, content):
+              if path not in SCANNER_WRAPPER_SHAPES:
+                  return False
+              doc = parse_yaml_file(path, content, 'workflow')
+              return doc is not None and workflow_shape(doc) == SCANNER_WRAPPER_SHAPES[path]
+
           def gate_automation(path, content):
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
+              digest = workflow_shape(doc)
+              if digest not in AUTOMATION_SHAPES[path]:
+                  fail(f'{path}: automation must match its reviewed workflow shape')
+
+          def workflow_shape(doc):
               if True in doc:
                   doc['on'] = doc.pop(True)
               for _, job in iter_jobs(doc):
@@ -932,10 +954,31 @@ jobs:
                       uses = step.get('uses')
                       if isinstance(uses, str):
                           step['uses'] = re.sub(r'@[0-9a-f]{40}$','@PINNED', uses)
-              digest = hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
-              if digest not in AUTOMATION_SHAPES[path]:
-                  fail(f'{path}: automation must match its reviewed workflow shape')
+              return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
           RELEASE_SOURCE_HASHES = {
+              '.github/trusted-ci/policy.test.py': '75606043457a38ea831f90e0954e9f7ff956892137ab7aaedc6456de964e3983',
+              '.github/scripts/trusted-ci-activation.json': '9f9ada9aad9236ad71ed86bbfbc5cf22f15ad662c6e07e795754b455bc1a0b14',
+              '.github/trusted-ci/.aislop/config.yml': '798f947468c6b556b14b802f650a3c4dda6a9302ed1238e13aa078e2380472eb',
+              '.github/trusted-ci/findings.cjs': '8062166755f5eb47298efe5588ca2a91e0b8de06ef7d50fc05b311f640b11602',
+              '.github/trusted-ci/npm-audit.cjs': 'f28a085b4a5b4b391dcc1e0e266cb756e107cf2e40f7f8af33c66ab22f6b6d4c',
+              '.github/trusted-ci/gitleaksignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+              '.github/trusted-ci/safe-path.test.cjs': 'b612066f54b951829f3cd8e6b481a43a183c50b4879187aaa9afa8f4b0299937',
+              '.github/trusted-ci/scan-tree.test.cjs': 'f67d7760d8a65f90d8dfc1c175fead68ecb4556f8f6e17fbdd976023904dab43',
+              '.github/trusted-ci/aislop.mjs': '3c112c90bb5851c872b7e888edb784fa05fc6ac84e87ab8ab93049fa402c8450',
+              '.github/trusted-ci/trivy.yaml': 'acc59baecbc3fd1279502d77c316c072987829fb4bc55485059adbe8e2a3fa7a',
+              '.github/trusted-ci/codeql.yml': '4e07dcbba42d7a11491b926197791a96b943af70a20dbc0f2debd7fa2d3b00f0',
+              '.github/trusted-ci/.semgrep.yml': 'd762890c82bb50694f8762c5abcd374d6f8671785a137d29db501f864675ff35',
+              '.github/trusted-ci/safe-path.cjs': '8c15c73a8ab6af7d378d6f22be15b3f33e5f6dc120b81caabb61adbe4136b464',
+              '.github/trusted-ci/identity.test.cjs': 'e567c728d0d49e24f315ce09c484b55528c96767a59371692c9ca6a69e8a7b74',
+              '.github/trusted-ci/package.json': '5db62573f0f82ee1e6774ffb51be79db2bd0aa995ace952313ac0ea47526e50e',
+              '.github/trusted-ci/biome-config.json': '6f98e6f6827ef4af012c5cb5b6a4e276623d9c4183c5b614b897348aedbc8364',
+              '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
+              '.github/trusted-ci/workflows.test.cjs': 'f4a4ed456ac26cac3ca4a86c7a36ea05d1c92aacd253e0ad6a5258b355741eca',
+              '.github/trusted-ci/trivyignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+              '.github/trusted-ci/scan-tree.cjs': '8502994efbcc163470e4905aff1a9cf582f3bb43ed72f2f2cc9c8d07a8c839ec',
+              '.github/trusted-ci/gitleaks.toml': '27630a96d6c55755cc37620f3933d5cab94b1eb78a726a32e11212972525d76e',
+              '.github/trusted-ci/identity.cjs': 'f456693577a70cfa91888a20de9d1e0cc28429583a9f03fd8b49ad2924e00f12',
+              '.github/trusted-ci/package-lock.json': '6c86a529845d85f0b07a0deaf3eb49f9a0cf8c42bfed8c1f7efbe7ae22f4f837',
               '.github/scripts/coverage-artifact.cjs': '9b37bf2b0e3bcd836011e4da2611b133fb750c0be43ad0d1e525bd33dc93aed0',
               '.github/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
               '.github/scripts/combination-identity.cjs': '28da02fbdd428f83a87973b3cccb963fb7bd2236ca7457957f792c98b31e0c12',
@@ -948,7 +991,7 @@ jobs:
               '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77','f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36','e5c150df0b2cd53c7c552d2a6af9a340afaa1d94900f0f695363b978fc88bba8','04cdad684a138433c2db8ab9c5086ee1d671523aeeea7a0b3ff807fde1c5fd69','412d76a8d9c99e8a695a4e1e2d5b440c7367101c6af8e6a777c2b48565ea1af3','4e3480ad9e385ba501ec1ea23d8fa943f0eb6e1107f9db2b8e1b416800582f7d','2a457b1eec191dd86b2a64f6593863d674618f58db0d7c5748de220b3cb77dc9','a334be73f4e1ae13358e51504bb3826aa2a49100ff55fcd434af052186ea68c2'),
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5','f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23','f206b57c6feb37a573b3a8cd9f211dd6d7e9a216d5121e6459978ca6f4fdd31f','5d2f482546b4ba0431717950c49f7533dd37381efa00017551995d2d39789540','214c7178e1e2cc01e38e96a6b8cc29e9e2b1aab3c24e8c290e99d328054201a4','5571e081f47f4568443728b74846cd54a18cf51eac205115e48da74bcdbd9f40','8ffd8de74374fce6eae741e02ae49afe0e24d0f49229c92ba523494c94e2af9b','9c4679fd2e40b8170eeb6de6c9e14b62274a92596396928e13d52a7ffc75c1e5'),
-              '.github/scripts/release-policy.test.py': ('174412c9929d2f32f7c75a84febdc66e288130dc7f9c1d0ba5744fd152e834fd','e53a95f1ee03c8ec816450df95216f4b131660b04ae2790ba1cf80accd57b0a0','60e74458b6cd4ea66d1d35a2e176fff52c6e1a5f8776b2515569a1d671dae254','c2835e26aac200a60eb37180118fbd16d3192aabf537e0766ea5f6f325f2bd34','50e1d2caa4e8ab1790d118c87c1d3d6fb6a0dfd6299c1ff096fa9ef7e933a0ac','747fc3fa4f0ceb1c0e8df3a9a54c7efe3b750d2d205e6646ed4b7ce32abefb89',),
+              '.github/scripts/release-policy.test.py': ('747fc3fa4f0ceb1c0e8df3a9a54c7efe3b750d2d205e6646ed4b7ce32abefb89','eb63cc2003afe088b57a4a036a487885a680e6919da437a1ec49c19eb66e0e30'),
               '.github/scripts/release-cleanup.cjs': ('f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533','3ec27d21d0df5fad08222606bce4bb3eaa07226f72ae3bd37c3e70bf83ff87e9','bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8'),
               '.github/scripts/release-cleanup.test.cjs': ('99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd','9495c6943363dfb0984573d0efce88e95e25cbb0c7691cb52bfc0a5820ada5be','1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956'),
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
@@ -1059,7 +1102,8 @@ jobs:
                   if result.returncode != 0:
                       raise RuntimeError(f'{path}: failed to fetch at head: {result.stderr.strip()}')
                   content = result.stdout
-              if not content.strip():
+              # Only explicitly hash-pinned empty ignore lists may be empty.
+              if not content.strip() and not (content == '' and RELEASE_SOURCE_HASHES.get(path) == hashlib.sha256(b'').hexdigest()):
                   raise RuntimeError(f'{path}: empty content at head')
               return content
           def main():
