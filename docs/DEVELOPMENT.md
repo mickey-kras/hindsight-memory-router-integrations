@@ -45,19 +45,22 @@ Root coverage includes `src/**/*.ts`, including maintained OpenClaw queue and se
 
 ### Python and node:test automation tests
 
-These run separately from Vitest. Install release-tool dependencies with `npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund` before the automation tests. The Sonar Python suites use only the standard library. The release-policy suite additionally requires PyYAML; install it in your active Python virtual environment with `python3 -m pip install PyYAML` before running that suite.
+These run separately from Vitest. Install release-tool dependencies with `npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund` before the automation tests. The Sonar Python suites use only the standard library. The release-policy and trusted scanner boundary suites additionally require Python 3 with PyYAML; install it in your active Python virtual environment with `python3 -m pip install PyYAML` before running those suites.
 
 | Family | Command | CI workflow |
 | --- | --- | --- |
-| Sonar finding rendering and tracker behavior | `python3 -m unittest tests/test_sonar_finding_sync.py` | `ci.yml` |
-| Sonar privacy, redaction, authenticated redirects and masking order | `python3 -m unittest discover -s tests -p test_sonar_privacy.py` | `ci.yml` |
-| Release policy | `python3 .github/scripts/release-policy.test.py` | `ci.yml` |
-| Vendored-file verification | `node --test scripts/verify-vendored-files.test.mjs` | `ci.yml` |
-| Release, combination resolution, cleanup and coverage provenance | `node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs .github/scripts/coverage-artifact.test.cjs` | `ci.yml` |
-| PR branch updater | `node --test .github/scripts/pr-branch-updater.test.cjs` | `ci.yml` |
-| npm audit tooling | `node --test .github/scripts/npm-audit.test.cjs` | `ci.yml` |
+| Sonar finding rendering and tracker behavior | `python3 -m unittest tests/test_sonar_finding_sync.py` | [trusted-ci.yml](../.github/workflows/trusted-ci.yml) |
+| Sonar privacy, redaction, authenticated redirects and masking order | `python3 -m unittest discover -s tests -p test_sonar_privacy.py` | [trusted-ci.yml](../.github/workflows/trusted-ci.yml) |
+| Release policy | `python3 .github/scripts/release-policy.test.py` | [trusted-ci.yml](../.github/workflows/trusted-ci.yml) |
+| Vendored-file verification | `node --test scripts/verify-vendored-files.test.mjs` | [trusted-ci.yml](../.github/workflows/trusted-ci.yml) |
+| Release, combination resolution, cleanup and coverage provenance | `node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs .github/scripts/coverage-artifact.test.cjs` | [trusted-ci.yml](../.github/workflows/trusted-ci.yml) |
+| PR branch updater | `node --test .github/scripts/pr-branch-updater.test.cjs` | [trusted-ci.yml](../.github/workflows/trusted-ci.yml) |
+| npm audit tooling | `node --test .github/scripts/npm-audit.test.cjs` | [trusted-ci.yml](../.github/workflows/trusted-ci.yml) |
+| Trusted scanner boundaries | `node --test .github/trusted-ci/*.test.cjs` | [trusted-ci.yml](../.github/workflows/trusted-ci.yml) |
 | Dependabot merge policy | `node --test .github/scripts/dependabot-auto-merge.test.cjs` | `dependabot-policy-tests.yml` |
 | Dependabot preparation | `node --test .github/scripts/dependabot-preparation.test.cjs` | `dependabot-policy-tests.yml` |
+
+Run the trusted scanner glob in a Unix-like environment with symlink support. It skips two Gitleaks binary cases unless `GITLEAKS_BINARY` points to the verified pinned Gitleaks 8.24.3 executable. Those cases also require Git and Bash. The security job downloads and verifies the pinned binary before explicitly running `gitleaks.test.cjs` with `GITLEAKS_BINARY` set.
 
 Finding-body rendering assertions live in the finding-sync suite: all three finding kinds retain diagnostic fields and public commit/workflow links without Sonar links, including configured and absent server cases. The privacy suite separately exercises final create/edit redaction of configured and advertised endpoints, authenticated redirect rejection, mask escaping, endpoint discovery failures and workflow masking order.
 
@@ -67,11 +70,11 @@ These require prepared artifacts or services in addition to installed dependenci
 
 | Check | Command | Prerequisites and CI boundary |
 | --- | --- | --- |
-| Packed coding-agent installation | `node --test .github/scripts/coding-installer-smoke.mjs` | Coding-agent package built and packed into `packages/`, with matching `PACKAGE_SHA256`; tests installation from a verified local tarball and loopback URL. Runs in `ci.yml` after package verification. |
+| Packed coding-agent installation | `node --test .github/scripts/coding-installer-smoke.mjs` | Coding-agent package built and packed into `packages/`, with matching `PACKAGE_SHA256`; tests installation from a verified local tarball and loopback URL. Runs in [trusted-ci.yml](../.github/workflows/trusted-ci.yml) after package verification. |
 | Minimum supported runtime and consumer types | `node scripts/verify-runtime-contract.mjs` | Run with exactly Node.js 22.12.0 and a freshly packed OpenClaw tarball. Installs into an isolated consumer and checks CommonJS/ESM exports, hosted entry point and production declaration dependencies. Requires npm registry access. |
-| Packaged clients with router and Hindsight | `bash .github/scripts/combination-smoke.sh` | The `release combination` job in [ci.yml](../.github/workflows/ci.yml) prepares pinned packages, checks out the matching router harness in `.router`, and sets the resolved image/version and runner environment. Requires Docker Compose, OpenSSL and image/registry access; see [release verification](RELEASING.md). This is the live service boundary, separate from synthetic client tests and `combination.test.cjs`. |
+| Packaged clients with router and Hindsight | `bash .github/scripts/combination-smoke.sh` | The `release combination` job in [trusted-ci.yml](../.github/workflows/trusted-ci.yml) prepares pinned packages, checks out the matching router harness in `.router`, and sets the resolved image/version and runner environment. Requires Docker Compose, OpenSSL and image/registry access; see [release verification](RELEASING.md). This is the live service boundary, separate from synthetic client tests and `combination.test.cjs`. |
 
-CI also verifies provenance with `node scripts/verify-coding-upstream.mjs` and `node scripts/verify-openclaw-overlay.mjs`, checks package inventory with `node .github/scripts/verify-package-inventory.cjs`, byte-compares repeat packs, and checks SHA-256/Nix pins. The [CI workflow](../.github/workflows/ci.yml) is the source for artifact preparation and security gates; the [Dependabot workflow](../.github/workflows/dependabot-policy-tests.yml) also probes pinned upstream metadata with a repository token.
+CI also verifies provenance with `node scripts/verify-coding-upstream.mjs` and `node scripts/verify-openclaw-overlay.mjs`, checks package inventory with `node .github/scripts/verify-package-inventory.cjs`, byte-compares repeat packs, and checks SHA-256/Nix pins. The [trusted CI workflow](../.github/workflows/trusted-ci.yml) implements artifact preparation and security gates. [main.yml](../.github/workflows/main.yml) and [pr-validation.yml](../.github/workflows/pr-validation.yml) call it at a pinned commit; [ci.yml](../.github/workflows/ci.yml) is a pinned reusable-workflow wrapper. The [Dependabot workflow](../.github/workflows/dependabot-policy-tests.yml) also probes pinned upstream metadata with a repository token.
 
 Packages are built from source by CI (`npm pack`) and attached to the GitHub release; their SHA-256 hashes are pinned in `PACKAGE_SHA256` and Nix hashes in `PACKAGE_NIX_HASHES`. Tarballs are never committed (`packages/` is gitignored).
 OpenClaw provenance: `UPSTREAM_VERSION`; coding-agents provenance: `integrations/coding-agents/UPSTREAM.json`.
