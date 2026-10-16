@@ -4,6 +4,20 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { prepare } = require("./scan-tree.cjs");
+test("the tracked scanner implementation prepares its own candidate tree", () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "trusted-scanner-self-"));
+  try {
+    const source = path.resolve(__dirname, "../..");
+    const output = path.join(temporary, "scan");
+    prepare(source, output);
+    assert.equal(
+      fs.readFileSync(path.join(output, ".github/trusted-ci/scan-tree.cjs"), "utf8"),
+      fs.readFileSync(path.join(__dirname, "scan-tree.cjs"), "utf8"),
+    );
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
 function fixture(run) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "trusted-scanner-"));
   const source = path.join(dir, "source");

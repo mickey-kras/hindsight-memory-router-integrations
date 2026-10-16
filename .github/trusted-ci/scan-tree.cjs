@@ -22,6 +22,8 @@ function prepare(source, destination, trusted = __dirname) {
     ".semgrepignore",
     ".gitignore",
   ]);
+  const directive = "aislop" + "-ignore";
+  const suppression = new RegExp(`(?:\\/\\/|\\/\\*+|#|<!--|\\*)\\s*${directive}(?:-[A-Za-z][\\w-]*)?(?![\\w-])`);
   function copy(from, to) {
     for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
       const input = path.join(from, entry.name);
@@ -36,7 +38,7 @@ function prepare(source, destination, trusted = __dirname) {
         // The pinned Aislop API always applies inline suppressions. Reject their
         // comment syntax conservatively, including quoted examples, before scanning.
         assert.ok(
-          !/(?:\/\/|\/\*+|#|<!--|\*)\s*aislop-ignore(?:-[A-Za-z][\w-]*)?(?![\w-])/.test(fs.readFileSync(input, "utf8")),
+          !suppression.test(fs.readFileSync(input, "utf8")),
           `Candidate inline scanner suppression rejected: ${path.relative(source, input)}`,
         );
         if (entry.name === "package.json") {
