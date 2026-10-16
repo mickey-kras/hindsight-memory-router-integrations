@@ -1,17 +1,17 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-      "version": "0.8.1",
+      "version": "0.8.2",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.32.1",
         "@napi-rs/keyring": "2.1.1",
         "jsonc-parser": "^3.3.1",
-        "smol-toml": "^1.9.0",
+        "smol-toml": "^1.9.1",
         "zod": "^4.6.5"
       },
       "bin": {
@@ -58,7 +58,7 @@
       "devDependencies": {
         "@opencode-ai/plugin": "^1.18.35",
         "@opencode-ai/sdk": "^1.18.9",
-        "@opencode/plugin": "^2.0.24",
+        "@opencode/plugin": "^2.0.26",
         "@types/node": "22.20.5",
         "tsup": "^8.3.0",
         "typescript": "^5.6.0",
@@ -1817,14 +1817,14 @@
       }
     },
     "node_modules/@opencode/ai": {
-      "version": "2.0.24",
-      "resolved": "https://registry.npmjs.org/@opencode/ai/-/ai-2.0.24.tgz",
-      "integrity": "sha512-NpuxKgm5bq+jcgUL9/z4aFmKYsBbIGOOjsV4iIHytt6PbM30d+/eeKTifQ4lzjHaRKk7DsDg+cc5gJiPh72Mbw==",
+      "version": "2.0.26",
+      "resolved": "https://registry.npmjs.org/@opencode/ai/-/ai-2.0.26.tgz",
+      "integrity": "sha512-CB+k3Ed6mtat2Or/6YZiXSPrI8q02NfECEKKO9HNeYLKFG3UrbIxrhnaRLbA9YMQp9mKOA1qWIWXJDnkxdVjMQ==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
         "@aws-sdk/credential-providers": "3.1057.0",
-        "@opencode/schema": "2.0.24",
+        "@opencode/schema": "2.0.26",
         "@smithy/eventstream-codec": "4.2.14",
         "@smithy/util-utf8": "4.2.2",
         "aws4fetch": "1.0.20",
@@ -1844,26 +1844,24 @@
       }
     },
     "node_modules/@opencode/plugin": {
-      "version": "2.0.24",
-      "resolved": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.0.24.tgz",
-      "integrity": "sha512-LkWZabmbDGPjdRwDEIA/3nC/P/GfoaOePq98dpOePuXpM0D64KW0Dh7nSGfAKO1Ai9btLkQEAKvgcvEl41FFMw==",
+      "version": "2.0.26",
+      "resolved": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.0.26.tgz",
+      "integrity": "sha512-8fu/WokR5hxGjclLQJKL0PAgsMEfh81MHnUBsJuhcnYUiTJ2ZQPLqSYAhzoYEQu/Vj4M65D3Xx7QS0Q9b9Z4fw==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
         "@ai-sdk/provider": "3.0.8",
-        "@opencode/ai": "2.0.24",
-        "@opencode/client": "2.0.24",
-        "@opencode/protocol": "2.0.24",
-        "@opencode/schema": "2.0.24",
-        "@opencode/util": "2.0.24",
-        "@standard-schema/spec": "1.1.0",
-        "effect": "4.0.0-rc.112",
-        "zod": "4.1.8"
+        "@opencode/ai": "2.0.26",
+        "@opencode/client": "2.0.26",
+        "@opencode/protocol": "2.0.26",
+        "@opencode/schema": "2.0.26",
+        "@opencode/util": "2.0.26",
+        "effect": "4.0.0-rc.112"
       },
       "peerDependencies": {
-        "@opencode/theme": "2.0.24",
-        "@opentui/core": ">=0.5.14",
-        "@opentui/solid": ">=0.5.14",
+        "@opencode/theme": "2.0.26",
+        "@opentui/core": ">=0.5.17",
+        "@opentui/solid": ">=0.5.17",
         "solid-js": ">=1.9.0"
       },
       "peerDependenciesMeta": {
@@ -1882,14 +1880,14 @@
       }
     },
     "node_modules/@opencode/plugin/node_modules/@opencode/client": {
-      "version": "2.0.24",
-      "resolved": "https://registry.npmjs.org/@opencode/client/-/client-2.0.24.tgz",
-      "integrity": "sha512-FSxVU0BP0CczAMSq0hcVHlv8DrWAR/0wTiqq8v1L6lTHaznWTVyZyOKw+UiV18re/Ng7IjS4SnNTh/pgu5jZYg==",
+      "version": "2.0.26",
+      "resolved": "https://registry.npmjs.org/@opencode/client/-/client-2.0.26.tgz",
+      "integrity": "sha512-0uqhXq6DJYjas3mc4roTyWAmhJpyO2gJaMcenoiA22RXJSOSIwPFho5K4qGmYDJGd5Fvvswh++Nr/wfjaHAYyg==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
-        "@opencode/protocol": "2.0.24",
-        "@opencode/schema": "2.0.24"
+        "@opencode/protocol": "2.0.26",
+        "@opencode/schema": "2.0.26"
       },
       "peerDependencies": {
         "effect": "4.0.0-rc.112",
@@ -1915,24 +1913,14 @@
         "msgpackr": "^2.0.5"
       }
     },
-    "node_modules/@opencode/plugin/node_modules/zod": {
-      "version": "4.1.8",
-      "resolved": "https://registry.npmjs.org/zod/-/zod-4.1.8.tgz",
-      "integrity": "sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ==",
-      "dev": true,
-      "license": "MIT",
-      "funding": {
-        "url": "https://github.com/sponsors/colinhacks"
-      }
-    },
     "node_modules/@opencode/protocol": {
-      "version": "2.0.24",
-      "resolved": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.24.tgz",
-      "integrity": "sha512-0fSYiSLKjh5DIHStL0zL9ofyYiprWVVL/1z06BhtDbD+8FS21rwnCfX3wEuyEIDQ7knS3AigIeiFFDglMXdMxg==",
+      "version": "2.0.26",
+      "resolved": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.26.tgz",
+      "integrity": "sha512-Q+kbu0zTneh0RC4jhiuB19WeP8et9dWXGJVjb5EbUdJ8E1j5Eh0lAyqLXlM2tzTxfMfK3gos9ss6mxMVsvDFIg==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
-        "@opencode/schema": "2.0.24",
+        "@opencode/schema": "2.0.26",
         "effect": "4.0.0-rc.112"
       }
     },
@@ -1948,9 +1936,9 @@
       }
     },
     "node_modules/@opencode/schema": {
-      "version": "2.0.24",
-      "resolved": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.24.tgz",
-      "integrity": "sha512-GpusTRzI4wZl0o+ntBS4r0NDdHcF6nZu5RIeNJg/In3GUBdCtih+rQMkS9XUt5RuSHpWrwaex5PAtdSErZJQmg==",
+      "version": "2.0.26",
+      "resolved": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.26.tgz",
+      "integrity": "sha512-DZ09xXCTkTI3Y9VzuQHsm5AMGh67EqkUM13lC0LGKvD12RAYaVmRX5lDv5AnD3OkmUmPPWLYWjicT18CDloy6Q==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
@@ -1970,9 +1958,9 @@
       }
     },
     "node_modules/@opencode/util": {
-      "version": "2.0.24",
-      "resolved": "https://registry.npmjs.org/@opencode/util/-/util-2.0.24.tgz",
-      "integrity": "sha512-7iVG2MdxR3NNliTjNGqoXp8cXRb+jBW+Vm9KWWK/lOh5xdOM0FDOhXLgqFDnBD0tMCDwXwn8GMUzrC4nT2CdNA==",
+      "version": "2.0.26",
+      "resolved": "https://registry.npmjs.org/@opencode/util/-/util-2.0.26.tgz",
+      "integrity": "sha512-RebqfdFEEby7IFA7agajYvCpeW4VoaPkKu/ZMhBXsEYRnpz2NMyoI7zapFvvDJdYl4B0/kPnmt5vUVuqRWm0lQ==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
@@ -2835,9 +2823,9 @@
       }
     },
     "node_modules/@smithy/core": {
-      "version": "3.35.1",
-      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.35.1.tgz",
-      "integrity": "sha512-i4YPS4B6ts7bjn7UwLnGjiZdprOvHvgGobFZsYK3GIY3E5hIqtj0rReU69BcTpGp+fvtraSNXeG1l+jtJvF55w==",
+      "version": "3.35.2",
+      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.35.2.tgz",
+      "integrity": "sha512-ejTukBuP/Pg3t9N8Ux+0zKsXeHWm7p6W3HbXFOyltKasSxZwCFmvTut7kBdZSCF3m9y1bXXyVu6p2xuMFcsTyQ==",
       "dev": true,
       "license": "Apache-2.0",
       "dependencies": {
@@ -5535,9 +5523,9 @@
       }
     },
     "node_modules/p-map": {
-      "version": "7.0.8",
-      "resolved": "https://registry.npmjs.org/p-map/-/p-map-7.0.8.tgz",
-      "integrity": "sha512-MitaVsCuCFIvOLLPIU7NnfrZvS9H9h7kwMUkDo+T2pEISaJD48IV9S8iIdXB7PsvvdxyYcsSTTrr90XKsbulNw==",
+      "version": "7.1.0",
+      "resolved": "https://registry.npmjs.org/p-map/-/p-map-7.1.0.tgz",
+      "integrity": "sha512-HaSJ9hNZOxTUSATfB48Qi7U2+GF1eECjI39nkeLmCWQrSOYr1z4NepR0rpWiZO77pYwUWU2cJ5NIgsmoFCsYDQ==",
       "dev": true,
       "license": "MIT",
       "engines": {
@@ -6379,9 +6367,9 @@
       }
     },
     "node_modules/smol-toml": {
-      "version": "1.9.0",
-      "resolved": "https://registry.npmjs.org/smol-toml/-/smol-toml-1.9.0.tgz",
-      "integrity": "sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==",
+      "version": "1.9.1",
+      "resolved": "https://registry.npmjs.org/smol-toml/-/smol-toml-1.9.1.tgz",
+      "integrity": "sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ==",
       "license": "BSD-3-Clause",
       "engines": {
         "node": ">= 18"
