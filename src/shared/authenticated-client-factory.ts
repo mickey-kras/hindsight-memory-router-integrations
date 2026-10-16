@@ -95,12 +95,19 @@ export class AuthenticatedClientFactory {
   // recovered transport after the owner has been durably acknowledged.
   createRetainReplayProbe(credentials: PrincipalCredentials): { client: RouterClient; commit(): void } {
     if (this.construct) return { client: this.forAgent(credentials), commit() {} };
+    const cachedClient = this.cache.get(credentials.principalId);
+    const cachedTransport = this.transportCache.get(credentials.principalId);
     const transport = this.createTransport(credentials);
     const client = this.createClient(credentials, transport);
     return {
       client,
       commit: () => {
-        if (this.cache.get(credentials.principalId)?.token !== credentials.token) return;
+        if (
+          cachedClient?.token !== credentials.token ||
+          this.cache.get(credentials.principalId) !== cachedClient ||
+          this.transportCache.get(credentials.principalId) !== cachedTransport
+        )
+          return;
         this.cache.set(credentials.principalId, { token: credentials.token, client });
         this.transportCache.set(credentials.principalId, { token: credentials.token, transport });
       },

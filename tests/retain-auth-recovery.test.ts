@@ -141,3 +141,25 @@ it("keeps shared denial and fresh admission closed until the probe owner is dura
     "fresh-op",
   ]);
 });
+
+it("does not replace a rotated transport or erase its sticky denial when an old probe completes", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 403 }));
+  const { clients, credentials } = stack();
+  const original = credentials.resolve("test");
+  clients.forAgent(original);
+  const probe = clients.createRetainReplayProbe(original);
+  const rotated = { ...original, token: `mr_rotated_${"b".repeat(64)}` };
+  const deniedTransport = clients.transportFor(rotated);
+  await expect(deniedTransport.request(deniedTransport.bankUrl("A", "/memories"), { method: "POST" })).rejects.toThrow(
+    "memory access denied",
+  );
+  fetch.mockImplementation(async () => Response.json({}));
+  await probe.client.retain("A", "owner", { operationId: "owner-op" });
+  probe.commit();
+  expect(clients.transportFor(rotated)).toBe(deniedTransport);
+  await expect(deniedTransport.request(deniedTransport.bankUrl("A", "/memories"), { method: "POST" })).rejects.toThrow(
+    "memory access denied",
+  );
+  await expect(clients.forAgent(rotated).retain("A", "fresh")).rejects.toThrow("memory access denied");
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
