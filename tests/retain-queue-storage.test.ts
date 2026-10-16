@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
 import {
-  openSync,
-  closeSync,
   appendFileSync,
+  closeSync,
   mkdtempSync,
-  readFileSync,
+  openSync,
   readdirSync,
+  readFileSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -14,8 +14,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { tryLock } from "fs-native-extensions";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { RetainQueueStorage } from "../src/shared/retain-queue-storage.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RetainQueueSharedStorageError, RetainQueueStorage } from "../src/shared/retain-queue-storage.js";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, closeSync: vi.fn(fs.closeSync) };
+});
+vi.mock("fs-native-extensions", async (importOriginal) => {
+  const native = await importOriginal<typeof import("fs-native-extensions")>();
+  return { ...native, tryLock: vi.fn(native.tryLock) };
+});
 
 const run = promisify(execFile);
 let directory: string;
@@ -23,6 +32,7 @@ beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "queue-capacity-"));
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(directory, { recursive: true, force: true });
 });
 const queuePath = () => join(directory, "hindsight-retain-queue.main.jsonl");
@@ -82,9 +92,71 @@ describe("aggregate queue capacity", () => {
       closeSync(fd);
     }
     rmSync(directory, { recursive: true });
-    await expect(storage.transaction(() => undefined)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(storage.replay(async () => undefined)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(storage.transaction(() => undefined)).rejects.toMatchObject({
+      name: "RetainQueueSharedStorageError",
+      cause: { code: "ENOENT" },
+    });
+    await expect(storage.replay(async () => undefined)).rejects.toMatchObject({
+      name: "RetainQueueSharedStorageError",
+      cause: { code: "ENOENT" },
+    });
   });
+
+  it.each([new RangeError("oversized queue"), Object.assign(new Error("queue I/O failed"), { code: "EIO" })])(
+    "preserves queue callback error identity: %s",
+    async (error) => {
+      const storage = new RetainQueueStorage(directory);
+      expect(error).not.toBeInstanceOf(RetainQueueSharedStorageError);
+      await expect(
+        storage.transaction(() => {
+          throw error;
+        }),
+      ).rejects.toBe(error);
+      await expect(
+        storage.replay(async () => {
+          throw error;
+        }),
+      ).rejects.toBe(error);
+      await expect(storage.transaction(() => "released")).resolves.toBe("released");
+      await expect(storage.replay(async () => "released")).resolves.toBe("released");
+    },
+  );
+
+  it.each(["transaction", "replay"] as const)(
+    "classifies %s lock acquisition and release failures as shared",
+    async (method) => {
+      const storage = new RetainQueueStorage(directory);
+      const cause = Object.assign(new Error("private filesystem error"), { code: "EIO" });
+      const action = vi.fn(() => "completed");
+      const perform = () =>
+        method === "transaction" ? storage.transaction(action) : storage.replay(async () => action());
+      vi.mocked(tryLock).mockImplementationOnce(() => {
+        throw cause;
+      });
+      await expect(perform()).rejects.toMatchObject({
+        name: "RetainQueueSharedStorageError",
+        message: "retain queue shared storage unavailable",
+        cause,
+      });
+      expect(action).not.toHaveBeenCalled();
+
+      const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
+      action.mockImplementationOnce(() => {
+        vi.mocked(closeSync).mockImplementationOnce((fd) => {
+          fs.closeSync(fd);
+          throw cause;
+        });
+        return "completed";
+      });
+      await expect(perform()).rejects.toMatchObject({
+        name: "RetainQueueSharedStorageError",
+        message: "retain queue shared storage unavailable",
+        cause,
+      });
+      expect(action).toHaveBeenCalledOnce();
+      await expect(perform()).resolves.toBe("completed");
+    },
+  );
 
   it("excludes a second replayer while allowing capacity transactions", async () => {
     const storage = new RetainQueueStorage(directory);
