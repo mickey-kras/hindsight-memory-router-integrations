@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sessionCacheFile } from "./session-cache";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
+import { appendJournalTurn, JOURNAL_MAX_BYTES, journalPath, readJournalTranscript } from "./turn-journal";
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
@@ -186,5 +186,49 @@ describe("journal tail I/O", () => {
     expect(readJournalTranscript(file)[0].content).toBe("original");
     writeFileSync(file, first.replace("original", "modified") + tail);
     expect(readJournalTranscript(file)[0].content).toBe("modified");
+  });
+});
+
+describe("journal byte ceiling", () => {
+  const turn = { role: "assistant", content: "🙂漢é\u0000\n\"\\", timestamp: "2026-01-01T00:00:00Z" };
+  const record: string = JSON.stringify(turn) + "\n";
+
+  function seedJournal(bytes: number, terminated: boolean): Buffer {
+    const tail: string = JSON.stringify({ role: "user", content: "previous" }) + (terminated ? "\n" : "");
+    const original: Buffer = Buffer.from("x".repeat(bytes - Buffer.byteLength(tail) - 1) + "\n" + tail);
+    writeFileSync(file, original);
+    return original;
+  }
+
+  it.each([true, false])("allows an exact UTF-8 byte fit with terminated=%s", (terminated) => {
+    const append: string = (terminated ? "" : "\n") + record;
+    const original: Buffer = seedJournal(JOURNAL_MAX_BYTES - Buffer.byteLength(append), terminated);
+    appendJournalTurn(file, turn);
+    expect(readFileSync(file).equals(Buffer.concat([original, Buffer.from(append)]))).toBe(true);
+    expect(readFileSync(file).length).toBe(JOURNAL_MAX_BYTES);
+    expect(readJournalTranscript(file).at(-1)).toEqual(turn);
+  });
+
+  it.each([true, false])("preserves every byte when the append overflows by one with terminated=%s", (terminated) => {
+    const append: string = (terminated ? "" : "\n") + record;
+    const original: Buffer = seedJournal(JOURNAL_MAX_BYTES - Buffer.byteLength(append) + 1, terminated);
+    expect(() => appendJournalTurn(file, turn)).not.toThrow();
+    expect(readFileSync(file).equals(original)).toBe(true);
+  });
+
+  it("rejects JSON escaping that makes a single turn larger than the ceiling", () => {
+    appendJournalTurn(file, { role: "user", content: "previous" });
+    const original: Buffer = readFileSync(file);
+    expect(() => appendJournalTurn(file, { role: "assistant", content: "\u0000".repeat(2 * 1024 * 1024) })).not.toThrow();
+    expect(readFileSync(file).equals(original)).toBe(true);
+  });
+
+  it.each([0, 1])("accounts for a torn-tail separator with %s bytes of overflow", (overflow) => {
+    const torn: string = '{"role":"assistant","content":"';
+    const original: Buffer = Buffer.from("x".repeat(JOURNAL_MAX_BYTES - Buffer.byteLength(record) - torn.length - 1 + overflow) + torn);
+    writeFileSync(file, original);
+    appendJournalTurn(file, turn);
+    const expected: Buffer = overflow ? original : Buffer.concat([original, Buffer.from("\n" + record)]);
+    expect(readFileSync(file).equals(expected)).toBe(true);
   });
 });

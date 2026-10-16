@@ -55,14 +55,13 @@ export function appendJournalTurn(path: string, turn: TransportTurn): void {
       if (size >= JOURNAL_MAX_BYTES) return;
       const { last, terminated } = readJournalTail(fd, size);
       if (last && last.role === turn.role && last.content === content) return;
-      appendFileSync(
-        fd,
-        (terminated ? "" : "\n") + JSON.stringify({
-          role: turn.role,
-          content,
-          timestamp: turn.timestamp ?? new Date().toISOString(),
-        }) + "\n"
-      );
+      const record: string = (terminated ? "" : "\n") + JSON.stringify({
+        role: turn.role,
+        content,
+        timestamp: turn.timestamp ?? new Date().toISOString(),
+      }) + "\n";
+      if (size + Buffer.byteLength(record, "utf8") > JOURNAL_MAX_BYTES) return;
+      appendFileSync(fd, record);
     });
   } catch {
     /* best-effort: an unwritable journal costs the tail of one session, never an error */
