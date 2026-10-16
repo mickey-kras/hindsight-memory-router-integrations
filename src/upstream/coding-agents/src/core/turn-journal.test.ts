@@ -146,7 +146,7 @@ describe("journal tail I/O", () => {
     writeFileSync(file, line.repeat(6000));
     appendJournalTurn(file, { role: "assistant", content: "new tail" });
     expect(readSync).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(readSync).mock.calls[0][3]).toBe(64 * 1024);
+    expect(readSync).toHaveBeenCalledWith(expect.any(Number), expect.any(Buffer), 0, 64 * 1024, expect.any(Number));
     expect(readJournalTranscript(file).at(-1)?.content).toBe("new tail");
   });
 

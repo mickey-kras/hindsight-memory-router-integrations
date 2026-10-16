@@ -14216,7 +14216,7 @@ index 0000000..d39fd5b
 +  });
 +});
 diff --git a/src/core/turn-journal.test.ts b/src/core/turn-journal.test.ts
-index bd7f631..6ec77c1 100644
+index bd7f631..ef73a11 100644
 --- a/src/core/turn-journal.test.ts
 +++ b/src/core/turn-journal.test.ts
 @@ -1,7 +1,13 @@
@@ -14259,7 +14259,7 @@ index bd7f631..6ec77c1 100644
 +    writeFileSync(file, line.repeat(6000));
 +    appendJournalTurn(file, { role: "assistant", content: "new tail" });
 +    expect(readSync).toHaveBeenCalledTimes(1);
-+    expect(vi.mocked(readSync).mock.calls[0][3]).toBe(64 * 1024);
++    expect(readSync).toHaveBeenCalledWith(expect.any(Number), expect.any(Buffer), 0, 64 * 1024, expect.any(Number));
 +    expect(readJournalTranscript(file).at(-1)?.content).toBe("new tail");
 +  });
 +
