@@ -2,6 +2,10 @@
 
 [Documentation](README.md) | [Repository](../README.md)
 
+The sync script requires Git with `--no-lazy-fetch` support and all required commit, tree and blob
+objects already present locally. It disables implicit downloads in every mode; fetch missing objects
+explicitly before running it. Older Git versions without this option stop with an unknown-option error.
+
 Use a local checkout of `vectorize-io/hindsight` and resolve the intended upstream ref to a commit:
 
 ```sh
@@ -20,6 +24,7 @@ Review the diff, including upstream behavior and independent downstream package 
 ```sh
 npm run upstream:accept
 python3 scripts/sync-upstream.py ../hindsight --patch-only
+python3 scripts/sync-upstream.py ../hindsight --check
 npm ci
 npm ci --prefix src/upstream/coding-agents
 npm run lint
@@ -35,7 +40,14 @@ npm test --prefix src/upstream/coding-agents
 `--patch-only` regenerates the complete coding-agent patch, including local additions and deletions.
 The patch uses one line of unified context and preserves exact reconstruction with standard
 `git apply`; no adapted content is omitted.
-Repeat both after any further adapted-source edits.
+Repeat both after any further adapted-source edits, then run `--check` again.
+
+`--check` is read-only: it validates both pristine inventories and versions against their exact
+commits in the supplied upstream Git checkout, requires the packaged and canonical coding-agent
+`UPSTREAM.json` manifests to agree, and byte-compares the reconstructed patch with `router.patch`.
+It never refreshes hashes or accepts a changed patch. The checkout must contain both pinned commits;
+changing pins or recorded hashes alone cannot satisfy verification. Run this check during upstream
+review; normal CI inventory checks do not download upstream or replace this provenance check.
 
 Pack both packages with the npm version pinned in `.github/workflows/ci.yml`. Refresh all entries
 in `PACKAGE_SHA256` and the OpenClaw source hash in `PACKAGE_NIX_HASHES`. Recompute `npm_deps` with the
