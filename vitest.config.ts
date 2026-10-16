@@ -13,6 +13,7 @@ export default defineConfig({
     },
   },
   test: {
+    globalSetup: ["./tests/build-packages.ts"],
     include: ["tests/**/*.test.ts"],
     environment: "node",
     coverage: {
