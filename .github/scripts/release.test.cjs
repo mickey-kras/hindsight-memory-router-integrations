@@ -865,11 +865,25 @@ test("retained package retries reuse bytes and fail closed on expired or missing
   fixture(async () => {
     const m = mock();
     integrationPrepared(m);
-    const saved = { id: 17, name: `packages-${sha}`, expired: false };
+    const saved = {
+      id: 17,
+      name: `packages-${sha}`,
+      expired: false,
+      workflow_run: { id: m.context.runId, head_sha: m.context.sha },
+    };
     let artifacts = [saved];
     m.github.rest.actions = { listWorkflowRunArtifacts: async () => ({ data: artifacts }) };
     await release.retryPackages(m);
     assert.equal(m.outputs.artifact, "17");
+    artifacts = [{ ...saved, workflow_run: { ...saved.workflow_run, id: m.context.runId + 1 } }];
+    await assert.rejects(release.retryPackages(m), /provenance/);
+    artifacts = [{ ...saved, workflow_run: { ...saved.workflow_run, head_sha: "c".repeat(40) } }];
+    await assert.rejects(release.retryPackages(m), /provenance/);
+    artifacts = [{ ...saved, workflow_run: undefined }];
+    await assert.rejects(release.retryPackages(m), /provenance/);
+    artifacts = [saved, { ...saved, id: 18 }];
+    await assert.rejects(release.retryPackages(m), /Ambiguous/);
+    artifacts = [saved];
     saved.expired = true;
     await assert.rejects(release.retryPackages(m), /expired/);
     artifacts = [];
