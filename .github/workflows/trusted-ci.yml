@@ -120,7 +120,7 @@ jobs:
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       - name: Cache Nix dependency hash
         id: nix-deps
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/nix-prefetch
           key: nix-prefetch-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NIXPKGS_REV }}-${{ hashFiles('npm-shrinkwrap.json')
