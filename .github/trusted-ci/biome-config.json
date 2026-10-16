@@ -1,0 +1,30 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.13/schema.json",
+  "files": {
+    "includes": ["**", "!coverage", "!dist", "!packages", "!src/upstream"]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "lineWidth": 120
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        "noImplicitAnyLet": "off",
+        "useIterableCallbackReturn": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [".github/rulesets/protect-release-branches.json"],
+      "json": {
+        "formatter": {
+          "expand": "always"
+        }
+      }
+    }
+  ]
+}
