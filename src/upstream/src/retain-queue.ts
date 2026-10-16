@@ -96,7 +96,9 @@ function isReplayState(value: unknown): boolean {
     return false;
   if (
     value.quarantine !== undefined &&
-    (typeof value.quarantine !== "string" || !["permanent", "bank-mismatch", "corrupt"].includes(value.quarantine))
+    value.quarantine !== "permanent" &&
+    value.quarantine !== "bank-mismatch" &&
+    value.quarantine !== "corrupt"
   )
     return false;
   if (value.gate !== undefined && value.gate !== "probe" && value.gate !== "operator") return false;

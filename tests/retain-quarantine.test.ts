@@ -368,22 +368,26 @@ it("rechecks durable quarantine after a concurrent routing change is reverted", 
   expect(rows().map((item) => item.content)).toEqual(["later", "fresh"]);
 });
 
-it("uses the original operation ID after an acknowledgement write fails", async () => {
-  enqueue("first", "X");
-  enqueue("dependent", "X");
-  vi.spyOn(RetainQueue.prototype, "remove").mockImplementationOnce(() => {
-    throw new Error("disk failure after HTTP");
-  });
-  const first = stack();
-  await first.coordinator.flushQueues();
-  expect(first.calls.map((call) => call.content)).toEqual(["first"]);
-  expect(rows()).toHaveLength(2);
-  vi.restoreAllMocks();
-  const restarted = stack();
-  await restarted.coordinator.flushQueues();
-  expect(restarted.calls.map((call) => call.content)).toEqual(["first", "dependent"]);
-  expect(restarted.calls[0].options?.operationId).toBe(first.calls[0].options?.operationId);
-});
+it.each([undefined, {}, { protected: true }] as const)(
+  "preserves the operation ID and replay state %j after an acknowledgement write fails",
+  async (replayState) => {
+    enqueue("first", "X", { replayState });
+    enqueue("dependent", "X");
+    vi.spyOn(RetainQueue.prototype, "remove").mockImplementationOnce(() => {
+      throw new Error("disk failure after HTTP");
+    });
+    const first = stack();
+    await first.coordinator.flushQueues();
+    expect(first.calls.map((call) => call.content)).toEqual(["first"]);
+    expect(rows()).toHaveLength(2);
+    expect(rows()[0].replayState).toEqual(replayState);
+    vi.restoreAllMocks();
+    const restarted = stack();
+    await restarted.coordinator.flushQueues();
+    expect(restarted.calls.map((call) => call.content)).toEqual(["first", "dependent"]);
+    expect(restarted.calls[0].options?.operationId).toBe(first.calls[0].options?.operationId);
+  },
+);
 
 it("keeps an operator-retried quarantine protected from transient abandonment", async () => {
   enqueue("repaired", "X", { replayAttempts: 4, replayState: {} });

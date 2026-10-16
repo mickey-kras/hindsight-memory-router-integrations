@@ -449,27 +449,7 @@ export class RetainCoordinator {
         this.log.error("retain replay quarantined: permanent response; payload preserved for operator review");
         return "quarantined";
       }
-      // Another admission can quarantine or protect this row while HTTP is in
-      // flight. Read its durable state and decide abandonment under one lock.
-      const { count, abandoned } = await this.storage.transaction(() => {
-        const current = queue.snapshot().find((queued) => queued.id === item.id);
-        if (!current) throw new Error(`queued retain not found: ${item.id}`);
-        const state = this.completedReplayState(queue, item);
-        const count = queue.incrementReplayAttempts(item.id);
-        queue.setReplayState(item.id, state);
-        const abandoned = count >= MAX_REPLAY_ATTEMPTS && state === undefined;
-        if (abandoned) queue.remove(item.id);
-        return { count, abandoned };
-      });
-      if (abandoned) {
-        try {
-          this.onAbandon(item, count);
-        } catch (error) {
-          this.log.error(
-            `retain abandonment handler failed for bank ${item.bankId}: ${error instanceof Error ? error.name : typeof error}`,
-          );
-        }
-      }
+      await this.recordTransientFailure(queue, item);
       return "stop";
     }
     // Deletion itself durably acknowledges success. Keep the sending marker
@@ -481,21 +461,48 @@ export class RetainCoordinator {
         // HTTP succeeded. If deletion did not commit, durably classify that
         // outcome so restart can retry the same operation ID. A failed fallback
         // leaves the conservative sending marker and stops this replay.
-        if (queue.snapshot().some((queued) => queued.id === item.id)) {
-          queue.setReplayState(item.id, this.completedReplayState(queue, item));
-        }
+        const current = queue.snapshot().find((queued) => queued.id === item.id);
+        if (current) queue.setReplayState(item.id, completedReplayState(current, item));
         throw error;
       }
     });
     return "delivered";
   }
 
+  private async recordTransientFailure(queue: RetainQueue, item: QueuedRetain): Promise<void> {
+    // Another admission can quarantine or protect this row while HTTP is in
+    // flight. Read its durable state and decide abandonment under one lock.
+    const { count, abandoned } = await this.storage.transaction(() => {
+      const current = queue.snapshot().find((queued) => queued.id === item.id);
+      if (!current) throw new Error(`queued retain not found: ${item.id}`);
+      const state = completedReplayState(current, item);
+      const count = queue.incrementReplayAttempts(item.id);
+      queue.setReplayState(item.id, state);
+      const abandoned = count >= MAX_REPLAY_ATTEMPTS && state === undefined;
+      if (abandoned) queue.remove(item.id);
+      return { count, abandoned };
+    });
+    if (abandoned) {
+      try {
+        this.onAbandon(item, count);
+      } catch (error) {
+        this.log.error(
+          `retain abandonment handler failed for bank ${item.bankId}: ${error instanceof Error ? error.name : typeof error}`,
+        );
+      }
+    }
+  }
+
   private completedReplayState(queue: RetainQueue, item: QueuedRetain): RetainReplayState | undefined {
     const current = queue.snapshot().find((queued) => queued.id === item.id);
     if (!current) throw new Error(`queued retain not found: ${item.id}`);
-    const { sending: _sending, ...state } = current.replayState ?? {};
-    return Object.keys(state).length > 0 || item.replayState !== undefined ? state : undefined;
+    return completedReplayState(current, item);
   }
+}
+
+function completedReplayState(current: QueuedRetain, item: QueuedRetain): RetainReplayState | undefined {
+  const { sending: _sending, ...state } = current.replayState ?? {};
+  return Object.keys(state).length > 0 || item.replayState !== undefined ? state : undefined;
 }
 
 function stringifyMetadataValue(value: unknown): string {
