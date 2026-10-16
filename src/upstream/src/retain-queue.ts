@@ -296,7 +296,7 @@ export class RetainQueue {
     );
   }
 
-  /** Assign missing replay identities in one durable rewrite. Caller holds the mutation lock. */
+  // Caller must hold the mutation lock.
   ensureOperationIds(operationIds: ReadonlyMap<string, string>): void {
     if (operationIds.size === 0) return;
     const contents = this.readAll();
