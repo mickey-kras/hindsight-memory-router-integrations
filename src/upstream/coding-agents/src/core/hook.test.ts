@@ -218,7 +218,7 @@ describe("buildHookOutput", () => {
     }
   });
 
-  it("reflect_failed records the bank, the deadline, and the server's full error body", async () => {
+  it("reflect_failed records the deadline and a bounded failure class", async () => {
     const diagFile = join(root, "diag.log");
     vi.stubEnv("HINDSIGHT_DIAG_FILE", diagFile);
     const body = `{"detail":"${"x".repeat(400)} upstream LLM rejected the turn"}`;
@@ -243,10 +243,10 @@ describe("buildHookOutput", () => {
       .split("\n")
       .map((line) => JSON.parse(line))
       .find((entry) => entry.event === "reflect_failed");
-    expect(failed.bank).toBe("coding-agent::demo");
+    expect(failed.bank).toBeUndefined();
     expect(failed.timeoutMs).toBe(20_000);
-    // Past describeError's default 200-char cut, where the root cause usually sits.
-    expect(failed.error).toContain("upstream LLM rejected the turn");
+    expect(failed.errorClass).toBe("operation_failed");
+    expect(failed.error).toBeUndefined();
   });
 
   it("the notice fires on the turns reflect ran, and stops once the retries are spent", async () => {

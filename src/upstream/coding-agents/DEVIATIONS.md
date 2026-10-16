@@ -7,6 +7,7 @@
 - 401/403 are terminal; upstream credential retry is replaced by runtime environment resolution on each request.
 - Optional human mode resolves a short-lived session from native OS secure storage on every request. Browser login uses the router's loopback OIDC/PKCE exchange; sign-out revokes and deletes the session. Persistent application credentials remain separate.
 - Redirects and raw server error bodies are blocked. Automatic upstream replacement and installer token migration are disabled.
+- Diagnostic and ordinary log files use an allowlist of timing, counts, booleans and bounded classifications at every verbosity. Prompts, answers, failure text, identifiers, paths, URLs and arbitrary progress messages are omitted; no content-debug mode is provided. Existing log files are not purged by an upgrade.
 - Upstream transcript parsing, provenance tags, retain payloads, hooks and harness adapters remain the baseline, with deliberate routing, privacy, installer and reliability adaptations. This is not a claim of identical behavior; the changes and source hashes below define the maintained differences.
 - Manual document ingestion uses the shared exact-title hash identity. Legacy IDs remain untouched; see the root README migration note.
 - `src/core/inject.ts` rewords the reflect rendering rules to "commit, PR and issue ids": the upstream "commit/PR/issue" slash token trips the Memory Router encoded-payload request scan, which rejects the reflect query with 422 suspicious_content.

@@ -7,7 +7,7 @@
  *          without touching config ("debug" | "info" | "warn" | "error")
  *
  * Line format: `<iso> LEVEL [scope] message {extra-json}` — greppable, tail-able. At "debug",
- * every diag event is mirrored here too, so one file tells the whole story. Never throws: logging
+ * every diag event is mirrored here too. Both files retain metadata only. Never throws: logging
  * must not break the agent.
  */
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
  * Every log this plugin keeps (plugin.log, diag.jsonl, usage.jsonl) lives here.
  *
  * They used to be split between `/tmp/hindsight-plugin.log` and `$TMPDIR/hindsight-coding-agent/`:
- * the first is shared by every user on the machine (and the lines carry queries and code), both are
+ * the first is shared by every user on the machine, both are
  * wiped on reboot, which loses exactly the history usage stats are for, and neither was bounded. A
  * sibling of the staged runtime (`~/.hindsight/coding-agents`), not a child of it: `update`
  * replaces that directory wholesale. Scratch state (session cache, cursors, locks) stays in the OS
@@ -33,7 +33,7 @@ export const LOG_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
  * Append to a log file, rotating it first once it has reached LOG_MAX_BYTES. Throws — callers are
- * the fail-open wrappers. The directory is owner-only: these lines carry prompts, queries and code.
+ * the fail-open wrappers. The directory is owner-only even though diagnostics omit content.
  *
  * Rotation is not coordinated across processes (every hook is its own process). Two that rotate at
  * once can push the just-restarted file over `.1`, losing one old generation — a bounded,
@@ -66,13 +66,52 @@ export function logFilePath(): string {
   return process.env.HINDSIGHT_LOG_FILE || join(logsDir(), "plugin.log");
 }
 
+const NUMERIC_FIELDS = new Set([
+  "ms", "chars", "count", "turns", "timeoutMs", "pages", "newChats", "failures",
+  "hostCatalog", "hindsight", "commits", "limit",
+]);
+const BOOLEAN_FIELDS = new Set(["cold", "wired", "hasSession", "appendSupported", "retry", "settled"]);
+const ERROR_CLASSES = ["timeout", "aborted", "connection_refused", "dns_failure", "operation_failed"] as const;
+type ErrorClass = (typeof ERROR_CLASSES)[number];
+
+/** Classify failures without rendering messages, stacks, URLs or arbitrary cause values. */
+function errorClass(value: unknown): ErrorClass {
+  const seen = new Set<unknown>();
+  let error: unknown = value;
+  while (error && typeof error === "object" && !seen.has(error) && seen.size < 8) {
+    seen.add(error);
+    const detail = error as { name?: unknown; code?: unknown; timedOut?: unknown; cause?: unknown };
+    if (detail.timedOut === true || detail.name === "TimeoutError" || detail.code === "ETIMEDOUT") return "timeout";
+    if (detail.name === "AbortError") return "aborted";
+    if (detail.code === "ECONNREFUSED") return "connection_refused";
+    if (detail.code === "ENOTFOUND" || detail.code === "EAI_AGAIN") return "dns_failure";
+    error = detail.cause;
+  }
+  return "operation_failed";
+}
+
+/** Shared allowlist for both sinks. Unknown fields and all free-form text are discarded. */
+export function logMetadata(extra: Record<string, unknown> = {}): Record<string, number | boolean | string> {
+  const safe: Record<string, number | boolean | string> = {};
+  for (const [key, value] of Object.entries(extra)) {
+    if (NUMERIC_FIELDS.has(key) && typeof value === "number" && Number.isFinite(value)) safe[key] = value;
+    else if (key === "status" && typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599) safe[key] = value;
+    else if (BOOLEAN_FIELDS.has(key) && typeof value === "boolean") safe[key] = value;
+    else if (key === "mode" && (value === "append" || value === "replace" || value === "skip")) safe[key] = value;
+    else if (key === "error") safe.errorClass = errorClass(value);
+    else if (key === "errorClass" && ERROR_CLASSES.some((known) => known === value)) safe.errorClass = String(value);
+  }
+  return safe;
+}
+
 function write(level: LogLevel, scope: string, msg: string, extra?: Record<string, unknown>): void {
   if (WEIGHT[level] < WEIGHT[current]) return;
   try {
+    const metadata = logMetadata(extra);
     appendLogLine(
       logFilePath(),
       `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${scope}] ${msg}` +
-        (extra && Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : "") +
+        (Object.keys(metadata).length ? ` ${JSON.stringify(metadata)}` : "") +
         "\n"
     );
   } catch {
@@ -95,9 +134,8 @@ export const log = {
  * Render a thrown value with its `cause` chain.
  *
  * Node's fetch reports EVERY transport failure as the bare string "fetch failed" and hides the real
- * reason (ECONNREFUSED, ENOTFOUND, a TLS error, a timeout) on `error.cause`. Logging only the
- * message turned a one-line diagnosis — "nothing is listening on the configured apiUrl" — into an
- * investigation, so every network failure we record goes through this instead.
+ * reason (ECONNREFUSED, ENOTFOUND, a TLS error, a timeout) on `error.cause`. This is for foreground
+ * error descriptions, never log messages. Durable diagnostics classify errors without their text.
  */
 export function describeError(value: unknown, maxChars = 200): string {
   const parts: string[] = [];

@@ -47,7 +47,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config";
-import { describeError, log } from "./log";
+import { log } from "./log";
 import { binOnPath } from "./util";
 
 export const PACKAGE_NAME = "@vectorize-io/hindsight-coding-agents";
@@ -299,11 +299,11 @@ export async function npmViewVersion(
     let out = "";
     let settled = false;
     let deadline: ReturnType<typeof setTimeout> | undefined;
-    const done = (v: string, reason?: string) => {
+    const done = (v: string, reason?: unknown) => {
       if (settled) return;
       settled = true;
       if (deadline) clearTimeout(deadline);
-      if (reason) log.info("auto-update", `version check failed: ${reason}`);
+      if (reason !== undefined) log.info("auto-update", "version check failed", { error: reason });
       resolve(v);
     };
     try {
@@ -317,12 +317,16 @@ export async function npmViewVersion(
         out += d;
       });
       // An unhandled pipe 'error' would crash the session-start hook.
-      child.stdout?.on("error", (e) => done("", describeError(e)));
+      child.stdout?.on("error", (e) => done("", e));
       // ENOENT / EACCES: npm is not where PATH said it was.
-      child.on("error", (e) => done("", describeError(e)));
+      child.on("error", (e) => done("", e));
       // close, not exit: stdout must have fully arrived before the parse.
       child.on("close", (code, signal) => {
-        if (code !== 0) return done("", `npm view exited ${code ?? signal}`);
+        if (code !== 0) {
+          // Only spawn's timeout sends SIGTERM through this private child. An external
+          // signal leaves killed false; our hard-deadline backstop sends SIGKILL instead.
+          return done("", { timedOut: code === null && signal === "SIGTERM" && child.killed === true });
+        }
         try {
           const v = JSON.parse(out.trim()) as unknown;
           // --json on one field is a quoted string; anything else is not a version to pin.
@@ -343,10 +347,10 @@ export async function npmViewVersion(
         } catch {
           /* already dead */
         }
-        done("", "npm view never exited — hard deadline");
+        done("", { timedOut: true });
       }, NPM_VIEW_HARD_DEADLINE_MS);
     } catch (e) {
-      done("", describeError(e));
+      done("", e);
     }
   });
 }
@@ -423,7 +427,7 @@ export async function maybeAutoUpdate(
         return "";
       }
 
-      log.info("auto-update", `updating the Hindsight runtime ${current} -> ${latest}`);
+      log.info("auto-update", "updating the Hindsight runtime");
       const child = spawnNpm(
         opts.spawn ?? realSpawn,
         "npx",
@@ -437,7 +441,7 @@ export async function maybeAutoUpdate(
       // A spawn failure (no npx on PATH, EACCES) arrives asynchronously as an 'error' event; an
       // unhandled one would take the session start down with it.
       child.on("error", (e) => {
-        log.warn("auto-update", `update spawn failed: ${e.message}`);
+        log.warn("auto-update", "update spawn failed", { error: e });
         releaseUpdateLock(lock);
       });
       child.unref();

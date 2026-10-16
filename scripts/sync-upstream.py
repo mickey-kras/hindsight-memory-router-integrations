@@ -102,7 +102,7 @@ def coding_patch(base: dict[str, bytes], local: dict[str, bytes]) -> bytes:
                 tree = git(root, "write-tree").decode().strip()
         return git(
             root, "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv",
-            "--find-renames=50%", "-l1000", "--no-color", "--abbrev=7", "--unified=3",
+            "--find-renames=50%", "-l1000", "--no-color", "--abbrev=7", "--unified=1",
             "--diff-algorithm=myers", "--indent-heuristic", "--src-prefix=a/", "--dst-prefix=b/", tree
         )
 
