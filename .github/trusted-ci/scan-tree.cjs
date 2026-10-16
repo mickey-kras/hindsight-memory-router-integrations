@@ -33,6 +33,12 @@ function prepare(source, destination, trusted = __dirname) {
         copy(input, output);
       } else {
         assert.ok(entry.isFile(), "Candidate must contain only regular files and directories");
+        // The pinned Aislop API always applies inline suppressions. Reject their
+        // comment syntax conservatively, including quoted examples, before scanning.
+        assert.ok(
+          !/(?:\/\/|\/\*+|#|<!--|\*)\s*aislop-ignore(?:-[A-Za-z][\w-]*)?(?![\w-])/.test(fs.readFileSync(input, "utf8")),
+          `Candidate inline scanner suppression rejected: ${path.relative(source, input)}`,
+        );
         if (entry.name === "package.json") {
           const pkg = JSON.parse(fs.readFileSync(input, "utf8"));
           for (const key of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {

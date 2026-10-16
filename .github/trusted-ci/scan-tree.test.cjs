@@ -55,6 +55,32 @@ test("all candidate Knip dependency declarations fail before scanner invocation"
     });
   }
 });
+test("candidate inline scanner suppressions fail before scanner invocation", () => {
+  const directive = "aislop" + "-ignore";
+  for (const marker of ["//", "/*", "/***", "#", "<!--", "*"]) {
+    for (const scope of ["", "-file", "-line", "-next-line"]) {
+      for (const rule of ["", " unsafe-type-assertion -- reason"]) {
+        fixture(({ source, output, write }) => {
+          write(
+            "nested/bad.ts",
+            `${marker} ${directive}${scope}${rule}\nexport const answer = JSON.parse("null") as any;`,
+          );
+          assert.throws(() => prepare(source, output), /inline scanner suppression/);
+          assert.equal(fs.existsSync(path.join(output, "nested/bad.ts")), false);
+        });
+      }
+    }
+  }
+  for (const text of [
+    `export const answer = JSON.parse("null") as any; // ${directive}`,
+    `const example = "// ${directive}-file";`,
+  ]) {
+    fixture(({ source, output, write }) => {
+      write("bad.ts", text);
+      assert.throws(() => prepare(source, output), /inline scanner suppression/);
+    });
+  }
+});
 test("symlinks and reused destinations fail closed without altering outside files", () =>
   fixture(({ source, output, write, dir }) => {
     write("source.txt", "safe");
