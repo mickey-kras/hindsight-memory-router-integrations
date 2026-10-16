@@ -15,6 +15,10 @@ async function updatePull({ github, owner, repo, number, sleep, baseBranch }) {
     const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: number });
     if (pull.state !== "open" || pull.base.ref !== baseBranch || pull.head.repo?.full_name !== `${owner}/${repo}`)
       return "ineligible";
+    // The orchestrator opts in only the next ready PR, avoiding rebase fan-out.
+    if (pull.draft !== false) return "draft or unknown readiness";
+    if (!Array.isArray(pull.labels) || !pull.labels.some((label) => label?.name === "update-branch"))
+      return "not opted in";
     // PR base metadata can lag behind the branch tip after a merge.
     const { data: main } = await github.rest.git.getRef({ owner, repo, ref: `heads/${baseBranch}` });
     const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
@@ -86,3 +90,4 @@ async function run({ github, context, core, sleep = pause }) {
 }
 
 module.exports = { run, validateContext };
+

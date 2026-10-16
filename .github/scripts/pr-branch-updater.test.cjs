@@ -7,6 +7,8 @@ function fixture({ mergeable = true, ahead = 1, fail = false, fork = false, user
   let reads = 0;
   const pull = {
     number: 1,
+    draft: false,
+    labels: [{ name: "update-branch" }],
     user,
     state: "open",
     base: { ref: "main", sha: "base" },
@@ -186,4 +188,42 @@ test("updates PRs against the release branch that triggered validation", async (
   };
   await run(args);
   assert.equal(calls.updates.length, 1);
+});
+
+
+for (const [name, patch] of Object.entries({
+  draft: { draft: true },
+  unknown: { draft: undefined },
+  unlabelled: { labels: [] },
+  missingLabels: { labels: undefined },
+  wrongCase: { labels: [{ name: "Update-Branch" }] },
+  malformed: { labels: [null, "update-branch", {}] },
+})) {
+  test(`does not update ${name} readiness`, async () => {
+    const { args, calls } = fixture();
+    const get = args.github.rest.pulls.get;
+    args.github.rest.pulls.get = async (options) => {
+      const result = await get(options);
+      Object.assign(result.data, patch);
+      return result;
+    };
+    await run(args);
+    assert.deepEqual(calls.updates, []);
+    assert.deepEqual(calls.comparisons, []);
+    assert.deepEqual(calls.failures, []);
+  });
+}
+test("rechecks opt-in after unknown mergeability", async () => {
+  const { args, calls } = fixture({ mergeable: null });
+  const get = args.github.rest.pulls.get;
+  let reads = 0;
+  args.github.rest.pulls.get = async (options) => {
+    const result = await get(options);
+    if (++reads > 1) result.data.labels = [];
+    return result;
+  };
+  await run(args);
+  assert.equal(calls.sleeps.length, 1);
+  assert.deepEqual(calls.updates, []);
+  assert.deepEqual(calls.failures, []);
 });
