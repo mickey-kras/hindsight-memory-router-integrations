@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -81,6 +81,29 @@ describe("managed harness identities", () => {
       bankId: first.bankId,
       banks: first.banks,
     });
+  });
+
+  it("reloads replaced config and rejects removed authorization on the next managed call", () => {
+    const path = setup();
+    const directory = join(dirname(path), "approved");
+    expect(managedReadScope("codex", directory, directory).bankId).toBe("A");
+    expect(managedSettings("codex").retainSessions).toBeUndefined();
+    const replacement = `${path}.new`;
+    writeFileSync(
+      replacement,
+      JSON.stringify({
+        routerUrl: url,
+        principals: {
+          codex: { additionalReadBanks: ["B"], tokenEnv: "TEST_CODEX_TOKEN", mapPathToBank: { [directory]: "B" } },
+        },
+      }),
+    );
+    renameSync(replacement, path);
+    expect(managedReadScope("codex", directory, directory)).toMatchObject({ bankId: "B", banks: ["B"] });
+    expect(managedSettings("codex").retainSessions).toBe(false);
+    writeFileSync(path, JSON.stringify({ routerUrl: url, principals: {} }));
+    expect(() => managedReadScope("codex", directory, directory)).toThrow(AccessDeniedError);
+    expect(() => managedSettings("codex")).toThrow(AccessDeniedError);
   });
 
   it("binds distinct harness principals to distinct credentials", async () => {

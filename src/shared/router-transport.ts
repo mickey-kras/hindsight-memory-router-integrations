@@ -135,13 +135,7 @@ export class RouterTransport {
   }
 
   assertAuthorized(): void {
-    const token = this.#token();
-    if (!token || !this.#tokenPattern.test(token)) throw new AccessDeniedError();
-    if (this.#deniedToken === token) throw this.#deniedError ?? new AccessDeniedError();
-    if (this.#deniedToken !== undefined) {
-      this.#deniedToken = undefined;
-      this.#deniedError = undefined;
-    }
+    this.credential();
   }
 
   authorizationIdentity(): string {
@@ -153,9 +147,13 @@ export class RouterTransport {
   }
 
   private credential(): string {
-    this.assertAuthorized();
     const token = this.#token();
-    if (!token) throw new AccessDeniedError();
+    if (!token || !this.#tokenPattern.test(token)) throw new AccessDeniedError();
+    if (this.#deniedToken === token) throw this.#deniedError ?? new AccessDeniedError();
+    if (this.#deniedToken !== undefined) {
+      this.#deniedToken = undefined;
+      this.#deniedError = undefined;
+    }
     return token;
   }
 

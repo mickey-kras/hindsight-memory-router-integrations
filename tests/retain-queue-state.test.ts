@@ -65,3 +65,31 @@ it("rejects after thirty lock waits without running the mutation and closes the 
   expect(action).not.toHaveBeenCalled();
   expect(() => fstatSync(lock.mock.calls[0][0])).toThrow(expect.objectContaining({ code: "EBADF" }));
 });
+
+it("preserves existing operation IDs and validates a batch before any rewrite", () => {
+  const filePath = join(directory, "queue.jsonl");
+  const queue = new RetainQueue({ filePath });
+  queue.enqueue("bank", { content: "legacy" });
+  queue.enqueue("bank", { content: "current", operationId: "existing" });
+  const [legacy, current] = queue.peek();
+  const original = readFileSync(filePath, "utf8");
+  expect(() =>
+    queue.ensureOperationIds(
+      new Map([
+        [legacy.id, "new"],
+        ["absent", "other"],
+      ]),
+    ),
+  ).toThrow("missing");
+  expect(readFileSync(filePath, "utf8")).toBe(original);
+  queue.ensureOperationIds(
+    new Map([
+      [legacy.id, "new"],
+      [current.id, "replacement"],
+    ]),
+  );
+  expect(queue.peek().map((item) => item.operationId)).toEqual(["new", "existing"]);
+  const duplicate = queue.peek()[0];
+  writeFileSync(filePath, `${JSON.stringify(duplicate)}\n${JSON.stringify(duplicate)}\n`);
+  expect(() => queue.ensureOperationIds(new Map([[duplicate.id, "other"]]))).toThrow("ambiguous");
+});

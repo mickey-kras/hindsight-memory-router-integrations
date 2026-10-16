@@ -291,6 +291,25 @@ export class RetainQueue {
     );
   }
 
+  /** Assign missing replay identities in one durable rewrite. Caller holds the mutation lock. */
+  ensureOperationIds(operationIds: ReadonlyMap<string, string>): void {
+    if (operationIds.size === 0) return;
+    const contents = this.readAll();
+    const seen = new Set<string>();
+    let changed = false;
+    for (const item of contents.items) {
+      const operationId = operationIds.get(item.id);
+      if (operationId === undefined) continue;
+      if (seen.has(item.id)) throw new Error("ambiguous retain queue identity");
+      seen.add(item.id);
+      if (item.operationId) continue;
+      item.operationId = operationId;
+      changed = true;
+    }
+    if (seen.size !== operationIds.size) throw new Error("missing retain queue identity");
+    if (changed) this.writeAll(contents.items, contents);
+  }
+
   /** Persist a replay identity before the request is sent. */
   ensureOperationId(id: string, operationId: string): string {
     const contents = this.readAll();

@@ -559,13 +559,12 @@ it("quarantines later writes when routing changes during an earlier replay reque
 it("turns a probe into an operator gate if routing changes while its operation ID is prepared", async () => {
   enqueue("denied", "X", { replayState: { gate: "probe", protected: true } });
   const current = stack();
-  const original = RetainQueue.prototype.ensureOperationId;
-  vi.spyOn(RetainQueue.prototype, "ensureOperationId").mockImplementationOnce(function (
+  const original = RetainQueue.prototype.ensureOperationIds;
+  vi.spyOn(RetainQueue.prototype, "ensureOperationIds").mockImplementationOnce(function (
     this: RetainQueue,
-    id,
-    operationId,
+    operationIds,
   ) {
-    const persisted = original.call(this, id, operationId);
+    const persisted = original.call(this, operationIds);
     current.config.principals.main.writeBank = "new";
     return persisted;
   });
@@ -708,4 +707,63 @@ it("keeps the conservative marker if clearing an unsent request fails", async ()
   await active.coordinator.flushQueues();
   expect(active.calls).toEqual([]);
   expect(active.logger.error.mock.calls.flat().join(" ")).not.toContain("private");
+});
+
+it("durably assigns every legacy identity before sending and reuses them after a pre-send crash", async () => {
+  enqueue("legacy-one", "X", { operationId: undefined });
+  enqueue("legacy-two", "Y", { operationId: "" });
+  enqueue("existing", "Z");
+  const prepare = RetainQueue.prototype.ensureOperationIds;
+  vi.spyOn(RetainQueue.prototype, "ensureOperationIds").mockImplementationOnce(function (this: RetainQueue, ids) {
+    prepare.call(this, ids);
+    throw new Error("crash after durable identity preparation");
+  });
+  const interrupted = stack();
+  await interrupted.coordinator.flushQueues();
+  expect(interrupted.calls).toEqual([]);
+  const persisted = rows();
+  expect(persisted.every((item) => typeof item.operationId === "string" && item.operationId.length > 0)).toBe(true);
+  expect(persisted[2].operationId).toBe("op-existing");
+  expect(persisted.every((item) => !item.replayState?.sending)).toBe(true);
+  vi.restoreAllMocks();
+  const restarted = stack();
+  await restarted.coordinator.flushQueues();
+  expect(restarted.calls.map((call) => call.options?.operationId)).toEqual(persisted.map((item) => item.operationId));
+  expect(rows()).toEqual([]);
+});
+
+it("preserves a concurrent enqueue when acknowledging a prepared legacy batch", async () => {
+  enqueue("legacy", "X", { operationId: undefined });
+  enqueue("later", "Y", { operationId: undefined });
+  const active = stack(async (content) => {
+    if (content !== "legacy") return;
+    expect(rows().every((item) => Boolean(item.operationId))).toBe(true);
+    await expect(active.coordinator.retain("main", { content: "concurrent", documentId: "X" })).resolves.toMatchObject({
+      queued: true,
+    });
+  });
+  await active.coordinator.flushQueues();
+  expect(active.calls.map((call) => call.content)).toEqual(["legacy", "later"]);
+  expect(rows().map((item) => item.content)).toEqual(["concurrent"]);
+  const restarted = stack();
+  await restarted.coordinator.flushQueues();
+  expect(restarted.calls.map((call) => call.content)).toEqual(["concurrent"]);
+});
+
+it("stops after a committed removal reports failure without resurrecting the row", async () => {
+  enqueue("first", "X");
+  enqueue("dependent", "X");
+  const remove = RetainQueue.prototype.remove;
+  vi.spyOn(RetainQueue.prototype, "remove").mockImplementationOnce(function (this: RetainQueue, id) {
+    remove.call(this, id);
+    throw new Error("directory sync acknowledgement failed");
+  });
+  const active = stack();
+  await active.coordinator.flushQueues();
+  expect(active.calls.map((call) => call.content)).toEqual(["first"]);
+  expect(rows().map((item) => item.content)).toEqual(["dependent"]);
+  vi.restoreAllMocks();
+  const restarted = stack();
+  await restarted.coordinator.flushQueues();
+  expect(restarted.calls.map((call) => call.content)).toEqual(["dependent"]);
 });

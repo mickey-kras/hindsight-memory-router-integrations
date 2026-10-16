@@ -274,6 +274,19 @@ export class RetainCoordinator {
       this.log.error("retain replay paused: HTTP outcome could not be persisted; operator repair required");
       return;
     }
+    // One durable upgrade for legacy rows before any HTTP request. Re-read on
+    // each delivery and acknowledgement so concurrent admissions are preserved.
+    const missingIds = new Map<string, string>();
+    const blockedForPreparation: QueuedRetain[] = [];
+    for (const item of items) {
+      if (item.replayState?.quarantine === "corrupt") break;
+      if (item.replayState?.quarantine || blockedForPreparation.some((prior) => sameRetainDocument(prior, item))) {
+        blockedForPreparation.push(item);
+        continue;
+      }
+      if (!item.operationId) missingIds.set(item.id, randomUUID());
+    }
+    await this.storage.transaction(() => queue.ensureOperationIds(missingIds));
     let attempts = 0;
     const gate = items.find((item) => item.replayState?.gate);
     if (gate) {
@@ -329,7 +342,7 @@ export class RetainCoordinator {
         return undefined;
       if (current.replayState?.quarantine || predecessors.some((queued) => sameRetainDocument(queued, current)))
         return { item: current, operationId: undefined };
-      const operationId = queue.ensureOperationId(current.id, current.operationId || randomUUID());
+      const operationId = current.operationId || queue.ensureOperationId(current.id, randomUUID());
       queue.setReplayState(current.id, { ...current.replayState, sending: true });
       return { item: current, operationId };
     });
@@ -423,9 +436,20 @@ export class RetainCoordinator {
       }
       return "stop";
     }
+    // Deletion itself durably acknowledges success. Keep the sending marker
+    // until that fresh-state rewrite commits, including if persistence fails.
     await this.storage.transaction(() => {
-      queue.setReplayState(item.id, this.completedReplayState(queue, item));
-      queue.remove(item.id);
+      try {
+        queue.remove(item.id);
+      } catch (error) {
+        // HTTP succeeded. If deletion did not commit, durably classify that
+        // outcome so restart can retry the same operation ID. A failed fallback
+        // leaves the conservative sending marker and stops this replay.
+        if (queue.snapshot().some((queued) => queued.id === item.id)) {
+          queue.setReplayState(item.id, this.completedReplayState(queue, item));
+        }
+        throw error;
+      }
     });
     return "delivered";
   }
