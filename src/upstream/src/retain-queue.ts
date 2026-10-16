@@ -105,6 +105,10 @@ function isReplayState(value: unknown): boolean {
   if (value.sending !== undefined && value.sending !== true) return false;
   if (value.protected !== undefined && value.protected !== true) return false;
   if (value.gate !== undefined && value.protected !== true) return false;
+  return hasValidReplayArchive(value);
+}
+
+function hasValidReplayArchive(value: Record<string, unknown>): boolean {
   if (value.quarantine === "corrupt") {
     return (
       typeof value.archive === "string" &&
