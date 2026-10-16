@@ -20,7 +20,7 @@ No wildcard, dynamic bank, fallback identity, or credential fallback.
 
 - HTTPS only; redirects rejected; runtime-resolved secrets; sanitized errors.
 - Recall/reflect share a deadline and token budget; content dedupe and deterministic order.
-- Any 401/403 discards the entire read result. Network/408/429/5xx failures permit partial reads.
+- Any 401/403 discards the entire read result. Network failures (including disconnects while consuming a successful response body) and 408/429/5xx failures permit partial reads. Malformed JSON and programming errors remain non-transient.
 - Bank/config/page reads are read operations. Scope checks still belong to Memory Router.
 
 ## Retain queues
