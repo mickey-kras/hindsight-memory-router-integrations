@@ -13,6 +13,7 @@ jobs:
   branch-name:
     name: branch name
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Validate same-repository branch name
         env:

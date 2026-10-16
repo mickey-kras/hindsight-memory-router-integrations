@@ -24,9 +24,11 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     outputs:
       coverage_artifact: ${{ steps.coverage.outputs.artifact-id }}
     env:
+      NIXPKGS_REV: e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3
       TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
     steps:
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
@@ -51,7 +53,10 @@ jobs:
         with:
           node-version: 22.23.3
           cache: npm
-          cache-dependency-path: npm-shrinkwrap.json
+          cache-dependency-path: |
+            npm-shrinkwrap.json
+            src/upstream/coding-agents/npm-shrinkwrap.json
+            .github/scripts/package-lock.json
 
       - name: Install npm packaging and audit client
         # Keep builds, test packs, release packs and audits on the reviewed npm.
@@ -103,6 +108,7 @@ jobs:
           node .github/scripts/npm-audit.cjs src/upstream/coding-agents
 
       - name: Verify package
+        id: packages
         # packages/ is gitignored: tarballs are CI-built, never committed.
         # Reproducibility is enforced twice: each package is packed twice and
         # byte-compared, and the pinned hashes in PACKAGE_SHA256 must match the
@@ -122,6 +128,7 @@ jobs:
           cmp "packages/$coding_artifact" "$RUNNER_TEMP/repack/$coding_repeat"
           node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
+          printf 'root_artifact=%s\n' "$artifact" >> "$GITHUB_OUTPUT"
 
       - name: Verify packed coding-agent installer
         run: node --test .github/scripts/coding-installer-smoke.mjs
@@ -140,16 +147,28 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
 
+      - name: Cache Nix dependency hash
+        id: nix-deps
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/nix-prefetch
+          key: nix-prefetch-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NIXPKGS_REV }}-${{ hashFiles('npm-shrinkwrap.json') }}
+
       - name: Nix dependency hash
+        env:
+          ROOT_ARTIFACT: ${{ steps.packages.outputs.root_artifact }}
+          PREFETCH_CACHE_HIT: ${{ steps.nix-deps.outputs.cache-hit }}
         run: |
-          artifact="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -r '.[0].filename')"
           expected_source="$(sed -n 's/^source=//p' PACKAGE_NIX_HASHES)"
           expected_deps="$(sed -n 's/^npm_deps=//p' PACKAGE_NIX_HASHES)"
-          test "$(nix hash file "$RUNNER_TEMP/$artifact")" = "$expected_source"
-          actual_deps="$(
-            nix run github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3#prefetch-npm-deps \
-              -- npm-shrinkwrap.json
-          )"
+          test "$(nix hash file "packages/$ROOT_ARTIFACT")" = "$expected_source"
+          cache_file="$RUNNER_TEMP/nix-prefetch/npm-deps"
+          if [ "$PREFETCH_CACHE_HIT" != true ]; then
+            mkdir -p "$(dirname "$cache_file")"
+            nix run "github:NixOS/nixpkgs/${NIXPKGS_REV}#prefetch-npm-deps" \
+              -- npm-shrinkwrap.json > "$cache_file"
+          fi
+          actual_deps="$(cat "$cache_file")"
           printf 'expected npm dependency hash: %s\nactual npm dependency hash:   %s\n' \
             "$expected_deps" "$actual_deps"
           test "$actual_deps" = "$expected_deps"
@@ -209,11 +228,6 @@ jobs:
           ref: ${{ inputs.candidate_ref }}
           sha: ${{ inputs.candidate_sha }}
 
-      - name: Setup Trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.71.2
-
       - name: Trivy dependency gate
         run: >-
           trivy fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL
@@ -251,6 +265,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.23.3
+          cache: npm
+          cache-dependency-path: |
+            npm-shrinkwrap.json
+            src/upstream/coding-agents/npm-shrinkwrap.json
       - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
       - name: Pack tested packages
         # packages/ is gitignored; the smoke gate packs from source and pins
