@@ -793,7 +793,7 @@ it("preserves every byte when a duplicate identity appears while HTTP is pending
   expect(readFileSync(path, "utf8")).toBe(concurrentBytes);
 });
 
-it.each([100, 50 * Buffer.byteLength(',"operationId":"' + "x".repeat(36) + '"')])(
+it.each([100, 50 * Buffer.byteLength(`,"operationId":"${"x".repeat(36)}"`)])(
   "replays a near-capacity legacy queue with %i bytes of headroom",
   async (headroom) => {
     for (let index = 0; index < 60; index++) {
