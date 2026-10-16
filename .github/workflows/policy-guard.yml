@@ -956,7 +956,7 @@ jobs:
                           step['uses'] = re.sub(r'@[0-9a-f]{40}$','@PINNED', uses)
               return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
           RELEASE_SOURCE_HASHES = {
-              '.github/trusted-ci/gitleaks.test.cjs': 'ee29aac9c7a3b2022ce977ab0f19b2d33589aa6b311e5b03765366f6ed0b50f3',
+              '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '75606043457a38ea831f90e0954e9f7ff956892137ab7aaedc6456de964e3983',
               '.github/scripts/trusted-ci-activation.json': '9f9ada9aad9236ad71ed86bbfbc5cf22f15ad662c6e07e795754b455bc1a0b14',
               '.github/trusted-ci/.aislop/config.yml': '798f947468c6b556b14b802f650a3c4dda6a9302ed1238e13aa078e2380472eb',
