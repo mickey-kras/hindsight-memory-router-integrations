@@ -54,8 +54,7 @@ export function managedReadScope(harness: string | undefined, directory: string,
   }
   if (
     sessionRoot &&
-    ((location !== workspace && !location.startsWith(workspace + sep)) ||
-      bankForPrincipal(snapshot.principal, sessionRoot) !== bankId)
+    (!isWithinDirectory(location, workspace) || bankForPrincipal(snapshot.principal, sessionRoot) !== bankId)
   ) {
     throw new AccessDeniedError();
   }
@@ -123,11 +122,15 @@ function bankForPrincipal(principal: ReturnType<typeof loadManagedConfig>["princ
         return [];
       }
     })
-    .filter(([path]) => location === path || location.startsWith(path + sep))
+    .filter(([path]) => isWithinDirectory(location, path))
     .sort(([a], [b]) => b.length - a.length)[0];
   if (!match) throw new AccessDeniedError();
   requireBank(principal, match[1], "read");
   return match[1];
+}
+
+function isWithinDirectory(location: string, directory: string): boolean {
+  return location === directory || location.startsWith(directory.endsWith(sep) ? directory : directory + sep);
 }
 
 export function managedToolPrefix(harness: string): string {
