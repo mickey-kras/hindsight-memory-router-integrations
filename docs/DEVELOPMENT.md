@@ -12,6 +12,7 @@ npm test --prefix src/upstream/coding-agents
 npm audit --audit-level=moderate
 npm audit --prefix src/upstream/coding-agents --audit-level=moderate
 node scripts/verify-coding-upstream.mjs
+python3 -m unittest discover -s scripts -p test_sync_upstream.py
 ```
 
 Every root Vitest invocation clean-builds both packages once before starting test workers, including targeted standalone tests. Existing `dist` directories never skip the build. CI reuses only the output of that successful test invocation for package verification; the test and upstream TypeScript checks remain separate.
