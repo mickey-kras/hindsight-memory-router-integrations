@@ -55,7 +55,7 @@ jobs:
       - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d
         with:
           category: .github/workflows/main.yml:analyze
-          upload: false
+          upload: never
           output: ${{ runner.temp }}/codeql-results
       - name: Revalidate candidate before publication
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3

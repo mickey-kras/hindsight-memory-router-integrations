@@ -57,6 +57,7 @@ test("privileged scanners use immutable helper checkout, no candidate install/ca
       }
       if (step.uses?.startsWith("actions/setup-node@")) assert.equal(step.with["package-manager-cache"], false);
       if (step.uses?.startsWith("aquasecurity/trivy-action@")) assert.equal(step.with.cache, false);
+      if (step.uses?.startsWith("github/codeql-action/analyze@")) assert.equal(step.with.upload, "never");
       if (step.uses?.startsWith("github/codeql-action/upload-sarif@")) {
         assert.equal(step.with.ref, "${{ steps.revalidated.outputs.ref }}");
         assert.equal(step.with.sha, "${{ steps.revalidated.outputs.sha }}");
