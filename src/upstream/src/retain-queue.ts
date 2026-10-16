@@ -96,7 +96,9 @@ function isReplayState(value: unknown): boolean {
     return false;
   if (
     value.quarantine !== undefined &&
-    (typeof value.quarantine !== "string" || !["permanent", "bank-mismatch", "corrupt"].includes(value.quarantine))
+    value.quarantine !== "permanent" &&
+    value.quarantine !== "bank-mismatch" &&
+    value.quarantine !== "corrupt"
   )
     return false;
   if (value.gate !== undefined && value.gate !== "probe" && value.gate !== "operator") return false;
@@ -296,7 +298,7 @@ export class RetainQueue {
     );
   }
 
-  /** Assign missing replay identities in one durable rewrite. Caller holds the mutation lock. */
+  // Caller must hold the mutation lock.
   ensureOperationIds(operationIds: ReadonlyMap<string, string>): void {
     if (operationIds.size === 0) return;
     const contents = this.readAll();
