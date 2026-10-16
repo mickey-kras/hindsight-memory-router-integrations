@@ -910,9 +910,9 @@ jobs:
                       fail(f'{path}: missing source safety contract: {contract}')
           AUTOMATION_SHAPES = {
               '.github/workflows/trusted-codeql.yml': ('521ffaa8ffd8063904da8421982e2149e3ddce56626ca95fc6abcffe5697b011',),
-              '.github/workflows/trusted-ci.yml': ('574a0a45311aca976a87e056ebdf456296d74438a46b68922d8d45351c232848',),
+              '.github/workflows/trusted-ci.yml': ('006f8c4b42451ee33f1adc1a8e6b46acbb605cf8a6c76fac1122b7c0e7bd6348',),
               '.github/workflows/trusted-aislop.yml': ('943fdcd4e062b54cfa904ca3812774ca4798a8eed92c35cb9c097e992af748b4',),
-              '.github/workflows/ci.yml': ('2b0e78b64d2a2f55ae8bf8b07c3e902dad15ba47ed66d96b5a821216917e57ed','94b99e1708f6e5fe3b78725113b4529a52768bd2972e455c5e01d69da6d53ce4','af4b2e3a471a3def863507c7f4b2bff6e9f20870ed424d4fbe32b4b1f19bed24','6afcaffa52e85b54ead0cda2122fd6cccf420c4cea40ec50d02eea8e3ca189aa','11dd037626f6a9ebfc01313ca396d46b7b963c0c370a2a3d38c4d575b787d8e6','b4b2b6359d18d81170a107431e6944dfddc49daba1f348c39095a9bcd9214ed2','c1933ebe0bfef3541249290db3cf43e407abc2c452b4f8295a4669119b03fba8','d510602234d8deae63e37b4ed575cc6d56df16792ddb46eb17e7a4fc35f360e6','8eb9a49d5364907d297539cd11e9f701619eadca0ff6463615ed4c184b543f2e','ef35ea034fcf529815e5884f0884b34cd2f035ebc30940930ac751d73f5f63b8',),
+              '.github/workflows/ci.yml': ('a61ad4bd1c6a7281742a1090d48988453afadc1f89a88cae76ac7c6ecee9e55a','2b0e78b64d2a2f55ae8bf8b07c3e902dad15ba47ed66d96b5a821216917e57ed','94b99e1708f6e5fe3b78725113b4529a52768bd2972e455c5e01d69da6d53ce4','af4b2e3a471a3def863507c7f4b2bff6e9f20870ed424d4fbe32b4b1f19bed24','6afcaffa52e85b54ead0cda2122fd6cccf420c4cea40ec50d02eea8e3ca189aa','11dd037626f6a9ebfc01313ca396d46b7b963c0c370a2a3d38c4d575b787d8e6','b4b2b6359d18d81170a107431e6944dfddc49daba1f348c39095a9bcd9214ed2','c1933ebe0bfef3541249290db3cf43e407abc2c452b4f8295a4669119b03fba8','d510602234d8deae63e37b4ed575cc6d56df16792ddb46eb17e7a4fc35f360e6','8eb9a49d5364907d297539cd11e9f701619eadca0ff6463615ed4c184b543f2e','ef35ea034fcf529815e5884f0884b34cd2f035ebc30940930ac751d73f5f63b8',),
               '.github/workflows/main.yml': ('656f5d9b3fefabf005d9729dac8d373bbe983f14550f3d4dd9e103df892225d8','8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e','4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd','75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746','11ebd1dbdd531ee9cd928002296cb0fce8e1e1e19204e5cc4f3e973672ad19da','39af26a5e2dd7f9fde43ffb1b0ca867d31433e1af2a00a0fdaba3016a164d2da','5cb2724f04882313fd92d84afcd5797c6ce62bbdf1183d3595f00e467c5e5c54','978986c5c4297bae695520a4ed1e17055c5fd41ade6e8afed8152a1003ec4259','f6e820ffb5bb391007a9b8e5ffc626a019233a8d9dacd2d6e173ed74faa19c16','11743111a6054b09a0f6b26014b8667565499ce2aa90c1252a17b1e84201760d','c14dd84414cd95fa0540f0e9a8d82d418bc7e3aa13366ed17443850ad0ee4a2d','63acb62bcc32e691693589147f5583b0f6903181a0272ff6685379b940b11098','f057995cab13e53280a6d2f9ba65275ec5599429d7fa2a5efe6c7fed85e2cc3b','d908ff6b8019f924567d359d63506f427a9ed308f0f030fc1fa1d59ddc087dcc','f39bbb9fb2b3a0088e93271d640e4de38940457861b9cfc83595a71cf2787df6','8999b3924049dfe9e7ac475a35e11bf7e18021f3a03098dc59662484c4562696','e6d13b3f4b346bc46528eb2cc9fd5d3174c2b5808bbceaf7ed657b5e1be61b92','5c8c759891221f02acd3e5baaa70ebf18c49f2bfb0b508f41a140cf80acb3fac',),
           POLICY_SOURCE
 
@@ -962,7 +962,7 @@ jobs:
               '.github/trusted-ci/npm-audit.cjs': 'f28a085b4a5b4b391dcc1e0e266cb756e107cf2e40f7f8af33c66ab22f6b6d4c',
               '.github/trusted-ci/gitleaksignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
               '.github/trusted-ci/safe-path.test.cjs': 'b612066f54b951829f3cd8e6b481a43a183c50b4879187aaa9afa8f4b0299937',
-              '.github/trusted-ci/scan-tree.test.cjs': 'a9d000da6a72ba907c651d903bd8ba711b01a94dd616aecfbd5ead6b8682bbf5',
+              '.github/trusted-ci/scan-tree.test.cjs': 'c4f28b77c49a7bc271f9b51d3d9cac618e35c8cbc4a9cd5f3160591187ef1f99',
               '.github/trusted-ci/aislop.mjs': '3c112c90bb5851c872b7e888edb784fa05fc6ac84e87ab8ab93049fa402c8450',
               '.github/trusted-ci/trivy.yaml': 'acc59baecbc3fd1279502d77c316c072987829fb4bc55485059adbe8e2a3fa7a',
               '.github/trusted-ci/codeql.yml': '4e07dcbba42d7a11491b926197791a96b943af70a20dbc0f2debd7fa2d3b00f0',
@@ -972,9 +972,9 @@ jobs:
               '.github/trusted-ci/package.json': '5db62573f0f82ee1e6774ffb51be79db2bd0aa995ace952313ac0ea47526e50e',
               '.github/trusted-ci/biome-config.json': '6f98e6f6827ef4af012c5cb5b6a4e276623d9c4183c5b614b897348aedbc8364',
               '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
-              '.github/trusted-ci/workflows.test.cjs': '8270fae56c2dcbf37481060b2f7abe7f5670dea95a18f8df1f3d7cc509e75b10',
+              '.github/trusted-ci/workflows.test.cjs': '42a5cc6830902fe4ee428923265380ec5fad43a050752b4f0c77a2a9a4d472b6',
               '.github/trusted-ci/trivyignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-              '.github/trusted-ci/scan-tree.cjs': '3f7cc055abd6c5d5868a34dc3c35f1618ee2ef32bdebcf6fdbbeb7a22c9689b8',
+              '.github/trusted-ci/scan-tree.cjs': '89ca230ea5995512295eed25dddcbbd677d0b50b723860d2f07e2995f42855ae',
               '.github/trusted-ci/gitleaks.toml': '27630a96d6c55755cc37620f3933d5cab94b1eb78a726a32e11212972525d76e',
               '.github/trusted-ci/identity.cjs': 'f456693577a70cfa91888a20de9d1e0cc28429583a9f03fd8b49ad2924e00f12',
               '.github/trusted-ci/package-lock.json': '6c86a529845d85f0b07a0deaf3eb49f9a0cf8c42bfed8c1f7efbe7ae22f4f837',

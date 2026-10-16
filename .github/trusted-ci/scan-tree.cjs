@@ -27,7 +27,7 @@ function prepare(source, destination, trusted = __dirname) {
       const input = path.join(from, entry.name);
       const output = path.join(to, entry.name);
       assert.ok(!entry.isSymbolicLink(), `Candidate symlink rejected: ${path.relative(source, input)}`);
-      if (controls.has(entry.name)) continue;
+      if (controls.has(entry.name) || /^(?:eslint\.config\.|\.eslintrc|\.eslintignore$)/.test(entry.name)) continue;
       if (entry.isDirectory()) {
         fs.mkdirSync(output);
         copy(input, output);

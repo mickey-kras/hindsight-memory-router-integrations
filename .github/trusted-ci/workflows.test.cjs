@@ -24,6 +24,9 @@ test("candidate execution has read-only permissions and fresh independent requir
     assert.deepEqual(job.permissions, { contents: "read" });
     assert.ok(!job.steps.some((s) => /upload-sarif|codeql-action\/analyze/.test(s.uses || "")));
   }
+  assert.ok(
+    ci.jobs.build.steps.some((step) => step.run === "python3 -m unittest discover -s scripts -p test_sync_upstream.py"),
+  );
   assert.deepEqual(ci.jobs.checks.needs, ["build", "security"]);
   assert.deepEqual(ci.jobs.checks.permissions, {});
   assert.equal(ci.jobs.checks.if, "${{ always() }}");

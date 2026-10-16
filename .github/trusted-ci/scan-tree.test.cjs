@@ -67,3 +67,31 @@ test("symlinks and reused destinations fail closed without altering outside file
     assert.throws(() => prepare(source, output), /fresh/);
     assert.throws(() => prepare(source, path.join(source, "nested")));
   }));
+
+test("ESLint ignore controls cannot remove source from the confined scan tree", () =>
+  fixture(({ source, output, write }) => {
+    const names = [
+      "eslint.config.js",
+      "eslint.config.cjs",
+      "eslint.config.mjs",
+      "eslint.config.ts",
+      "eslint.config.cts",
+      "eslint.config.mts",
+      ".eslintrc",
+      ".eslintrc.json",
+      ".eslintrc.js",
+      ".eslintrc.cjs",
+      ".eslintrc.yaml",
+      ".eslintrc.yml",
+      ".eslintignore",
+    ];
+    for (const directory of ["", "nested/"]) {
+      write(`${directory}unsafe.js`, "const unused = 1;");
+      for (const name of names) write(`${directory}${name}`, 'export default [{ ignores: ["**"] }];');
+    }
+    prepare(source, output);
+    for (const directory of ["", "nested/"]) {
+      assert.equal(fs.readFileSync(path.join(output, `${directory}unsafe.js`), "utf8"), "const unused = 1;");
+      for (const name of names) assert.equal(fs.existsSync(path.join(output, `${directory}${name}`)), false);
+    }
+  }));
