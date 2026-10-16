@@ -71,6 +71,11 @@ jobs:
       # The clean build in Vitest checks root source; retain test and upstream checks.
       - run: npm exec -- tsc --noEmit -p tsconfig.test.json
       - run: npm exec -- tsc --noEmit -p tsconfig.integration.json
+      - name: Require ready PR for full validation
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          echo "Draft checks finished; full validation requires ready for review."
+          exit 1
       - name: Tests and coverage
         run: npm run test:coverage
       - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
@@ -95,6 +100,9 @@ jobs:
         run: node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs .github/scripts/coverage-artifact.test.cjs
       - name: Release policy tests
         run: python3 .github/scripts/release-policy.test.py
+
+      - name: Draft validation policy tests
+        run: python3 .github/scripts/draft-validation.test.py
 
       - name: PR branch updater tests
         run: node --test .github/scripts/pr-branch-updater.test.cjs
@@ -250,7 +258,22 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Verify current PR readiness
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            const expected = context.payload.pull_request;
+            const { data: current } = await github.rest.pulls.get({
+              ...context.repo, pull_number: expected.number,
+            });
+            if (current.state !== 'open' || current.draft !== false ||
+                current.head.sha !== expected.head.sha || current.base.sha !== expected.base.sha) {
+              throw new Error('PR readiness or revision changed during full validation');
+            }
+
   combination:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft != true
     name: release combination
     continue-on-error: ${{ github.event_name == 'pull_request' && !startsWith(github.base_ref, 'release/') }}
     runs-on: ubuntu-latest
