@@ -9,7 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendLogLine, log, logsDir } from "./log";
+import { appendLogLine, log, logMetadata, logsDir } from "./log";
 
 /** Where the JSONL trail lands. Exported so a failure notice can name the file to open. */
 export function diagFilePath(): string {
@@ -17,11 +17,12 @@ export function diagFilePath(): string {
 }
 
 export function diag(harness: string, event: string, extra: Record<string, unknown> = {}): void {
-  log.debug(harness, `diag:${event}`, extra); // debug level shows the full story in ONE file
   try {
+    const metadata = logMetadata(extra);
+    log.debug(harness, `diag:${event}`, metadata);
     appendLogLine(
       diagFilePath(),
-      JSON.stringify({ ts: new Date().toISOString(), harness, event, ...extra }) + "\n"
+      JSON.stringify({ ts: new Date().toISOString(), harness, event, ...metadata }) + "\n"
     );
   } catch {
     /* diagnostics must not break the agent */

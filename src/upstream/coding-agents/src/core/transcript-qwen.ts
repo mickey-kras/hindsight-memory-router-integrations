@@ -187,7 +187,7 @@ export function readQwenTranscript(path: string): TransportTurn[] {
     log.warn("qwen-code", "transcript read failed — retaining what was parsed", {
       path,
       turns: turns.length,
-      error: err instanceof Error ? err.message : String(err),
+      error: err,
     });
   }
   return turns;

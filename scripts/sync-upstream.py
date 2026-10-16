@@ -96,7 +96,7 @@ def coding_patch(base, local):
             git(root, "add", "--force", "--all")
             if files is base:
                 tree = git(root, "write-tree").decode().strip()
-        return git(root, "diff", "--cached", "--binary", "--no-ext-diff", tree)
+        return git(root, "diff", "--cached", "--binary", "--no-ext-diff", "--unified=1", tree)
 
 
 def run(repo, commit, patch_only=False):
