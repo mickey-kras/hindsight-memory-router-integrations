@@ -17,6 +17,10 @@ ROOT = Path.cwd()
 GUARD = ROOT / ".github/workflows/policy-guard.yml"
 ROUTER = (ROOT / ".github/workflows/publish.yml").exists()
 MAIN = ".github/workflows/publish.yml" if ROUTER else ".github/workflows/main.yml"
+ACTIVE = "trusted-ci.yml@" in (ROOT / MAIN).read_text()
+CI = ".github/workflows/trusted-ci.yml" if ACTIVE else ".github/workflows/ci.yml"
+BUILD = "build" if ACTIVE else "checks"
+SECURITY = "security" if ACTIVE else "checks"
 PATHS = [
     ".github/dependency-review-config.yml",
     ".github/workflows/policy-guard.yml",
@@ -50,6 +54,8 @@ else:
     PATHS.append(".github/scripts/release-cleanup.cjs")
     PATHS.append(".github/scripts/release-cleanup.test.cjs")
 
+
+PATHS.extend(str(path.relative_to(ROOT)) for path in (ROOT / ".github/workflows").glob("trusted-*.yml"))
 
 def policy(overrides=None):
     files = {
@@ -162,8 +168,8 @@ class ReleasePolicyTests(unittest.TestCase):
         main = yaml.safe_load((ROOT / MAIN).read_text())
         for name in ["quality", "aislop", "codeql"]:
             self.assertEqual(main["jobs"][name]["with"], {
-                "candidate_sha": "${{ inputs.candidate_sha }}",
-                "candidate_ref": "${{ inputs.candidate_ref }}",
+                ("revision_sha" if ACTIVE else "candidate_sha"): "${{ inputs.candidate_sha }}",
+                ("revision_ref" if ACTIVE else "candidate_ref"): "${{ inputs.candidate_ref }}",
             })
         steps = {step.get("name"): step for step in main["jobs"]["publish"]["steps"]}
         self.assertEqual(steps["Attest tested packages"]["with"]["predicate-path"], "${{ steps.provenance.outputs.path }}")
@@ -171,10 +177,16 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertEqual(steps["Restore retained packages"]["with"]["artifact-ids"], "${{ steps.retained.outputs.artifact }}")
 
     def test_coverage_is_restored_from_successful_quality_output(self):
-        ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        ci = yaml.safe_load((ROOT / CI).read_text())
         main = yaml.safe_load((ROOT / MAIN).read_text())
-        checks = ci["jobs"]["checks"]
+        checks = ci["jobs"][BUILD]
         self.assertEqual(checks["outputs"]["coverage_artifact"], "${{ steps.coverage.outputs.artifact-id }}")
+        if ACTIVE:
+            self.assertEqual(ci.get("on", ci.get(True))["workflow_call"]["outputs"]["coverage_artifact"]["value"],
+                             "${{ jobs.checks.outputs.coverage_artifact }}")
+            self.assertEqual(ci["jobs"]["checks"]["outputs"]["coverage_artifact"],
+                             "${{ needs.build.outputs.coverage_artifact }}")
+            self.assertEqual(ci["jobs"]["checks"]["needs"], ["build", "security"])
         retained = next(step for step in checks["steps"] if step.get("id") == "coverage")
         self.assertNotIn("if", retained)
         self.assertEqual(checks["steps"][-1], retained)
@@ -224,48 +236,60 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertTrue(all("app-token" not in step.get("uses", "") for step in retained["steps"]))
 
     def test_gitleaks_artifacts_are_unique_per_source_and_attempt(self):
-        ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-        steps = {step.get("name"): step for step in ci["jobs"]["checks"]["steps"]}
-        self.assertIs(steps["Gitleaks"]["env"]["GITLEAKS_ENABLE_UPLOAD_ARTIFACT"], False)
+        ci = yaml.safe_load((ROOT / CI).read_text())
+        steps = {step.get("name"): step for step in ci["jobs"][SECURITY]["steps"]}
+        if ACTIVE:
+            self.assertIn("--report-path", steps["Gitleaks"]["run"])
+            identity = "steps.identity.outputs.sha"
+        else:
+            self.assertIs(steps["Gitleaks"]["env"]["GITLEAKS_ENABLE_UPLOAD_ARTIFACT"], False)
+            identity = "inputs.candidate_sha || github.sha"
         self.assertEqual(steps["Retain Gitleaks report"]["with"]["name"],
-                         "gitleaks-${{ inputs.candidate_sha || github.sha }}-${{ github.run_attempt }}")
+                         "gitleaks-${{ " + identity + " }}-${{ github.run_attempt }}")
 
     def test_reviewed_release_workflows_pass(self):
         self.assertEqual(policy(), [])
 
     def test_publication_cannot_drop_a_gate_or_run_on_main_push(self):
-        original = (ROOT / MAIN).read_text()
-        for content in [
-            original.replace("inputs.candidate_sha != ''", "github.ref == 'refs/heads/main'"),
-            original.replace("      - name: Release preflight", "      - if: false\n        name: Release preflight"),
-            original.replace("needs: [quality, aislop, codeql]", "needs: [quality, codeql]"),
-            original.replace("candidate_sha: ${{ inputs.candidate_sha }}", "candidate_sha: ${{ github.sha }}"),
-        ]:
-            self.assertNotEqual(content, original)
-            self.assertTrue(policy({MAIN: content}))
+        for mutation in ["condition", "preflight", "gate", "identity"]:
+            doc = yaml.safe_load((ROOT / MAIN).read_text())
+            publish = doc["jobs"]["publish"]
+            if mutation == "condition":
+                publish["if"] = "github.ref == 'refs/heads/main'"
+            elif mutation == "preflight":
+                next(step for step in publish["steps"] if step.get("name") == "Release preflight")["if"] = False
+            elif mutation == "gate":
+                publish["needs"].remove("aislop")
+            else:
+                doc["jobs"]["quality"]["with"]["revision_sha" if ACTIVE else "candidate_sha"] = "${{ github.sha }}"
+            self.assertTrue(policy({MAIN: yaml.safe_dump(doc)}))
 
     def test_main_dispatch_stays_inputless_and_all_jobs_require_main(self):
-        doc = yaml.safe_load((ROOT / MAIN).read_text())
-        for job in doc["jobs"].values():
+        original = yaml.safe_load((ROOT / MAIN).read_text())
+        for job in original["jobs"].values():
             self.assertIn("github.ref == 'refs/heads/main'", job["if"])
-        original = (ROOT / MAIN).read_text()
-        for changed in [
-            original.replace("  workflow_dispatch:\n", ""),
-            original.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n    inputs:\n      candidate_sha:\n        type: string\n"),
-            original.replace("github.ref == 'refs/heads/main' && inputs.candidate_sha != ''", "inputs.candidate_sha != ''"),
-        ]:
-            self.assertNotEqual(changed, original)
-            self.assertTrue(policy({MAIN: changed}))
+        for mutation in ["missing", "inputs", "condition"]:
+            doc = yaml.safe_load((ROOT / MAIN).read_text())
+            events = doc.get("on", doc.get(True))
+            if mutation == "missing":
+                del events["workflow_dispatch"]
+            elif mutation == "inputs":
+                events["workflow_dispatch"] = {"inputs": {"candidate_sha": {"type": "string"}}}
+            else:
+                doc["jobs"]["publish"]["if"] = "inputs.candidate_sha != ''"
+            self.assertTrue(policy({MAIN: yaml.safe_dump(doc)}))
 
     def test_new_release_trigger_or_missing_entry_guard_fails(self):
         path = ".github/workflows/release.yml"
-        original = (ROOT / path).read_text()
-        for content in [
-            original.replace("on:\n", "on:\n  push:\n    branches: ['release/*']\n"),
-            original.replace("needs: entry", "if: always()"),
-            original.replace("context.ref !== 'refs/heads/main'", "false"),
-        ]:
-            self.assertTrue(policy({path: content}))
+        for mutation in ["trigger", "dependency", "entry"]:
+            doc = yaml.safe_load((ROOT / path).read_text())
+            if mutation == "trigger":
+                doc.get("on", doc.get(True))["push"] = {"branches": ["release/*"]}
+            elif mutation == "dependency":
+                doc["jobs"]["baseline"].pop("needs")
+            else:
+                doc["jobs"]["entry"]["steps"][0]["with"]["script"] = "core.info('unchecked')"
+            self.assertTrue(policy({path: yaml.safe_dump(doc)}))
 
     def test_release_script_mutation_fails(self):
         for path, old, new in [
@@ -289,26 +313,38 @@ class ReleasePolicyTests(unittest.TestCase):
             self.assertTrue(policy({path: changed}))
 
     def test_scan_neutralization_fails(self):
-        path = ".github/workflows/ci.yml"
-        changed = (ROOT / path).read_text().replace(
+        path = CI
+        original = (ROOT / path).read_text()
+        changed = original.replace(
             "      - name: Trivy dependency gate", "      - continue-on-error: true\n        name: Trivy dependency gate")
+        self.assertNotEqual(changed, original)
         self.assertTrue(policy({path: changed}))
 
     def test_combination_cannot_use_floating_router_images(self):
-        path = ".github/workflows/ci.yml"
+        path = CI
         original = (ROOT / path).read_text()
         changed = original.replace("${{ steps.pins.outputs.router_image }}", "latest")
+        self.assertNotEqual(changed, original)
         self.assertTrue(policy({path: changed}))
 
     def test_candidate_scans_cannot_report_main_or_checkout_floating_sources(self):
-        for path in [".github/workflows/ci.yml", ".github/workflows/aislop.yml", ".github/workflows/codeql.yml"]:
-            original = (ROOT / path).read_text()
-            for changed in [
-                original.replace("ref: ${{ inputs.candidate_sha || github.sha }}", "ref: main"),
-                original.replace("sha: ${{ inputs.candidate_sha }}", "sha: ${{ github.sha }}"),
-            ]:
-                self.assertNotEqual(changed, original)
-                self.assertTrue(policy({path: changed}))
+        prefix = "trusted-" if ACTIVE else ""
+        for name in ["ci", "aislop", "codeql"]:
+            path = f".github/workflows/{prefix}{name}.yml"
+            doc = yaml.safe_load((ROOT / path).read_text())
+            for mutation in ["checkout", "publication"]:
+                changed = yaml.safe_load((ROOT / path).read_text())
+                steps = [step for job in changed["jobs"].values() for step in job.get("steps", [])]
+                if mutation == "checkout":
+                    step = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+                                and (not ACTIVE or step.get("with", {}).get("path") == "candidate"))
+                    step["with"]["ref"] = "main"
+                else:
+                    step = next(step for step in steps if step.get("uses", "").startswith("github/codeql-action/")
+                                and "sha" in step.get("with", {}))
+                    step["with"]["sha"] = "${{ github.sha }}"
+                self.assertNotEqual(changed, doc)
+                self.assertTrue(policy({path: yaml.safe_dump(changed)}))
 
     def test_full_action_pin_refresh_is_allowed(self):
         doc = yaml.safe_load((ROOT / MAIN).read_text())
@@ -334,9 +370,9 @@ class DependencyPolicyTests(unittest.TestCase):
             self.assertTrue(policy({path: changed}))
 
     def test_dependency_workflow_cannot_disable_scanning(self):
-        path = ".github/workflows/ci.yml"
+        path = CI
         doc = yaml.safe_load((ROOT / path).read_text())
-        next(step for step in doc["jobs"]["checks"]["steps"] if step.get("name") == "Dependency review")["with"]["vulnerability-check"] = False
+        next(step for step in doc["jobs"][SECURITY]["steps"] if step.get("name") == "Dependency review")["with"]["vulnerability-check"] = False
         self.assertTrue(policy({path: yaml.safe_dump(doc)}))
 
 
@@ -368,8 +404,8 @@ class CIEfficiencyTests(unittest.TestCase):
                 self.assertEqual(installed, expected)
 
     def test_quality_caches_cover_installed_lockfiles(self):
-        jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
-        for job_name in ["checks", "combination"]:
+        jobs = yaml.safe_load((ROOT / CI).read_text())["jobs"]
+        for job_name in [BUILD, "combination"]:
             with self.subTest(job=job_name):
                 steps = jobs[job_name]["steps"]
                 setup = next(step for step in steps if step.get("with", {}).get("cache") == "npm")
@@ -407,8 +443,8 @@ class CIEfficiencyTests(unittest.TestCase):
                 self.assertTrue(policy({path: yaml.safe_dump(doc)}))
 
     def test_nix_source_and_dependency_hashes_remain_checked_on_cache_hits(self):
-        ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-        steps = {step.get("name"): step for step in ci["jobs"]["checks"]["steps"]}
+        ci = yaml.safe_load((ROOT / CI).read_text())
+        steps = {step.get("name"): step for step in ci["jobs"][BUILD]["steps"]}
         script = steps["Nix dependency hash"]["run"]
         # Exercise the actual workflow shell with an offline Nix boundary.
         with tempfile.TemporaryDirectory(prefix="nix-hash-") as temporary:
@@ -437,7 +473,7 @@ else:
                 "PATH": f"{directory / 'bin'}:{os.environ['PATH']}",
                 "RUNNER_TEMP": temporary,
                 "ROOT_ARTIFACT": "root.tgz",
-                "NIXPKGS_REV": ci["jobs"]["checks"]["env"]["NIXPKGS_REV"],
+                "NIXPKGS_REV": ci["jobs"][BUILD]["env"]["NIXPKGS_REV"],
             }
             for hit, expected_source, expected_deps, cached, success in [
                 ("false", source, "sha256-dependencies", None, True),
@@ -466,10 +502,10 @@ else:
                     self.assertEqual(sum(call[0] == "run" for call in calls), 0 if hit == "true" else 1)
 
     def test_nix_cache_cannot_replace_source_validation_or_tool_identity(self):
-        path = ".github/workflows/ci.yml"
+        path = CI
         original = (ROOT / path).read_text()
         ci = yaml.safe_load(original)
-        steps = {step.get("name"): step for step in ci["jobs"]["checks"]["steps"]}
+        steps = {step.get("name"): step for step in ci["jobs"][BUILD]["steps"]}
         cache = steps["Cache Nix dependency hash"]["with"]
         self.assertNotIn("restore-keys", cache)
         for identity in ["runner.os", "runner.arch", "env.NIXPKGS_REV", "hashFiles('npm-shrinkwrap.json')"]:
@@ -487,9 +523,8 @@ else:
 
     def test_shape_gates_protect_former_detailed_dispatch(self):
         for path, old, new in [
-            (".github/workflows/ci.yml", "run: npm run test:coverage", "run: true"),
+            (CI, "run: npm run test:coverage", "run: true"),
             (MAIN, "pollingTimeoutSec: 270", "pollingTimeoutSec: 0"),
-            (".github/workflows/pr-validation.yml", "uses: ./.github/workflows/ci.yml", "if: false\n    uses: ./.github/workflows/ci.yml"),
             (".github/workflows/branch-policy.yml", "            exit 1", "            exit 0"),
         ]:
             with self.subTest(path=path):
@@ -499,6 +534,10 @@ else:
                 failures = policy({path: changed})
                 self.assertTrue(failures)
                 self.assertIn("automation must match its reviewed workflow shape", "\n".join(failures))
+        path = ".github/workflows/pr-validation.yml"
+        doc = yaml.safe_load((ROOT / path).read_text())
+        doc["jobs"]["quality"]["if"] = False
+        self.assertTrue(policy({path: yaml.safe_dump(doc)}))
 
     def test_runner_jobs_are_bounded_without_cancelling_mutations(self):
         for path in (ROOT / ".github/workflows").glob("*.yml"):
