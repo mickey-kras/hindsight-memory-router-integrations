@@ -263,7 +263,7 @@ export class RetainCoordinator {
     principalId: string,
     credentials: ReturnType<PrincipalCredentialResolver["resolve"]>,
   ): Promise<void> {
-    const client = this.clients.forAgent(credentials);
+    let client = this.clients.forAgent(credentials);
     const queue = this.queueFor(principalId);
     let items = await this.storage.transaction(() => {
       this.prepareQueue(principalId, queue);
@@ -284,8 +284,11 @@ export class RetainCoordinator {
         predecessors.some((item) => item.replayState?.quarantine === "corrupt" || sameRetainDocument(item, gate))
       )
         return;
+      const probe = this.clients.createRetainReplayProbe(credentials);
       attempts++;
-      if ((await this.deliverQueued(principalId, client, queue, gate)) !== "delivered") return;
+      if ((await this.deliverQueued(principalId, probe.client, queue, gate)) !== "delivered") return;
+      if (!probe.commit()) return;
+      client = probe.client;
       items = await this.storage.transaction(() => queue.snapshot());
       // Recovery-edited backlogs can contain another gate owner. Never let a
       // successful probe implicitly clear a different persisted principal gate.
