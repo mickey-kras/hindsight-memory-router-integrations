@@ -1,7 +1,10 @@
 """Exercise release policy against meaningful workflow and source mutations."""
 
+import base64
+import hashlib
 import json
 import os
+import shlex
 import sys
 import tempfile
 import subprocess
@@ -20,6 +23,8 @@ PATHS = [
     MAIN,
     ".github/workflows/release.yml",
     ".github/workflows/ci.yml",
+    ".github/workflows/pr-validation.yml",
+    ".github/workflows/branch-policy.yml",
     ".github/workflows/aislop.yml",
     ".github/workflows/codeql.yml",
     ".github/workflows/pr-branch-updater.yml",
@@ -333,6 +338,182 @@ class DependencyPolicyTests(unittest.TestCase):
         doc = yaml.safe_load((ROOT / path).read_text())
         next(step for step in doc["jobs"]["checks"]["steps"] if step.get("name") == "Dependency review")["with"]["vulnerability-check"] = False
         self.assertTrue(policy({path: yaml.safe_dump(doc)}))
+
+
+class CIEfficiencyTests(unittest.TestCase):
+    def test_credentialed_jobs_disable_dependency_caching_and_keep_locked_installs(self):
+        for path, job_name, expected in [
+            (MAIN, "sonar", {".", "src/upstream/coding-agents"}),
+            (MAIN, "publish", {".", "src/upstream/coding-agents", ".github/scripts"}),
+            (".github/workflows/release.yml", "prepare-release", {".", "src/upstream/coding-agents", ".github/scripts"}),
+        ]:
+            with self.subTest(workflow=path, job=job_name):
+                job = yaml.safe_load((ROOT / path).read_text())["jobs"][job_name]
+                setups = [step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-node@")]
+                self.assertTrue(setups)
+                for setup in setups:
+                    self.assertNotIn("cache", setup["with"])
+                    self.assertNotIn("cache-dependency-path", setup["with"])
+                    self.assertIs(setup["with"].get("package-manager-cache"), False)
+                self.assertFalse(any(step.get("uses", "").startswith("actions/cache") for step in job["steps"]))
+                installed = set()
+                for step in job["steps"]:
+                    for line in step.get("run", "").splitlines():
+                        if not line.strip().startswith("npm ci"):
+                            continue
+                        command = shlex.split(line)
+                        if command[:2] == ["npm", "ci"]:
+                            installed.add(command[command.index("--prefix") + 1] if "--prefix" in command else ".")
+                            self.assertIn("--ignore-scripts", command)
+                self.assertEqual(installed, expected)
+
+    def test_quality_caches_cover_installed_lockfiles(self):
+        jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+        for job_name in ["checks", "combination"]:
+            with self.subTest(job=job_name):
+                steps = jobs[job_name]["steps"]
+                setup = next(step for step in steps if step.get("with", {}).get("cache") == "npm")
+                cached = set(setup["with"].get("cache-dependency-path", "").splitlines())
+                installed = set()
+                for step in steps:
+                    for line in step.get("run", "").splitlines():
+                        if not line.strip().startswith("npm ci"):
+                            continue
+                        command = shlex.split(line)
+                        if command[:2] != ["npm", "ci"]:
+                            continue
+                        prefix = Path(command[command.index("--prefix") + 1]) if "--prefix" in command else Path(".")
+                        lockfile = next(prefix / name for name in ["npm-shrinkwrap.json", "package-lock.json"]
+                                        if (ROOT / prefix / name).is_file())
+                        installed.add(str(lockfile))
+                self.assertTrue(installed, "Quality jobs must retain locked dependency installation")
+                self.assertTrue(installed <= cached, f"Uncached installation lockfiles: {installed - cached}")
+
+    def test_credentialed_jobs_cannot_restore_dependency_caching(self):
+        for path, job_name, locks in [
+            (MAIN, "sonar", "npm-shrinkwrap.json\nsrc/upstream/coding-agents/npm-shrinkwrap.json\n"),
+            (MAIN, "publish", "npm-shrinkwrap.json\nsrc/upstream/coding-agents/npm-shrinkwrap.json\n.github/scripts/package-lock.json\n"),
+            (".github/workflows/release.yml", "prepare-release", "npm-shrinkwrap.json\nsrc/upstream/coding-agents/npm-shrinkwrap.json\n.github/scripts/package-lock.json\n"),
+        ]:
+            with self.subTest(workflow=path, job=job_name):
+                doc = yaml.safe_load((ROOT / path).read_text())
+                setup = next(step for step in doc["jobs"][job_name]["steps"]
+                             if step.get("uses", "").startswith("actions/setup-node@"))["with"]
+                setup["package-manager-cache"] = True
+                self.assertTrue(policy({path: yaml.safe_dump(doc)}))
+                del setup["package-manager-cache"]
+                self.assertTrue(policy({path: yaml.safe_dump(doc)}))
+                setup.update({"cache": "npm", "cache-dependency-path": locks})
+                self.assertTrue(policy({path: yaml.safe_dump(doc)}))
+
+    def test_nix_source_and_dependency_hashes_remain_checked_on_cache_hits(self):
+        ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        steps = {step.get("name"): step for step in ci["jobs"]["checks"]["steps"]}
+        script = steps["Nix dependency hash"]["run"]
+        # Exercise the actual workflow shell with an offline Nix boundary.
+        with tempfile.TemporaryDirectory(prefix="nix-hash-") as temporary:
+            directory = Path(temporary)
+            (directory / "packages").mkdir()
+            (directory / "packages/root.tgz").write_bytes(b"verified tarball")
+            (directory / "bin").mkdir()
+            nix = directory / "bin/nix"
+            nix.write_text("""#!/usr/bin/env python3
+import base64, hashlib, json, os, sys
+from pathlib import Path
+with Path('calls').open('a') as log:
+    log.write(json.dumps(sys.argv[1:]) + '\\n')
+if sys.argv[1:3] == ['hash', 'file']:
+    print('sha256-' + base64.b64encode(hashlib.sha256(Path(sys.argv[3]).read_bytes()).digest()).decode())
+elif sys.argv[1:] == ['run', 'github:NixOS/nixpkgs/' + os.environ['NIXPKGS_REV'] + '#prefetch-npm-deps', '--', 'npm-shrinkwrap.json']:
+    print('sha256-dependencies')
+else:
+    sys.exit('Unexpected Nix command')
+""")
+            nix.chmod(0o755)
+            source = "sha256-" + base64.b64encode(hashlib.sha256(b"verified tarball").digest()).decode()
+            cache = directory / "nix-prefetch/npm-deps"
+            environment = {
+                **os.environ,
+                "PATH": f"{directory / 'bin'}:{os.environ['PATH']}",
+                "RUNNER_TEMP": temporary,
+                "ROOT_ARTIFACT": "root.tgz",
+                "NIXPKGS_REV": ci["jobs"]["checks"]["env"]["NIXPKGS_REV"],
+            }
+            for hit, expected_source, expected_deps, cached, success in [
+                ("false", source, "sha256-dependencies", None, True),
+                ("true", source, "sha256-dependencies", "sha256-dependencies", True),
+                ("true", "sha256-wrong-source", "sha256-dependencies", "sha256-dependencies", False),
+                ("true", source, "sha256-new-dependencies", "sha256-dependencies", False),
+                ("true", source, "sha256-dependencies", None, False),
+                ("false", source, "sha256-dependencies", "stale-prefix-match", True),
+            ]:
+                with self.subTest(hit=hit, source=expected_source, deps=expected_deps, cached=cached):
+                    cache.parent.mkdir(exist_ok=True)
+                    cache.unlink(missing_ok=True)
+                    if cached is not None:
+                        cache.write_text(cached + "\n")
+                    (directory / "calls").write_text("")
+                    (directory / "PACKAGE_NIX_HASHES").write_text(
+                        f"source={expected_source}\nnpm_deps={expected_deps}\n")
+                    result = subprocess.run(
+                        ["bash", "-euo", "pipefail", "-c", script], cwd=directory,
+                        env={**environment, "PREFETCH_CACHE_HIT": hit},
+                        capture_output=True, text=True, check=False,
+                    )
+                    self.assertEqual(result.returncode == 0, success, result.stderr)
+                    calls = [json.loads(line) for line in (directory / "calls").read_text().splitlines()]
+                    self.assertEqual(calls[0], ["hash", "file", "packages/root.tgz"])
+                    self.assertEqual(sum(call[0] == "run" for call in calls), 0 if hit == "true" else 1)
+
+    def test_nix_cache_cannot_replace_source_validation_or_tool_identity(self):
+        path = ".github/workflows/ci.yml"
+        original = (ROOT / path).read_text()
+        ci = yaml.safe_load(original)
+        steps = {step.get("name"): step for step in ci["jobs"]["checks"]["steps"]}
+        cache = steps["Cache Nix dependency hash"]["with"]
+        self.assertNotIn("restore-keys", cache)
+        for identity in ["runner.os", "runner.arch", "env.NIXPKGS_REV", "hashFiles('npm-shrinkwrap.json')"]:
+            self.assertIn(identity, cache["key"])
+        self.assertNotIn("npm pack", steps["Nix dependency hash"]["run"])
+        self.assertNotIn("if", steps["Nix dependency hash"])
+        for old, new in [
+            ('test "$(nix hash file "packages/$ROOT_ARTIFACT")" = "$expected_source"', "true"),
+            ('test "$actual_deps" = "$expected_deps"', "true"),
+            ("${{ env.NIXPKGS_REV }}", "unpinned"),
+        ]:
+            changed = original.replace(old, new)
+            self.assertNotEqual(changed, original)
+            self.assertTrue(policy({path: changed}))
+
+    def test_shape_gates_protect_former_detailed_dispatch(self):
+        for path, old, new in [
+            (".github/workflows/ci.yml", "run: npm run test:coverage", "run: true"),
+            (MAIN, "pollingTimeoutSec: 270", "pollingTimeoutSec: 0"),
+            (".github/workflows/pr-validation.yml", "uses: ./.github/workflows/ci.yml", "if: false\n    uses: ./.github/workflows/ci.yml"),
+            (".github/workflows/branch-policy.yml", "            exit 1", "            exit 0"),
+        ]:
+            with self.subTest(path=path):
+                original = (ROOT / path).read_text()
+                changed = original.replace(old, new)
+                self.assertNotEqual(changed, original)
+                failures = policy({path: changed})
+                self.assertTrue(failures)
+                self.assertIn("automation must match its reviewed workflow shape", "\n".join(failures))
+
+    def test_runner_jobs_are_bounded_without_cancelling_mutations(self):
+        for path in (ROOT / ".github/workflows").glob("*.yml"):
+            doc = yaml.safe_load(path.read_text())
+            for name, job in doc.get("jobs", {}).items():
+                if "runs-on" in job:
+                    with self.subTest(path=path.name, job=name):
+                        self.assertGreater(job.get("timeout-minutes", 0), 0)
+                        self.assertLessEqual(job["timeout-minutes"], 30)
+        for name in ["main", "release", "dependabot-preparation", "dependabot-auto-merge"]:
+            doc = yaml.safe_load((ROOT / f".github/workflows/{name}.yml").read_text())
+            self.assertIs(doc["concurrency"]["cancel-in-progress"], False)
+        guard = yaml.safe_load(GUARD.read_text())
+        self.assertIn("github.event.pull_request.number", guard["concurrency"]["group"])
+        self.assertIs(guard["concurrency"]["cancel-in-progress"], True)
 
 
 if __name__ == "__main__":
