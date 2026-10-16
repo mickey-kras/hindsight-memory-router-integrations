@@ -43,7 +43,7 @@ function enqueue(content: string, documentId?: string, extra: Partial<QueuedReta
 }
 function stack(
   behavior: (content: string) => void | Promise<void> = () => {},
-  options: { bank?: string; age?: number; maxItems?: number } = {},
+  options: { bank?: string; age?: number; maxItems?: number; maxBytes?: number } = {},
 ) {
   const calls: Array<{ bank: string; content: string; options?: Record<string, unknown> }> = [];
   const logger = { warn: vi.fn(), error: vi.fn() };
@@ -74,6 +74,7 @@ function stack(
     logger,
     queueMaxAgeMs: options.age,
     queueMaxItems: options.maxItems,
+    queueMaxBytes: options.maxBytes,
   });
   return { coordinator, calls, logger, config };
 }
@@ -551,4 +552,45 @@ it("rejects a fresh retain if routing changes while delivery preparation is awai
   await expect(sending).rejects.toMatchObject({ name: "RetainAuthorizationError", bank: "bank" });
   expect(current.calls).toEqual([]);
   expect(rows()).toEqual([]);
+});
+
+it("does not abandon a row quarantined while its fifth HTTP attempt is pending", async () => {
+  enqueue("older", "X", { replayAttempts: 4 });
+  let release!: () => void;
+  let entered!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const active = stack(async () => {
+    entered();
+    await pending;
+    throw http(503);
+  });
+  const flushing = active.coordinator.flushQueues();
+  await started;
+  active.config.principals.main.writeBank = "new-bank";
+  await active.coordinator.retain("main", { content: "fresh", documentId: "Y" });
+  expect(rows()[0].replayState?.quarantine).toBe("bank-mismatch");
+  release();
+  await flushing;
+  expect(rows().map((row) => row.content)).toEqual(["older", "fresh"]);
+  expect(rows()[0]).toMatchObject({ replayAttempts: 5, replayState: { quarantine: "bank-mismatch" } });
+  expect(active.logger.error.mock.calls.flat().join(" ")).not.toContain("abandon");
+});
+
+it("reports operator action for an over-cap barrier without sending or accepting fresh work", async () => {
+  writeFileSync(path, "x\n");
+  const active = stack(undefined, { maxBytes: 300 });
+  await active.coordinator.flushQueues();
+  expect(active.logger.error.mock.calls.flat().join(" ")).toContain(
+    "increase retainQueueMaxBytes or repair the backlog",
+  );
+  await expect(active.coordinator.retain("main", { content: "fresh" })).rejects.toMatchObject({
+    code: "RETAIN_QUEUE_REWRITE_CAPACITY",
+  });
+  expect(active.calls).toEqual([]);
+  expect(readFileSync(path, "utf8")).toBe("x\n");
 });

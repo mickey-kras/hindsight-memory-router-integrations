@@ -6,6 +6,7 @@ import {
   type QueuedRetain,
   type QueuedRetainPayload,
   RetainQueue,
+  RetainQueueRewriteCapacityError,
   type RetainReplayState,
   sameRetainDocument,
 } from "../upstream/src/retain-queue.js";
@@ -186,6 +187,12 @@ export class RetainCoordinator {
           );
           return;
         }
+        if (error instanceof RetainQueueRewriteCapacityError) {
+          this.log.error(
+            `retain queue replay paused for ${this.queueLabel(file)}: rewrite exceeds byte limit; original bytes preserved; increase retainQueueMaxBytes or repair the backlog`,
+          );
+          continue;
+        }
         this.log.error(
           `retain queue replay failed for ${this.queueLabel(file)}; remaining items stay queued for retry`,
         );
@@ -364,9 +371,17 @@ export class RetainCoordinator {
         this.log.error("retain replay quarantined: permanent response; payload preserved for operator review");
         return "quarantined";
       }
-      const count = await this.storage.transaction(() => queue.incrementReplayAttempts(item.id));
-      if (count >= MAX_REPLAY_ATTEMPTS && item.replayState === undefined) {
-        await this.storage.transaction(() => queue.remove(item.id));
+      // Another admission can quarantine or protect this row while HTTP is in
+      // flight. Read its durable state and decide abandonment under one lock.
+      const { count, abandoned } = await this.storage.transaction(() => {
+        const current = queue.snapshot().find((queued) => queued.id === item.id);
+        if (!current) throw new Error(`queued retain not found: ${item.id}`);
+        const count = queue.incrementReplayAttempts(item.id);
+        const abandoned = count >= MAX_REPLAY_ATTEMPTS && current.replayState === undefined;
+        if (abandoned) queue.remove(item.id);
+        return { count, abandoned };
+      });
+      if (abandoned) {
         try {
           this.onAbandon(item, count);
         } catch (error) {

@@ -171,6 +171,14 @@ export interface RetainQueueOptions {
   };
 }
 
+export class RetainQueueRewriteCapacityError extends RangeError {
+  readonly code = "RETAIN_QUEUE_REWRITE_CAPACITY";
+  constructor() {
+    super("retain queue rewrite exceeds configured byte limit; original queue preserved; increase the limit or repair the backlog");
+    this.name = "RetainQueueRewriteCapacityError";
+  }
+}
+
 export class RetainQueue {
   private readonly filePath: string;
   private readonly maxAgeMs: number;
@@ -514,7 +522,13 @@ export class RetainQueue {
       this.cachedSize = 0;
       return;
     }
-    writePrivateQueueFile(this.filePath, items.map((i) => JSON.stringify(i)).join("\n") + "\n");
+    const serialized = items.map((i) => JSON.stringify(i)).join("\n") + "\n";
+    // Recovery barriers and replay metadata can grow an otherwise in-limit
+    // queue. Never replace readable source bytes with an unreadable generation.
+    if (this.options.maxReadBytes !== undefined && Buffer.byteLength(serialized) > this.options.maxReadBytes) {
+      throw new RetainQueueRewriteCapacityError();
+    }
+    writePrivateQueueFile(this.filePath, serialized);
     this.cachedSize = items.length;
   }
 }

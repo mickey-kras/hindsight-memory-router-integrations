@@ -546,3 +546,47 @@ it("atomically classifies many mismatches in one replacement and leaves all byte
     items.map((record) => ({ ...record, replayState: { quarantine: "bank-mismatch" } })),
   );
 });
+
+it("never expands a corrupt queue beyond its bounded read limit", () => {
+  const raw = Buffer.from("x\n");
+  writeFileSync(filePath, raw);
+  const queue = new RetainQueue({ filePath, maxReadBytes: 300 });
+  expect(() => queue.snapshot()).toThrow(/rewrite exceeds configured byte limit/);
+  expect(readFileSync(filePath)).toEqual(raw);
+  expect(recoveries()).toEqual([raw]);
+  expect(() => queue.snapshot()).toThrow(/rewrite exceeds configured byte limit/);
+  expect(readFileSync(filePath)).toEqual(raw);
+  expect(() => new RetainQueue({ filePath, maxReadBytes: 300 }).snapshot()).toThrow(
+    /rewrite exceeds configured byte limit/,
+  );
+  expect(recoveries()).toEqual([raw]);
+  const recovered = new RetainQueue({ filePath, maxReadBytes: 1000 }).snapshot();
+  expect(recovered[0].replayState).toMatchObject({ quarantine: "corrupt", length: 2 });
+  expect(recoveries()).toEqual([raw]);
+});
+
+it("preserves valid rows on both sides of an over-cap corruption barrier", () => {
+  const first = item("before");
+  const last = item("after");
+  const raw = Buffer.from(`${line(first)}x\n${line(last)}`);
+  writeFileSync(filePath, raw);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const queue = new RetainQueue({ filePath, maxReadBytes: raw.length });
+    expect(() => queue.snapshot()).toThrow(/rewrite exceeds configured byte limit/);
+    expect(readFileSync(filePath)).toEqual(raw);
+    expect(recoveries()).toEqual([Buffer.from("x\n")]);
+  }
+  const restored = new RetainQueue({ filePath, maxReadBytes: raw.length + 1000 }).snapshot();
+  expect(restored[0]).toEqual(first);
+  expect(restored[1].replayState?.quarantine).toBe("corrupt");
+  expect(restored[2]).toEqual(last);
+});
+
+it("rejects replay metadata expansion without replacing an in-limit queue", () => {
+  const original = line(item("bounded"));
+  writeFileSync(filePath, original);
+  const queue = new RetainQueue({ filePath, maxReadBytes: Buffer.byteLength(original) });
+  expect(() => queue.ensureOperationId("bounded", "new-operation")).toThrow(/rewrite exceeds configured byte limit/);
+  expect(readFileSync(filePath, "utf8")).toBe(original);
+  expect(queue.snapshot()).toEqual([JSON.parse(original)]);
+});
