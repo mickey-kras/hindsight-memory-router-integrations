@@ -663,3 +663,49 @@ it("keeps protection on a fresh row accepted during gated replay contention", as
   expect(rows().map((row) => row.content)).toEqual(["denied", "fresh"]);
   expect(rows()[1].replayState).toEqual({ protected: true });
 });
+
+it.each(["removed", "invalid"])(
+  "clears the unsent marker when routing becomes %s after preparation",
+  async (failure) => {
+    enqueue("waiting", "X", failure === "invalid" ? { replayState: { gate: "probe", protected: true } } : {});
+    const original = rows();
+    const active = stack();
+    const route = { ...active.config.principals.main };
+    const setReplayState = RetainQueue.prototype.setReplayState;
+    vi.spyOn(RetainQueue.prototype, "setReplayState").mockImplementationOnce(function (this: RetainQueue, id, state) {
+      setReplayState.call(this, id, state);
+      expect(rows()[0].replayState?.sending).toBe(true);
+      if (failure === "removed") Reflect.deleteProperty(active.config.principals, "main");
+      else active.config.principals.main.writeBank = "invalid/bank";
+    });
+    await active.coordinator.flushQueues();
+    expect(active.calls).toEqual([]);
+    expect(rows()).toEqual(original);
+    active.config.principals.main = route;
+    await active.coordinator.flushQueues();
+    expect(active.calls.map((call) => call.content)).toEqual(["waiting"]);
+    expect(active.calls[0].options?.operationId).toBe("op-waiting");
+    expect(rows()).toEqual([]);
+  },
+);
+
+it("keeps the conservative marker if clearing an unsent request fails", async () => {
+  enqueue("waiting", "X");
+  const active = stack();
+  const setReplayState = RetainQueue.prototype.setReplayState;
+  vi.spyOn(RetainQueue.prototype, "setReplayState")
+    .mockImplementationOnce(function (this: RetainQueue, id, state) {
+      setReplayState.call(this, id, state);
+      active.config.principals.main.writeBank = "invalid/bank";
+    })
+    .mockImplementationOnce(() => {
+      throw new Error("private storage failure");
+    });
+  await active.coordinator.flushQueues();
+  expect(active.calls).toEqual([]);
+  expect(rows()[0]).toMatchObject({ content: "waiting", operationId: "op-waiting", replayState: { sending: true } });
+  active.config.principals.main.writeBank = "bank";
+  await active.coordinator.flushQueues();
+  expect(active.calls).toEqual([]);
+  expect(active.logger.error.mock.calls.flat().join(" ")).not.toContain("private");
+});

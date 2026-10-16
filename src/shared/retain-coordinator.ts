@@ -339,7 +339,15 @@ export class RetainCoordinator {
     const operationId = prepared.operationId;
     // Routing may change while a previous HTTP request or storage lock is awaited.
     // Keep local authorization failures outside the HTTP error classifier.
-    if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
+    let currentBank: string;
+    try {
+      currentBank = this.credentials.resolveWriteBank(principalId);
+    } catch (error) {
+      // No HTTP request started: discard only the provisional sending marker.
+      await this.storage.transaction(() => queue.setReplayState(item.id, this.completedReplayState(queue, item)));
+      throw error;
+    }
+    if (item.bankId !== currentBank) {
       await this.storage.transaction(() =>
         queue.setReplayState(item.id, {
           ...item.replayState,
