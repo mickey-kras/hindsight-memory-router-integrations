@@ -80,7 +80,7 @@ function refresh(directory, number, head, base, output) {
   run("node", ["scripts/verify-coding-upstream.mjs"]);
   run("node", ["scripts/verify-openclaw-overlay.mjs"]);
   for (const directory of PACKAGES) {
-    run("npm", ["ci"], join(root, directory));
+    run("npm", ["ci", "--ignore-scripts"], join(root, directory));
     run("npm", ["run", "build"], join(root, directory));
   }
   mkdirSync(join(root, "packages"), { recursive: true });

@@ -73,9 +73,14 @@ test("scanner configuration and commands disable candidate tool execution and su
   assert.match(gitleaks, /--gitleaks-ignore-path trusted\/\.github\/trusted-ci\/gitleaksignore/);
   const semgrep = security.find((s) => s.name === "Semgrep").run;
   assert.match(semgrep, /--config \/trusted\/\.semgrep.yml --no-git-ignore/);
+  assert.match(semgrep, /--disable-nosem/);
   assert.match(semgrep, /scan:\/src:ro/);
   const wrapper = readFileSync(resolve(__dirname, "aislop.mjs"), "utf8");
   assert.match(wrapper, /process.env.PATH = safeTools.safePath/);
   assert.match(wrapper, /loadConfig\(trusted\)/);
   assert.match(wrapper, /process.env.AISLOP_NO_TELEMETRY = ['"]1['"]/);
+});
+
+test("trusted scanner activation policy rejects tampering", () => {
+  execFileSync("python3", [resolve(__dirname, "policy.test.py")], { encoding: "utf8" });
 });
