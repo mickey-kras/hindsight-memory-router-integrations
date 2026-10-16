@@ -144,7 +144,7 @@
       "retainQueueMaxAgeMs": {
         "type": "integer",
         "minimum": -1,
-        "description": "Max age of queued retains (-1 keeps forever; 0 expires entries older than the cleanup time).",
+        "description": "Max age of ordinary queued retains (-1 keeps forever; 0 expires older entries). Quarantines, ordering barriers, dependent successors and authorization-protected backlog are exempt.",
         "default": -1
       },
       "retainQueueMaxItems": {

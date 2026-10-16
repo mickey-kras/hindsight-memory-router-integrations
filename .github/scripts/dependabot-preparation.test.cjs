@@ -1319,8 +1319,9 @@ test("every packaging job selects and verifies the same npm before install, test
     ),
   );
   const expectedJobs = new Set([
-    "ci.yml/checks",
-    "ci.yml/combination",
+    ...(workflows["main.yml"].jobs.quality.uses.includes("trusted-ci.yml@")
+      ? []
+      : ["ci.yml/checks", "ci.yml/combination"]),
     "trusted-ci.yml/build",
     "trusted-ci.yml/combination",
     "main.yml/publish",

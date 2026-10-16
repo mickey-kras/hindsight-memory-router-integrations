@@ -30,13 +30,18 @@ class TrustedScannerBootstrapTests(unittest.TestCase):
     def test_future_callers_are_admitted_only_at_the_reviewed_immutable_source(self):
         fixture = self.activation()
         self.assertRegex(fixture["source_sha"], r"^[a-f0-9]{40}$")
-        self.assertEqual(policy(fixture["workflows"]), [])
+        self.assertEqual(policy({**fixture["workflows"], **fixture["files"]}), [])
         for path, content in fixture["workflows"].items():
             if fixture["source_sha"] not in content:
                 continue
             with self.subTest(path=path):
                 changed = content.replace(fixture["source_sha"], "f" * 40)
-                self.assertTrue(policy({**fixture["workflows"], path: changed}))
+                self.assertTrue(policy({**fixture["workflows"], **fixture["files"], path: changed}))
+
+    def test_activation_test_update_requires_exact_reviewed_bytes(self):
+        fixture = self.activation()
+        for path, content in fixture["files"].items():
+            self.assertTrue(policy({**fixture["workflows"], **fixture["files"], path: content + "\nchanged"}))
 
     def test_immutable_closure_and_configs_cannot_be_changed_or_disabled(self):
         for path in [

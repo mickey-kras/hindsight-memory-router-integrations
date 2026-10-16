@@ -615,12 +615,8 @@ describe("RetainCoordinator", () => {
     await expect(replay.retain.flushQueues()).resolves.toBeUndefined();
 
     expect(readFileSync(blocked.path, "utf8")).toBe(before);
-    // Delivery succeeded before the filesystem rejected removal. Retries must
-    // retain the original operation ID so the server can deduplicate them.
-    expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
-      { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
-      { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
-    ]);
+    // Recovery and ordinal barriers must become durable before any HTTP request.
+    expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
     expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
     expect(logger.error).toHaveBeenCalledTimes(2);
     expect(logger.error.mock.calls.flat().join("\n")).not.toContain("private");
@@ -634,7 +630,7 @@ describe("RetainCoordinator", () => {
     ]);
     const archive = readdirSync(recoveryDir).find((file) => file.endsWith(".jsonl"));
     expect(readFileSync(join(recoveryDir, archive as string), "utf8")).toBe(corrupt);
-    expect(() => readFileSync(blocked.path)).toThrow();
+    expect(JSON.parse(readFileSync(blocked.path, "utf8")).replayState.quarantine).toBe("corrupt");
   });
 
   it("defers every principal after a shared lock timeout and retries on the next flush", async () => {
@@ -733,7 +729,9 @@ describe("RetainCoordinator", () => {
     try {
       await replay.retain.flushQueues();
       expect(lockDelay).toHaveBeenCalledTimes(30);
-      expect(readFileSync(blocked.path, "utf8")).toBe(before);
+      expect(readFileSync(blocked.path, "utf8")).toBe(
+        `${JSON.stringify({ ...blocked.item, replayState: { sending: true } })}\n${JSON.stringify(second)}\n`,
+      );
       expect(readFileSync(ready.path, "utf8")).toBe(ready.raw);
       expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
         { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
@@ -745,6 +743,10 @@ describe("RetainCoordinator", () => {
 
       if (lock !== undefined) closeSync(lock);
       lock = undefined;
+      await replay.retain.flushQueues();
+      expect(replay.fakeClients.get(blocked.principal)?.retains).toHaveLength(1);
+      // Explicit operator recovery after reconciling the uncertain HTTP outcome.
+      writeFileSync(blocked.path, before, { mode: 0o600 });
       await replay.retain.flushQueues();
       expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
         { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
@@ -825,7 +827,10 @@ describe("RetainCoordinator", () => {
         },
       });
       await replay.retain.flushQueues();
-      expect(readFileSync(blocked.path, "utf8")).toBe(blocked.raw);
+      expect(JSON.parse(readFileSync(blocked.path, "utf8"))).toEqual({
+        ...blocked.item,
+        replayState: { gate: "probe", protected: true },
+      });
       expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
       expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
     },
@@ -839,7 +844,10 @@ describe("RetainCoordinator", () => {
 
     await replay.retain.flushQueues();
 
-    expect(readFileSync(blocked.path, "utf8")).toBe(denied);
+    expect(JSON.parse(readFileSync(blocked.path, "utf8"))).toEqual({
+      ...JSON.parse(denied),
+      replayState: { quarantine: "bank-mismatch" },
+    });
     expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
     expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
   });
@@ -883,9 +891,11 @@ describe("RetainCoordinator", () => {
     expect(replay.fakeClients.get("main")?.retains).toHaveLength(0);
   });
 
-  it("preserves corrupt bytes during replay and logs only counts and classification", async () => {
+  it("preserves corrupt bytes and holds later writes behind an ordinal barrier", async () => {
+    const log = { warn: vi.fn(), error: vi.fn() };
     const failing = makeStack({
       queueDir,
+      logger: log,
       behavior: () => {
         throw httpError(503);
       },
@@ -895,15 +905,12 @@ describe("RetainCoordinator", () => {
     const corrupt = 'private broken transcript\r\n{"content":"private invalid record"}\n';
     appendFileSync(queueFile, corrupt);
     await failing.retain.retain("main", { content: "second", documentId: "document", updateMode: "replace" });
-    const log = { warn: vi.fn(), error: vi.fn() };
     const replay = makeStack({ queueDir, logger: log });
     await replay.retain.flushQueues();
     expect(
       replay.fakeClients.get("main")?.retains.map(({ content, options }) => [content, options?.updateMode]),
-    ).toEqual([
-      ["first", "append"],
-      ["second", "replace"],
-    ]);
+    ).toEqual([["first", "append"]]);
+    expect(readFileSync(queueFile, "utf8")).toContain('"content":"second"');
     const recoveryDir = `${queueFile}.recovery`;
     expect(
       readFileSync(join(recoveryDir, readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))[0]), "utf8"),
@@ -1007,14 +1014,16 @@ describe("RetainCoordinator", () => {
     const unbounded = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: unbounded });
     expect(unbounded.warn).toHaveBeenCalledWith(
-      `retain queue at ${queueDir} holds plaintext transcripts with no expiration; set retainQueueMaxAgeMs to bound retention and protect the directory with disk encryption`,
+      `retain queue at ${queueDir} holds plaintext transcripts with no expiration; set retainQueueMaxAgeMs to bound ordinary retention (protected backlog is exempt) and protect the directory with disk encryption`,
     );
     const bounded = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: bounded, queueMaxAgeMs: 604800000 });
     expect(bounded.warn).not.toHaveBeenCalled();
     const renamed = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: renamed, maxAgeConfigKey: "queueMaxAgeMs" });
-    expect(renamed.warn.mock.calls.flat().join("\n")).toContain("set queueMaxAgeMs to bound retention");
+    expect(renamed.warn.mock.calls.flat().join("\n")).toContain(
+      "set queueMaxAgeMs to bound ordinary retention (protected backlog is exempt)",
+    );
   });
   it("caps outage writes across principals, preserves FIFO, and frees capacity after replay", async () => {
     let unavailable = true;
@@ -1101,13 +1110,24 @@ describe("RetainCoordinator", () => {
         .get("main")
         ?.retains.map((item) => item.content)
         .sort(),
-    ).toEqual(["new-0", "new-1", "new-2", "new-3", "new-4", "old"]);
+    ).toEqual(["old"]);
+    const pending = readFileSync(queueFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(pending[0].replayState.quarantine).toBe("corrupt");
+    expect(
+      pending
+        .slice(1)
+        .map((item) => item.content)
+        .sort(),
+    ).toEqual(["new-0", "new-1", "new-2", "new-3", "new-4"]);
     const recoveryDir = `${queueFile}.recovery`;
     expect(
       readFileSync(join(recoveryDir, readdirSync(recoveryDir).filter((name) => name.endsWith(".jsonl"))[0]), "utf8"),
     ).toBe("broken\n");
   });
-  it("does not deserialize backlog records while accepting subsequent outage writes", async () => {
+  it("inspects the principal backlog before admitting fresh delivery", async () => {
     const stack = makeStack({
       queueDir,
       behavior: () => {
@@ -1119,7 +1139,7 @@ describe("RetainCoordinator", () => {
     try {
       await stack.retain.retain("main", { content: "next" });
       await stack.retain.retain("backend", { content: "another principal" });
-      expect(parse).not.toHaveBeenCalledWith(expect.stringContaining('"bankId":'));
+      expect(parse).toHaveBeenCalledWith(expect.stringContaining('"bankId":'));
     } finally {
       parse.mockRestore();
     }

@@ -956,8 +956,8 @@ jobs:
                           step['uses'] = re.sub(r'@[0-9a-f]{40}$','@PINNED', uses)
               return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
           RELEASE_SOURCE_HASHES = {
-              '.github/trusted-ci/policy.test.py': '1d9ebbe3ccc331d74996e41ee7e3cecd7250be46f21c0aa2eee94f5c788461a2',
-              '.github/scripts/trusted-ci-activation.json': '3ef5a68ea91a3458bf6f689c22f7d8f5d7675b30394087e0d8bf14010ed4e075',
+              '.github/trusted-ci/policy.test.py': '75606043457a38ea831f90e0954e9f7ff956892137ab7aaedc6456de964e3983',
+              '.github/scripts/trusted-ci-activation.json': '9f9ada9aad9236ad71ed86bbfbc5cf22f15ad662c6e07e795754b455bc1a0b14',
               '.github/trusted-ci/.aislop/config.yml': '798f947468c6b556b14b802f650a3c4dda6a9302ed1238e13aa078e2380472eb',
               '.github/trusted-ci/findings.cjs': '8062166755f5eb47298efe5588ca2a91e0b8de06ef7d50fc05b311f640b11602',
               '.github/trusted-ci/npm-audit.cjs': 'f28a085b4a5b4b391dcc1e0e266cb756e107cf2e40f7f8af33c66ab22f6b6d4c',
@@ -991,7 +991,7 @@ jobs:
               '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77','f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36','e5c150df0b2cd53c7c552d2a6af9a340afaa1d94900f0f695363b978fc88bba8','04cdad684a138433c2db8ab9c5086ee1d671523aeeea7a0b3ff807fde1c5fd69','412d76a8d9c99e8a695a4e1e2d5b440c7367101c6af8e6a777c2b48565ea1af3','4e3480ad9e385ba501ec1ea23d8fa943f0eb6e1107f9db2b8e1b416800582f7d','2a457b1eec191dd86b2a64f6593863d674618f58db0d7c5748de220b3cb77dc9','a334be73f4e1ae13358e51504bb3826aa2a49100ff55fcd434af052186ea68c2'),
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5','f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23','f206b57c6feb37a573b3a8cd9f211dd6d7e9a216d5121e6459978ca6f4fdd31f','5d2f482546b4ba0431717950c49f7533dd37381efa00017551995d2d39789540','214c7178e1e2cc01e38e96a6b8cc29e9e2b1aab3c24e8c290e99d328054201a4','5571e081f47f4568443728b74846cd54a18cf51eac205115e48da74bcdbd9f40','8ffd8de74374fce6eae741e02ae49afe0e24d0f49229c92ba523494c94e2af9b','9c4679fd2e40b8170eeb6de6c9e14b62274a92596396928e13d52a7ffc75c1e5'),
-              '.github/scripts/release-policy.test.py': '747fc3fa4f0ceb1c0e8df3a9a54c7efe3b750d2d205e6646ed4b7ce32abefb89',
+              '.github/scripts/release-policy.test.py': ('747fc3fa4f0ceb1c0e8df3a9a54c7efe3b750d2d205e6646ed4b7ce32abefb89','eb63cc2003afe088b57a4a036a487885a680e6919da437a1ec49c19eb66e0e30'),
               '.github/scripts/release-cleanup.cjs': ('f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533','3ec27d21d0df5fad08222606bce4bb3eaa07226f72ae3bd37c3e70bf83ff87e9','bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8'),
               '.github/scripts/release-cleanup.test.cjs': ('99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd','9495c6943363dfb0984573d0efce88e95e25cbb0c7691cb52bfc0a5820ada5be','1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956'),
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
