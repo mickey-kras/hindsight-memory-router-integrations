@@ -2,6 +2,10 @@
 
 [Documentation](README.md) | [Repository](../README.md)
 
+The sync script requires Git with `--no-lazy-fetch` support and all required commit, tree and blob
+objects already present locally. It disables implicit downloads in every mode; fetch missing objects
+explicitly before running it. Older Git versions without this option stop with an unknown-option error.
+
 Use a local checkout of `vectorize-io/hindsight` and resolve the intended upstream ref to a commit:
 
 ```sh

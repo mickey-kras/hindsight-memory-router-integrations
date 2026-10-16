@@ -79,6 +79,8 @@ class SonarFindingSyncTests(unittest.TestCase):
                         "Workflow: https://github.com/owner/repo/actions/runs/42",
                         finding.body,
                     )
+                self.assertEqual(findings[0].body.count("- Finding ID:"), 1)
+                self.assertEqual(findings[1].body.count("- Finding ID:"), 1)
                 for text in (
                     "Finding ID: `issue-1`",
                     "Rule: `python:S3776`",

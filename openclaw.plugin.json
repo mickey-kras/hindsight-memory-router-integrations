@@ -144,7 +144,7 @@
       "retainQueueMaxAgeMs": {
         "type": "integer",
         "minimum": -1,
-        "description": "Max age of queued retains (-1 keeps forever).",
+        "description": "Max age of queued retains (-1 keeps forever; 0 expires entries older than the cleanup time).",
         "default": -1
       },
       "retainQueueMaxItems": {

@@ -14,6 +14,7 @@ jobs:
   entry:
     name: require main
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions: {}
     steps:
       - name: Reject release dispatches outside main
@@ -46,6 +47,7 @@ jobs:
     name: prepare candidate
     needs: baseline
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: release-automation
     outputs:
       sha: ${{ steps.prepared.outputs.sha }}
@@ -72,11 +74,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.23.3
+          # Keep credentialed jobs isolated from dependency caches written by CI.
+          package-manager-cache: false
       - name: Build and verify packages
         run: |
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = 11.19.1
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
-          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
           npm run build
           npm run build:coding-agents
           mkdir -p packages
@@ -101,6 +106,27 @@ jobs:
         with:
           github-token: ${{ steps.app.outputs.token }}
           script: await require('./.github/scripts/release.cjs').prepare({ github, context, core });
+      - name: Resolve retained preparation packages
+        if: steps.prepared.outputs.sha != ''
+        id: retained
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          CANDIDATE_REF: ${{ steps.prepared.outputs.ref }}
+          CANDIDATE_SHA: ${{ steps.prepared.outputs.sha }}
+        with:
+          script: |
+            await require('./.github/scripts/release.cjs').retryPackages({
+              github, context, core,
+              target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
+            });
+      - name: Retain prepared packages
+        if: steps.prepared.outputs.sha != '' && steps.retained.outputs.artifact == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: packages-${{ steps.prepared.outputs.sha }}
+          path: packages/*.tgz
+          if-no-files-found: error
+          retention-days: 30
       - name: Resume the prepared release
         if: steps.prepared.outputs.resume_sha != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
@@ -138,6 +164,7 @@ jobs:
     needs: prepare-release
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.prepare-release.result == 'failure' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:

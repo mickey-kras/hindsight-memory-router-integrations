@@ -15,6 +15,16 @@ SPEC.loader.exec_module(sync)
 SCRIPTS = Path(__file__).parent
 
 
+class GitInvocationTests(unittest.TestCase):
+    def test_git_disables_lazy_fetch_despite_caller_environment(self) -> None:
+        with patch.dict("os.environ", {"GIT_NO_LAZY_FETCH": "0"}), \
+                patch.object(sync.subprocess, "check_output", return_value=b"blob") as execute:
+            self.assertEqual(sync.git(Path("upstream"), "cat-file", "blob", "object"), b"blob")
+        command = execute.call_args.args[0]
+        self.assertEqual(command[:2], ["git", "--no-lazy-fetch"])
+        self.assertNotIn("GIT_NO_LAZY_FETCH", execute.call_args.kwargs["env"])
+
+
 class UpstreamVerificationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()

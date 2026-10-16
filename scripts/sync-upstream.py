@@ -22,7 +22,7 @@ def git(repo: Path, *args: str, input_data: bytes | None = None) -> bytes:
     environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                        GIT_ATTR_NOSYSTEM="1", GIT_NO_REPLACE_OBJECTS="1")
     return subprocess.check_output(
-        ["git", "-C", str(repo), "-c", "core.autocrlf=false",
+        ["git", "--no-lazy-fetch", "-C", str(repo), "-c", "core.autocrlf=false",
          "-c", f"core.attributesFile={os.devnull}", *args], input=input_data, env=environment
     )
 
