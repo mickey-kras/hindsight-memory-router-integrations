@@ -535,4 +535,3 @@ export class RetainQueue {
     this.cachedSize = items.length;
   }
 }
-

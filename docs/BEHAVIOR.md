@@ -71,4 +71,3 @@ Reusing that title replaces its content across these tools; changing the title c
 
 Legacy document IDs remain untouched. The first re-ingest after upgrading creates a new document;
 verify its contents before manually removing the old document. No automatic deletion or ID migration runs.
-
