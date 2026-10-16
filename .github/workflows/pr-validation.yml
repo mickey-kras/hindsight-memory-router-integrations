@@ -55,7 +55,7 @@ jobs:
             const run = context.eventName === 'pull_request' ? runPullRequestPolicy : runDispatchedPolicy;
             await run(github, context, core, mainSha);
   quality:
-    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-ci.yml@e09f70355dfd69bbb31b77f590621e6b376c2f1e
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-ci.yml@0ca3c6f3eb4de34ac739fbc018610586a9f2ad45
     permissions:
       contents: read
       pull-requests: read
