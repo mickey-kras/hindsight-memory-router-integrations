@@ -51,12 +51,20 @@ else:
     PATHS.append(".github/scripts/release-cleanup.test.cjs")
 
 
+TRUSTED_FILES = sorted(str(path.relative_to(ROOT)) for path in (ROOT / ".github/trusted-ci").rglob("*")
+                       if path.is_file() and "node_modules" not in path.parts)
+PATHS.extend(TRUSTED_FILES)
+PATHS.extend(f".github/workflows/trusted-{name}.yml" for name in ("ci", "aislop", "codeql"))
+PATHS.append(".github/scripts/trusted-ci-activation.json")
+
+
 def policy(overrides=None):
     files = {
         str(path.relative_to(ROOT)): path.read_text()
         for path in (ROOT / ".github").rglob("*")
         if "node_modules" not in path.parts and path.is_file() and path.suffix in {".yml", ".yaml", ".cjs", ".mjs", ".py", ".sh", ".json"}
     }
+    files.update({path: (ROOT / path).read_text() for path in TRUSTED_FILES})
     files["package.json"] = (ROOT / "package.json").read_text()
     files.update(overrides or {})
     guard = yaml.safe_load(GUARD.read_text())
@@ -514,6 +522,48 @@ else:
         guard = yaml.safe_load(GUARD.read_text())
         self.assertIn("github.event.pull_request.number", guard["concurrency"]["group"])
         self.assertIs(guard["concurrency"]["cancel-in-progress"], True)
+
+
+class TrustedScannerBootstrapTests(unittest.TestCase):
+    def activation(self):
+        return json.loads((ROOT / ".github/scripts/trusted-ci-activation.json").read_text())
+
+    def test_future_callers_are_admitted_only_at_the_reviewed_immutable_source(self):
+        fixture = self.activation()
+        self.assertRegex(fixture["source_sha"], r"^[a-f0-9]{40}$")
+        self.assertEqual(policy(fixture["workflows"]), [])
+        for path, content in fixture["workflows"].items():
+            if fixture["source_sha"] not in content:
+                continue
+            with self.subTest(path=path):
+                changed = content.replace(fixture["source_sha"], "f" * 40)
+                self.assertTrue(policy({**fixture["workflows"], path: changed}))
+
+    def test_immutable_closure_and_configs_cannot_be_changed_or_disabled(self):
+        for path in [
+            ".github/trusted-ci/identity.cjs", ".github/trusted-ci/scan-tree.cjs",
+            ".github/trusted-ci/.aislop/config.yml", ".github/trusted-ci/package-lock.json",
+            ".github/trusted-ci/gitleaksignore", ".github/trusted-ci/trivyignore",
+        ]:
+            with self.subTest(path=path):
+                self.assertTrue(policy({path: (ROOT / path).read_text() + "\nchanged"}))
+        path = ".github/workflows/trusted-ci.yml"
+        doc = yaml.safe_load((ROOT / path).read_text())
+        doc["jobs"]["build"]["permissions"]["security-events"] = "write"
+        self.assertTrue(policy({path: yaml.safe_dump(doc)}))
+
+    def test_activation_keeps_required_job_names_and_transitive_permissions(self):
+        fixture = self.activation()
+        for caller in ["main", "pr-validation"]:
+            jobs = yaml.safe_load(fixture["workflows"][f".github/workflows/{caller}.yml"])["jobs"]
+            for name, callee in [("quality", "ci"), ("aislop", "aislop"), ("codeql", "codeql")]:
+                self.assertEqual(jobs[name]["uses"],
+                    "mickey-kras/hindsight-memory-router-integrations/.github/workflows/"
+                    f"trusted-{callee}.yml@{fixture['source_sha']}")
+                self.assertEqual(jobs[name]["permissions"]["pull-requests"], "read")
+        release = yaml.safe_load(fixture["workflows"][".github/workflows/release.yml"])
+        for job in ["baseline", "release"]:
+            self.assertEqual(release["jobs"][job]["permissions"]["pull-requests"], "read")
 
 
 if __name__ == "__main__":
