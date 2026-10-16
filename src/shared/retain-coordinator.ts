@@ -62,7 +62,6 @@ export class RetainCoordinator {
   private readonly log: CoordinatorLogger;
   private readonly onAbandon: RetainAbandonHandler;
   private readonly maxAgeConfigKey: string;
-  private readonly unpersistedDenials = new Set<string>();
 
   constructor(options: {
     credentials: PrincipalCredentialResolver;
@@ -138,10 +137,10 @@ export class RetainCoordinator {
     const outcome = await this.storage.replay(async () => {
       const items = await this.storage.transaction(() => this.prepareQueue(principalId, queue));
       if (
-        this.unpersistedDenials.has(principalId) ||
         items.some(
           (item) =>
             item.replayState?.gate !== undefined ||
+            item.replayState?.sending ||
             item.replayState?.quarantine === "corrupt" ||
             sameRetainDocument(item, { bankId: bank, documentId: payload.documentId }),
         )
@@ -264,10 +263,6 @@ export class RetainCoordinator {
     principalId: string,
     credentials: ReturnType<PrincipalCredentialResolver["resolve"]>,
   ): Promise<void> {
-    if (this.unpersistedDenials.has(principalId)) {
-      this.log.error("retain replay paused: authorization state could not be persisted; operator repair required");
-      return;
-    }
     const client = this.clients.forAgent(credentials);
     const queue = this.queueFor(principalId);
     let items = await this.storage.transaction(() => {
@@ -275,6 +270,10 @@ export class RetainCoordinator {
       queue.cleanup();
       return queue.snapshot();
     });
+    if (items.some((item) => item.replayState?.sending)) {
+      this.log.error("retain replay paused: HTTP outcome could not be persisted; operator repair required");
+      return;
+    }
     let attempts = 0;
     const gate = items.find((item) => item.replayState?.gate);
     if (gate) {
@@ -315,9 +314,29 @@ export class RetainCoordinator {
   ): Promise<"delivered" | "quarantined" | "mismatched" | "stop"> {
     // Preparation and acknowledgement errors are storage failures, never HTTP
     // classifications. A failed acknowledgement retains the original operation ID.
-    const operationId = await this.storage.transaction(() =>
-      queue.ensureOperationId(item.id, item.operationId || randomUUID()),
-    );
+    const prepared = await this.storage.transaction(() => {
+      const items = queue.snapshot();
+      const current = items.find((queued) => queued.id === item.id);
+      if (!current) return undefined;
+      const predecessors = items.slice(0, items.indexOf(current));
+      const gate = items.find((queued) => queued.replayState?.gate);
+      if (
+        items.some((queued) => queued.replayState?.sending) ||
+        (gate !== undefined && gate.id !== current.id) ||
+        current.replayState?.gate === "operator" ||
+        predecessors.some((queued) => queued.replayState?.quarantine === "corrupt")
+      )
+        return undefined;
+      if (current.replayState?.quarantine || predecessors.some((queued) => sameRetainDocument(queued, current)))
+        return { item: current, operationId: undefined };
+      const operationId = queue.ensureOperationId(current.id, current.operationId || randomUUID());
+      queue.setReplayState(current.id, { ...current.replayState, sending: true });
+      return { item: current, operationId };
+    });
+    if (!prepared) return "stop";
+    if (prepared.operationId === undefined) return "quarantined";
+    item = prepared.item;
+    const operationId = prepared.operationId;
     // Routing may change while a previous HTTP request or storage lock is awaited.
     // Keep local authorization failures outside the HTTP error classifier.
     if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
@@ -346,27 +365,26 @@ export class RetainCoordinator {
     } catch (error) {
       if (error instanceof RetainQueueSharedStorageError) throw error;
       if (isAuthorizationError(error)) {
-        this.unpersistedDenials.add(principalId);
         await this.storage.transaction(() =>
           queue.setReplayStates(
             queue.snapshot().map((queued) => ({
               id: queued.id,
               state: {
                 ...queued.replayState,
+                sending: undefined,
                 ...(queued.id === item.id ? { gate: "probe" as const } : {}),
                 protected: true,
               },
             })),
           ),
         );
-        this.unpersistedDenials.delete(principalId);
         this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
         return "stop";
       }
       if (!isTransientRequestError(error)) {
         await this.storage.transaction(() =>
           queue.setReplayState(item.id, {
-            ...item.replayState,
+            ...this.completedReplayState(queue, item),
             quarantine: "permanent",
             ...(item.replayState?.gate ? { gate: "operator" as const } : {}),
           }),
@@ -379,8 +397,10 @@ export class RetainCoordinator {
       const { count, abandoned } = await this.storage.transaction(() => {
         const current = queue.snapshot().find((queued) => queued.id === item.id);
         if (!current) throw new Error(`queued retain not found: ${item.id}`);
+        const state = this.completedReplayState(queue, item);
         const count = queue.incrementReplayAttempts(item.id);
-        const abandoned = count >= MAX_REPLAY_ATTEMPTS && current.replayState === undefined;
+        queue.setReplayState(item.id, state);
+        const abandoned = count >= MAX_REPLAY_ATTEMPTS && state === undefined;
         if (abandoned) queue.remove(item.id);
         return { count, abandoned };
       });
@@ -395,8 +415,18 @@ export class RetainCoordinator {
       }
       return "stop";
     }
-    await this.storage.transaction(() => queue.remove(item.id));
+    await this.storage.transaction(() => {
+      queue.setReplayState(item.id, this.completedReplayState(queue, item));
+      queue.remove(item.id);
+    });
     return "delivered";
+  }
+
+  private completedReplayState(queue: RetainQueue, item: QueuedRetain): RetainReplayState | undefined {
+    const current = queue.snapshot().find((queued) => queued.id === item.id);
+    if (!current) throw new Error(`queued retain not found: ${item.id}`);
+    const { sending: _sending, ...state } = current.replayState ?? {};
+    return Object.keys(state).length > 0 || item.replayState !== undefined ? state : undefined;
   }
 }
 

@@ -46,6 +46,8 @@ export interface QueuedRetainPayload {
 export interface RetainReplayState {
   quarantine?: "permanent" | "bank-mismatch" | "corrupt";
   gate?: "probe" | "operator";
+  /** An HTTP outcome is not yet durably classified; operator recovery is required after restart. */
+  sending?: true;
   /** Sticky after a denial, including subsequent transient failures. */
   protected?: true;
   /** Corrupt bytes live in this recovery snapshot, never in a synthetic payload. */
@@ -89,7 +91,7 @@ function isReplayState(value: unknown): boolean {
   if (value === undefined) return true;
   if (!isRecord(value)) return false;
   if (
-    Object.keys(value).some((key) => !["quarantine", "gate", "protected", "archive", "offset", "length"].includes(key))
+    Object.keys(value).some((key) => !["quarantine", "gate", "sending", "protected", "archive", "offset", "length"].includes(key))
   )
     return false;
   if (
@@ -98,6 +100,7 @@ function isReplayState(value: unknown): boolean {
   )
     return false;
   if (value.gate !== undefined && value.gate !== "probe" && value.gate !== "operator") return false;
+  if (value.sending !== undefined && value.sending !== true) return false;
   if (value.protected !== undefined && value.protected !== true) return false;
   if (value.gate !== undefined && value.protected !== true) return false;
   if (value.quarantine === "corrupt") {
@@ -241,12 +244,12 @@ export class RetainQueue {
     return contents.items;
   }
 
-  setReplayState(id: string, state: RetainReplayState): void {
+  setReplayState(id: string, state: RetainReplayState | undefined): void {
     this.setReplayStates([{ id, state }]);
   }
 
   /** Classify a changed-bank backlog in one atomic rewrite, not one per row. */
-  setReplayStates(updates: Array<{ id: string; state: RetainReplayState }>): void {
+  setReplayStates(updates: Array<{ id: string; state: RetainReplayState | undefined }>): void {
     if (updates.length === 0) return;
     const contents = this.readAll();
     const pending = new Map(updates.map((update) => [update.id, update.state]));
@@ -254,7 +257,7 @@ export class RetainQueue {
     const seen = new Set<string>();
     for (const item of contents.items) {
       const state = pending.get(item.id);
-      if (state === undefined) continue;
+      if (!pending.has(item.id)) continue;
       if (seen.has(item.id)) throw new Error("ambiguous retain queue identity");
       seen.add(item.id);
       item.replayState = state;
@@ -317,7 +320,7 @@ export class RetainQueue {
     const contents = this.readAll();
     // A closed principal gate protects its entire backlog. Quarantine and unknown
     // identity barriers protect dependent successors without extending unrelated retention.
-    const gated = contents.items.some((item) => item.replayState?.gate !== undefined);
+    const gated = contents.items.some((item) => item.replayState?.gate !== undefined || item.replayState?.sending);
     const protectedRows: QueuedRetain[] = [];
     let barrier = false;
     const kept = contents.items.filter((item) => {
@@ -532,3 +535,4 @@ export class RetainQueue {
     this.cachedSize = items.length;
   }
 }
+

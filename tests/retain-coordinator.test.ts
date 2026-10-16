@@ -729,7 +729,9 @@ describe("RetainCoordinator", () => {
     try {
       await replay.retain.flushQueues();
       expect(lockDelay).toHaveBeenCalledTimes(30);
-      expect(readFileSync(blocked.path, "utf8")).toBe(before);
+      expect(readFileSync(blocked.path, "utf8")).toBe(
+        `${JSON.stringify({ ...blocked.item, replayState: { sending: true } })}\n${JSON.stringify(second)}\n`,
+      );
       expect(readFileSync(ready.path, "utf8")).toBe(ready.raw);
       expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
         { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
@@ -741,6 +743,10 @@ describe("RetainCoordinator", () => {
 
       if (lock !== undefined) closeSync(lock);
       lock = undefined;
+      await replay.retain.flushQueues();
+      expect(replay.fakeClients.get(blocked.principal)?.retains).toHaveLength(1);
+      // Explicit operator recovery after reconciling the uncertain HTTP outcome.
+      writeFileSync(blocked.path, before, { mode: 0o600 });
       await replay.retain.flushQueues();
       expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
         { content: blocked.item.content, options: { operationId: blocked.item.operationId } },

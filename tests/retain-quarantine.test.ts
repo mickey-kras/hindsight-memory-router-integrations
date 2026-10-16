@@ -309,32 +309,63 @@ it("queues concurrent fresh work behind an in-flight predecessor without holding
   expect(rows()).toEqual([]);
 });
 
-it("fails closed in the current instance when a denial cannot be persisted", async () => {
+it("preserves an uncertain denial across restart, expiration, and fresh admission", async () => {
   enqueue("denied", "X");
-  const original = readFileSync(path, "utf8");
-  const writeState = vi.spyOn(RetainQueue.prototype, "setReplayStates").mockImplementationOnce(() => {
-    throw new Error("private disk failure");
-  });
-  const denied = stack(() => {
+  enqueue("backlog", "Y");
+  const concurrent = stack();
+  const denied = stack(async () => {
+    await expect(
+      concurrent.coordinator.retain("main", { content: "during HTTP", documentId: "W" }),
+    ).resolves.toMatchObject({ queued: true });
+    vi.spyOn(RetainQueue.prototype, "setReplayStates").mockImplementationOnce(() => {
+      throw new Error("private disk failure");
+    });
     throw http(403);
   });
   await denied.coordinator.flushQueues();
-  expect(readFileSync(path, "utf8")).toBe(original);
-  writeState.mockRestore();
-  await denied.coordinator.flushQueues();
-  expect(await denied.coordinator.retain("main", { content: "fresh", documentId: "Y" })).toMatchObject({
+  expect(denied.calls.map((call) => call.content)).toEqual(["denied"]);
+  vi.restoreAllMocks();
+  const items = rows();
+  for (const item of items) item.createdAt = "2000-01-01T00:00:00Z";
+  writeFileSync(path, `${items.map((item) => JSON.stringify(item)).join("\n")}\n`);
+  const restarted = stack(undefined, { age: 1 });
+  await restarted.coordinator.flushQueues();
+  expect(await restarted.coordinator.retain("main", { content: "fresh", documentId: "Z" })).toMatchObject({
     queued: true,
   });
-  expect(denied.calls.map((call) => call.content)).toEqual(["denied"]);
-  expect(denied.logger.error.mock.calls.flat().join(" ")).not.toContain("private");
-  // A new process cannot infer the unpersisted response, but a repeated denial
-  // now records the durable gate without losing either accepted request.
-  const restarted = stack(() => {
-    throw http(403);
-  });
   await restarted.coordinator.flushQueues();
-  expect(rows()[0].replayState).toEqual({ gate: "probe", protected: true });
-  expect(rows()).toHaveLength(2);
+  expect(restarted.calls).toEqual([]);
+  expect(rows().map((item) => item.content)).toEqual(["denied", "backlog", "during HTTP", "fresh"]);
+  expect(denied.logger.error.mock.calls.flat().join(" ")).not.toContain("private");
+});
+
+it("rechecks durable quarantine after a concurrent routing change is reverted", async () => {
+  enqueue("first", "X");
+  enqueue("later", "Y");
+  let release!: () => void;
+  let entered!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const active = stack(async (content) => {
+    if (content === "first") {
+      entered();
+      await pending;
+    }
+  });
+  const flushing = active.coordinator.flushQueues();
+  await started;
+  active.config.principals.main.writeBank = "new-bank";
+  await active.coordinator.retain("main", { content: "fresh", documentId: "Z" });
+  expect(rows()[1].replayState?.quarantine).toBe("bank-mismatch");
+  active.config.principals.main.writeBank = "bank";
+  release();
+  await flushing;
+  expect(active.calls.map((call) => call.content)).toEqual(["first"]);
+  expect(rows().map((item) => item.content)).toEqual(["later", "fresh"]);
 });
 
 it("uses the original operation ID after an acknowledgement write fails", async () => {
@@ -398,6 +429,7 @@ it.each([
   { gate: "other" },
   { gate: "probe" },
   { protected: false },
+  { sending: false },
   { archive: "a" },
   { quarantine: "corrupt", archive: "a", offset: 0, length: 1 },
   { quarantine: "corrupt", archive: "a".repeat(64), offset: -1, length: 1 },
