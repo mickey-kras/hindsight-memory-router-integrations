@@ -6,6 +6,10 @@ name: policy
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
+concurrency:
+  group: policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: read
@@ -14,6 +18,7 @@ jobs:
   guard:
     name: guard
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
@@ -50,6 +55,13 @@ jobs:
           def fail(message):
               failures.append(message)
 
+          # safe_load semantics with duplicate-key rejection: any repeated key
+          # in a mapping is a hard error, killing parser differentials such as
+          # a doubled `on:` registering under both True and 'on'. All string
+          # keys are lowercased (values untouched) because GitHub compares
+          # workflow keys case-insensitively; a capital `If: 'false'` or a
+          # mixed-case `ON:` must not bypass the checks below. Duplicates are
+          # rejected AFTER lowering, so `If:`/`if:` pairs are hard errors.
           class UniqueKeyLoader(yaml.SafeLoader):
               pass
 
@@ -81,6 +93,7 @@ jobs:
           def load_yaml(content):
               return yaml.load(content, Loader=UniqueKeyLoader)
 
+          # YAML 1.1 quirk: PyYAML resolves an unquoted `on:` key to True.
           def workflow_events(doc):
               on = doc.get('on', doc.get(True))
               if isinstance(on, str):
@@ -100,11 +113,17 @@ jobs:
               if not isinstance(doc, dict):
                   fail(f'{path}: {kind} must be a mapping')
                   return None
+              # PyYAML (1.1) reads unquoted on: as True while GitHub (1.2)
+              # reads it as 'on'; a file carrying both hides triggers from us.
               if 'on' in doc and True in doc:
                   fail(f'{path}: {kind} has ambiguous on: keys')
                   return None
               return doc
 
+          # Allowlist (replaces the old write-scope denylist). id-token: write
+          # is only permitted where no contributor-controlled code runs and no
+          # attacker-influenceable schedule exists, i.e. on push-only
+          # workflows (main.yml); schedule/workflow_dispatch no longer qualify.
           ALLOWED_PERMISSIONS = {
               'contents': {'read'},
               'pull-requests': {'read'},
@@ -115,6 +134,11 @@ jobs:
           }
           ID_TOKEN_EVENTS = {'push'}
 
+          # Trigger allowlist (replaces per-file event freedom): only these
+          # events may ever appear in a workflow file. The guard file itself
+          # is pinned to exactly GUARD_EVENT and is the sole file allowed to
+          # carry it, which kills the privileged-PR-trigger class (including
+          # workflow_run and repository_dispatch) for new/changed workflows.
           DEFAULT_ALLOWED_EVENTS = {
               'pull_request', 'workflow_call', 'push', 'schedule', 'workflow_dispatch',
           }
@@ -176,6 +200,9 @@ jobs:
           def _ref_pattern(*parts):
               return re.compile(''.join(parts), re.IGNORECASE)
 
+          # Every needle below is assembled from pieces at runtime (no literal
+          # occurrence of the joined token anywhere in this file) so the
+          # guard's own run body, env values and serialized document stay
           # clean under the contributor-ref scans and the whole-document
           # self-scan in gate_policy_guard.
           T_PR = 'pull' + '_' + 'request'
@@ -348,7 +375,6 @@ jobs:
           AISLOP_UPLOAD_IF = (
               AISLOP_GATE_IF + ' && ( ' + T_EVENT_PR + ' || ' + T_SAME_REPO + ' )'
           )
-          TRIVY_UPLOAD_IF = T_EVENT_PR + ' || ' + T_SAME_REPO
 
           def require_events(path, doc, required):
               events = workflow_events(doc)
@@ -430,37 +456,6 @@ jobs:
                       fail(f'{path}: {label} run must not spoof its gate with an echo line')
                       return
 
-          CI_REQUIRED_STEPS = (
-              'Release automation tests',
-              'Audit release tools', 'Release policy tests',
-              'Tests and coverage', 'Verify package', 'Nix dependency hash',
-              'Gitleaks', 'Semgrep', 'Trivy dependency gate', 'Setup Trivy',
-              'Sonar finding reporter tests',
-          )
-          CI_RUN_SIGNATURES = {
-              'Release automation tests': ('node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs',),
-              'Release policy tests': ('python3 .github/scripts/release-policy.test.py',),
-              'Verify package': (
-                  'npm pack', 'sha256sum --check PACKAGE_SHA256',
-                  'cmp ', 'grep -Fxq package/npm-shrinkwrap.json',
-              ),
-              'Nix dependency hash': ('prefetch-npm-deps', 'PACKAGE_NIX_HASHES'),
-              'Semgrep': (
-                  'semgrep scan --config .semgrep.yml', '--error',
-                  'docker run', 'semgrep/semgrep:',
-              ),
-              'Trivy dependency gate': (
-                  'trivy fs', '--exit-code 1', 'HIGH,CRITICAL',
-                  '--severity HIGH,CRITICAL',
-              ),
-              'Sonar finding reporter tests': (
-                  'python3 -m unittest tests/test_sonar_finding_sync.py',
-              ),
-          }
-          CI_USES_PREFIXES = {
-              'Gitleaks': 'gitleaks/gitleaks-action@',
-              'Setup Trivy': 'aquasecurity/setup-trivy@',
-          }
 
           def gate_candidate_identity(path, doc):
               trigger = doc.get('on', doc.get(True, {}))
@@ -478,92 +473,6 @@ jobs:
                           if options.get('ref') != ('$' + '{{ inputs.candidate_ref }}') or options.get('sha') != ('$' + '{{ inputs.candidate_sha }}'):
                               fail(f'{path}: SARIF must identify the selected candidate')
 
-          def gate_ci(path, content):
-              doc = parse_yaml_file(path, content, 'workflow')
-              if doc is None:
-                  return
-              gate_candidate_identity(path, doc)
-              if doc.get('name') != 'ci':
-                  fail('ci.yml: workflow name must remain ci')
-              require_events(path, doc, ('workflow_call',))
-              require_job_set(path, doc, ('checks', 'combination'))
-              combination = job_named(doc, 'combination')
-              if combination is None:
-                  fail('ci.yml: release combination gate is missing')
-              else:
-                  for step in iter_steps(combination):
-                      if isinstance(step.get('uses'), str):
-                          step['uses'] = re.sub(r'@[0-9a-f]{40}$', '@PINNED', step['uses'])
-                  digest = hashlib.sha256(json.dumps(combination, sort_keys=True).encode()).hexdigest()
-                  if digest not in ('8b6e181447427904d947eed3f2fce9b5c5977df6b4fc9f31cdf7e34445eab303', '7832eaa46af5297a8e230b394bcaef3a81bd1f5e3a77a13d753b1f51ddbbde9c', '6286eb1d16f0431decfbf58b6beab4c7dfe1ae3eef055740906679da6cb58c31', 'ed2a51a08d9649b48f39c876279821905b5b50026b8fa1104767e2ee3deb2057', 'b751bbc99fdb0cb49e5b5d2d868871cb6d0320ba16dd969345d60a74efae660f', '920f5c1a9f9928099fd9dc8f9684177c21927db412a1b90c208bd0f3d39c1f92'):
-                      fail('ci.yml: release combination must retain its reviewed checks and pinned inputs')
-              checks = job_named(doc, 'checks')
-              if checks is None:
-                  fail('ci.yml: jobs.checks must exist')
-                  return
-              check_gate_job(path, 'checks', checks)
-              require_step_names(path, checks, CI_REQUIRED_STEPS)
-              for name in CI_REQUIRED_STEPS:
-                  step = step_named(checks, name)
-                  if step is None:
-                      continue
-                  check_gate_step(path, 'checks', step)
-                  check_step_keys(path, 'checks', step)
-                  needles = CI_RUN_SIGNATURES.get(name)
-                  if needles is not None:
-                      run = step.get('run')
-                      normalized = normalize_run(run) if isinstance(run, str) else ''
-                      missing = [needle for needle in needles if needle not in normalized]
-                      if missing:
-                          fail(
-                              f'ci.yml: {name} run must keep: {", ".join(missing)}'
-                          )
-                      if isinstance(run, str):
-                          check_run_not_neutralized(path, f"step {name}", run)
-                  prefix = CI_USES_PREFIXES.get(name)
-                  if prefix is not None:
-                      uses = step.get('uses')
-                      if not isinstance(uses, str) or not uses.startswith(prefix):
-                          fail(f'ci.yml: {name} must keep using {prefix}...')
-              steps = list(iter_steps(checks))
-              # Exact-run pinning: these two single-line gates must stay
-              # byte-identical, so echo-spoofed needles, appended
-              # neutralizers or reformulations cannot pass; legitimate edits
-              # intentionally require guard-aware review.
-              tests_step = step_named(checks, 'Tests and coverage')
-              tests_run = tests_step.get('run') if tests_step else None
-              if not isinstance(tests_run, str) or tests_run.strip() != 'npm run test:coverage':
-                  fail("ci.yml: Tests and coverage run must be exactly 'npm run test:coverage'")
-              audit_step = step_named(checks, 'Node tooling audit')
-              expected_audit_run = (
-                  'node --test .github/scripts/npm-audit.test.cjs\n'
-                  'node .github/scripts/npm-audit.cjs\n'
-                  'node .github/scripts/npm-audit.cjs src/upstream/coding-agents'
-              )
-              if audit_step is None or audit_step.get('run', '').strip() != expected_audit_run:
-                  fail('ci.yml: Node tooling audit must scan both npm dependency trees')
-              else:
-                  check_step_keys(path, 'checks', audit_step)
-              upload = next(
-                  (
-                      step for step in steps
-                      if isinstance(step.get('with'), dict)
-                      and step['with'].get('category') == '.github/workflows/main.yml:trivy'
-                  ),
-                  None,
-              )
-              if upload is None:
-          POLICY_SOURCE
-
-      - name: Policy source 2
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
-                  fail('ci.yml: Trivy SARIF upload category must stay configured')
-              else:
-                  check_gate_step(path, 'checks', upload, allow_if=True)
-                  if normalize_condition(upload.get('if', '')) != TRIVY_UPLOAD_IF:
-                      fail('ci.yml: Upload Trivy SARIF if condition must stay exactly: ' + TRIVY_UPLOAD_IF)
 
           AISLOP_REQUIRED_STEPS = (
               'Aislop quality gate', 'Aislop SARIF',
@@ -580,6 +489,12 @@ jobs:
           # text) and survive the neutralization ban like the ci.yml gates.
           AISLOP_RUN_SIGNATURES = {
               'Aislop quality gate': ('aislop:ci',),
+          POLICY_SOURCE
+
+      - name: Policy source 2
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
               'Aislop SARIF': ('aislop', '--sarif', '> aislop.sarif'),
           }
 
@@ -687,80 +602,7 @@ jobs:
                   for job in jobs.values()
               )
 
-          def gate_pr_validation(path, content):
-              doc = parse_yaml_file(path, content, 'workflow')
-              if doc is None:
-                  return
-              require_events(path, doc, ('pull_request',))
-              expected = {
-                  'quality': './.github/workflows/ci.yml',
-                  'aislop': './.github/workflows/aislop.yml',
-                  'codeql': './.github/workflows/codeql.yml',
-                  'branch-policy': './.github/workflows/branch-policy.yml',
-                  'dependabot-policy': './.github/workflows/dependabot-policy-tests.yml',
-              }
-              require_job_set(path, doc, (*expected, 'guard'))
-              for job_name, uses in expected.items():
-                  job = job_named(doc, job_name)
-                  if job is None or job.get('uses') != uses:
-                      fail(f'pr-validation.yml: jobs.{job_name} must call {uses}')
 
-          def gate_main(path, content):
-              doc = parse_yaml_file(path, content, 'workflow')
-              if doc is None:
-                  return
-              events = workflow_events(doc)
-              require_job_set(path, doc, ('update-pr-branches', 'quality', 'aislop', 'codeql', 'sonar'))
-              if 'push' not in events:
-                  fail('main.yml: push trigger must stay enabled')
-              if 'pull_request' in events or GUARD_EVENT in events:
-                  fail('main.yml: trusted main workflow must stay isolated from PRs')
-              expected_uses = {
-                  'update-pr-branches': './.github/workflows/pr-branch-updater.yml',
-                  'quality': './.github/workflows/ci.yml',
-                  'aislop': './.github/workflows/aislop.yml',
-                  'codeql': './.github/workflows/codeql.yml',
-              }
-              for job_name, expected in expected_uses.items():
-                  job = job_named(doc, job_name)
-                  if job is None or job.get('uses') != expected:
-                      fail(f'main.yml: jobs.{job_name} must call {expected}')
-              sonar = job_named(doc, 'sonar')
-              if sonar is None:
-                  fail('main.yml: jobs.sonar must exist')
-                  return
-              if 'workflow_dispatch' in events:
-                  if not trusted_main_dispatch(path, doc):
-                      fail('main.yml: dispatch requires every job to be restricted to main')
-                  check_gate_job(path, 'sonar', {key: value for key, value in sonar.items() if key != 'if'})
-              else:
-                  check_gate_job(path, 'sonar', sonar)
-              if sonar.get('needs') != ['quality', 'aislop', 'codeql']:
-                  fail('main.yml: sonar job must need quality, aislop and codeql')
-              if step_named(sonar, 'SonarQube quality gate') is None:
-                  fail('main.yml: SonarQube quality gate step must exist')
-              quality_gate = step_named(sonar, 'SonarQube quality gate')
-              if quality_gate is not None and quality_gate.get('id') != 'sonar-quality-gate':
-                  fail('main.yml: SonarQube quality gate must preserve its reporter id')
-              reporter = step_named(sonar, 'Synchronize SonarQube findings')
-              if reporter is None:
-                  fail('main.yml: SonarQube finding reporter must exist')
-              else:
-                  expected_if = (
-                      "failure() && steps.sonar-quality-gate.outcome == 'failure' "
-                      "&& github.ref == 'refs/heads/main'"
-                  )
-                  if normalize_condition(reporter.get('if', '')) != expected_if:
-                      fail('main.yml: SonarQube finding reporter condition must stay fail-closed')
-                  if normalize_run(reporter.get('run', '')) != (
-                      'python3 .github/scripts/sync-sonar-findings.py '
-                      '.scannerwork/report-task.txt'
-                  ):
-                      fail('main.yml: SonarQube finding reporter command must stay active')
-              for name in ('SonarQube analysis', 'SonarQube quality gate'):
-                  step = step_named(sonar, name)
-                  if step is not None:
-                      check_gate_step(path, 'sonar', step)
 
           GUARD_RUN_TOKENS = (
               'safe_load', 'protected', 'GATES', 'check_workflow',
@@ -900,40 +742,6 @@ jobs:
                           'a silent-success exit'
                       )
 
-          def gate_branch_policy(path, content):
-              doc = parse_yaml_file(path, content, 'workflow')
-              if doc is None:
-                  return
-              require_events(path, doc, ('workflow_call',))
-              require_job_set(path, doc, ('branch-name',))
-              branch_job = job_named(doc, 'branch-name')
-              if branch_job is None:
-                  fail('branch-policy.yml: jobs.branch-name must exist')
-                  return
-              check_gate_job(path, 'branch-name', branch_job)
-              validate_step = step_named(branch_job, 'Validate same-repository branch name')
-              if validate_step is None:
-                  fail('branch-policy.yml: Validate same-repository branch name step must exist')
-              else:
-                  check_gate_step(path, 'branch-name', validate_step)
-              # Normalize before matching: a backslash-newline continuation
-              # splits a neutralizer such as || true across lines, which a
-              # raw substring scan would miss.
-              runs = [
-                  normalize_run(step['run'])
-                  for _, job in iter_jobs(doc)
-                  for step in iter_steps(job)
-                  if isinstance(step.get('run'), str)
-              ]
-              matches = [run for run in runs if 'WORK_BRANCH_RE' in run]
-              if not matches:
-                  fail('branch-policy.yml: branch name validation must stay active')
-                  return
-              for run in matches:
-                  if '|| true' in run or '||true' in run.replace(' ', ''):
-                      fail('branch-policy.yml: branch name validation must not be neutralized with || true')
-              if not any('=~' in run and 'exit 1' in run for run in matches):
-                  fail('branch-policy.yml: branch name validation must keep failing on invalid names')
 
           # Keys are lowercased by the loader, so the camelCase failBelow
           # arrives as 'failbelow'; values (including exclude entries) are
@@ -1024,12 +832,6 @@ jobs:
               properties = {}
               for line in content.split('\n'):
                   line = line.strip()
-          POLICY_SOURCE
-
-      - name: Policy source 3
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   if not line or line.startswith('#') or '=' not in line:
                       continue
                   key, _, value = line.partition('=')
@@ -1089,6 +891,12 @@ jobs:
                   'if (latest.state !== "open" || latest.head.sha !== current.head.sha || latest.base.sha !== current.base.sha)',
               ),
               '.github/scripts/verify-prepared-policy.py': (
+          POLICY_SOURCE
+
+      - name: Policy source 3
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   'workflow = Path(__file__).resolve().parents[1] / "workflows/policy-guard.yml"',
                   'if not run.startswith(prefix) or not run.endswith("POLICY_SOURCE\\n"):',
                   'raise ValueError("Unexpected trusted policy source")',
@@ -1152,13 +960,9 @@ jobs:
               if hashlib.sha256(content.encode()).hexdigest() not in expected:
                   fail(f'{path}: release automation must match its reviewed policy')
           GATES = {
-              '.github/workflows/ci.yml': gate_ci,
               '.github/workflows/aislop.yml': gate_aislop,
               '.github/workflows/codeql.yml': gate_codeql,
-              '.github/workflows/main.yml': gate_main,
-              '.github/workflows/pr-validation.yml': gate_pr_validation,
               '.github/workflows/policy-guard.yml': gate_policy_guard,
-              '.github/workflows/branch-policy.yml': gate_branch_policy,
               '.aislop/config.yml': gate_aislop_config,
               '.github/scripts/npm-audit.cjs': gate_npm_audit_script,
               '.github/scripts/sync-sonar-findings.py': gate_sonar_reporter,
@@ -1170,6 +974,9 @@ jobs:
               'PACKAGE_SHA256': gate_checksum_file,
               'PACKAGE_NIX_HASHES': gate_checksum_file,
           }
+          # Reviewed whole-workflow shapes replace the former detailed dispatch for
+          # automation workflows; do not shadow an independently active gate.
+          assert not (GATES.keys() & AUTOMATION_SHAPES.keys())
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
           GATES.update({path: gate_release_source for path in RELEASE_SOURCE_HASHES})
           GATES.update({path: gate_dependency_preparation for path in DEPENDABOT_SOURCE_CONTRACTS})
