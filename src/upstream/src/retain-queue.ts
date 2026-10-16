@@ -151,6 +151,16 @@ function isQueuedRetain(value: unknown): value is QueuedRetain {
   );
 }
 
+function isBlankQueueRecord(content: Buffer, start: number, end: number): boolean {
+  let first = start;
+  while (
+    first < end &&
+    (content[first] === 9 || content[first] === 10 || content[first] === 13 || content[first] === 32)
+  )
+    first++;
+  return first === end;
+}
+
 function syncDirectory(directory: string): void {
   const fd = openPrivateQueueDirectory(directory);
   try {
@@ -362,7 +372,7 @@ export class RetainQueue {
     }
   }
 
-  private readAll(): QueueContents {
+  private readContents(): QueueContents {
     const result: QueueContents = {
       items: [],
       source: "",
@@ -388,6 +398,11 @@ export class RetainQueue {
     } finally {
       closeSync(fd);
     }
+    return result;
+  }
+
+  private readAll(): QueueContents {
+    const result = this.readContents();
     const content = result.bytes;
     // Adjacent corrupt records share a range: even millions of blank lines
     // need one range. Only intervening valid records can increase this list.
@@ -414,13 +429,7 @@ export class RetainQueue {
     for (let start = 0; start < content.length; ) {
       const newline = content.indexOf(10, start);
       const end = newline < 0 ? content.length : newline + 1;
-      let first = start;
-      while (
-        first < end &&
-        (content[first] === 9 || content[first] === 10 || content[first] === 13 || content[first] === 32)
-      )
-        first++;
-      if (first === end) {
+      if (isBlankQueueRecord(content, start, end)) {
         result.counts.malformedJson++;
         preserveRange(start, end);
         start = end;

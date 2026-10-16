@@ -36,8 +36,8 @@ export class RetainQueueBusyError extends RetainQueueSharedStorageError {
 function sharedStorageOperation<T>(action: () => T): T {
   try {
     return action();
-  } catch (cause) {
-    throw new RetainQueueSharedStorageError("retain queue shared storage unavailable", { cause });
+  } catch (error_) {
+    throw new RetainQueueSharedStorageError("retain queue shared storage unavailable", { cause: error_ });
   }
 }
 
