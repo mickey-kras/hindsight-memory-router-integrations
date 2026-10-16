@@ -8,13 +8,13 @@ Requires Node.js 22.12.0 or later. From the repository root:
 npm ci
 npm ci --prefix src/upstream/coding-agents
 npm run test:coverage
-npm run build
-npm run build:coding-agents
 npm test --prefix src/upstream/coding-agents
 npm audit --audit-level=moderate
 npm audit --prefix src/upstream/coding-agents --audit-level=moderate
 node scripts/verify-coding-upstream.mjs
 ```
+
+Every root Vitest invocation clean-builds both packages once before starting test workers, including targeted standalone tests. Existing `dist` directories never skip the build. CI reuses only the output of that successful test invocation for package verification; the test and upstream TypeScript checks remain separate.
 
 Packages are built from source by CI (`npm pack`) and attached to the GitHub release; their SHA-256 hashes are pinned in `PACKAGE_SHA256` and Nix hashes in `PACKAGE_NIX_HASHES`. Tarballs are never committed (`packages/` is gitignored).
 OpenClaw provenance: `UPSTREAM_VERSION`; coding-agents provenance: `integrations/coding-agents/UPSTREAM.json`.

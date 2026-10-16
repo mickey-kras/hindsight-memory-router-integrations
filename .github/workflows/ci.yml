@@ -9,6 +9,9 @@ on:
       candidate_sha:
         type: string
         default: ''
+    outputs:
+      coverage_artifact:
+        value: ${{ jobs.checks.outputs.coverage_artifact }}
 
 concurrency:
   group: ci-${{ github.event_name }}-${{ inputs.candidate_sha || github.event.pull_request.number || github.ref }}
@@ -21,6 +24,8 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    outputs:
+      coverage_artifact: ${{ steps.coverage.outputs.artifact-id }}
     env:
       TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
     steps:
@@ -58,11 +63,11 @@ jobs:
       - run: npm ci --prefix src/upstream/coding-agents
       - run: npm run lint
       - run: npm run format:check
-      - run: npm run typecheck
+      # The clean build in Vitest checks root source; retain test and upstream checks.
+      - run: npm exec -- tsc --noEmit -p tsconfig.test.json
+      - run: npm exec -- tsc --noEmit -p tsconfig.integration.json
       - name: Tests and coverage
         run: npm run test:coverage
-      - run: npm run build
-      - run: npm run build:coding-agents
       - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
       - run: npm test --prefix src/upstream/coding-agents
       - run: node scripts/verify-coding-upstream.mjs
@@ -81,7 +86,7 @@ jobs:
           done
           exit 1
       - name: Release automation tests
-        run: node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs
+        run: node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs .github/scripts/coverage-artifact.test.cjs
       - name: Release policy tests
         run: python3 .github/scripts/release-policy.test.py
 
@@ -214,6 +219,21 @@ jobs:
           trivy fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL
           --ignore-unfixed --skip-dirs .cache --skip-dirs node_modules
           --skip-dirs coverage --skip-dirs dist .
+
+      - name: Record coverage provenance
+        env:
+          COVERAGE_SHA: ${{ inputs.candidate_sha || github.sha }}
+        run: node .github/scripts/coverage-artifact.cjs record
+      - name: Retain verified coverage
+        id: coverage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: coverage-${{ inputs.candidate_sha || github.sha }}-${{ github.run_attempt }}
+          path: |
+            coverage/lcov.info
+            coverage/provenance.json
+          if-no-files-found: error
+          retention-days: 7
 
   combination:
     name: release combination
