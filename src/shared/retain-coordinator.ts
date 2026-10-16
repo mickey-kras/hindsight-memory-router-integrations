@@ -86,7 +86,7 @@ export class RetainCoordinator {
     this.maxAgeConfigKey = options.maxAgeConfigKey ?? "retainQueueMaxAgeMs";
     if (this.queueMaxAgeMs < 0) {
       this.log.warn(
-        `retain queue at ${this.queueDir} holds plaintext transcripts with no expiration; set ${this.maxAgeConfigKey} to bound retention and protect the directory with disk encryption`,
+        `retain queue at ${this.queueDir} holds plaintext transcripts with no expiration; set ${this.maxAgeConfigKey} to bound ordinary retention (protected backlog is exempt) and protect the directory with disk encryption`,
       );
     }
   }
@@ -107,6 +107,12 @@ export class RetainCoordinator {
   }
 
   async retain(principalId: string, request: RetainRequestPayload): Promise<RetainOutcome> {
+    // Serialize fresh senders until the predecessor is delivered or durably queued.
+    // Replay already has a persisted predecessor and may still accept queued work.
+    return this.storage.admission(() => this.retainAdmitted(principalId, request));
+  }
+
+  private async retainAdmitted(principalId: string, request: RetainRequestPayload): Promise<RetainOutcome> {
     const credentials = this.credentials.resolve(principalId);
     const bank = this.credentials.resolveWriteBank(principalId);
     const client = this.clients.forAgent(credentials);
@@ -118,7 +124,10 @@ export class RetainCoordinator {
     };
     const queue = this.queueFor(principalId);
     const enqueue = async (): Promise<RetainOutcome> => {
-      await this.storage.transaction(() => queue.enqueue(bank, payload, payload.metadata));
+      await this.storage.transaction(() => {
+        queue.enqueue(bank, payload, payload.metadata);
+        this.prepareQueue(principalId, queue);
+      });
       this.log.warn(`retain queued for later delivery (bank: ${bank})`);
       return { queued: true, bank };
     };
@@ -213,20 +222,29 @@ export class RetainCoordinator {
     const items = queue.snapshot();
     const bank = this.credentials.resolveWriteBank(principalId);
     const changes: Array<{ id: string; state: RetainReplayState }> = [];
+    const gated = items.some((item) => item.replayState?.gate !== undefined);
+    let bankMismatch = false;
     for (const item of items) {
-      if (item.replayState?.quarantine || item.bankId === bank) continue;
-      item.replayState = {
-        ...item.replayState,
-        quarantine: "bank-mismatch",
-        ...(item.replayState?.gate ? { gate: "operator" as const } : {}),
-      };
-      changes.push({ id: item.id, state: item.replayState });
+      let state = item.replayState;
+      if (gated && !state?.protected) state = { ...state, protected: true };
+      if (!state?.quarantine && item.bankId !== bank) {
+        bankMismatch = true;
+        state = {
+          ...state,
+          quarantine: "bank-mismatch",
+          ...(state?.gate ? { gate: "operator" as const } : {}),
+        };
+      }
+      if (state === item.replayState || state === undefined) continue;
+      item.replayState = state;
+      changes.push({ id: item.id, state });
     }
     if (changes.length > 0) {
       queue.setReplayStates(changes);
-      this.log.error(
-        "retain replay authorization denied: bank mismatch quarantined; original bank and payload preserved",
-      );
+      if (bankMismatch)
+        this.log.error(
+          "retain replay authorization denied: bank mismatch quarantined; original bank and payload preserved",
+        );
     }
     return items;
   }
@@ -303,11 +321,16 @@ export class RetainCoordinator {
       if (isAuthorizationError(error)) {
         this.unpersistedDenials.add(principalId);
         await this.storage.transaction(() =>
-          queue.setReplayState(item.id, {
-            ...item.replayState,
-            gate: "probe",
-            protected: true,
-          }),
+          queue.setReplayStates(
+            queue.snapshot().map((queued) => ({
+              id: queued.id,
+              state: {
+                ...queued.replayState,
+                ...(queued.id === item.id ? { gate: "probe" as const } : {}),
+                protected: true,
+              },
+            })),
+          ),
         );
         this.unpersistedDenials.delete(principalId);
         this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);

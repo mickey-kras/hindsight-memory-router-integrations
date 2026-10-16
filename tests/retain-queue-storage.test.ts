@@ -213,3 +213,18 @@ describe("aggregate queue capacity", () => {
     await expect(storage.transaction(() => storage.assertAppend(2))).rejects.toMatchObject({ limit: "items" });
   });
 });
+
+it("rejects a fresh admission contender after bounded contention and releases its descriptor", async () => {
+  const storage = new RetainQueueStorage(directory);
+  const fd = openSync(join(directory, ".retain-admission.lock"), "a", 0o600);
+  expect(tryLock(fd)).toBe(true);
+  const contender = vi.fn(async () => "accepted");
+  try {
+    await expect(storage.admission(contender)).rejects.toMatchObject({ code: "RETAIN_QUEUE_BUSY" });
+    expect(contender).not.toHaveBeenCalled();
+  } finally {
+    closeSync(fd);
+  }
+  expect(await storage.admission(contender)).toBe("accepted");
+  expect(contender).toHaveBeenCalledTimes(1);
+});

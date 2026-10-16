@@ -309,7 +309,7 @@ it("queues concurrent fresh work behind an in-flight predecessor without holding
 it("fails closed in the current instance when a denial cannot be persisted", async () => {
   enqueue("denied", "X");
   const original = readFileSync(path, "utf8");
-  const writeState = vi.spyOn(RetainQueue.prototype, "setReplayState").mockImplementationOnce(() => {
+  const writeState = vi.spyOn(RetainQueue.prototype, "setReplayStates").mockImplementationOnce(() => {
     throw new Error("private disk failure");
   });
   const denied = stack(() => {
@@ -433,4 +433,69 @@ it("classifies a whole changed-bank backlog with one atomic state update", async
   expect(updates.mock.calls[0][0]).toHaveLength(64);
   expect(rows()).toEqual(original.map((item) => ({ ...item, replayState: { quarantine: "bank-mismatch" } })));
   expect(calls).toEqual([]);
+});
+
+it("serializes fresh contenders behind a transiently failing fresh predecessor across coordinators", async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const first = stack(async () => {
+    entered();
+    await pending;
+    throw http(503);
+  });
+  const sending = first.coordinator.retain("main", { content: "older", documentId: "X", updateMode: "append" });
+  await started;
+  const second = stack();
+  const contender = second.coordinator.retain("main", { content: "newer", documentId: "X", updateMode: "replace" });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(rows()).toEqual([]);
+  expect(second.calls).toEqual([]);
+  release();
+  expect(await sending).toMatchObject({ queued: true });
+  expect(await contender).toMatchObject({ queued: true });
+  expect(rows().map((item) => item.content)).toEqual(["older", "newer"]);
+  const restarted = stack();
+  await restarted.coordinator.flushQueues();
+  expect(restarted.calls.map((call) => call.content)).toEqual(["older", "newer"]);
+  expect(restarted.calls.map((call) => call.options?.updateMode)).toEqual(["append", "replace"]);
+});
+
+it("preserves a formerly gated backlog past the recovery batch limit and restart", async () => {
+  enqueue("denied", "X");
+  for (let index = 0; index < 55; index++) enqueue(`backlog-${index}`);
+  await stack(() => {
+    throw http(403);
+  }).coordinator.flushQueues();
+  const items = rows();
+  for (const item of items) item.createdAt = "2000-01-01T00:00:00Z";
+  writeFileSync(path, `${items.map((item) => JSON.stringify(item)).join("\n")}\n`);
+  const recovered = stack(undefined, { age: 1 });
+  await recovered.coordinator.flushQueues();
+  expect(recovered.calls).toHaveLength(50);
+  expect(rows()).toHaveLength(6);
+  expect(rows().every((item) => item.replayState?.protected)).toBe(true);
+  const restarted = stack(undefined, { age: 1 });
+  await restarted.coordinator.flushQueues();
+  expect(restarted.calls.map((call) => call.content)).toEqual(
+    Array.from({ length: 6 }, (_, index) => `backlog-${index + 49}`),
+  );
+  expect(rows()).toEqual([]);
+});
+
+it("keeps fresh work accepted under a gate protected after recovery and transient retries", async () => {
+  enqueue("denied", "X", { replayState: { gate: "probe", protected: true } });
+  await stack().coordinator.retain("main", { content: "fresh", documentId: "Y" });
+  const retry = stack((content) => {
+    if (content === "fresh") throw http(503);
+  });
+  for (let index = 0; index < 6; index++) await retry.coordinator.flushQueues();
+  expect(rows()).toEqual([
+    expect.objectContaining({ content: "fresh", replayAttempts: 6, replayState: { protected: true } }),
+  ]);
 });

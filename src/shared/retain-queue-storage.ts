@@ -121,15 +121,25 @@ export class RetainQueueStorage {
     }
   }
 
+  async admission<T>(action: () => Promise<T>): Promise<T> {
+    return (await this.deliveryLock(".retain-admission.lock", action, true)) as T;
+  }
+
   async replay<T>(action: () => Promise<T>): Promise<T | undefined> {
+    return this.deliveryLock(".retain-replay.lock", action, false);
+  }
+
+  private async deliveryLock<T>(name: string, action: () => Promise<T>, wait: boolean): Promise<T | undefined> {
     const fd = sharedStorageOperation(() =>
-      openPrivateQueueFile(
-        join(this.directory, ".retain-replay.lock"),
-        constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
-      ),
+      openPrivateQueueFile(join(this.directory, name), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT),
     );
     try {
-      if (!sharedStorageOperation(() => tryLock(fd))) return undefined;
+      let attempt = 0;
+      while (!sharedStorageOperation(() => tryLock(fd))) {
+        if (!wait) return undefined;
+        if (attempt++ === 30) throw new RetainQueueBusyError();
+        await setTimeout(100);
+      }
       return await action();
     } finally {
       sharedStorageOperation(() => closeSync(fd));

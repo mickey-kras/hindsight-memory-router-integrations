@@ -1008,14 +1008,16 @@ describe("RetainCoordinator", () => {
     const unbounded = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: unbounded });
     expect(unbounded.warn).toHaveBeenCalledWith(
-      `retain queue at ${queueDir} holds plaintext transcripts with no expiration; set retainQueueMaxAgeMs to bound retention and protect the directory with disk encryption`,
+      `retain queue at ${queueDir} holds plaintext transcripts with no expiration; set retainQueueMaxAgeMs to bound ordinary retention (protected backlog is exempt) and protect the directory with disk encryption`,
     );
     const bounded = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: bounded, queueMaxAgeMs: 604800000 });
     expect(bounded.warn).not.toHaveBeenCalled();
     const renamed = { warn: vi.fn(), error: () => {} };
     makeStack({ queueDir, logger: renamed, maxAgeConfigKey: "queueMaxAgeMs" });
-    expect(renamed.warn.mock.calls.flat().join("\n")).toContain("set queueMaxAgeMs to bound retention");
+    expect(renamed.warn.mock.calls.flat().join("\n")).toContain(
+      "set queueMaxAgeMs to bound ordinary retention (protected backlog is exempt)",
+    );
   });
   it("caps outage writes across principals, preserves FIFO, and frees capacity after replay", async () => {
     let unavailable = true;
