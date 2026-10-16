@@ -7,7 +7,13 @@ import type { AuthenticatedClientFactory } from "./authenticated-client-factory.
 import { PRINCIPAL_ID_PATTERN, type PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 import { privateQueueDirectory } from "./private-queue-files.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
-import { QUEUE_FILE_PREFIX, QUEUE_FILE_SUFFIX, RetainQueueStorage } from "./retain-queue-storage.js";
+import {
+  QUEUE_FILE_PREFIX,
+  QUEUE_FILE_SUFFIX,
+  RetainQueueSharedStorageError,
+  RetainQueueStorage,
+} from "./retain-queue-storage.js";
+
 export { RetainQueueBusyError, RetainQueueCapacityError } from "./retain-queue-storage.js";
 
 export type RetainRequestPayload = QueuedRetainPayload;
@@ -141,7 +147,13 @@ export class RetainCoordinator {
       }
       try {
         await this.flushQueueFile(file);
-      } catch {
+      } catch (error) {
+        if (error instanceof RetainQueueSharedStorageError) {
+          this.log.error(
+            "retain queue replay paused: shared storage unavailable; remaining items stay queued for retry",
+          );
+          return;
+        }
         this.log.error(
           `retain queue replay failed for ${this.queueLabel(file)}; remaining items stay queued for retry`,
         );
@@ -191,6 +203,7 @@ export class RetainCoordinator {
         await this.replayItem(principalId, client, queue, item);
         delivered.push(item.id);
       } catch (error) {
+        if (error instanceof RetainQueueSharedStorageError) throw error;
         await this.handleReplayError(error, queue, item, delivered);
         break; // preserve FIFO ordering; retry next flush
       }
