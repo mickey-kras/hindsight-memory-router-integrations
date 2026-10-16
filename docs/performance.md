@@ -18,6 +18,8 @@ install its dependencies, and run the same command.
 Each queue row has 1 KiB content and a distinct document. A flush sends at most 50
 rows. Ordinary rows already have operation IDs; legacy rows require durable IDs.
 Each journal case appends 20 distinct short replies to an existing synthetic journal.
+Identity preparation covers at most 50 requests and leaves room for the in-flight marker.
+Near-capacity legacy queues fall back to durable per-row IDs as successful removals free space.
 
 | Case | Metric | Before | After |
 | --- | --- | ---: | ---: |
@@ -28,7 +30,7 @@ Each journal case appends 20 distinct short replies to an existing synthetic jou
 | Legacy queue, 50 rows | Rewrites / bytes | 199 / 5,786,280 | 100 / 3,053,680 |
 | Legacy queue, 50 rows | fsync calls | 399 | 201 |
 | Ordinary queue, 100 rows, one batch | Read / rewrite bytes | 26,805,100 / 13,226,660 | 13,519,820 / 8,798,750 |
-| Legacy queue, 100 rows, one batch | Read / rewrite bytes | 26,153,400 / 17,226,280 | 13,900,385 / 9,098,530 |
+| Legacy queue, 100 rows, one batch | Read / rewrite bytes | 26,153,400 / 17,226,280 | 13,502,885 / 8,830,880 |
 | 1 MiB journal, 20 appends | Read bytes | 21,006,845 | 1,310,720 |
 | 7 MiB journal, 20 appends | Read bytes | 146,832,965 | 1,310,720 |
 

@@ -1,0 +1,360 @@
+name: trusted ci
+'on':
+  workflow_call:
+    inputs:
+      revision_ref:
+        type: string
+        default: ''
+      revision_sha:
+        type: string
+        default: ''
+    outputs:
+      coverage_artifact:
+        value: ${{ jobs.checks.outputs.coverage_artifact }}
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      coverage_artifact: ${{ steps.coverage.outputs.artifact-id }}
+    env:
+      NIXPKGS_REV: e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.revision_sha || github.sha }}
+          persist-credentials: 'false'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.23.3
+          cache: npm
+          cache-dependency-path: |
+            npm-shrinkwrap.json
+            src/upstream/coding-agents/npm-shrinkwrap.json
+            .github/scripts/package-lock.json
+      - name: Install npm packaging and audit client
+        run: |
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = 11.19.1
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm exec -- tsc --noEmit -p tsconfig.test.json
+      - run: npm exec -- tsc --noEmit -p tsconfig.integration.json
+      - name: Tests and coverage
+        run: npm run test:coverage
+      - run: npm exec --prefix src/upstream/coding-agents -- tsc --noEmit -p src/upstream/coding-agents/tsconfig.json
+      - run: npm test --prefix src/upstream/coding-agents
+      - run: node scripts/verify-coding-upstream.mjs
+      - run: node scripts/verify-openclaw-overlay.mjs
+      - run: node --test scripts/verify-vendored-files.test.mjs
+      - run: python3 -m unittest discover -s scripts -p test_sync_upstream.py
+      - name: Install release tools
+        run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
+      - name: Audit release tools
+        run: |
+          # Retry only shields transient registry errors; the endpoint
+          # retirement itself is handled by the npm 11 upgrade above.
+          for attempt in 1 2 3; do
+            if npm audit --prefix .github/scripts --audit-level=moderate; then exit 0; fi
+            echo "npm audit attempt $attempt failed; retrying"
+            sleep $((attempt * 15))
+          done
+          exit 1
+      - name: Release automation tests
+        run: node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs
+          .github/scripts/coverage-artifact.test.cjs
+      - name: Trusted scanner boundary tests
+        run: node --test .github/trusted-ci/*.test.cjs
+      - name: Release policy tests
+        run: python3 .github/scripts/release-policy.test.py
+      - name: PR branch updater tests
+        run: node --test .github/scripts/pr-branch-updater.test.cjs
+      - name: Sonar finding reporter tests
+        run: |
+          python3 -m unittest tests/test_sonar_finding_sync.py
+          python3 -m unittest discover -s tests -p test_sonar_privacy.py
+      - name: Node tooling audit
+        run: |
+          node --test .github/scripts/npm-audit.test.cjs
+          node .github/scripts/npm-audit.cjs
+          node .github/scripts/npm-audit.cjs src/upstream/coding-agents
+      - name: Verify package
+        id: packages
+        run: |
+          mkdir -p packages "$RUNNER_TEMP/repack"
+          artifact="$(npm pack --pack-destination packages --json | jq -r '.[0].filename')"
+          tar -tzf "packages/$artifact" > "$RUNNER_TEMP/package-files"
+          grep -Fxq package/npm-shrinkwrap.json "$RUNNER_TEMP/package-files"
+          repeat="$(npm pack --pack-destination "$RUNNER_TEMP/repack" --json | jq -r '.[0].filename')"
+          test "$artifact" = "$repeat"
+          cmp "packages/$artifact" "$RUNNER_TEMP/repack/$repeat"
+          coding_artifact="$(cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --json | jq -r '.[0].filename')"
+          tar -tzf "packages/$coding_artifact" | grep -Fxq package/npm-shrinkwrap.json
+          coding_repeat="$(cd src/upstream/coding-agents && npm pack --pack-destination "$RUNNER_TEMP/repack" --json | jq -r '.[0].filename')"
+          test "$coding_artifact" = "$coding_repeat"
+          cmp "packages/$coding_artifact" "$RUNNER_TEMP/repack/$coding_repeat"
+          node .github/scripts/verify-package-inventory.cjs
+          sha256sum --check PACKAGE_SHA256
+          printf 'root_artifact=%s\n' "$artifact" >> "$GITHUB_OUTPUT"
+      - name: Verify packed coding-agent installer
+        run: node --test .github/scripts/coding-installer-smoke.mjs
+      - name: Use minimum supported Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.12.0
+      - name: Verify packed minimum-runtime contracts
+        run: node scripts/verify-runtime-contract.mjs
+      - name: Restore tooling Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.23.3
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      - name: Cache Nix dependency hash
+        id: nix-deps
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/nix-prefetch
+          key: nix-prefetch-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NIXPKGS_REV }}-${{ hashFiles('npm-shrinkwrap.json')
+            }}
+      - name: Nix dependency hash
+        env:
+          ROOT_ARTIFACT: ${{ steps.packages.outputs.root_artifact }}
+          PREFETCH_CACHE_HIT: ${{ steps.nix-deps.outputs.cache-hit }}
+        run: |
+          expected_source="$(sed -n 's/^source=//p' PACKAGE_NIX_HASHES)"
+          expected_deps="$(sed -n 's/^npm_deps=//p' PACKAGE_NIX_HASHES)"
+          test "$(nix hash file "packages/$ROOT_ARTIFACT")" = "$expected_source"
+          cache_file="$RUNNER_TEMP/nix-prefetch/npm-deps"
+          if [ "$PREFETCH_CACHE_HIT" != true ]; then
+            mkdir -p "$(dirname "$cache_file")"
+            nix run "github:NixOS/nixpkgs/${NIXPKGS_REV}#prefetch-npm-deps" \
+              -- npm-shrinkwrap.json > "$cache_file"
+          fi
+          actual_deps="$(cat "$cache_file")"
+          printf 'expected npm dependency hash: %s\nactual npm dependency hash:   %s\n' \
+            "$expected_deps" "$actual_deps"
+          test "$actual_deps" = "$expected_deps"
+      - name: Record coverage provenance
+        env:
+          COVERAGE_SHA: ${{ inputs.revision_sha || github.sha }}
+        run: node .github/scripts/coverage-artifact.cjs record
+      - name: Retain verified coverage
+        id: coverage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: coverage-${{ inputs.revision_sha || github.sha }}-${{ github.run_attempt }}
+          path: |
+            coverage/lcov.info
+            coverage/provenance.json
+          if-no-files-found: error
+          retention-days: 7
+    permissions:
+      contents: read
+  checks:
+    needs:
+      - build
+      - security
+    if: ${{ always() }}
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      coverage_artifact: ${{ needs.build.outputs.coverage_artifact }}
+    steps:
+      - name: Require build and independent scans
+        env:
+          BUILD: ${{ needs.build.result }}
+          SECURITY: ${{ needs.security.result }}
+        run: |
+          test "$BUILD" = success
+          test "$SECURITY" = success
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: read
+      security-events: write
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
+        with:
+          egress-policy: audit
+      - name: Check out immutable workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Validate candidate identity
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          REVISION_SHA: ${{ inputs.revision_sha }}
+          REVISION_REF: ${{ inputs.revision_ref }}
+        with:
+          script: |
+            const result = await require('./trusted/.github/trusted-ci/identity.cjs').identify({github, context, sha: process.env.REVISION_SHA, ref: process.env.REVISION_REF});
+            for (const [key, value] of Object.entries(result)) core.setOutput(key, value);
+        id: identity
+      - name: Check out validated candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.identity.outputs.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.23.3
+          package-manager-cache: false
+      - name: Prepare confined scanner tree
+        run: |
+          node trusted/.github/trusted-ci/scan-tree.cjs candidate "$RUNNER_TEMP/scan"
+          mkdir -p "$RUNNER_TEMP/reports"
+      - name: Dependency review
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.number
+          != '')
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+        with:
+          config-file: ./trusted/.github/trusted-ci/dependency-review-config.yml
+          base-ref: ${{ github.event.pull_request.base.sha || 'main' }}
+          head-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install trusted audit client
+        run: |
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = 11.19.1
+      - name: Audit candidate dependencies without candidate configuration
+        run: |
+          node trusted/.github/trusted-ci/npm-audit.cjs "$RUNNER_TEMP/scan"
+          node trusted/.github/trusted-ci/npm-audit.cjs "$RUNNER_TEMP/scan/src/upstream/coding-agents"
+          node trusted/.github/trusted-ci/npm-audit.cjs "$RUNNER_TEMP/scan/.github/scripts"
+      - name: Gitleaks
+        run: |
+          curl --fail --location --silent --show-error https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz -o "$RUNNER_TEMP/gitleaks.tar.gz"
+          printf '%s  %s\n' 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c "$RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
+          mkdir "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          GITLEAKS_BINARY="$RUNNER_TEMP/gitleaks/gitleaks" node --test trusted/.github/trusted-ci/gitleaks.test.cjs
+          "$RUNNER_TEMP/gitleaks/gitleaks" git candidate --log-opts="--full-history --all --text" --redact --ignore-gitleaks-allow --config trusted/.github/trusted-ci/gitleaks.toml --gitleaks-ignore-path trusted/.github/trusted-ci/gitleaksignore --report-format sarif --report-path "$RUNNER_TEMP/reports/gitleaks.sarif"
+      - name: Retain Gitleaks report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: gitleaks-${{ steps.identity.outputs.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reports/gitleaks.sarif
+          retention-days: 7
+      - name: Semgrep
+        run: |
+          SEMGREP_IMAGE="semgrep/semgrep:1.172.0@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b"
+          docker pull "$SEMGREP_IMAGE"
+          docker run --rm -v "$RUNNER_TEMP/scan:/src:ro" -v "$GITHUB_WORKSPACE/trusted/.github/trusted-ci:/trusted:ro" -w /src "$SEMGREP_IMAGE" semgrep scan --config /trusted/.semgrep.yml --no-git-ignore --disable-nosem --exclude .semgrep.yml --error --metrics off
+      - name: Trivy dependency report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: fs
+          scan-ref: ${{ runner.temp }}/scan
+          scanners: vuln
+          format: sarif
+          output: ${{ runner.temp }}/reports/trivy.sarif
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 0
+          limit-severities-for-sarif: true
+          version: v0.71.2
+          cache: false
+          cache-dir: ${{ runner.temp }}/trivy-cache
+          trivy-config: trusted/.github/trusted-ci/trivy.yaml
+          trivyignores: trusted/.github/trusted-ci/trivyignore
+      - name: Revalidate candidate before publication
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          REVISION_SHA: ${{ inputs.revision_sha }}
+          REVISION_REF: ${{ inputs.revision_ref }}
+        with:
+          script: |
+            const result = await require('./trusted/.github/trusted-ci/identity.cjs').identify({github, context, sha: process.env.REVISION_SHA, ref: process.env.REVISION_REF});
+            for (const [key, value] of Object.entries(result)) core.setOutput(key, value);
+        id: revalidated
+        if: ${{ !cancelled() }}
+      - name: Upload Trivy SARIF
+        if: ${{ !cancelled() && steps.revalidated.outputs.upload == 'true' }}
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d
+        with:
+          checkout_path: ${{ runner.temp }}/scan
+          sarif_file: ${{ runner.temp }}/reports/trivy.sarif
+          category: .github/workflows/main.yml:trivy
+          ref: ${{ steps.revalidated.outputs.ref }}
+          sha: ${{ steps.revalidated.outputs.sha }}
+      - name: Trivy dependency gate
+        run: |
+          trivy fs --config trusted/.github/trusted-ci/trivy.yaml --ignorefile trusted/.github/trusted-ci/trivyignore --cache-dir "$RUNNER_TEMP/trivy-cache" --scanners vuln --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$RUNNER_TEMP/scan"
+  combination:
+    name: release combination
+    continue-on-error: ${{ github.event_name == 'pull_request' && !startsWith(github.base_ref, 'release/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.revision_sha || github.sha }}
+          persist-credentials: 'false'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.23.3
+          cache: npm
+          cache-dependency-path: |
+            npm-shrinkwrap.json
+            src/upstream/coding-agents/npm-shrinkwrap.json
+      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
+      - name: Pack tested packages
+        run: |
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = 11.19.1
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm run build:coding-agents
+          mkdir -p packages
+          npm pack --pack-destination packages --silent
+          (cd src/upstream/coding-agents && npm pack --pack-destination "$GITHUB_WORKSPACE/packages" --silent)
+          node .github/scripts/verify-package-inventory.cjs
+          sha256sum --check PACKAGE_SHA256
+      - name: Resolve tested combination
+        id: pins
+        env:
+          CANDIDATE_REF: ${{ inputs.revision_ref }}
+          CANDIDATE_SHA: ${{ inputs.revision_sha }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            await require('./.github/scripts/combination.cjs')({
+              github, context, core,
+              target: process.env.CANDIDATE_SHA ? { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA } : undefined,
+            });
+      - name: Check out router test harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: mickey-kras/hindsight-memory-router
+          ref: ${{ steps.pins.outputs.router_sha }}
+          path: .router
+          persist-credentials: 'false'
+      - name: Test packaged clients against router and Hindsight
+        env:
+          ROUTER_TEST_IMAGE: ${{ steps.pins.outputs.router_image }}
+          ROUTER_TEST_VERSION: ${{ steps.pins.outputs.router_version }}
+          HINDSIGHT_TEST_IMAGE: ${{ steps.pins.outputs.image }}
+        run: bash .github/scripts/combination-smoke.sh
+    permissions:
+      contents: read

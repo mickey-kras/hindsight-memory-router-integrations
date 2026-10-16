@@ -1,0 +1,10 @@
+# Vulnerabilities block updates; license obligations depend on how code is used.
+# See SECURITY.md for the manual license review required for shipped dependencies.
+fail-on-severity: high
+vulnerability-check: true
+license-check: false
+warn-only: false
+fail-on-scopes:
+  - runtime
+  - development
+  - unknown

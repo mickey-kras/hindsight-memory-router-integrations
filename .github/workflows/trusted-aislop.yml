@@ -1,0 +1,91 @@
+name: trusted aislop
+'on':
+  workflow_call:
+    inputs:
+      revision_ref:
+        type: string
+        default: ''
+      revision_sha:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  status:
+    name: aislop status
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      security-events: write
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
+        with:
+          egress-policy: audit
+      - name: Check out immutable workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Validate candidate identity
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          REVISION_SHA: ${{ inputs.revision_sha }}
+          REVISION_REF: ${{ inputs.revision_ref }}
+        with:
+          script: |
+            const result = await require('./trusted/.github/trusted-ci/identity.cjs').identify({github, context, sha: process.env.REVISION_SHA, ref: process.env.REVISION_REF});
+            for (const [key, value] of Object.entries(result)) core.setOutput(key, value);
+        id: identity
+      - name: Check out validated candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.identity.outputs.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.23.3
+          package-manager-cache: false
+      - name: Prepare confined scanner tree
+        run: |
+          node trusted/.github/trusted-ci/scan-tree.cjs candidate "$RUNNER_TEMP/scan"
+          mkdir -p "$RUNNER_TEMP/reports"
+      - name: Install immutable scanner dependencies
+        run: |
+          npm ci --prefix trusted/.github/trusted-ci --ignore-scripts --no-audit --no-fund
+      - name: Aislop quality gate
+        run: |
+          node trusted/.github/trusted-ci/aislop.mjs "$RUNNER_TEMP/scan" human
+      - name: Aislop SARIF
+        if: ${{ !cancelled() }}
+        run: |
+          node trusted/.github/trusted-ci/aislop.mjs "$RUNNER_TEMP/scan" sarif > "$RUNNER_TEMP/reports/aislop.sarif"
+      - name: Aislop findings gate
+        if: ${{ !cancelled() }}
+        run: |
+          node trusted/.github/trusted-ci/findings.cjs "$RUNNER_TEMP/reports/aislop.sarif"
+      - name: Revalidate candidate before publication
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          REVISION_SHA: ${{ inputs.revision_sha }}
+          REVISION_REF: ${{ inputs.revision_ref }}
+        with:
+          script: |
+            const result = await require('./trusted/.github/trusted-ci/identity.cjs').identify({github, context, sha: process.env.REVISION_SHA, ref: process.env.REVISION_REF});
+            for (const [key, value] of Object.entries(result)) core.setOutput(key, value);
+        id: revalidated
+        if: ${{ !cancelled() }}
+      - name: Upload Aislop SARIF
+        if: ${{ !cancelled() && steps.revalidated.outputs.upload == 'true' }}
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d
+        with:
+          checkout_path: ${{ runner.temp }}/scan
+          sarif_file: ${{ runner.temp }}/reports/aislop.sarif
+          category: .github/workflows/main.yml:status
+          ref: ${{ steps.revalidated.outputs.ref }}
+          sha: ${{ steps.revalidated.outputs.sha }}

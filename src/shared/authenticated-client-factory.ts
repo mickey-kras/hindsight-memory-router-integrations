@@ -83,21 +83,50 @@ export class AuthenticatedClientFactory {
     if (!credentials.access) throw new AccessDeniedError();
     const cached = this.transportCache.get(credentials.principalId);
     if (cached?.token === credentials.token) return cached.transport;
-    const transport = new RouterTransport({
-      routerUrl: this.baseUrl,
-      access: credentials.access,
-      principalId: credentials.principalId,
-      token: () => credentials.token,
-    });
+    const transport = this.createTransport(credentials);
     this.transportCache.set(credentials.principalId, {
       token: credentials.token,
       transport,
     });
     return transport;
   }
-  private createClient(credentials: PrincipalCredentials): RouterClient {
+
+  // Only an eligible durable gate owner may use this isolated client. Publish its
+  // recovered transport after the owner has been durably acknowledged.
+  createRetainReplayProbe(credentials: PrincipalCredentials): { client: RouterClient; commit(): boolean } {
+    if (this.construct) return { client: this.forAgent(credentials), commit: () => true };
+    const cachedClient = this.cache.get(credentials.principalId);
+    const cachedTransport = this.transportCache.get(credentials.principalId);
+    const transport = this.createTransport(credentials);
+    const client = this.createClient(credentials, transport);
+    return {
+      client,
+      commit: () => {
+        if (
+          cachedClient?.token !== credentials.token ||
+          cachedTransport?.token !== credentials.token ||
+          this.cache.get(credentials.principalId) !== cachedClient ||
+          this.transportCache.get(credentials.principalId) !== cachedTransport
+        )
+          return false;
+        this.cache.set(credentials.principalId, { token: credentials.token, client });
+        this.transportCache.set(credentials.principalId, { token: credentials.token, transport });
+        return true;
+      },
+    };
+  }
+
+  private createTransport(credentials: PrincipalCredentials): RouterTransport {
     if (!credentials.access) throw new AccessDeniedError();
-    const transport = this.transportFor(credentials);
+    return new RouterTransport({
+      routerUrl: this.baseUrl,
+      access: credentials.access,
+      principalId: credentials.principalId,
+      token: () => credentials.token,
+    });
+  }
+  private createClient(credentials: PrincipalCredentials, transport = this.transportFor(credentials)): RouterClient {
+    if (!credentials.access) throw new AccessDeniedError();
     return {
       async retain(bank, content, options) {
         const response = await transport.request(transport.bankUrl(bank, "/memories"), {

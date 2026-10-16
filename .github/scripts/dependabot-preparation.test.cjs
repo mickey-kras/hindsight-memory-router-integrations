@@ -1319,8 +1319,11 @@ test("every packaging job selects and verifies the same npm before install, test
     ),
   );
   const expectedJobs = new Set([
-    "ci.yml/checks",
-    "ci.yml/combination",
+    ...(workflows["main.yml"].jobs.quality.uses.includes("trusted-ci.yml@")
+      ? []
+      : ["ci.yml/checks", "ci.yml/combination"]),
+    "trusted-ci.yml/build",
+    "trusted-ci.yml/combination",
     "main.yml/publish",
     "release.yml/prepare-release",
     "dependabot-preparation.yml/build",
@@ -1468,5 +1471,38 @@ test("policy propagates content and blob retrieval failures without fallback or 
     };
     await assert.rejects(h.run, (error) => error === failure);
     assert.equal(h.requests.length, operation === "getContent" ? 0 : 1);
+  }
+});
+
+function runTrustedScannerTests(files) {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  return execFileSync(process.execPath, ["--test", ...files], { encoding: "utf8", env });
+}
+
+// Keep the bootstrap boundary suite in an existing required workflow before the
+// immutable reusable workflows are activated.
+test("trusted scanner boundary suite passes before activation", () => {
+  runTrustedScannerTests(
+    ["identity", "scan-tree", "safe-path", "workflows"].map((name) =>
+      resolve(__dirname, `../trusted-ci/${name}.test.cjs`),
+    ),
+  );
+});
+
+test("trusted scanner boundary runner propagates child test failures", () => {
+  const directory = mkdtempSync(join(tmpdir(), "trusted-scanner-failure-"));
+  try {
+    const sentinel = join(directory, "sentinel.test.cjs");
+    writeFileSync(
+      sentinel,
+      'require("node:test")("child failure sentinel", () => { throw new Error("trusted scanner sentinel failed"); });\n',
+    );
+    assert.throws(
+      () => runTrustedScannerTests([sentinel]),
+      (error) => error.status === 1 && error.stdout.includes("trusted scanner sentinel failed"),
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

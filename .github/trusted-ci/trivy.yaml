@@ -1,0 +1,6 @@
+scan:
+  skip-dirs:
+    - node_modules
+    - coverage
+    - dist
+    - .cache

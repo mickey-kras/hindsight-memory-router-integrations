@@ -1,6 +1,5 @@
 name: aislop
-
-on:
+'on':
   workflow_call:
     inputs:
       candidate_ref:
@@ -9,91 +8,13 @@ on:
       candidate_sha:
         type: string
         default: ''
-
-concurrency:
-  group: aislop-${{ github.event_name }}-${{ inputs.candidate_sha || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 permissions:
   contents: read
+  pull-requests: read
   security-events: write
-
 jobs:
   status:
-    name: aislop status
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ inputs.candidate_sha || github.sha }}
-          persist-credentials: false
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22.23.3
-          cache: npm
-          cache-dependency-path: npm-shrinkwrap.json
-
-      - run: npm ci
-
-      - name: Aislop quality gate
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [ "${EVENT_NAME}" = pull_request ]; then
-            npm run aislop:ci -- --human
-          else
-            npm run aislop:ci:human
-          fi
-
-      - name: Aislop SARIF
-        if: ${{ !cancelled() }}
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [ "${EVENT_NAME}" = pull_request ]; then
-            npm run --silent aislop:ci -- --sarif > aislop.sarif
-          else
-            npm run --silent aislop:ci:sarif > aislop.sarif
-          fi
-
-      - name: Aislop findings gate
-        if: ${{ !cancelled() && hashFiles('aislop.sarif') != '' }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-
-          const sarif = JSON.parse(readFileSync('aislop.sarif', 'utf8'));
-          // audit-ci separately gates the exact GHSA allowlist in audit-ci.jsonc.
-          const findings = sarif.runs
-            .flatMap((run) => run.results ?? [])
-            .filter((finding) => finding.ruleId !== 'security/vulnerable-dependency');
-          if (findings.length > 0) {
-            const rules = [...new Set(findings.map((finding) => finding.ruleId ?? 'unknown'))];
-            console.error(`Aislop reported ${findings.length} finding(s): ${rules.join(', ')}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Upload Aislop SARIF
-        if: >-
-          ${{
-            !cancelled() &&
-            hashFiles('aislop.sarif') != '' &&
-            (
-              github.event_name != 'pull_request' ||
-              github.event.pull_request.head.repo.full_name == github.repository
-            )
-          }}
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        with:
-          sarif_file: aislop.sarif
-          category: .github/workflows/main.yml:status
-          ref: ${{ inputs.candidate_ref }}
-          sha: ${{ inputs.candidate_sha }}
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-aislop.yml@fdadc9d93167455b9a0f4494f931beb2562be1ce
+    with:
+      revision_sha: ${{ inputs.candidate_sha }}
+      revision_ref: ${{ inputs.candidate_ref }}

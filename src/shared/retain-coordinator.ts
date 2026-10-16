@@ -263,7 +263,7 @@ export class RetainCoordinator {
     principalId: string,
     credentials: ReturnType<PrincipalCredentialResolver["resolve"]>,
   ): Promise<void> {
-    const client = this.clients.forAgent(credentials);
+    let client = this.clients.forAgent(credentials);
     const queue = this.queueFor(principalId);
     let items = await this.storage.transaction(() => {
       this.prepareQueue(principalId, queue);
@@ -274,20 +274,6 @@ export class RetainCoordinator {
       this.log.error("retain replay paused: HTTP outcome could not be persisted; operator repair required");
       return;
     }
-    // One durable upgrade for legacy rows before any HTTP request. Re-read on
-    // each delivery and acknowledgement so concurrent admissions are preserved.
-    const missingIds = new Map<string, string>();
-    const blockedForPreparation: QueuedRetain[] = [];
-    for (const item of items) {
-      if (item.replayState?.quarantine === "corrupt") break;
-      if (item.replayState?.quarantine || blockedForPreparation.some((prior) => sameRetainDocument(prior, item))) {
-        blockedForPreparation.push(item);
-        continue;
-      }
-      if (!item.operationId) missingIds.set(item.id, randomUUID());
-    }
-    await this.storage.transaction(() => queue.ensureOperationIds(missingIds));
-    let attempts = 0;
     const gate = items.find((item) => item.replayState?.gate);
     if (gate) {
       const predecessors = items.slice(0, items.indexOf(gate));
@@ -297,8 +283,36 @@ export class RetainCoordinator {
         predecessors.some((item) => item.replayState?.quarantine === "corrupt" || sameRetainDocument(item, gate))
       )
         return;
+    }
+    // Upgrade only this request batch, prioritizing its authorization probe.
+    // A near-capacity legacy queue falls back to durable per-row preparation
+    // as acknowledged removals free space; the planned IDs stay unchanged.
+    const missingIds = new Map<string, string>();
+    let preparedCount = gate ? 1 : 0;
+    if (gate && !gate.operationId) missingIds.set(gate.id, randomUUID());
+    const blockedForPreparation: QueuedRetain[] = [];
+    for (const item of items) {
+      if (preparedCount >= REPLAY_BATCH_SIZE || item.replayState?.quarantine === "corrupt") break;
+      if (item === gate) continue;
+      if (item.replayState?.quarantine || blockedForPreparation.some((prior) => sameRetainDocument(prior, item))) {
+        blockedForPreparation.push(item);
+        continue;
+      }
+      preparedCount++;
+      if (!item.operationId) missingIds.set(item.id, randomUUID());
+    }
+    try {
+      await this.storage.transaction(() => queue.ensureOperationIds(missingIds));
+    } catch (error) {
+      if (!(error instanceof RetainQueueRewriteCapacityError)) throw error;
+    }
+    let attempts = 0;
+    if (gate) {
+      const probe = this.clients.createRetainReplayProbe(credentials);
       attempts++;
-      if ((await this.deliverQueued(principalId, client, queue, gate)) !== "delivered") return;
+      if ((await this.deliverQueued(principalId, probe.client, queue, gate, missingIds)) !== "delivered") return;
+      if (!probe.commit()) return;
+      client = probe.client;
       items = await this.storage.transaction(() => queue.snapshot());
       // Recovery-edited backlogs can contain another gate owner. Never let a
       // successful probe implicitly clear a different persisted principal gate.
@@ -312,7 +326,7 @@ export class RetainCoordinator {
         continue;
       }
       attempts++;
-      const outcome = await this.deliverQueued(principalId, client, queue, item);
+      const outcome = await this.deliverQueued(principalId, client, queue, item, missingIds);
       if (outcome === "stop") break;
       if (outcome === "mismatched") attempts--;
       if (outcome === "quarantined" || outcome === "mismatched") blocked.push(item);
@@ -324,6 +338,7 @@ export class RetainCoordinator {
     client: ReturnType<AuthenticatedClientFactory["forAgent"]>,
     queue: RetainQueue,
     item: QueuedRetain,
+    plannedIds: ReadonlyMap<string, string>,
   ): Promise<"delivered" | "quarantined" | "mismatched" | "stop"> {
     // Preparation and acknowledgement errors are storage failures, never HTTP
     // classifications. A failed acknowledgement retains the original operation ID.
@@ -342,7 +357,8 @@ export class RetainCoordinator {
         return undefined;
       if (current.replayState?.quarantine || predecessors.some((queued) => sameRetainDocument(queued, current)))
         return { item: current, operationId: undefined };
-      const operationId = current.operationId || queue.ensureOperationId(current.id, randomUUID());
+      const operationId =
+        current.operationId || queue.ensureOperationId(current.id, plannedIds.get(current.id) ?? randomUUID());
       queue.setReplayState(current.id, { ...current.replayState, sending: true });
       return { item: current, operationId };
     });
