@@ -44,7 +44,7 @@ Root coverage includes `src/**/*.ts`, including maintained OpenClaw queue and se
 
 ### Python and node:test automation tests
 
-These run separately from Vitest. Install release-tool dependencies with `npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund` before the automation tests. Python suites use the standard library.
+These run separately from Vitest. Install release-tool dependencies with `npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund` before the automation tests. The Sonar Python suites use only the standard library. The release-policy suite additionally requires PyYAML; install it in your active Python virtual environment with `python3 -m pip install PyYAML` before running that suite.
 
 | Family | Command | CI workflow |
 | --- | --- | --- |
