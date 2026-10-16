@@ -12,8 +12,6 @@ process.env.AISLOP_NO_HISTORY = "1";
 process.env.AISLOP_NO_UPDATE_NOTIFIER = "1";
 const { loadConfig, scanCommand } = await import("aislop");
 const config = loadConfig(trusted);
-// The pinned loader strips this runtime-only engine option from YAML.
-config.allowProjectLocalTools = false;
 const result = await scanCommand(resolve(process.argv[2]), config, {
   verbose: false,
   json: false,

@@ -18,6 +18,9 @@ function prepare(source, destination, trusted = __dirname) {
     "biome.jsonc",
     ".git",
     "node_modules",
+    // Pinned Aislop resolves Ruff from these project-local tool directories.
+    ".venv",
+    "venv",
     ".npmrc",
     ".semgrepignore",
     ".gitignore",

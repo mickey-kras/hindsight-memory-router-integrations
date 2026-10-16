@@ -69,6 +69,20 @@ test("all candidate Knip dependency declarations fail before scanner invocation"
     });
   }
 });
+test("candidate virtualenv tool locations never reach scanner discovery", () =>
+  fixture(({ source, output, write }) => {
+    for (const environment of [".venv", "venv", "nested/.venv", "nested/venv"]) {
+      for (const binary of ["bin/ruff", "Scripts/ruff", "Scripts/ruff.exe"]) {
+        write(`${environment}/${binary}`, "candidate-controlled tool placeholder");
+      }
+    }
+    write("main.py", "print('source remains scanned')\n");
+    prepare(source, output);
+    assert.equal(fs.readFileSync(path.join(output, "main.py"), "utf8"), "print('source remains scanned')\n");
+    for (const environment of [".venv", "venv", "nested/.venv", "nested/venv"]) {
+      assert.equal(fs.existsSync(path.join(output, environment)), false);
+    }
+  }));
 test("candidate inline scanner suppressions fail before scanner invocation", () => {
   const directive = "aislop" + "-ignore";
   for (const marker of ["//", "/*", "/***", "#", "<!--", "*"]) {
