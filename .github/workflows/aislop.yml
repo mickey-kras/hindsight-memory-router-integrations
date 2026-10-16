@@ -14,7 +14,7 @@ permissions:
   security-events: write
 jobs:
   status:
-    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-aislop.yml@e09f70355dfd69bbb31b77f590621e6b376c2f1e
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-aislop.yml@fdadc9d93167455b9a0f4494f931beb2562be1ce
     with:
       revision_sha: ${{ inputs.candidate_sha }}
       revision_ref: ${{ inputs.candidate_ref }}
