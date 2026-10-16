@@ -61,7 +61,7 @@ jobs:
       pull-requests: read
       security-events: write
   aislop:
-    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-aislop.yml@e09f70355dfd69bbb31b77f590621e6b376c2f1e
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-aislop.yml@fdadc9d93167455b9a0f4494f931beb2562be1ce
     permissions:
       contents: read
       pull-requests: read
