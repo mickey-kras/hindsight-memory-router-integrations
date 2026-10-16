@@ -278,7 +278,7 @@ export function registerTraecodeWorkspaceMcp(
   } catch (e) {
     diag("traecode", "workspace_mcp_register_failed", {
       cwd,
-      error: e instanceof Error ? e.message : String(e),
+      error: e,
     });
     return "failed";
   }
@@ -441,7 +441,7 @@ export function ensureWorkspaceMcpEnabled(
   } catch (e) {
     diag("traecode", "workspace_mcp_enabled_seed_failed", {
       cwd,
-      error: e instanceof Error ? e.message : String(e),
+      error: e,
     });
     return "failed";
   }

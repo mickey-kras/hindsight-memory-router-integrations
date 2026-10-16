@@ -38,8 +38,16 @@ Each workspace runtime keeps at most 256 sessions. Completed sessions are releas
 
 ## Audit logs
 
-Every memory operation emits a single-line JSON audit record (principal, op, bank, outcome, bounded error
-class) to the host log; memory content is never logged.
+Memory-operation audit records contain principal, operation, bank, outcome and a bounded error class.
+Coding-agent `diag.jsonl` and `plugin.log` retain event names, timing, counts and bounded classifications.
+They omit prompts, memory answers, raw failure messages, paths, URLs and session/bank identifiers,
+including at `debug` verbosity. There is no content-debug mode. Each file rotates at 10 MiB with one
+previous generation retained; upgrading does not remove older logs that may contain content.
+
+This logging policy does not cover host transcripts, model-facing context, user-facing notices or
+explicit foreground command output, which can contain memory content.
+Persistent hosts with a notifier still receive notice payloads through that callback. Hosts without
+a notifier retain only lifecycle metadata; notice content is not copied to logs or stdout/stderr.
 
 ## Ingest document identity
 
