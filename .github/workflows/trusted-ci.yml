@@ -243,7 +243,8 @@ jobs:
           printf '%s  %s\n' 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c "$RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
           mkdir "$RUNNER_TEMP/gitleaks"
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP/gitleaks" gitleaks
-          "$RUNNER_TEMP/gitleaks/gitleaks" git candidate --redact --ignore-gitleaks-allow --config trusted/.github/trusted-ci/gitleaks.toml --gitleaks-ignore-path trusted/.github/trusted-ci/gitleaksignore --report-format sarif --report-path "$RUNNER_TEMP/reports/gitleaks.sarif"
+          GITLEAKS_BINARY="$RUNNER_TEMP/gitleaks/gitleaks" node --test trusted/.github/trusted-ci/gitleaks.test.cjs
+          "$RUNNER_TEMP/gitleaks/gitleaks" git candidate --log-opts="--full-history --all --text" --redact --ignore-gitleaks-allow --config trusted/.github/trusted-ci/gitleaks.toml --gitleaks-ignore-path trusted/.github/trusted-ci/gitleaksignore --report-format sarif --report-path "$RUNNER_TEMP/reports/gitleaks.sarif"
       - name: Retain Gitleaks report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
