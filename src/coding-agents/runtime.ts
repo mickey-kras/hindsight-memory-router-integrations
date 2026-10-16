@@ -6,7 +6,13 @@ import { RouterTransport } from "../shared/router-transport.js";
 import { HUMAN_TOKEN_PATTERN, HumanLoginRequiredError, humanRouterUrl, readHumanSession } from "./human-session.js";
 
 export function harnessTransport(harness: string | undefined): RouterTransport {
-  const { config, principal } = loadManagedConfig(process.env, harness);
+  return transportForConfig(harness, loadManagedConfig(process.env, harness));
+}
+
+function transportForConfig(
+  harness: string | undefined,
+  { config, principal }: ReturnType<typeof loadManagedConfig>,
+): RouterTransport {
   if (principal.human) {
     const routerUrl = humanRouterUrl(config.routerUrl);
     const reference = principal.human.credentialRef;
@@ -35,8 +41,9 @@ export function harnessTransport(harness: string | undefined): RouterTransport {
 
 // Aggregated context may contain memory from any readable bank.
 export function managedReadScope(harness: string | undefined, directory: string, sessionRoot?: string) {
-  const transport = harnessTransport(harness);
-  const bankId = managedBank(harness, directory);
+  const snapshot = loadManagedConfig(process.env, harness);
+  const transport = transportForConfig(harness, snapshot);
+  const bankId = bankForPrincipal(snapshot.principal, directory);
   let workspace: string;
   let location: string;
   try {
@@ -47,7 +54,8 @@ export function managedReadScope(harness: string | undefined, directory: string,
   }
   if (
     sessionRoot &&
-    ((location !== workspace && !location.startsWith(workspace + sep)) || managedBank(harness, sessionRoot) !== bankId)
+    ((location !== workspace && !location.startsWith(workspace + sep)) ||
+      bankForPrincipal(snapshot.principal, sessionRoot) !== bankId)
   ) {
     throw new AccessDeniedError();
   }
@@ -68,8 +76,9 @@ export function managedReadScope(harness: string | undefined, directory: string,
 // The supplied harness is the entrypoint identity, never a normal-config override.
 export function managedSettings(harness: string | undefined) {
   if (!harness) throw new AccessDeniedError();
-  const transport = harnessTransport(harness);
-  const { config } = loadManagedConfig(process.env, harness);
+  const snapshot = loadManagedConfig(process.env, harness);
+  const transport = transportForConfig(harness, snapshot);
+  const { config } = snapshot;
   const readOnlySettings = transport.access.writeBank
     ? {}
     : {
@@ -94,7 +103,10 @@ export function managedSettings(harness: string | undefined) {
 }
 
 export function managedBank(harness: string | undefined, directory: string): string {
-  const { principal } = loadManagedConfig(process.env, harness);
+  return bankForPrincipal(loadManagedConfig(process.env, harness).principal, directory);
+}
+
+function bankForPrincipal(principal: ReturnType<typeof loadManagedConfig>["principal"], directory: string): string {
   if (!directory) throw new AccessDeniedError();
   let location: string;
   try {

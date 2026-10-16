@@ -69,6 +69,17 @@ describe("retain queue corrupt-record recovery", () => {
       run: (queue) => queue.ensureOperationId("first", "new-operation"),
       ids: ["first", "second"],
     },
+    {
+      name: "batched operation ID assignment",
+      run: (queue) =>
+        queue.ensureOperationIds(
+          new Map([
+            ["first", "new-operation"],
+            ["second", "replacement"],
+          ]),
+        ),
+      ids: ["first", "second"],
+    },
     { name: "attempt increment", run: (queue) => queue.incrementReplayAttempts("second"), ids: ["first", "second"] },
     { name: "age cleanup", run: (queue) => queue.cleanup(), ids: ["second"] },
   ];

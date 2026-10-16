@@ -14216,27 +14216,93 @@ index 0000000..d39fd5b
 +  });
 +});
 diff --git a/src/core/turn-journal.test.ts b/src/core/turn-journal.test.ts
-index bd7f631..ef37e5f 100644
+index bd7f631..ef73a11 100644
 --- a/src/core/turn-journal.test.ts
 +++ b/src/core/turn-journal.test.ts
-@@ -2,3 +2,4 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+@@ -1,7 +1,13 @@
+-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { mkdtempSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
  import { tmpdir } from "node:os";
 -import { join } from "node:path";
+-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 +import { dirname, join } from "node:path";
 +import { sessionCacheFile } from "./session-cache";
- import { afterEach, beforeEach, describe, expect, it } from "vitest";
-@@ -21,3 +22,3 @@ describe("journalPath", () => {
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
+ 
++vi.mock("node:fs", async (importOriginal) => {
++  const fs = await importOriginal<typeof import("node:fs")>();
++  return { ...fs, readSync: vi.fn(fs.readSync) };
++});
++
+ let root: string;
+@@ -12,2 +18,3 @@ beforeEach(() => {
+   file = join(root, "session.journal.jsonl");
++  vi.clearAllMocks();
+ });
+@@ -21,3 +28,3 @@ describe("journalPath", () => {
      expect(journalPath("zcode", "sess-1")).toBe(
 -      join(tmpdir(), "hindsight-zcode", "sess-1.journal.jsonl")
 +      join(dirname(sessionCacheFile("zcode", "sess-1")), "sess-1.journal.jsonl")
      );
-@@ -28,3 +29,3 @@ describe("journalPath", () => {
+@@ -28,3 +35,3 @@ describe("journalPath", () => {
      expect(journalPath("zcode", undefined)).toBe(
 -      join(tmpdir(), "hindsight-zcode", "no-session.journal.jsonl")
 +      join(dirname(sessionCacheFile("zcode", "sess-1")), "no-session.journal.jsonl")
      );
+@@ -134 +141,50 @@ describe("readJournalTranscript", () => {
+ });
++
++describe("journal tail I/O", () => {
++  it("reads one bounded chunk when appending to a multi-megabyte journal", () => {
++    const line = JSON.stringify({ role: "user", content: "x".repeat(1024) }) + "\n";
++    writeFileSync(file, line.repeat(6000));
++    appendJournalTurn(file, { role: "assistant", content: "new tail" });
++    expect(readSync).toHaveBeenCalledTimes(1);
++    expect(readSync).toHaveBeenCalledWith(expect.any(Number), expect.any(Buffer), 0, 64 * 1024, expect.any(Number));
++    expect(readJournalTranscript(file).at(-1)?.content).toBe("new tail");
++  });
++
++  it.each(["", "\n", "\nnot-json\nnull\n{\"role\":\"user\"}\n  "])(
++    "deduplicates a long Unicode turn across chunk boundaries and invalid suffix %j",
++    (suffix) => {
++      const content = "🙂漢é".repeat(30000);
++      const body = JSON.stringify({ role: "assistant", content }) + suffix;
++      writeFileSync(file, body);
++      appendJournalTurn(file, { role: "assistant", content });
++      expect(readFileSync(file, "utf8")).toBe(body);
++      expect(readJournalTranscript(file)).toHaveLength(1);
++    },
++  );
++
++  it("scans past an arbitrarily long torn record and preserves the next complete append", () => {
++    const original = JSON.stringify({ role: "user", content: "valid" }) + "\n";
++    const torn = '{"role":"assistant","content":"' + "x".repeat(200000);
++    writeFileSync(file, original + torn);
++    appendJournalTurn(file, { role: "user", content: "valid" });
++    expect(readFileSync(file, "utf8")).toBe(original + torn);
++    appendJournalTurn(file, { role: "assistant", content: "recovered" });
++    expect(readJournalTranscript(file).map((turn) => turn.content)).toEqual(["valid", "recovered"]);
++    expect(readFileSync(file, "utf8").startsWith(original + torn + "\n")).toBe(true);
++  });
++
++  it("separates a complete unterminated record from a different appended turn", () => {
++    writeFileSync(file, JSON.stringify({ role: "user", content: "first" }));
++    appendJournalTurn(file, { role: "assistant", content: "second" });
++    expect(readJournalTranscript(file).map((turn) => turn.content)).toEqual(["first", "second"]);
++  });
++
++  it("keeps full transcript reads sensitive to edits before the tail", () => {
++    const first = JSON.stringify({ role: "user", content: "original" }) + "\n";
++    const tail = (JSON.stringify({ role: "assistant", content: "x".repeat(1024) }) + "\n").repeat(200);
++    writeFileSync(file, first + tail);
++    expect(readJournalTranscript(file)[0].content).toBe("original");
++    writeFileSync(file, first.replace("original", "modified") + tail);
++    expect(readJournalTranscript(file)[0].content).toBe("modified");
++  });
++});
 diff --git a/src/core/turn-journal.ts b/src/core/turn-journal.ts
-index 62c8e05..de46653 100644
+index 62c8e05..9e810b2 100644
 --- a/src/core/turn-journal.ts
 +++ b/src/core/turn-journal.ts
 @@ -24,5 +24,4 @@
@@ -14244,7 +14310,7 @@ index 62c8e05..de46653 100644
 -import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
 -import { tmpdir } from "node:os";
 -import { dirname, join } from "node:path";
-+import { appendFileSync, constants, fstatSync, readFileSync } from "node:fs";
++import { appendFileSync, constants, fstatSync, readSync } from "node:fs";
 +import { readPrivateFile, sessionStateFile, withPrivateFile } from "./private-state";
  import type { TransportTurn } from "./chat";
 @@ -39,3 +38,3 @@ export const JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
@@ -14252,7 +14318,7 @@ index 62c8e05..de46653 100644
 -  return join(tmpdir(), `hindsight-${harness}`, `${sessionId || "no-session"}.journal.jsonl`);
 +  return sessionStateFile(harness, sessionId || "no-session", ".journal.jsonl");
  }
-@@ -53,18 +52,15 @@ export function appendJournalTurn(path: string, turn: TransportTurn): void {
+@@ -53,18 +52,16 @@ export function appendJournalTurn(path: string, turn: TransportTurn): void {
    try {
 -    if (statSync(path).size >= JOURNAL_MAX_BYTES) return;
 -  } catch {
@@ -14271,12 +14337,13 @@ index 62c8e05..de46653 100644
 -      }) + "\n"
 -    );
 +    withPrivateFile(path, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT, (fd) => {
-+      if (fstatSync(fd).size >= JOURNAL_MAX_BYTES) return;
-+      const last = parseJournalTranscript(readFileSync(fd, "utf8")).at(-1);
++      const size = fstatSync(fd).size;
++      if (size >= JOURNAL_MAX_BYTES) return;
++      const { last, terminated } = readJournalTail(fd, size);
 +      if (last && last.role === turn.role && last.content === content) return;
 +      appendFileSync(
 +        fd,
-+        JSON.stringify({
++        (terminated ? "" : "\n") + JSON.stringify({
 +          role: turn.role,
 +          content,
 +          timestamp: turn.timestamp ?? new Date().toISOString(),
@@ -14284,18 +14351,84 @@ index 62c8e05..de46653 100644
 +      );
 +    });
    } catch {
-@@ -78,3 +74,3 @@ export function readJournalTranscript(path: string): TransportTurn[] {
+@@ -78,3 +75,3 @@ export function readJournalTranscript(path: string): TransportTurn[] {
    try {
 -    body = readFileSync(path, "utf8");
 +    body = readPrivateFile(path);
    } catch {
-@@ -82,2 +78,6 @@ export function readJournalTranscript(path: string): TransportTurn[] {
+@@ -82,20 +79,56 @@ export function readJournalTranscript(path: string): TransportTurn[] {
    }
 +  return parseJournalTranscript(body);
 +}
 +
++// Read backwards in fixed chunks; retain only the current candidate record.
++// A long or malformed suffix may require more chunks, never a whole-file parse.
++function readJournalTail(fd: number, size: number): { last?: TransportTurn; terminated: boolean } {
++  let position = size;
++  let fragments: Buffer[] = [];
++  let terminated = size === 0;
++  while (position > 0) {
++    const length = Math.min(position, 64 * 1024);
++    position -= length;
++    const buffer = Buffer.alloc(length);
++    let received = 0;
++    while (received < length) {
++      const count = readSync(fd, buffer, received, length - received, position + received);
++      if (count === 0) throw new Error("Journal changed during tail read");
++      received += count;
++    }
++    if (position + length === size) terminated = buffer[length - 1] === 10;
++    let end = length;
++    for (let index = length - 1; index >= 0; index--) {
++      if (buffer[index] !== 10) continue;
++      fragments.push(buffer.subarray(index + 1, end));
++      const last = parseJournalTurn(Buffer.concat(fragments.reverse()).toString("utf8"));
++      if (last) return { last, terminated };
++      fragments = [];
++      end = index;
++    }
++    fragments.push(buffer.subarray(0, end));
++  }
++  return { last: parseJournalTurn(Buffer.concat(fragments.reverse()).toString("utf8")), terminated };
++}
++
++function parseJournalTurn(line: string): TransportTurn | undefined {
++  const trimmed = line.trim();
++  if (!trimmed) return undefined;
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(trimmed);
++  } catch {
++    return undefined;
++  }
++  if (typeof parsed !== "object" || parsed === null) return undefined;
++  const { role, content, timestamp } = parsed as Record<string, unknown>;
++  if (typeof role !== "string" || typeof content !== "string" || !content) return undefined;
++  return { role, content, ...(typeof timestamp === "string" ? { timestamp } : {}) };
++}
++
 +function parseJournalTranscript(body: string): TransportTurn[] {
    const turns: TransportTurn[] = [];
+   for (const line of body.split("\n")) {
+-    const trimmed = line.trim();
+-    if (!trimmed) continue;
+-    let parsed: unknown;
+-    try {
+-      parsed = JSON.parse(trimmed);
+-    } catch {
+-      continue; // a torn final line (the process died mid-append) costs that turn, not the session
+-    }
+-    if (typeof parsed !== "object" || parsed === null) continue;
+-    const { role, content, timestamp } = parsed as Record<string, unknown>;
+-    if (typeof role !== "string" || typeof content !== "string" || !content) continue;
+-    turns.push({
+-      role,
+-      content,
+-      ...(typeof timestamp === "string" ? { timestamp } : {}),
+-    });
++    const turn = parseJournalTurn(line);
++    if (turn) turns.push(turn);
+   }
 diff --git a/src/core/usage.test.ts b/src/core/usage.test.ts
 index da0d378..ce3b6b6 100644
 --- a/src/core/usage.test.ts

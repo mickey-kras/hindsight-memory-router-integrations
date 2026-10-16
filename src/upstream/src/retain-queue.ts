@@ -170,6 +170,14 @@ function syncDirectory(directory: string): void {
   }
 }
 
+function assertUniqueIdentities(items: QueuedRetain[]): void {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (ids.has(item.id)) throw new Error("duplicate retain queue identity; operator repair required");
+    ids.add(item.id);
+  }
+}
+
 export interface RetainQueueOptions {
   /** Path to the JSONL queue file. The parent directory must already exist. */
   filePath: string;
@@ -245,11 +253,7 @@ export class RetainQueue {
   /** Materialize unknown-identity ordering barriers before any delivery. Caller holds the mutation lock. */
   snapshot(): QueuedRetain[] {
     const contents = this.readAll();
-    const ids = new Set<string>();
-    for (const item of contents.items) {
-      if (ids.has(item.id)) throw new Error("duplicate retain queue identity; operator repair required");
-      ids.add(item.id);
-    }
+    assertUniqueIdentities(contents.items);
     if (contents.bytes.length > 0) this.writeAll(contents.items, contents);
     return contents.items;
   }
@@ -285,10 +289,32 @@ export class RetainQueue {
   removeMany(ids: string[]): void {
     const idSet = new Set(ids);
     const contents = this.readAll();
+    if (idSet.size > 0) assertUniqueIdentities(contents.items);
     this.writeAll(
       contents.items.filter((i) => !idSet.has(i.id)),
       contents,
     );
+  }
+
+  /** Assign missing replay identities in one durable rewrite. Caller holds the mutation lock. */
+  ensureOperationIds(operationIds: ReadonlyMap<string, string>): void {
+    if (operationIds.size === 0) return;
+    const contents = this.readAll();
+    const seen = new Set<string>();
+    let changed = false;
+    for (const item of contents.items) {
+      const operationId = operationIds.get(item.id);
+      if (operationId === undefined) continue;
+      if (seen.has(item.id)) throw new Error("ambiguous retain queue identity");
+      seen.add(item.id);
+      if (item.operationId) continue;
+      item.operationId = operationId;
+      changed = true;
+    }
+    if (seen.size !== operationIds.size) throw new Error("missing retain queue identity");
+    // Leave space for one in-flight marker so a fitting identity batch cannot
+    // fill the file and prevent the first request from being prepared.
+    if (changed) this.writeAll(contents.items, contents, Buffer.byteLength(',"replayState":{"sending":true}'));
   }
 
   /** Persist a replay identity before the request is sent. */
@@ -527,7 +553,7 @@ export class RetainQueue {
   }
 
   /** Atomically rewrite the file with the given items. */
-  private writeAll(items: QueuedRetain[], contents: QueueContents): void {
+  private writeAll(items: QueuedRetain[], contents: QueueContents, reservedBytes = 0): void {
     this.preserveCorruptRecords(contents);
     if (items.length === 0) {
       removePrivateQueueFile(this.filePath);
@@ -537,7 +563,7 @@ export class RetainQueue {
     const serialized = items.map((i) => JSON.stringify(i)).join("\n") + "\n";
     // Recovery barriers and replay metadata can grow an otherwise in-limit
     // queue. Never replace readable source bytes with an unreadable generation.
-    if (this.options.maxReadBytes !== undefined && Buffer.byteLength(serialized) > this.options.maxReadBytes) {
+    if (this.options.maxReadBytes !== undefined && Buffer.byteLength(serialized) + reservedBytes > this.options.maxReadBytes) {
       throw new RetainQueueRewriteCapacityError();
     }
     writePrivateQueueFile(this.filePath, serialized);

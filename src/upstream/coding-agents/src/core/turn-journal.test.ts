@@ -1,9 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sessionCacheFile } from "./session-cache";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, readSync: vi.fn(fs.readSync) };
+});
 
 let root: string;
 let file: string;
@@ -11,6 +16,7 @@ let file: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "hs-journal-"));
   file = join(root, "session.journal.jsonl");
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
@@ -131,5 +137,54 @@ describe("readJournalTranscript", () => {
     appendJournalTurn(file, { role: "user", content });
     expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(1);
     expect(readJournalTranscript(file)[0].content).toBe(content);
+  });
+});
+
+describe("journal tail I/O", () => {
+  it("reads one bounded chunk when appending to a multi-megabyte journal", () => {
+    const line = JSON.stringify({ role: "user", content: "x".repeat(1024) }) + "\n";
+    writeFileSync(file, line.repeat(6000));
+    appendJournalTurn(file, { role: "assistant", content: "new tail" });
+    expect(readSync).toHaveBeenCalledTimes(1);
+    expect(readSync).toHaveBeenCalledWith(expect.any(Number), expect.any(Buffer), 0, 64 * 1024, expect.any(Number));
+    expect(readJournalTranscript(file).at(-1)?.content).toBe("new tail");
+  });
+
+  it.each(["", "\n", "\nnot-json\nnull\n{\"role\":\"user\"}\n  "])(
+    "deduplicates a long Unicode turn across chunk boundaries and invalid suffix %j",
+    (suffix) => {
+      const content = "🙂漢é".repeat(30000);
+      const body = JSON.stringify({ role: "assistant", content }) + suffix;
+      writeFileSync(file, body);
+      appendJournalTurn(file, { role: "assistant", content });
+      expect(readFileSync(file, "utf8")).toBe(body);
+      expect(readJournalTranscript(file)).toHaveLength(1);
+    },
+  );
+
+  it("scans past an arbitrarily long torn record and preserves the next complete append", () => {
+    const original = JSON.stringify({ role: "user", content: "valid" }) + "\n";
+    const torn = '{"role":"assistant","content":"' + "x".repeat(200000);
+    writeFileSync(file, original + torn);
+    appendJournalTurn(file, { role: "user", content: "valid" });
+    expect(readFileSync(file, "utf8")).toBe(original + torn);
+    appendJournalTurn(file, { role: "assistant", content: "recovered" });
+    expect(readJournalTranscript(file).map((turn) => turn.content)).toEqual(["valid", "recovered"]);
+    expect(readFileSync(file, "utf8").startsWith(original + torn + "\n")).toBe(true);
+  });
+
+  it("separates a complete unterminated record from a different appended turn", () => {
+    writeFileSync(file, JSON.stringify({ role: "user", content: "first" }));
+    appendJournalTurn(file, { role: "assistant", content: "second" });
+    expect(readJournalTranscript(file).map((turn) => turn.content)).toEqual(["first", "second"]);
+  });
+
+  it("keeps full transcript reads sensitive to edits before the tail", () => {
+    const first = JSON.stringify({ role: "user", content: "original" }) + "\n";
+    const tail = (JSON.stringify({ role: "assistant", content: "x".repeat(1024) }) + "\n").repeat(200);
+    writeFileSync(file, first + tail);
+    expect(readJournalTranscript(file)[0].content).toBe("original");
+    writeFileSync(file, first.replace("original", "modified") + tail);
+    expect(readJournalTranscript(file)[0].content).toBe("modified");
   });
 });

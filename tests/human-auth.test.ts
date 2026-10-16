@@ -473,3 +473,18 @@ describe("explicit lifecycle", () => {
     expect(log.mock.calls.flat().join()).not.toContain("secret");
   });
 });
+
+it("reads a single fresh credential per send and still blocks sign-out on an existing transport", async () => {
+  secureEntry(router, "person").setPassword(JSON.stringify(session()));
+  const send = vi.fn(async () => new Response("{}"));
+  vi.stubGlobal("fetch", send);
+  const transport = harnessTransport("codex");
+  keychain.constructed.length = 0;
+  await transport.request(transport.bankUrl("private"));
+  expect(keychain.constructed).toHaveLength(1);
+  secureEntry(router, "person").deleteCredential();
+  keychain.constructed.length = 0;
+  await expect(transport.request(transport.bankUrl("private"))).rejects.toThrow("human session unavailable");
+  expect(keychain.constructed).toHaveLength(1);
+  expect(send).toHaveBeenCalledTimes(1);
+});
