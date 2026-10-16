@@ -284,6 +284,27 @@ export class RetainCoordinator {
       )
         return;
     }
+    const missingIds = await this.prepareReplayOperationIds(queue, items, gate);
+    let attempts = 0;
+    if (gate) {
+      const probe = this.clients.createRetainReplayProbe(credentials);
+      attempts++;
+      if ((await this.deliverQueued(principalId, probe.client, queue, gate, missingIds)) !== "delivered") return;
+      if (!probe.commit()) return;
+      client = probe.client;
+      items = await this.storage.transaction(() => queue.snapshot());
+      // Recovery-edited backlogs can contain another gate owner. Never let a
+      // successful probe implicitly clear a different persisted principal gate.
+      if (items.some((item) => item.replayState?.gate)) return;
+    }
+    await this.deliverReplayBatch(principalId, client, queue, items, missingIds, attempts);
+  }
+
+  private async prepareReplayOperationIds(
+    queue: RetainQueue,
+    items: QueuedRetain[],
+    gate: QueuedRetain | undefined,
+  ): Promise<Map<string, string>> {
     // Upgrade only this request batch, prioritizing its authorization probe.
     // A near-capacity legacy queue falls back to durable per-row preparation
     // as acknowledged removals free space; the planned IDs stay unchanged.
@@ -306,18 +327,17 @@ export class RetainCoordinator {
     } catch (error) {
       if (!(error instanceof RetainQueueRewriteCapacityError)) throw error;
     }
-    let attempts = 0;
-    if (gate) {
-      const probe = this.clients.createRetainReplayProbe(credentials);
-      attempts++;
-      if ((await this.deliverQueued(principalId, probe.client, queue, gate, missingIds)) !== "delivered") return;
-      if (!probe.commit()) return;
-      client = probe.client;
-      items = await this.storage.transaction(() => queue.snapshot());
-      // Recovery-edited backlogs can contain another gate owner. Never let a
-      // successful probe implicitly clear a different persisted principal gate.
-      if (items.some((item) => item.replayState?.gate)) return;
-    }
+    return missingIds;
+  }
+
+  private async deliverReplayBatch(
+    principalId: string,
+    client: ReturnType<AuthenticatedClientFactory["forAgent"]>,
+    queue: RetainQueue,
+    items: QueuedRetain[],
+    missingIds: ReadonlyMap<string, string>,
+    attempts: number,
+  ): Promise<void> {
     const blocked: QueuedRetain[] = [];
     for (const item of items) {
       if (attempts >= REPLAY_BATCH_SIZE || item.replayState?.quarantine === "corrupt") break;
