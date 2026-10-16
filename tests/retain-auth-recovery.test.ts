@@ -142,24 +142,69 @@ it("keeps shared denial and fresh admission closed until the probe owner is dura
   ]);
 });
 
-it("does not replace a rotated transport or erase its sticky denial when an old probe completes", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 403 }));
-  const { clients, credentials } = stack();
+it.each(["before", "after"])(
+  "preserves rotated transport denial when rotation occurs %s probe creation",
+  async (timing) => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 403 }));
+    const { clients, credentials } = stack();
+    const original = credentials.resolve("test");
+    clients.forAgent(original);
+    const pendingProbe = timing === "after" ? clients.createRetainReplayProbe(original) : undefined;
+    const rotated = { ...original, token: `mr_rotated_${"b".repeat(64)}` };
+    const deniedTransport = clients.transportFor(rotated);
+    await expect(
+      deniedTransport.request(deniedTransport.bankUrl("A", "/memories"), { method: "POST" }),
+    ).rejects.toThrow("memory access denied");
+    const probe = pendingProbe ?? clients.createRetainReplayProbe(original);
+    fetch.mockImplementation(async () => Response.json({}));
+    await probe.client.retain("A", "owner", { operationId: "owner-op" });
+    expect(probe.commit()).toBe(false);
+    expect(clients.transportFor(rotated)).toBe(deniedTransport);
+    await expect(
+      deniedTransport.request(deniedTransport.bankUrl("A", "/memories"), { method: "POST" }),
+    ).rejects.toThrow("memory access denied");
+    await expect(clients.forAgent(rotated).retain("A", "fresh")).rejects.toThrow("memory access denied");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each([
+  ["client", "before"],
+  ["client", "during"],
+  ["transport", "before"],
+  ["transport", "during"],
+])("stops backlog replay when %s credentials rotate %s the probe", async (cache, timing) => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+  const { coordinator, clients, credentials, rows } = stack();
+  await coordinator.retain("test", { content: "owner", operationId: "owner-op" });
+  fetch.mockResolvedValue(new Response(null, { status: 403 }));
+  await coordinator.flushQueues();
+  await coordinator.retain("test", { content: "successor", operationId: "next-op" });
   const original = credentials.resolve("test");
-  clients.forAgent(original);
-  const probe = clients.createRetainReplayProbe(original);
   const rotated = { ...original, token: `mr_rotated_${"b".repeat(64)}` };
-  const deniedTransport = clients.transportFor(rotated);
-  await expect(deniedTransport.request(deniedTransport.bankUrl("A", "/memories"), { method: "POST" })).rejects.toThrow(
-    "memory access denied",
-  );
+  const rotate = () => {
+    if (cache === "client") clients.forAgent(rotated);
+    else clients.transportFor(rotated);
+    vi.spyOn(credentials, "resolve").mockReturnValue(rotated);
+  };
+  if (timing === "before") {
+    const create = clients.createRetainReplayProbe.bind(clients);
+    vi.spyOn(clients, "createRetainReplayProbe").mockImplementation((current) => {
+      rotate();
+      return create(current);
+    });
+  }
+  fetch.mockImplementation(async () => {
+    if (timing === "during") rotate();
+    return Response.json({});
+  });
+  await coordinator.flushQueues();
+  expect(rows().map((row) => row.operationId)).toEqual(["next-op"]);
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(JSON.parse(String(fetch.mock.calls[2][1]?.body)).operation_id).toBe("owner-op");
   fetch.mockImplementation(async () => Response.json({}));
-  await probe.client.retain("A", "owner", { operationId: "owner-op" });
-  probe.commit();
-  expect(clients.transportFor(rotated)).toBe(deniedTransport);
-  await expect(deniedTransport.request(deniedTransport.bankUrl("A", "/memories"), { method: "POST" })).rejects.toThrow(
-    "memory access denied",
-  );
-  await expect(clients.forAgent(rotated).retain("A", "fresh")).rejects.toThrow("memory access denied");
-  expect(fetch).toHaveBeenCalledTimes(2);
+  await coordinator.flushQueues();
+  expect(rows()).toEqual([]);
+  expect(fetch.mock.calls[3][1]?.headers).toMatchObject({ Authorization: `Bearer ${rotated.token}` });
+  expect(JSON.parse(String(fetch.mock.calls[3][1]?.body)).operation_id).toBe("next-op");
 });

@@ -287,7 +287,7 @@ export class RetainCoordinator {
       const probe = this.clients.createRetainReplayProbe(credentials);
       attempts++;
       if ((await this.deliverQueued(principalId, probe.client, queue, gate)) !== "delivered") return;
-      probe.commit();
+      if (!probe.commit()) return;
       client = probe.client;
       items = await this.storage.transaction(() => queue.snapshot());
       // Recovery-edited backlogs can contain another gate owner. Never let a

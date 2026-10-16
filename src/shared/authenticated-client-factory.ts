@@ -93,8 +93,8 @@ export class AuthenticatedClientFactory {
 
   // Only an eligible durable gate owner may use this isolated client. Publish its
   // recovered transport after the owner has been durably acknowledged.
-  createRetainReplayProbe(credentials: PrincipalCredentials): { client: RouterClient; commit(): void } {
-    if (this.construct) return { client: this.forAgent(credentials), commit() {} };
+  createRetainReplayProbe(credentials: PrincipalCredentials): { client: RouterClient; commit(): boolean } {
+    if (this.construct) return { client: this.forAgent(credentials), commit: () => true };
     const cachedClient = this.cache.get(credentials.principalId);
     const cachedTransport = this.transportCache.get(credentials.principalId);
     const transport = this.createTransport(credentials);
@@ -104,12 +104,14 @@ export class AuthenticatedClientFactory {
       commit: () => {
         if (
           cachedClient?.token !== credentials.token ||
+          cachedTransport?.token !== credentials.token ||
           this.cache.get(credentials.principalId) !== cachedClient ||
           this.transportCache.get(credentials.principalId) !== cachedTransport
         )
-          return;
+          return false;
         this.cache.set(credentials.principalId, { token: credentials.token, client });
         this.transportCache.set(credentials.principalId, { token: credentials.token, transport });
+        return true;
       },
     };
   }
