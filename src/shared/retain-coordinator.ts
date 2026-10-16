@@ -126,6 +126,9 @@ export class RetainCoordinator {
     const queue = this.queueFor(principalId);
     const enqueue = async (): Promise<RetainOutcome> => {
       await this.storage.transaction(() => {
+        // Contended replay skips the delivery path's preparation. Reject an
+        // invalid existing backlog before accepting any new bytes into it.
+        this.prepareQueue(principalId, queue);
         queue.enqueue(bank, payload, payload.metadata);
         this.prepareQueue(principalId, queue);
       });

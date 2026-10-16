@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthenticatedClientFactory } from "../src/shared/authenticated-client-factory.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RetainCoordinator } from "../src/shared/retain-coordinator.js";
+import { RetainQueueStorage } from "../src/shared/retain-queue-storage.js";
 import { type QueuedRetain, RetainQueue } from "../src/upstream/src/retain-queue.js";
 
 let directory: string;
@@ -593,4 +594,40 @@ it("reports operator action for an over-cap barrier without sending or accepting
   });
   expect(active.calls).toEqual([]);
   expect(readFileSync(path, "utf8")).toBe("x\n");
+});
+
+it("rejects invalid backlog before appending when another worker holds replay", async () => {
+  enqueue("existing", "X");
+  const original = readFileSync(path, "utf8");
+  writeFileSync(path, original + original);
+  const invalid = readFileSync(path);
+  const active = stack();
+  const otherWorker = new RetainQueueStorage(directory);
+  await otherWorker.replay(async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(active.coordinator.retain("main", { content: "fresh", documentId: "Y" })).rejects.toThrow(
+        "duplicate retain queue identity",
+      );
+      expect(readFileSync(path)).toEqual(invalid);
+    }
+  });
+  expect(active.calls).toEqual([]);
+  // Operator repair must not expose work that the caller was told was rejected.
+  writeFileSync(path, original);
+  await active.coordinator.flushQueues();
+  expect(active.calls.map((call) => call.content)).toEqual(["existing"]);
+});
+
+it("keeps protection on a fresh row accepted during gated replay contention", async () => {
+  enqueue("denied", "X", { replayState: { gate: "probe", protected: true } });
+  const active = stack();
+  const otherWorker = new RetainQueueStorage(directory);
+  await otherWorker.replay(async () => {
+    await expect(active.coordinator.retain("main", { content: "fresh", documentId: "X" })).resolves.toMatchObject({
+      queued: true,
+    });
+  });
+  expect(active.calls).toEqual([]);
+  expect(rows().map((row) => row.content)).toEqual(["denied", "fresh"]);
+  expect(rows()[1].replayState).toEqual({ protected: true });
 });
