@@ -79,6 +79,7 @@ test("scanner configuration and commands disable candidate tool execution and su
   const wrapper = readFileSync(resolve(__dirname, "aislop.mjs"), "utf8");
   assert.match(wrapper, /process.env.PATH = safeTools.safePath/);
   assert.match(wrapper, /loadConfig\(trusted\)/);
+  assert.match(wrapper, /config\.allowProjectLocalTools = false/);
   assert.match(wrapper, /process.env.AISLOP_NO_TELEMETRY = ['"]1['"]/);
 });
 
