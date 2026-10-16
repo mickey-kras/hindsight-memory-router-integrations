@@ -2,7 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
-import { type QueuedRetain, type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
+import {
+  type QueuedRetain,
+  type QueuedRetainPayload,
+  RetainQueue,
+  type RetainReplayState,
+  sameRetainDocument,
+} from "../upstream/src/retain-queue.js";
 import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
 import { PRINCIPAL_ID_PATTERN, type PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 import { privateQueueDirectory } from "./private-queue-files.js";
@@ -55,6 +61,7 @@ export class RetainCoordinator {
   private readonly log: CoordinatorLogger;
   private readonly onAbandon: RetainAbandonHandler;
   private readonly maxAgeConfigKey: string;
+  private readonly unpersistedDenials = new Set<string>();
 
   constructor(options: {
     credentials: PrincipalCredentialResolver;
@@ -109,29 +116,44 @@ export class RetainCoordinator {
       tags: request.tags?.slice(),
       operationId: request.operationId ?? randomUUID(),
     };
-    try {
-      await client.retain(bank, payload.content, {
-        documentId: payload.documentId,
-        context: payload.context,
-        metadata: payload.metadata,
-        tags: payload.tags,
-        updateMode: payload.updateMode,
-        operationId: payload.operationId,
-        async: true,
-      });
-      return { queued: false, bank };
-    } catch (error) {
-      if (isAuthorizationError(error)) {
-        throw new RetainAuthorizationError(bank);
-      }
-      if (!isTransientRequestError(error)) {
-        throw error;
-      }
-      const queue = this.queueFor(principalId);
+    const queue = this.queueFor(principalId);
+    const enqueue = async (): Promise<RetainOutcome> => {
       await this.storage.transaction(() => queue.enqueue(bank, payload, payload.metadata));
       this.log.warn(`retain queued for later delivery (bank: ${bank})`);
       return { queued: true, bank };
-    }
+    };
+    const outcome = await this.storage.replay(async () => {
+      const items = await this.storage.transaction(() => this.prepareQueue(principalId, queue));
+      if (
+        this.unpersistedDenials.has(principalId) ||
+        items.some(
+          (item) =>
+            item.replayState?.gate !== undefined ||
+            item.replayState?.quarantine === "corrupt" ||
+            sameRetainDocument(item, { bankId: bank, documentId: payload.documentId }),
+        )
+      )
+        return enqueue();
+      try {
+        await client.retain(bank, payload.content, {
+          documentId: payload.documentId,
+          context: payload.context,
+          metadata: payload.metadata,
+          tags: payload.tags,
+          updateMode: payload.updateMode,
+          operationId: payload.operationId,
+          async: true,
+        });
+        return { queued: false, bank };
+      } catch (error) {
+        if (isAuthorizationError(error)) throw new RetainAuthorizationError(bank);
+        if (!isTransientRequestError(error)) throw error;
+        return enqueue();
+      }
+    });
+    // Another sender owns delivery exclusion. Accept durably behind it, never
+    // interpret the replay lock's nonblocking `undefined` as a successful send.
+    return outcome ?? enqueue();
   }
 
   async flushQueues(): Promise<void> {
@@ -187,81 +209,136 @@ export class RetainCoordinator {
     await this.storage.replay(() => this.replayQueue(principalId, credentials));
   }
 
+  private prepareQueue(principalId: string, queue: RetainQueue): QueuedRetain[] {
+    const items = queue.snapshot();
+    const bank = this.credentials.resolveWriteBank(principalId);
+    const changes: Array<{ id: string; state: RetainReplayState }> = [];
+    for (const item of items) {
+      if (item.replayState?.quarantine || item.bankId === bank) continue;
+      item.replayState = {
+        ...item.replayState,
+        quarantine: "bank-mismatch",
+        ...(item.replayState?.gate ? { gate: "operator" as const } : {}),
+      };
+      changes.push({ id: item.id, state: item.replayState });
+    }
+    if (changes.length > 0) {
+      queue.setReplayStates(changes);
+      this.log.error(
+        "retain replay authorization denied: bank mismatch quarantined; original bank and payload preserved",
+      );
+    }
+    return items;
+  }
+
   private async replayQueue(
     principalId: string,
     credentials: ReturnType<PrincipalCredentialResolver["resolve"]>,
   ): Promise<void> {
+    if (this.unpersistedDenials.has(principalId)) {
+      this.log.error("retain replay paused: authorization state could not be persisted; operator repair required");
+      return;
+    }
     const client = this.clients.forAgent(credentials);
     const queue = this.queueFor(principalId);
-    const items = await this.storage.transaction(() => {
+    let items = await this.storage.transaction(() => {
+      this.prepareQueue(principalId, queue);
       queue.cleanup();
-      return queue.peek(REPLAY_BATCH_SIZE);
+      return queue.snapshot();
     });
-    const delivered: string[] = [];
-    for (const item of items) {
-      try {
-        await this.replayItem(principalId, client, queue, item);
-        delivered.push(item.id);
-      } catch (error) {
-        if (error instanceof RetainQueueSharedStorageError) throw error;
-        await this.handleReplayError(error, queue, item, delivered);
-        break; // preserve FIFO ordering; retry next flush
-      }
+    let attempts = 0;
+    const gate = items.find((item) => item.replayState?.gate);
+    if (gate) {
+      const predecessors = items.slice(0, items.indexOf(gate));
+      if (
+        gate.replayState?.gate !== "probe" ||
+        gate.replayState.quarantine ||
+        predecessors.some((item) => item.replayState?.quarantine === "corrupt" || sameRetainDocument(item, gate))
+      )
+        return;
+      attempts++;
+      if ((await this.deliverQueued(principalId, client, queue, gate)) !== "delivered") return;
+      items = await this.storage.transaction(() => queue.snapshot());
+      // Recovery-edited backlogs can contain another gate owner. Never let a
+      // successful probe implicitly clear a different persisted principal gate.
+      if (items.some((item) => item.replayState?.gate)) return;
     }
-    await this.storage.transaction(() => queue.removeMany(delivered));
+    const blocked: QueuedRetain[] = [];
+    for (const item of items) {
+      if (attempts >= REPLAY_BATCH_SIZE || item.replayState?.quarantine === "corrupt") break;
+      if (item.replayState?.quarantine || blocked.some((prior) => sameRetainDocument(prior, item))) {
+        blocked.push(item);
+        continue;
+      }
+      attempts++;
+      const outcome = await this.deliverQueued(principalId, client, queue, item);
+      if (outcome === "stop") break;
+      if (outcome === "quarantined") blocked.push(item);
+    }
   }
 
-  private async replayItem(
+  private async deliverQueued(
     principalId: string,
     client: ReturnType<AuthenticatedClientFactory["forAgent"]>,
     queue: RetainQueue,
     item: QueuedRetain,
-  ): Promise<void> {
-    if (item.updateMode !== undefined && item.updateMode !== "append" && item.updateMode !== "replace") {
-      throw new TypeError("invalid queued retain update mode");
-    }
-    if (item.bankId !== this.credentials.resolveWriteBank(principalId)) {
-      throw new RetainAuthorizationError(item.bankId);
-    }
+  ): Promise<"delivered" | "quarantined" | "stop"> {
+    // Preparation and acknowledgement errors are storage failures, never HTTP
+    // classifications. A failed acknowledgement retains the original operation ID.
     const operationId = await this.storage.transaction(() =>
-      queue.ensureOperationId(item.id, item.operationId ?? randomUUID()),
+      queue.ensureOperationId(item.id, item.operationId || randomUUID()),
     );
-    await client.retain(item.bankId, item.content, {
-      documentId: item.documentId,
-      context: item.context,
-      metadata: toStringMetadata(item.metadata),
-      tags: item.tags,
-      updateMode: item.updateMode,
-      operationId,
-      async: true,
-    });
-  }
-
-  private async handleReplayError(
-    error: unknown,
-    queue: RetainQueue,
-    item: QueuedRetain,
-    delivered: string[],
-  ): Promise<void> {
-    if (isAuthorizationError(error)) {
-      this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
-      return;
-    }
-    if (!isTransientRequestError(error)) {
-      this.log.error(`retain replay failed permanently for bank ${item.bankId}; item stays queued for review`);
-      return;
-    }
-    const attempts = await this.storage.transaction(() => queue.incrementReplayAttempts(item.id));
-    if (attempts >= MAX_REPLAY_ATTEMPTS) {
-      delivered.push(item.id);
-      try {
-        this.onAbandon(item, attempts);
-      } catch (error) {
-        this.log.error(
-          `retain abandonment handler failed for bank ${item.bankId}: ${error instanceof Error ? error.name : typeof error}`,
+    try {
+      await client.retain(item.bankId, item.content, {
+        documentId: item.documentId,
+        context: item.context,
+        metadata: toStringMetadata(item.metadata),
+        tags: item.tags,
+        updateMode: item.updateMode,
+        operationId,
+        async: true,
+      });
+    } catch (error) {
+      if (error instanceof RetainQueueSharedStorageError) throw error;
+      if (isAuthorizationError(error)) {
+        this.unpersistedDenials.add(principalId);
+        await this.storage.transaction(() =>
+          queue.setReplayState(item.id, {
+            ...item.replayState,
+            gate: "probe",
+            protected: true,
+          }),
         );
+        this.unpersistedDenials.delete(principalId);
+        this.log.error(`retain replay denied for bank ${item.bankId}; item stays queued for operator review`);
+        return "stop";
       }
+      if (!isTransientRequestError(error)) {
+        await this.storage.transaction(() =>
+          queue.setReplayState(item.id, {
+            ...item.replayState,
+            quarantine: "permanent",
+            ...(item.replayState?.gate ? { gate: "operator" as const } : {}),
+          }),
+        );
+        this.log.error("retain replay quarantined: permanent response; payload preserved for operator review");
+        return "quarantined";
+      }
+      const count = await this.storage.transaction(() => queue.incrementReplayAttempts(item.id));
+      if (count >= MAX_REPLAY_ATTEMPTS && item.replayState === undefined) {
+        await this.storage.transaction(() => queue.remove(item.id));
+        try {
+          this.onAbandon(item, count);
+        } catch (error) {
+          this.log.error(
+            `retain abandonment handler failed for bank ${item.bankId}: ${error instanceof Error ? error.name : typeof error}`,
+          );
+        }
+      }
+      return "stop";
     }
+    await this.storage.transaction(() => queue.remove(item.id));
+    return "delivered";
   }
 }
 

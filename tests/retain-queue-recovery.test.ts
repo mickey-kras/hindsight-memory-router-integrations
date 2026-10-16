@@ -1,17 +1,17 @@
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
-  fsyncSync,
   constants,
-  mkdtempSync,
+  fsyncSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
-  symlinkSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,13 +89,24 @@ describe("retain queue corrupt-record recovery", () => {
     const onCorruption = vi.fn();
     const queue = new RetainQueue({ filePath, maxAgeMs: 60_000, onCorruption });
 
-    expect(queue.peek().map((queued) => queued.id)).toEqual(["first", "second"]);
+    expect(
+      queue
+        .peek()
+        .filter((queued) => queued.replayState?.quarantine !== "corrupt")
+        .map((queued) => queued.id),
+    ).toEqual(["first", "second"]);
     run(queue);
 
+    expect(queue.peek().filter((queued) => queued.replayState?.quarantine === "corrupt")).toHaveLength(2);
     expect(recoveries()).toEqual([Buffer.concat([bad, invalidUtf8, tail])]);
     expect(recoveries()[0].includes("private first")).toBe(false);
     expect(recoveries()[0].includes("private second")).toBe(false);
-    expect(queue.peek().map((queued) => queued.id)).toEqual(ids);
+    expect(
+      queue
+        .peek()
+        .filter((queued) => queued.replayState?.quarantine !== "corrupt")
+        .map((queued) => queued.id),
+    ).toEqual(ids);
     expect(queue.peek().find((queued) => queued.id === "second")).toMatchObject({
       documentId: "document",
       operationId: "original-operation",
@@ -146,10 +157,17 @@ describe("retain queue corrupt-record recovery", () => {
     const original = raw + line(item("valid"));
     writeFileSync(filePath, original);
     const queue = new RetainQueue({ filePath });
-    expect(queue.peek().map((queued) => queued.id)).toEqual(["valid"]);
+    expect(
+      queue
+        .peek()
+        .filter((queued) => queued.replayState?.quarantine !== "corrupt")
+        .map((queued) => queued.id),
+    ).toEqual(["valid"]);
     queue.remove("valid");
     expect(recoveries()).toEqual([Buffer.from(raw)]);
-    expect(() => readFileSync(filePath)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(new RetainQueue({ filePath }).peek()).toEqual([
+      expect.objectContaining({ replayState: expect.objectContaining({ quarantine: "corrupt" }) }),
+    ]);
   });
 
   it("reuses durable recovery after a queue rewrite fails and the process restarts", async () => {
@@ -168,7 +186,12 @@ describe("retain queue corrupt-record recovery", () => {
     appendFileSync(filePath, line(item("later", { operationId: "later-operation" })));
     const restarted = new RetainQueue({ filePath });
     restarted.ensureOperationId("first", "operation");
-    expect(restarted.peek().map(({ id, operationId }) => ({ id, operationId }))).toEqual([
+    expect(
+      restarted
+        .peek()
+        .filter((queued) => queued.replayState?.quarantine !== "corrupt")
+        .map(({ id, operationId }) => ({ id, operationId })),
+    ).toEqual([
       { id: "first", operationId: "operation" },
       { id: "later", operationId: "later-operation" },
     ]);
@@ -233,12 +256,14 @@ describe("retain queue corrupt-record recovery", () => {
     },
   );
 
-  it("preserves a malformed-only queue before removing the active file", () => {
+  it("preserves a malformed-only queue as an active ordering barrier", () => {
     const original = Buffer.from("  \r\nnull\n{unterminated");
     writeFileSync(filePath, original);
     new RetainQueue({ filePath }).removeMany([]);
     expect(recoveries()).toEqual([original]);
-    expect(() => readFileSync(filePath)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(new RetainQueue({ filePath }).peek()).toEqual([
+      expect.objectContaining({ replayState: expect.objectContaining({ quarantine: "corrupt" }) }),
+    ]);
   });
 
   it.each(["broken", line(item("first")).trimEnd()])(
@@ -402,9 +427,9 @@ describe("retain queue corrupt-record recovery", () => {
       const source = `
       import { RetainQueue } from ${JSON.stringify(new URL("../src/upstream/src/retain-queue.ts", import.meta.url).href)};
       const queue = new RetainQueue({ filePath: ${JSON.stringify(filePath)}, maxReadBytes: 16 * 1024 * 1024 });
-      if (queue.peek().length !== ${alternating ? 50 : 0}) throw new Error("unexpected replayable records");
+      if (queue.peek().length !== ${alternating ? 50 : 1}) throw new Error("unexpected replayable records");
       queue.removeMany([]);
-      if (queue.size() !== ${alternating ? count : 0}) throw new Error("valid records lost");
+      if (queue.size() !== ${alternating ? count * 2 : 1}) throw new Error("valid records lost");
     `;
       execFileSync(
         process.execPath,
@@ -441,4 +466,83 @@ describe("retain queue corrupt-record recovery", () => {
     }
     expect(readFileSync(filePath, "utf8")).toBe(original);
   });
+});
+
+it("syncs an accepted append before returning and preserves bytes if append sync fails", async () => {
+  const queue = new RetainQueue({ filePath });
+  queue.enqueue("bank", { content: "accepted", operationId: "accepted-operation" });
+  expect(fsyncSync).toHaveBeenCalledTimes(2); // file contents, then containing directory
+  vi.mocked(fsyncSync).mockImplementationOnce(() => {
+    throw new Error("append sync failed");
+  });
+  expect(() => queue.enqueue("bank", { content: "uncertain", operationId: "uncertain-operation" })).toThrow(
+    "append sync failed",
+  );
+  // A failed append acknowledgement is uncertain, never a claim that no bytes
+  // reached disk. Keep the identity for explicit reconciliation/retry.
+  expect(new RetainQueue({ filePath }).peek()).toMatchObject([
+    { content: "accepted", operationId: "accepted-operation" },
+    { content: "uncertain", operationId: "uncertain-operation" },
+  ]);
+});
+
+it.each(["temp sync", "rename"])(
+  "keeps the original backlog when gate %s fails before replacement",
+  async (failure) => {
+    const original = line(item("denied", { operationId: "operation" }));
+    writeFileSync(filePath, original);
+    if (failure === "temp sync")
+      vi.mocked(fsyncSync).mockImplementationOnce(() => {
+        throw new Error("sync failed");
+      });
+    else
+      vi.mocked(renameSync).mockImplementationOnce(() => {
+        throw new Error("rename failed");
+      });
+    expect(() => new RetainQueue({ filePath }).setReplayState("denied", { gate: "probe", protected: true })).toThrow(
+      "failed",
+    );
+    expect(readFileSync(filePath, "utf8")).toBe(original);
+    expect(readdirSync(directory).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    new RetainQueue({ filePath }).setReplayState("denied", { gate: "probe", protected: true });
+    expect(new RetainQueue({ filePath }).peek()[0]).toMatchObject({
+      operationId: "operation",
+      replayState: { gate: "probe", protected: true },
+    });
+  },
+);
+
+it("preserves the newly written gate if directory sync fails after atomic replacement", async () => {
+  writeFileSync(filePath, line(item("denied", { operationId: "operation" })));
+  const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+  vi.mocked(fsyncSync)
+    .mockImplementationOnce(actualFs.fsyncSync)
+    .mockImplementationOnce(() => {
+      throw new Error("directory sync failed");
+    });
+  expect(() => new RetainQueue({ filePath }).setReplayState("denied", { gate: "probe", protected: true })).toThrow(
+    "directory sync failed",
+  );
+  expect(new RetainQueue({ filePath }).peek()[0]).toMatchObject({
+    operationId: "operation",
+    replayState: { gate: "probe", protected: true },
+  });
+});
+
+it("atomically classifies many mismatches in one replacement and leaves all bytes intact if replacement fails", async () => {
+  const items = Array.from({ length: 64 }, (_, index) => item(`item-${index}`, { operationId: `operation-${index}` }));
+  const original = items.map(line).join("");
+  writeFileSync(filePath, original);
+  const updates = items.map(({ id }) => ({ id, state: { quarantine: "bank-mismatch" as const } }));
+  vi.mocked(renameSync).mockImplementationOnce(() => {
+    throw new Error("replacement failed");
+  });
+  expect(() => new RetainQueue({ filePath }).setReplayStates(updates)).toThrow("replacement failed");
+  expect(readFileSync(filePath, "utf8")).toBe(original);
+  vi.mocked(renameSync).mockClear();
+  new RetainQueue({ filePath }).setReplayStates(updates);
+  expect(renameSync).toHaveBeenCalledTimes(1);
+  expect(new RetainQueue({ filePath }).peek(64)).toEqual(
+    items.map((record) => ({ ...record, replayState: { quarantine: "bank-mismatch" } })),
+  );
 });

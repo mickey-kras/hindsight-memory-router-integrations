@@ -43,6 +43,17 @@ export interface QueuedRetainPayload {
   updateMode?: "replace" | "append";
 }
 
+export interface RetainReplayState {
+  quarantine?: "permanent" | "bank-mismatch" | "corrupt";
+  gate?: "probe" | "operator";
+  /** Sticky after a denial, including subsequent transient failures. */
+  protected?: true;
+  /** Corrupt bytes live in this recovery snapshot, never in a synthetic payload. */
+  archive?: string;
+  offset?: number;
+  length?: number;
+}
+
 export interface QueuedRetain {
   id: string;
   bankId: string;
@@ -55,6 +66,7 @@ export interface QueuedRetain {
   updateMode?: "replace" | "append";
   createdAt: string; // ISO 8601
   replayAttempts?: number;
+  replayState?: RetainReplayState;
 }
 
 export interface RetainQueueCorruption {
@@ -73,9 +85,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isReplayState(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  if (
+    Object.keys(value).some((key) => !["quarantine", "gate", "protected", "archive", "offset", "length"].includes(key))
+  )
+    return false;
+  if (
+    value.quarantine !== undefined &&
+    (typeof value.quarantine !== "string" || !["permanent", "bank-mismatch", "corrupt"].includes(value.quarantine))
+  )
+    return false;
+  if (value.gate !== undefined && value.gate !== "probe" && value.gate !== "operator") return false;
+  if (value.protected !== undefined && value.protected !== true) return false;
+  if (value.gate !== undefined && value.protected !== true) return false;
+  if (value.quarantine === "corrupt") {
+    return (
+      typeof value.archive === "string" &&
+      /^[a-f0-9]{64}$/.test(value.archive) &&
+      Number.isSafeInteger(value.offset) &&
+      Number(value.offset) >= 0 &&
+      Number.isSafeInteger(value.length) &&
+      Number(value.length) > 0
+    );
+  }
+  return value.archive === undefined && value.offset === undefined && value.length === undefined;
+}
+
+/** Exact identity: omitted document IDs are independent, including from each other. */
+export function sameRetainDocument(left: QueuedRetain, right: { bankId: string; documentId?: string }): boolean {
+  return (
+    left.documentId !== undefined &&
+    right.documentId !== undefined &&
+    left.bankId === right.bankId &&
+    left.documentId === right.documentId
+  );
+}
+
 function isQueuedRetain(value: unknown): value is QueuedRetain {
   if (!isRecord(value)) return false;
   return (
+    isReplayState(value.replayState) &&
     typeof value.id === "string" &&
     value.id.length > 0 &&
     typeof value.bankId === "string" &&
@@ -156,9 +207,11 @@ export class RetainQueue {
     const fd = openPrivateQueueFile(this.filePath, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
     try {
       appendFileSync(fd, serialized, "utf8");
+      fsyncSync(fd);
     } finally {
       closeSync(fd);
     }
+    syncDirectory(dirname(this.filePath));
     this.options.capacity?.didAppend(this.filePath);
     if (this.cachedSize !== undefined) this.cachedSize++;
   }
@@ -166,6 +219,40 @@ export class RetainQueue {
   /** Get up to `limit` oldest pending items (FIFO). */
   peek(limit = 50): QueuedRetain[] {
     return this.readAll().items.slice(0, limit);
+  }
+
+  /** Materialize unknown-identity ordering barriers before any delivery. Caller holds the mutation lock. */
+  snapshot(): QueuedRetain[] {
+    const contents = this.readAll();
+    const ids = new Set<string>();
+    for (const item of contents.items) {
+      if (ids.has(item.id)) throw new Error("duplicate retain queue identity; operator repair required");
+      ids.add(item.id);
+    }
+    if (contents.bytes.length > 0) this.writeAll(contents.items, contents);
+    return contents.items;
+  }
+
+  setReplayState(id: string, state: RetainReplayState): void {
+    this.setReplayStates([{ id, state }]);
+  }
+
+  /** Classify a changed-bank backlog in one atomic rewrite, not one per row. */
+  setReplayStates(updates: Array<{ id: string; state: RetainReplayState }>): void {
+    if (updates.length === 0) return;
+    const contents = this.readAll();
+    const pending = new Map(updates.map((update) => [update.id, update.state]));
+    if (pending.size !== updates.length) throw new Error("ambiguous retain queue state update");
+    const seen = new Set<string>();
+    for (const item of contents.items) {
+      const state = pending.get(item.id);
+      if (state === undefined) continue;
+      if (seen.has(item.id)) throw new Error("ambiguous retain queue identity");
+      seen.add(item.id);
+      item.replayState = state;
+    }
+    if (seen.size !== pending.size) throw new Error("missing retain queue identity");
+    this.writeAll(contents.items, contents);
   }
 
   /** Remove a single item by id. */
@@ -204,7 +291,7 @@ export class RetainQueue {
     const contents = this.readAll();
     const item = contents.items.find((queued) => queued.id === id);
     if (!item) throw new Error(`queued retain not found: ${id}`);
-    item.replayAttempts = (item.replayAttempts ?? 0) + 1;
+    item.replayAttempts = Math.min((item.replayAttempts ?? 0) + 1, Number.MAX_SAFE_INTEGER - 1);
     this.writeAll(contents.items, contents);
     return item.replayAttempts;
   }
@@ -220,7 +307,21 @@ export class RetainQueue {
     if (this.maxAgeMs < 0) return 0;
     const cutoff = Date.now() - this.maxAgeMs;
     const contents = this.readAll();
-    const kept = contents.items.filter((i) => new Date(i.createdAt).getTime() >= cutoff);
+    // A closed principal gate protects its entire backlog. Quarantine and unknown
+    // identity barriers protect dependent successors without extending unrelated retention.
+    const gated = contents.items.some((item) => item.replayState?.gate !== undefined);
+    const protectedRows: QueuedRetain[] = [];
+    let barrier = false;
+    const kept = contents.items.filter((item) => {
+      barrier ||= item.replayState?.quarantine === "corrupt";
+      const protect =
+        gated ||
+        barrier ||
+        item.replayState !== undefined ||
+        protectedRows.some((prior) => sameRetainDocument(prior, item));
+      if (protect) protectedRows.push(item);
+      return protect || new Date(item.createdAt).getTime() >= cutoff;
+    });
     const removed = contents.items.length - kept.length;
     if (removed > 0) this.writeAll(kept, contents);
     return removed;
@@ -282,8 +383,21 @@ export class RetainQueue {
     const ranges: number[] = [];
     let corruptBytes = 0;
     const preserveRange = (start: number, end: number): void => {
-      if (ranges.at(-1) === start) ranges[ranges.length - 1] = end;
-      else ranges.push(start, end);
+      if (ranges.at(-1) === start) {
+        ranges[ranges.length - 1] = end;
+        const state = result.items.at(-1)?.replayState;
+        if (state?.length !== undefined) state.length += end - start;
+      } else {
+        ranges.push(start, end);
+        result.items.push({
+          id: `corrupt-${result.source}-${start}`,
+          bankId: "unknown",
+          content: "",
+          metadata: {},
+          createdAt: "1970-01-01T00:00:00.000Z",
+          replayState: { quarantine: "corrupt", archive: result.source, offset: corruptBytes, length: end - start },
+        });
+      }
       corruptBytes += end - start;
     };
     for (let start = 0; start < content.length; ) {

@@ -74,7 +74,7 @@ describe("aggregate queue capacity", () => {
 
   it("reserves replay metadata headroom in the aggregate byte limit", async () => {
     writeFileSync(queuePath(), "a\n");
-    const storage = new RetainQueueStorage(directory, 10, 258);
+    const storage = new RetainQueueStorage(directory, 10, 514);
     await storage.transaction(() => storage.assertAppend(0));
     await expect(storage.transaction(() => storage.assertAppend(1))).rejects.toMatchObject({ limit: "bytes" });
   });

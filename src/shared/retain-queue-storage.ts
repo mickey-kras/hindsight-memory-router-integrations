@@ -8,7 +8,7 @@ export const QUEUE_FILE_PREFIX = "hindsight-retain-queue.";
 export const QUEUE_FILE_SUFFIX = ".jsonl";
 export const DEFAULT_QUEUE_MAX_ITEMS = 1000;
 export const DEFAULT_QUEUE_MAX_BYTES = 16 * 1024 * 1024;
-const REPLAY_METADATA_BYTES = 128;
+const REPLAY_METADATA_BYTES = 256;
 
 export class RetainQueueCapacityError extends Error {
   readonly code = "RETAIN_QUEUE_CAPACITY";
