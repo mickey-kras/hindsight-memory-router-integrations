@@ -90,4 +90,3 @@ async function run({ github, context, core, sleep = pause }) {
 }
 
 module.exports = { run, validateContext };
-

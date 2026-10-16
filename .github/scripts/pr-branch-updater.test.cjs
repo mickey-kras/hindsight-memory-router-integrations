@@ -190,7 +190,6 @@ test("updates PRs against the release branch that triggered validation", async (
   assert.equal(calls.updates.length, 1);
 });
 
-
 for (const [name, patch] of Object.entries({
   draft: { draft: true },
   unknown: { draft: undefined },
