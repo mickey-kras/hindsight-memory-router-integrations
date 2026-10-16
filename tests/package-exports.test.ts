@@ -44,10 +44,21 @@ it("loads ESM root and hosted exports", () => {
     const source = `
       import plugin, { PLUGIN_ID } from "@mickey-kras/hindsight-memory-router-openclaw";
       import { HostedRouterClient } from "@mickey-kras/hindsight-memory-router-openclaw/hosted";
-      if (typeof plugin !== "function" || PLUGIN_ID !== "hindsight-memory-router") throw new Error("missing root export");
-      if (typeof HostedRouterClient !== "function") throw new Error("missing hosted export");
+      process.stdout.write(JSON.stringify({
+        plugin: typeof plugin,
+        pluginId: PLUGIN_ID,
+        hosted: typeof HostedRouterClient,
+      }));
     `;
-    execFileSync(process.execPath, ["--input-type=module", "-e", source], { cwd: directory });
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", source], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    expect(JSON.parse(output)).toEqual({
+      plugin: "function",
+      pluginId: "hindsight-memory-router",
+      hosted: "function",
+    });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
