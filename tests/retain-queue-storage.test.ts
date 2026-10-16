@@ -74,7 +74,7 @@ describe("aggregate queue capacity", () => {
 
   it("reserves replay metadata headroom in the aggregate byte limit", async () => {
     writeFileSync(queuePath(), "a\n");
-    const storage = new RetainQueueStorage(directory, 10, 258);
+    const storage = new RetainQueueStorage(directory, 10, 514);
     await storage.transaction(() => storage.assertAppend(0));
     await expect(storage.transaction(() => storage.assertAppend(1))).rejects.toMatchObject({ limit: "bytes" });
   });
@@ -212,4 +212,19 @@ describe("aggregate queue capacity", () => {
     }
     await expect(storage.transaction(() => storage.assertAppend(2))).rejects.toMatchObject({ limit: "items" });
   });
+});
+
+it("rejects a fresh admission contender after bounded contention and releases its descriptor", async () => {
+  const storage = new RetainQueueStorage(directory);
+  const fd = openSync(join(directory, ".retain-admission.lock"), "a", 0o600);
+  expect(tryLock(fd)).toBe(true);
+  const contender = vi.fn(async () => "accepted");
+  try {
+    await expect(storage.admission(contender)).rejects.toMatchObject({ code: "RETAIN_QUEUE_BUSY" });
+    expect(contender).not.toHaveBeenCalled();
+  } finally {
+    closeSync(fd);
+  }
+  expect(await storage.admission(contender)).toBe("accepted");
+  expect(contender).toHaveBeenCalledTimes(1);
 });

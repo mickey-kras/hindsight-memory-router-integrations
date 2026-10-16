@@ -4,14 +4,15 @@ import {
   constants,
   fchmodSync,
   fstatSync,
-  mkdirSync,
+  fsyncSync,
   lstatSync,
-  realpathSync,
+  mkdirSync,
   openSync,
+  realpathSync,
   renameSync,
+  type Stats,
   unlinkSync,
   writeFileSync,
-  type Stats,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -92,6 +93,15 @@ export function isMissingQueueFile(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+function syncPrivateQueueDirectory(path: string): void {
+  const fd = openPrivateQueueDirectory(path);
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function removePrivateQueueFile(path: string): void {
   path = resolve(path);
   let fd: number;
@@ -103,6 +113,7 @@ export function removePrivateQueueFile(path: string): void {
   }
   try {
     unlinkSync(path);
+    syncPrivateQueueDirectory(dirname(path));
   } finally {
     closeSync(fd);
   }
@@ -120,7 +131,9 @@ export function writePrivateQueueFile(path: string, body: string): void {
   const fd = openPrivateQueueFile(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL);
   try {
     writeFileSync(fd, body, "utf8");
+    fsyncSync(fd);
     renameSync(temporary, path);
+    syncPrivateQueueDirectory(dirname(path));
   } finally {
     closeSync(fd);
     removePrivateQueueFile(temporary);
