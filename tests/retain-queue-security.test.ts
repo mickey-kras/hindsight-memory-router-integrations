@@ -8,8 +8,8 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -247,7 +247,10 @@ describe("private retain queue paths", () => {
       () => removePrivateQueueFile(queueFile),
     ])
       expect(action).toThrow("require Linux POSIX file permissions");
-    await expect(new RetainQueueStorage(directory).transaction(() => undefined)).rejects.toThrow("require Linux");
+    await expect(new RetainQueueStorage(directory).transaction(() => undefined)).rejects.toMatchObject({
+      name: "RetainQueueSharedStorageError",
+      cause: { message: expect.stringContaining("require Linux") },
+    });
     expect(readFileSync(queueFile, "utf8")).toBe("untouched");
     expect(statSync(queueFile).mode & 0o777).toBe(0o644);
     expect(statSync(directory).mode & 0o777).toBe(0o755);

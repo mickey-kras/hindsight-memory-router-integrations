@@ -1,13 +1,19 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { type QueuedRetain, type QueuedRetainPayload, RetainQueue } from "../upstream/src/retain-queue.js";
 import type { AuthenticatedClientFactory } from "./authenticated-client-factory.js";
-import type { PrincipalCredentialResolver } from "./principal-credential-resolver.js";
+import { PRINCIPAL_ID_PATTERN, type PrincipalCredentialResolver } from "./principal-credential-resolver.js";
 import { privateQueueDirectory } from "./private-queue-files.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
-import { QUEUE_FILE_PREFIX, QUEUE_FILE_SUFFIX, RetainQueueStorage } from "./retain-queue-storage.js";
+import {
+  QUEUE_FILE_PREFIX,
+  QUEUE_FILE_SUFFIX,
+  RetainQueueSharedStorageError,
+  RetainQueueStorage,
+} from "./retain-queue-storage.js";
+
 export { RetainQueueBusyError, RetainQueueCapacityError } from "./retain-queue-storage.js";
 
 export type RetainRequestPayload = QueuedRetainPayload;
@@ -139,8 +145,34 @@ export class RetainCoordinator {
       if (!file.startsWith(QUEUE_FILE_PREFIX) || !file.endsWith(QUEUE_FILE_SUFFIX)) {
         continue;
       }
-      await this.flushQueueFile(file);
+      try {
+        await this.flushQueueFile(file);
+      } catch (error) {
+        if (error instanceof RetainQueueSharedStorageError) {
+          this.log.error(
+            "retain queue replay paused: shared storage unavailable; remaining items stay queued for retry",
+          );
+          return;
+        }
+        this.log.error(
+          `retain queue replay failed for ${this.queueLabel(file)}; remaining items stay queued for retry`,
+        );
+      }
     }
+  }
+
+  private queueLabel(file: string): string {
+    const principalId = file.slice(QUEUE_FILE_PREFIX.length, -QUEUE_FILE_SUFFIX.length);
+    if (
+      PRINCIPAL_ID_PATTERN.test(principalId) &&
+      principalId !== "." &&
+      principalId !== ".." &&
+      this.credentials.has(principalId)
+    ) {
+      return `agent ${principalId}`;
+    }
+    // Unknown filenames may contain content or control characters, not trusted IDs.
+    return `queue ${createHash("sha256").update(file).digest("hex").slice(0, 16)}`;
   }
 
   private async flushQueueFile(file: string): Promise<void> {
@@ -149,7 +181,7 @@ export class RetainCoordinator {
     try {
       credentials = this.credentials.resolve(principalId);
     } catch {
-      this.log.error(`retain queue replay skipped: no routing entry for agent ${principalId}`);
+      this.log.error(`retain queue replay skipped: no routing entry for ${this.queueLabel(file)}`);
       return; // fail closed: unknown agent's items stay queued
     }
     await this.storage.replay(() => this.replayQueue(principalId, credentials));
@@ -171,6 +203,7 @@ export class RetainCoordinator {
         await this.replayItem(principalId, client, queue, item);
         delivered.push(item.id);
       } catch (error) {
+        if (error instanceof RetainQueueSharedStorageError) throw error;
         await this.handleReplayError(error, queue, item, delivered);
         break; // preserve FIFO ordering; retry next flush
       }
