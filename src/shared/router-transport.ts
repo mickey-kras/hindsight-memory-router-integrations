@@ -176,12 +176,12 @@ export class RouterTransport {
       this.#deniedToken = token;
       this.#deniedError = error;
       // Observe cleanup failures without waiting for an underlying source to finish.
-      void response.body?.cancel().catch(() => undefined);
+      response.body?.cancel().catch(() => undefined);
       throw error;
     }
     // Never expose server error bodies, which may echo credentials or bank existence.
     if (!response.ok && (response.status !== 404 || method !== "GET")) {
-      void response.body?.cancel().catch(() => undefined);
+      response.body?.cancel().catch(() => undefined);
       throw new RouterRequestError(
         response.status,
         response.status === 429 ? boundedRetryAfterMs(response.headers.get("retry-after")) : 0,
@@ -191,7 +191,7 @@ export class RouterTransport {
       return filterVisibleBanks(response, this.access);
     }
     if (response.status === 404) {
-      void response.body?.cancel().catch(() => undefined);
+      response.body?.cancel().catch(() => undefined);
       return new Response(null, { status: 404 });
     }
     return response;
