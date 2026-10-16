@@ -365,9 +365,9 @@ export function deriveBankIdOrSkip(
     if (!(error instanceof BankResolutionError)) throw error;
     log.warn(harness, "bank unresolved: skipping (repository could not be identified)", {
       directory,
-      error: error.message,
+      error,
     });
-    diag(harness, "bank_unresolved", { directory, error: error.message });
+    diag(harness, "bank_unresolved", { directory, error });
     return null;
   }
 }

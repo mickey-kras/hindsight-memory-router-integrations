@@ -22,7 +22,7 @@ import type { Config } from "./config";
 import { maybeAutoUpdate } from "./auto-update";
 import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
-import { describeError, log, setLogLevel } from "./log";
+import { log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
 import { buildKnowledgePreamble } from "./knowledge-injection";
 import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
@@ -66,7 +66,7 @@ export class RuntimeCore {
   private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
   private deferInitialReflect = false;
   /** Host-notice channel (opencode/Kilo: client.tui.showToast via the adapter). Optional, fail-open. */
-  private notify?: (title: string, message: string) => void;
+  private notify?: (title: string, message: string) => void | PromiseLike<void>;
 
   constructor(
     private readonly client: HindsightClient,
@@ -85,8 +85,24 @@ export class RuntimeCore {
     setLogLevel(cfg.logLevel);
   }
 
-  setNotifier(notify: (title: string, message: string) => void): void {
+  setNotifier(notify: (title: string, message: string) => void | PromiseLike<void>): void {
     this.notify = notify;
+  }
+
+  private dispatchNotice(kind: "session" | "reflection", title: string, message: string): void {
+    if (!this.notify) {
+      log.info(this.harness, `${kind} notice not dispatched: host notifier unavailable`);
+      return;
+    }
+    try {
+      const pending = this.notify(title, message);
+      log.info(this.harness, `${kind} notice dispatched`);
+      void Promise.resolve(pending).catch((error: unknown) => {
+        log.warn(this.harness, `${kind} notice delivery failed`, { error });
+      });
+    } catch (error) {
+      log.warn(this.harness, `${kind} notice delivery failed`, { error });
+    }
   }
 
   /**
@@ -160,14 +176,11 @@ export class RuntimeCore {
         client: this.client,
         harness: this.harness,
       });
-      // The seed note is user-facing; opencode has no visible-system channel at load, so surface it
-      // on stderr (shows in the plugin log / console) rather than dropping it.
-      // Banner: via the host's toast API when available (stderr corrupts the TUI); always logged.
+      // Surface the seed note through the host's toast API when available; its text stays out of logs.
       if (out.systemMessage) {
         const plain = stripVTControlCharacters(out.systemMessage);
-        log.info(this.harness, plain);
         const title = toolBrand(this.cfg.toolPrefix).displayName;
-        this.notify?.(title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
+        this.dispatchNotice("session", title, plain.startsWith(`${title} is `) ? `Is ${plain.slice(`${title} is `.length)}` : plain);
       }
       this.deferInitialReflect = out.deferInitialReflect === true;
     } catch {
@@ -233,8 +246,7 @@ export class RuntimeCore {
       // renders inside the TUI input line. The shared output owns when a notice exists.
       if (output.notice) {
         const preview = output.notice.replaceAll(/\s+/g, " ").trim().slice(0, 140);
-        log.info(this.harness, "reflect goal", { preview });
-        this.notify?.(`${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
+        this.dispatchNotice("reflection", `${toolBrand(this.cfg.toolPrefix).displayName} · recalled past decisions`, preview);
       }
       const block = blocks.filter(Boolean).join("\n\n");
       this.injection.set(sessionId, block);
@@ -327,7 +339,7 @@ export class RuntimeCore {
         turns = await this.fetchTranscript(sessionId);
       } catch (e) {
         diag(this.harness, "idle_fetch_failed", {
-          error: describeError(e),
+          error: e,
           session: sessionId,
         });
         return;
@@ -486,7 +498,7 @@ export class RuntimeCore {
         state.retainedTurns = 0;
         diag(this.harness, "retain_failed", {
           ms: Date.now() - t0,
-          error: describeError(e),
+          error: e,
           session: sessionId,
           trigger,
         });

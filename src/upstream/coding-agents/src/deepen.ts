@@ -41,7 +41,7 @@ import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
 import { buildRetainStamp } from "./core/retain-stamp";
-import { describeError, log as plog, setLogLevel } from "./core/log";
+import { setLogLevel } from "./core/log";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
 
@@ -89,11 +89,9 @@ if (!REPO || !BANK) {
 }
 
 setLogLevel(cfg.logLevel);
-// Foreground runs (benchmark/e2e) read stdout; background runs are followed via the leveled
-// plugin.log — every engine line goes to both.
+// Foreground progress stays on stdout; durable diagnostics record lifecycle metadata separately.
 const log = (m: string) => {
   console.log(`${new Date().toISOString()} ${m}`);
-  plog.info("deepen", m);
 };
 
 // ── per-bank lease: concurrent session starts must not double-ingest ─────────────
@@ -314,7 +312,7 @@ async function main() {
 main().catch((e) => {
   diag("deepen", "deepen_failed", {
     bank: FINAL_BANK,
-    error: describeError(e),
+    error: e,
   });
   console.error("deepen failed:", (e as Error).message || e);
   if (lease) releaseLease(lease);

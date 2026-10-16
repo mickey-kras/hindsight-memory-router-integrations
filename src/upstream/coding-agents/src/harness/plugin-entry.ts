@@ -64,10 +64,10 @@ export function createPluginEntry(harness: string): Plugin {
             .then((r: unknown) => {
               const err = (r as { error?: unknown })?.error;
               if (err)
-                log.debug(harness, "toast rejected", { error: JSON.stringify(err).slice(0, 200) });
+                log.debug(harness, "toast rejected", { error: err });
             })
             .catch((e: unknown) =>
-              log.debug(harness, "toast failed", { error: String(e).slice(0, 120) })
+              log.debug(harness, "toast failed", { error: e })
             );
         }, wait).unref?.();
       });

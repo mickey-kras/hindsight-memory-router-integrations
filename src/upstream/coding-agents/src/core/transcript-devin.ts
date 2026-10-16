@@ -114,7 +114,7 @@ export function readDevinTranscript(
   } catch (error) {
     // A corrupt file or a Devin storage-schema change surfaces here instead of masquerading as an
     // empty conversation.
-    diag("devin-cli", "session_db_read_failed", { dbPath, error: String(error) });
+    diag("devin-cli", "session_db_read_failed", { dbPath, error });
     return [];
   } finally {
     try {
