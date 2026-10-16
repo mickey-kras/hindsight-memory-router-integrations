@@ -1,6 +1,5 @@
 name: codeql
-
-on:
+'on':
   workflow_call:
     inputs:
       candidate_ref:
@@ -10,36 +9,14 @@ on:
         type: string
         default: ''
   schedule:
-    - cron: "31 3 * * 1"
-
-concurrency:
-  group: codeql-${{ github.event_name }}-${{ inputs.candidate_sha || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
+    - cron: 31 3 * * 1
 permissions:
   contents: read
+  pull-requests: read
   security-events: write
-
 jobs:
   analyze:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.candidate_sha || github.sha }}
-          persist-credentials: false
-
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        with:
-          languages: javascript-typescript
-
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        with:
-          category: .github/workflows/main.yml:analyze
-          ref: ${{ inputs.candidate_ref }}
-          sha: ${{ inputs.candidate_sha }}
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-codeql.yml@e09f70355dfd69bbb31b77f590621e6b376c2f1e
+    with:
+      revision_sha: ${{ inputs.candidate_sha }}
+      revision_ref: ${{ inputs.candidate_ref }}

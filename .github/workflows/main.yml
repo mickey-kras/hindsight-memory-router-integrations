@@ -1,36 +1,9 @@
 name: main
-
-on:
-  workflow_call:
-    inputs:
-      candidate_ref:
-        type: string
-        default: ''
-      candidate_sha:
-        type: string
-        default: ''
-    secrets:
-      RELEASE_APP_PRIVATE_KEY:
-        required: false
-      TAILSCALE_OAUTH_CLIENT_ID:
-        required: false
-      TAILSCALE_AUDIENCE:
-        required: false
-      SONAR_TOKEN:
-        required: false
-      SONAR_HOST_URL:
-        required: false
-  workflow_dispatch:
-  push:
-    branches: [main]
-
 concurrency:
   group: main-${{ github.event_name }}-${{ inputs.candidate_sha || github.sha }}
   cancel-in-progress: false
-
 permissions:
   contents: read
-
 jobs:
   update-pr-branches:
     name: update PR branches
@@ -40,40 +13,39 @@ jobs:
     uses: ./.github/workflows/pr-branch-updater.yml
     secrets:
       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-
   quality:
     name: quality
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
+      pull-requests: read
       security-events: write
-    uses: ./.github/workflows/ci.yml
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-ci.yml@e09f70355dfd69bbb31b77f590621e6b376c2f1e
     with:
-      candidate_sha: ${{ inputs.candidate_sha }}
-      candidate_ref: ${{ inputs.candidate_ref }}
-
+      revision_sha: ${{ inputs.candidate_sha }}
+      revision_ref: ${{ inputs.candidate_ref }}
   aislop:
     name: aislop
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
+      pull-requests: read
       security-events: write
-    uses: ./.github/workflows/aislop.yml
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-aislop.yml@e09f70355dfd69bbb31b77f590621e6b376c2f1e
     with:
-      candidate_sha: ${{ inputs.candidate_sha }}
-      candidate_ref: ${{ inputs.candidate_ref }}
-
+      revision_sha: ${{ inputs.candidate_sha }}
+      revision_ref: ${{ inputs.candidate_ref }}
   codeql:
     name: codeql
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
+      pull-requests: read
       security-events: write
-    uses: ./.github/workflows/codeql.yml
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-codeql.yml@e09f70355dfd69bbb31b77f590621e6b376c2f1e
     with:
-      candidate_sha: ${{ inputs.candidate_sha }}
-      candidate_ref: ${{ inputs.candidate_ref }}
-
+      revision_sha: ${{ inputs.candidate_sha }}
+      revision_ref: ${{ inputs.candidate_ref }}
   sonar:
     name: sonar
     if: github.ref == 'refs/heads/main' && inputs.candidate_sha == ''
@@ -81,46 +53,42 @@ jobs:
       contents: read
       id-token: write
       issues: write
-    needs: [quality, aislop, codeql]
+    needs:
+      - quality
+      - aislop
+      - codeql
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
         with:
           egress-policy: audit
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
-
       - name: Mask configured SonarQube endpoint
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: python3 .github/scripts/mask-sonar-context.py configured
       - name: Connect to the tailnet
-        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd
         with:
           oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
           audience: ${{ secrets.TAILSCALE_AUDIENCE }}
           tags: tag:github-sonar
           use-cache: 'true'
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.23.3
-          # Keep credentialed jobs isolated from dependency caches written by CI.
           package-manager-cache: false
-
       - name: Install SonarQube analysis dependencies
-        # Coverage is reused, but this runner still needs dependency types.
         run: |
           npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
           test "$(npm --version)" = 11.19.1
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/upstream/coding-agents --ignore-scripts --no-audit --no-fund
-
       - name: Require successful coverage artifact
         env:
           COVERAGE_ARTIFACT_ID: ${{ needs.quality.outputs.coverage_artifact }}
@@ -135,39 +103,39 @@ jobs:
         env:
           COVERAGE_SHA: ${{ github.sha }}
         run: node .github/scripts/coverage-artifact.cjs verify
-
       - name: Mask advertised SonarQube endpoint
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: python3 .github/scripts/mask-sonar-context.py advertised
       - name: SonarQube analysis
-        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
       - name: SonarQube quality gate
         id: sonar-quality-gate
         timeout-minutes: 6
-        uses: SonarSource/sonarqube-quality-gate-action@7a5fffe8e523c40e0c740b6bc2712ab503e52efa # v1
+        uses: SonarSource/sonarqube-quality-gate-action@7a5fffe8e523c40e0c740b6bc2712ab503e52efa
         with:
           pollingTimeoutSec: 270
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
       - name: Synchronize SonarQube findings
-        if: ${{ !cancelled() && failure() && steps.sonar-quality-gate.outcome == 'failure' && github.ref == 'refs/heads/main' }}
+        if: ${{ !cancelled() && failure() && steps.sonar-quality-gate.outcome == 'failure' && github.ref == 'refs/heads/main'
+          }}
         env:
           GH_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: python3 .github/scripts/sync-sonar-findings.py .scannerwork/report-task.txt
-
   publish:
     name: publish packages
-    needs: [quality, aislop, codeql]
+    needs:
+      - quality
+      - aislop
+      - codeql
     if: github.ref == 'refs/heads/main' && inputs.candidate_sha != ''
     outputs:
       released: ${{ steps.finalized.outputs.latest }}
@@ -199,7 +167,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.23.3
-          # Keep credentialed jobs isolated from dependency caches written by CI.
           package-manager-cache: false
       - name: Resolve retained packages
         id: retained
@@ -251,7 +218,6 @@ jobs:
               github, context, core,
               target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
             });
-
       - name: Install release tools
         run: npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
       - name: Candidate provenance
@@ -310,3 +276,27 @@ jobs:
               github, context, core,
               target: { ref: process.env.CANDIDATE_REF, sha: process.env.CANDIDATE_SHA },
             });
+'on':
+  workflow_call:
+    inputs:
+      candidate_ref:
+        type: string
+        default: ''
+      candidate_sha:
+        type: string
+        default: ''
+    secrets:
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
+      TAILSCALE_OAUTH_CLIENT_ID:
+        required: false
+      TAILSCALE_AUDIENCE:
+        required: false
+      SONAR_TOKEN:
+        required: false
+      SONAR_HOST_URL:
+        required: false
+  workflow_dispatch: null
+  push:
+    branches:
+      - main
