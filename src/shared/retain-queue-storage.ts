@@ -18,11 +18,26 @@ export class RetainQueueCapacityError extends Error {
   }
 }
 
-export class RetainQueueBusyError extends Error {
+export class RetainQueueSharedStorageError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "RetainQueueSharedStorageError";
+  }
+}
+
+export class RetainQueueBusyError extends RetainQueueSharedStorageError {
   readonly code = "RETAIN_QUEUE_BUSY";
   constructor(options?: ErrorOptions) {
     super("retain queue is busy; retain was not queued", options);
     this.name = "RetainQueueBusyError";
+  }
+}
+
+function sharedStorageOperation<T>(action: () => T): T {
+  try {
+    return action();
+  } catch (cause) {
+    throw new RetainQueueSharedStorageError("retain queue shared storage unavailable", { cause });
   }
 }
 
@@ -79,38 +94,45 @@ export class RetainQueueStorage {
   }
 
   async transaction<T>(action: () => T): Promise<T> {
-    const fd = openPrivateQueueFile(
-      join(this.directory, ".retain-queue.lock"),
-      constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
+    const fd = sharedStorageOperation(() =>
+      openPrivateQueueFile(
+        join(this.directory, ".retain-queue.lock"),
+        constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
+      ),
     );
     try {
       let attempt = 0;
-      while (!tryLock(fd)) {
+      while (!sharedStorageOperation(() => tryLock(fd))) {
         if (attempt === 30) throw new RetainQueueBusyError();
         await setTimeout(100);
         attempt++;
       }
-      for (const name of readdirSync(this.directory)) {
-        if (name.startsWith(QUEUE_FILE_PREFIX) && name.includes(`${QUEUE_FILE_SUFFIX}.`) && name.endsWith(".tmp")) {
-          removePrivateQueueFile(join(this.directory, name));
+      sharedStorageOperation(() => {
+        for (const name of readdirSync(this.directory)) {
+          if (name.startsWith(QUEUE_FILE_PREFIX) && name.includes(`${QUEUE_FILE_SUFFIX}.`) && name.endsWith(".tmp")) {
+            removePrivateQueueFile(join(this.directory, name));
+          }
         }
-      }
+      });
+      // Queue-specific failures must keep their identity for per-principal isolation.
       return action();
     } finally {
-      closeSync(fd);
+      sharedStorageOperation(() => closeSync(fd));
     }
   }
 
   async replay<T>(action: () => Promise<T>): Promise<T | undefined> {
-    const fd = openPrivateQueueFile(
-      join(this.directory, ".retain-replay.lock"),
-      constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
+    const fd = sharedStorageOperation(() =>
+      openPrivateQueueFile(
+        join(this.directory, ".retain-replay.lock"),
+        constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
+      ),
     );
     try {
-      if (!tryLock(fd)) return undefined;
+      if (!sharedStorageOperation(() => tryLock(fd))) return undefined;
       return await action();
     } finally {
-      closeSync(fd);
+      sharedStorageOperation(() => closeSync(fd));
     }
   }
 

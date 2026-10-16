@@ -1,20 +1,31 @@
 import {
   appendFileSync,
+  closeSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
+  openSync,
   readdirSync,
+  readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as lockDelay } from "node:timers/promises";
 
+import { tryLock } from "fs-native-extensions";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
-import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
+import { type PrincipalConfig, PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RetainAuthorizationError, RetainCoordinator } from "../src/shared/retain-coordinator.js";
+
+vi.mock("node:timers/promises", async (importOriginal) => {
+  const timers = await importOriginal<typeof import("node:timers/promises")>();
+  return { ...timers, setTimeout: vi.fn(timers.setTimeout) };
+});
 
 const TOKEN_MAIN = `mr_main-key_${"a".repeat(64)}`;
 const TOKEN_BACKEND = `mr_backend-key_${"b".repeat(64)}`;
@@ -40,10 +51,11 @@ function makeStack(options: {
   queueMaxBytes?: number;
   onAbandon?: (item: { bankId: string }, attempts: number) => void;
   maxAgeConfigKey?: string;
+  principals?: Record<string, PrincipalConfig>;
 }) {
   const credentials = new PrincipalCredentialResolver({
     routerUrl: "https://router.example.test",
-    principals: {
+    principals: options.principals ?? {
       main: {
         token: TOKEN_MAIN,
         writeBank: "main",
@@ -92,6 +104,28 @@ function makeStack(options: {
 }
 
 const httpError = (statusCode: number) => Object.assign(new Error(`http ${statusCode}`), { statusCode });
+
+async function queuePrincipals(queueDir: string) {
+  const first = makeStack({
+    queueDir,
+    behavior: () => {
+      throw httpError(503);
+    },
+  });
+  await first.retain.retain("backend", { content: "private backend transcript" });
+  await first.retain.retain("main", { content: "private main transcript" });
+  // Choose the failing queue from the actual directory order so each regression
+  // proves that a later principal is reached on this filesystem.
+  return readdirSync(queueDir)
+    .filter((file) => file.endsWith(".jsonl"))
+    .map((file) => {
+      const path = join(queueDir, file);
+      const raw = readFileSync(path, "utf8");
+      const item = JSON.parse(raw);
+      const principal = item.bankId === "dev" ? "backend" : "main";
+      return { path, raw, item, principal };
+    });
+}
 
 describe("RetainCoordinator", () => {
   let queueDir: string;
@@ -491,6 +525,323 @@ describe("RetainCoordinator", () => {
     await expect(retain.flushQueues()).resolves.toBeUndefined();
     rmSync(queueDir, { recursive: true, force: true });
     await expect(retain.flushQueues()).resolves.toBeUndefined();
+  });
+
+  it("continues past an oversized queue without weakening aggregate enqueue capacity", async () => {
+    const [blocked, ready] = await queuePrincipals(queueDir);
+    const oversized = `${JSON.stringify({ ...blocked.item, content: "private transcript ".repeat(100) })}\n`;
+    writeFileSync(blocked.path, oversized);
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    const replay = makeStack({ queueDir, queueMaxBytes: 1000, logger });
+
+    await expect(replay.retain.flushQueues()).resolves.toBeUndefined();
+
+    expect(readFileSync(blocked.path, "utf8")).toBe(oversized);
+    expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
+    expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
+    expect(() => readFileSync(ready.path)).toThrow();
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      `retain queue replay failed for agent ${blocked.principal}; remaining items stay queued for retry`,
+    );
+
+    const outage = makeStack({
+      queueDir,
+      queueMaxBytes: 1000,
+      behavior: () => {
+        throw httpError(503);
+      },
+    });
+    await expect(outage.retain.retain(ready.principal, { content: "new work" })).rejects.toMatchObject({
+      name: "RetainQueueCapacityError",
+      limit: "bytes",
+    });
+    expect(readFileSync(blocked.path, "utf8")).toBe(oversized);
+
+    await replay.retain.flushQueues();
+    expect(replay.fakeClients.get(ready.principal)?.retains).toHaveLength(1);
+    const restarted = makeStack({ queueDir, queueMaxBytes: 3000 });
+    await restarted.retain.flushQueues();
+    expect(restarted.fakeClients.get(blocked.principal)?.retains).toMatchObject([
+      { content: JSON.parse(oversized).content, options: { operationId: blocked.item.operationId } },
+    ]);
+    expect(() => readFileSync(blocked.path)).toThrow();
+  });
+
+  it.each(["symlink", "hardlink"])(
+    "isolates a rejected %s queue without reading or changing its target",
+    async (kind) => {
+      const [blocked, ready] = await queuePrincipals(queueDir);
+      const target = join(queueDir, "private-target");
+      writeFileSync(target, blocked.raw, { mode: 0o644 });
+      rmSync(blocked.path);
+      if (kind === "symlink") symlinkSync(target, blocked.path);
+      else linkSync(target, blocked.path);
+      const logger = { warn: vi.fn(), error: vi.fn() };
+      const replay = makeStack({ queueDir, logger });
+
+      await expect(replay.retain.flushQueues()).resolves.toBeUndefined();
+
+      expect(readFileSync(target, "utf8")).toBe(blocked.raw);
+      expect(statSync(target).mode & 0o777).toBe(0o644);
+      expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
+      expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        `retain queue replay failed for agent ${blocked.principal}; remaining items stay queued for retry`,
+      );
+
+      rmSync(blocked.path);
+      writeFileSync(blocked.path, blocked.raw, { mode: 0o600 });
+      const restarted = makeStack({ queueDir });
+      await restarted.retain.flushQueues();
+      expect(restarted.fakeClients.get(blocked.principal)?.retains).toMatchObject([
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+      ]);
+      expect(readFileSync(target, "utf8")).toBe(blocked.raw);
+      expect(statSync(target).mode & 0o777).toBe(0o644);
+    },
+  );
+
+  it("isolates recovery filesystem failures and retries the intact backlog after repair and restart", async () => {
+    const [blocked, ready] = await queuePrincipals(queueDir);
+    const corrupt = "private malformed transcript\n";
+    appendFileSync(blocked.path, corrupt);
+    const before = readFileSync(blocked.path, "utf8");
+    const recoveryDir = `${blocked.path}.recovery`;
+    writeFileSync(recoveryDir, "recovery path is unavailable");
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    const replay = makeStack({ queueDir, logger });
+
+    await expect(replay.retain.flushQueues()).resolves.toBeUndefined();
+    await expect(replay.retain.flushQueues()).resolves.toBeUndefined();
+
+    expect(readFileSync(blocked.path, "utf8")).toBe(before);
+    // Delivery succeeded before the filesystem rejected removal. Retries must
+    // retain the original operation ID so the server can deduplicate them.
+    expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
+      { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+      { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+    ]);
+    expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
+    expect(logger.error).toHaveBeenCalledTimes(2);
+    expect(logger.error.mock.calls.flat().join("\n")).not.toContain("private");
+    expect(logger.error.mock.calls.flat().join("\n")).not.toContain(queueDir);
+
+    rmSync(recoveryDir);
+    const restarted = makeStack({ queueDir });
+    await restarted.retain.flushQueues();
+    expect(restarted.fakeClients.get(blocked.principal)?.retains).toMatchObject([
+      { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+    ]);
+    const archive = readdirSync(recoveryDir).find((file) => file.endsWith(".jsonl"));
+    expect(readFileSync(join(recoveryDir, archive as string), "utf8")).toBe(corrupt);
+    expect(() => readFileSync(blocked.path)).toThrow();
+  });
+
+  it("defers every principal after a shared lock timeout and retries on the next flush", async () => {
+    const [blocked, ready] = await queuePrincipals(queueDir);
+    let lock: number | undefined = openSync(join(queueDir, ".retain-queue.lock"), "a", 0o600);
+    expect(tryLock(lock)).toBe(true);
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    try {
+      const replay = makeStack({ queueDir, logger });
+      await expect(replay.retain.flushQueues()).resolves.toBeUndefined();
+      expect(readFileSync(blocked.path, "utf8")).toBe(blocked.raw);
+      expect(readFileSync(ready.path, "utf8")).toBe(ready.raw);
+      expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
+      expect(replay.fakeClients.has(ready.principal)).toBe(false);
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        "retain queue replay paused: shared storage unavailable; remaining items stay queued for retry",
+      );
+      closeSync(lock);
+      lock = undefined;
+      const restarted = makeStack({ queueDir });
+      await restarted.retain.flushQueues();
+      expect(restarted.fakeClients.get(blocked.principal)?.retains).toMatchObject([{ content: blocked.item.content }]);
+      expect(restarted.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
+    } finally {
+      if (lock !== undefined) closeSync(lock);
+    }
+  }, 10000);
+
+  it.each([2, 64])("uses one shared-lock retry budget for %i principal queues", async (count) => {
+    const fixtures = Array.from({ length: count }, (_, index) => {
+      const principal = `agent-${index}`;
+      const path = join(queueDir, `hindsight-retain-queue.${principal}.jsonl`);
+      const raw = `${JSON.stringify({
+        id: principal,
+        bankId: principal,
+        content: "private queued fixture",
+        metadata: {},
+        operationId: `operation-${index}`,
+        createdAt: new Date().toISOString(),
+      })}\n`;
+      writeFileSync(path, raw, { mode: 0o600 });
+      return { principal, path, raw };
+    });
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    const replay = makeStack({
+      queueDir,
+      logger,
+      principals: Object.fromEntries(
+        fixtures.map(({ principal }) => [principal, { token: TOKEN_MAIN, writeBank: principal }]),
+      ),
+    });
+    let lock: number | undefined = openSync(join(queueDir, ".retain-queue.lock"), "a", 0o600);
+    expect(tryLock(lock)).toBe(true);
+    vi.mocked(lockDelay).mockClear().mockResolvedValue(undefined);
+    try {
+      await replay.retain.flushQueues();
+      expect(lockDelay).toHaveBeenCalledTimes(30);
+      expect(replay.fakeClients.size).toBe(1);
+      expect([...replay.fakeClients.values()].flatMap((client) => client.retains)).toEqual([]);
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        "retain queue replay paused: shared storage unavailable; remaining items stay queued for retry",
+      );
+      for (const { path, raw } of fixtures) expect(readFileSync(path, "utf8")).toBe(raw);
+
+      closeSync(lock);
+      lock = undefined;
+      await replay.retain.flushQueues();
+      expect([...replay.fakeClients.values()].flatMap((client) => client.retains)).toHaveLength(count);
+      expect(lockDelay).toHaveBeenCalledTimes(30);
+    } finally {
+      if (lock !== undefined) closeSync(lock);
+      vi.mocked(lockDelay).mockRestore();
+    }
+  });
+
+  it("stops after a shared failure following delivery without changing operation IDs or retrying the lock", async () => {
+    const [blocked, ready] = await queuePrincipals(queueDir);
+    const second = { ...blocked.item, id: "second-item", content: "second item", operationId: "second-operation" };
+    const before = `${blocked.raw}${JSON.stringify(second)}\n`;
+    writeFileSync(blocked.path, before, { mode: 0o600 });
+    let lock: number | undefined;
+    let heldOnce = false;
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    const replay = makeStack({
+      queueDir,
+      logger,
+      behavior: (bank) => {
+        if (bank === blocked.item.bankId && !heldOnce) {
+          heldOnce = true;
+          lock = openSync(join(queueDir, ".retain-queue.lock"), "a", 0o600);
+          expect(tryLock(lock)).toBe(true);
+        }
+      },
+    });
+    vi.mocked(lockDelay).mockClear().mockResolvedValue(undefined);
+    try {
+      await replay.retain.flushQueues();
+      expect(lockDelay).toHaveBeenCalledTimes(30);
+      expect(readFileSync(blocked.path, "utf8")).toBe(before);
+      expect(readFileSync(ready.path, "utf8")).toBe(ready.raw);
+      expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+      ]);
+      expect(replay.fakeClients.has(ready.principal)).toBe(false);
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        "retain queue replay paused: shared storage unavailable; remaining items stay queued for retry",
+      );
+
+      if (lock !== undefined) closeSync(lock);
+      lock = undefined;
+      await replay.retain.flushQueues();
+      expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+        { content: second.content, options: { operationId: second.operationId } },
+      ]);
+      expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
+      expect(lockDelay).toHaveBeenCalledTimes(30);
+    } finally {
+      if (lock !== undefined) closeSync(lock);
+      vi.mocked(lockDelay).mockRestore();
+    }
+  });
+
+  it.each([".retain-queue.lock", ".retain-replay.lock", "hindsight-retain-queue.backend.jsonl.probe.tmp"])(
+    "stops once for unsafe shared storage at %s and resumes after repair",
+    async (name) => {
+      const fixtures = await queuePrincipals(queueDir);
+      const target = join(queueDir, "private-target");
+      writeFileSync(target, "untouched private target", { mode: 0o644 });
+      const mode = statSync(target).mode & 0o777;
+      const unsafe = join(queueDir, name);
+      rmSync(unsafe, { force: true });
+      symlinkSync(target, unsafe);
+      const logger = { warn: vi.fn(), error: vi.fn() };
+      const replay = makeStack({ queueDir, logger });
+
+      await replay.retain.flushQueues();
+
+      for (const { path, raw } of fixtures) expect(readFileSync(path, "utf8")).toBe(raw);
+      expect([...replay.fakeClients.values()].flatMap((client) => client.retains)).toEqual([]);
+      expect(readFileSync(target, "utf8")).toBe("untouched private target");
+      expect(statSync(target).mode & 0o777).toBe(mode);
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        "retain queue replay paused: shared storage unavailable; remaining items stay queued for retry",
+      );
+
+      rmSync(unsafe);
+      await replay.retain.flushQueues();
+      for (const { principal, item } of fixtures) {
+        expect(replay.fakeClients.get(principal)?.retains).toMatchObject([{ content: item.content }]);
+      }
+      expect(readFileSync(target, "utf8")).toBe("untouched private target");
+      expect(statSync(target).mode & 0o777).toBe(mode);
+    },
+  );
+
+  it.each(["retired", "private prompt", "x".repeat(129), ".", ".."])(
+    "skips an unknown or invalid principal without logging its filename: %j",
+    async (principal) => {
+      const [first, second] = await queuePrincipals(queueDir);
+      const unknownPath = join(queueDir, `hindsight-retain-queue.${principal}.jsonl`);
+      writeFileSync(unknownPath, "private orphaned transcript\n");
+      const logger = { warn: vi.fn(), error: vi.fn() };
+      const replay = makeStack({ queueDir, logger });
+
+      await replay.retain.flushQueues();
+
+      expect(readFileSync(unknownPath, "utf8")).toBe("private orphaned transcript\n");
+      expect([...replay.fakeClients.keys()].sort()).toEqual(["backend", "main"]);
+      for (const queue of [first, second]) {
+        expect(replay.fakeClients.get(queue.principal)?.retains).toMatchObject([{ content: queue.item.content }]);
+      }
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        expect.stringMatching(/^retain queue replay skipped: no routing entry for queue [0-9a-f]{16}$/),
+      );
+    },
+  );
+
+  it.each([401, 403])(
+    "keeps HTTP %i denial local to its principal and preserves the denied backlog",
+    async (status) => {
+      const [blocked, ready] = await queuePrincipals(queueDir);
+      const replay = makeStack({
+        queueDir,
+        behavior: (bank) => {
+          if (bank === blocked.item.bankId) throw httpError(status);
+        },
+      });
+      await replay.retain.flushQueues();
+      expect(readFileSync(blocked.path, "utf8")).toBe(blocked.raw);
+      expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
+      expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
+    },
+  );
+
+  it("keeps a mismatched bank local to its principal without rerouting or starving other queues", async () => {
+    const [blocked, ready] = await queuePrincipals(queueDir);
+    const denied = `${JSON.stringify({ ...blocked.item, bankId: "unconfigured-bank" })}\n`;
+    writeFileSync(blocked.path, denied);
+    const replay = makeStack({ queueDir });
+
+    await replay.retain.flushQueues();
+
+    expect(readFileSync(blocked.path, "utf8")).toBe(denied);
+    expect(replay.fakeClients.get(blocked.principal)?.retains).toEqual([]);
+    expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
   });
 
   it("keeps a replay item whose bank no longer matches the principal route", async () => {
