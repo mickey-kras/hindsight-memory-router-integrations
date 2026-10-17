@@ -797,39 +797,40 @@ it("preserves every byte when a duplicate identity appears while HTTP is pending
   expect(readFileSync(path, "utf8")).toBe(concurrentBytes);
 });
 
-it.each([100, 50 * Buffer.byteLength(`,"operationId":"${"x".repeat(36)}"`)])(
-  "replays a near-capacity legacy queue with %i bytes of headroom",
-  async (headroom) => {
-    for (let index = 0; index < 60; index++) {
-      enqueue(`legacy-${index}${"x".repeat(1024)}`, `doc-${index}`, { operationId: undefined });
-    }
-    const original = readFileSync(path, "utf8");
-    const maxBytes = Buffer.byteLength(original) + headroom;
-    const prepare = RetainQueue.prototype.ensureOperationIds;
-    let plannedIds: ReadonlyMap<string, string> = new Map();
-    vi.spyOn(RetainQueue.prototype, "ensureOperationIds").mockImplementationOnce(function (this: RetainQueue, ids) {
-      plannedIds = ids;
-      expect(() => prepare.call(this, ids)).toThrow(RetainQueueRewriteCapacityError);
-      expect(readFileSync(path, "utf8")).toBe(original);
-      throw new RetainQueueRewriteCapacityError();
-    });
-    const active = stack(
-      () => {
-        expect(Buffer.byteLength(readFileSync(path))).toBeLessThanOrEqual(maxBytes);
-      },
-      { maxBytes },
-    );
-    await active.coordinator.flushQueues();
-    expect(active.calls).toHaveLength(50);
-    expect(active.calls.map((call) => call.options?.operationId)).toEqual([...plannedIds.values()]);
-    expect(rows()).toHaveLength(10);
-    expect(rows().every((row) => row.operationId === undefined)).toBe(true);
-    const restarted = stack(undefined, { maxBytes });
-    await restarted.coordinator.flushQueues();
-    expect(restarted.calls).toHaveLength(10);
-    expect(rows()).toEqual([]);
-  },
-);
+// Leave room for one identity and principal-wide denial protection, but not a bulk ID upgrade.
+it.each([
+  60 * Buffer.byteLength(',"replayState":{"protected":true}') + 100,
+  50 * Buffer.byteLength(`,"operationId":"${"x".repeat(36)}"`),
+])("replays a near-capacity legacy queue with %i bytes of headroom", async (headroom) => {
+  for (let index = 0; index < 60; index++) {
+    enqueue(`legacy-${index}${"x".repeat(1024)}`, `doc-${index}`, { operationId: undefined });
+  }
+  const original = readFileSync(path, "utf8");
+  const maxBytes = Buffer.byteLength(original) + headroom;
+  const prepare = RetainQueue.prototype.ensureOperationIds;
+  let plannedIds: ReadonlyMap<string, string> = new Map();
+  vi.spyOn(RetainQueue.prototype, "ensureOperationIds").mockImplementationOnce(function (this: RetainQueue, ids) {
+    plannedIds = ids;
+    expect(() => prepare.call(this, ids)).toThrow(RetainQueueRewriteCapacityError);
+    expect(readFileSync(path, "utf8")).toBe(original);
+    throw new RetainQueueRewriteCapacityError();
+  });
+  const active = stack(
+    () => {
+      expect(Buffer.byteLength(readFileSync(path))).toBeLessThanOrEqual(maxBytes);
+    },
+    { maxBytes },
+  );
+  await active.coordinator.flushQueues();
+  expect(active.calls).toHaveLength(50);
+  expect(active.calls.map((call) => call.options?.operationId)).toEqual([...plannedIds.values()]);
+  expect(rows()).toHaveLength(10);
+  expect(rows().every((row) => row.operationId === undefined)).toBe(true);
+  const restarted = stack(undefined, { maxBytes });
+  await restarted.coordinator.flushQueues();
+  expect(restarted.calls).toHaveLength(10);
+  expect(rows()).toEqual([]);
+});
 
 it("prepares only the fifty-request budget before sending a large legacy backlog", async () => {
   for (let index = 0; index < 60; index++) enqueue(`legacy-${index}`, `doc-${index}`, { operationId: undefined });
