@@ -425,6 +425,41 @@ test("publication rejects a changed reconstruction patch before creating a commi
   assert.equal(h.state.published.length, 0);
 });
 
+test("publication and prepared-commit inspection read large patches through their pinned blob", async () => {
+  const h = harness();
+  const patch = `${codingFixture.patch}diff --git a/large.txt b/large.txt\n${" ".repeat(1024 * 1024)}\n`;
+  const file = policyFileHarness(patch, true);
+  h.contents[PATCH] = patch;
+  h.payload.files.find((entry) => entry.path === PATCH).contents = Buffer.from(patch).toString("base64");
+  const getContent = h.github.rest.repos.getContent;
+  const reads = [];
+  h.github.rest.repos.getContent = async (request) => {
+    if (request.path !== PATCH) return getContent(request);
+    reads.push(request);
+    return { data: file.metadata };
+  };
+  const blobs = [];
+  h.github.rest.git.getBlob = async (request) => {
+    blobs.push(request);
+    return { data: file.blob };
+  };
+  await publish(h.github, context, h.payload, "unused", h.metadata);
+  assert.deepEqual(await dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits), [commit]);
+  assert.deepEqual(
+    reads.map(({ ref }) => ref),
+    [base, generated, base],
+  );
+  assert.deepEqual(
+    blobs,
+    reads.map(() => ({ ...context.repo, file_sha: file.metadata.sha })),
+  );
+  file.blob.content = Buffer.from("different bytes").toString("base64");
+  await assert.rejects(
+    dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits),
+    /Invalid blob content/,
+  );
+});
+
 test("npm refresh emits a reconstruction patch for the prepared coding dependency inputs", () => {
   const { readFileSync, chmodSync } = require("node:fs");
   const directory = mkdtempSync(join(tmpdir(), "coding-dependency-refresh-"));

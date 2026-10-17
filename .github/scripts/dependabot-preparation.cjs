@@ -27,9 +27,8 @@ function signedDependabot(commit) {
 }
 
 async function content(github, repo, path, ref) {
-  const { data } = await github.rest.repos.getContent({ ...repo, path, ref });
-  if (data.type !== "file" || data.encoding !== "base64") throw new Error(`Not a regular file: ${path}`);
-  return Buffer.from(data.content, "base64").toString("utf8");
+  // Validation imports preparation as well; defer this shared reader until use.
+  return require("./dependabot-validation.cjs").readFile(github, repo, path, ref);
 }
 
 async function pathsFor() {

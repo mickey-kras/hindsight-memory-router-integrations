@@ -216,4 +216,4 @@ async function requestValidation(github, context, pull, core) {
   core.info(`#${current.number}: requested PR validation including guard at ${current.head.sha}`);
 }
 
-module.exports = { requestValidation, runPolicy, runDispatchedPolicy, validationEligibility };
+module.exports = { requestValidation, runPolicy, runDispatchedPolicy, validationEligibility, readFile };
