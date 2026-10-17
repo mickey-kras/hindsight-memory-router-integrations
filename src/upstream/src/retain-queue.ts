@@ -184,6 +184,38 @@ function assertUniqueIdentities(items: QueuedRetain[]): void {
   }
 }
 
+function replayMetadataBytes(replayState: RetainReplayState | undefined, replayAttempts: number | undefined): number {
+  // Every valid row already has payload fields, so its first metadata field
+  // needs a leading comma. Ignore the braces and never serialize the payload.
+  const bytes = Buffer.byteLength(JSON.stringify({ replayState, replayAttempts })) - 2;
+  return bytes === 0 ? 0 : bytes + 1;
+}
+
+/** Reserve the largest durable HTTP outcome, including principal-wide denial protection. */
+function replayOutcomeHeadroom(items: QueuedRetain[]): number {
+  let protectionBytes = 0;
+  let gateBytes = 0;
+  let outcomeBytes = 0;
+  for (const item of items) {
+    const size = replayMetadataBytes(item.replayState, item.replayAttempts);
+    const { sending: _sending, ...completed } = item.replayState ?? {};
+    const protectedState: RetainReplayState = { ...completed, protected: true };
+    const protectedSize = replayMetadataBytes(protectedState, item.replayAttempts);
+    protectionBytes += protectedSize - size;
+    gateBytes = Math.max(gateBytes,
+      replayMetadataBytes({ ...protectedState, gate: "probe" }, item.replayAttempts) - protectedSize);
+    const sending: RetainReplayState = { ...item.replayState, sending: true };
+    const attempts = Math.min((item.replayAttempts ?? 0) + 1, Number.MAX_SAFE_INTEGER - 1);
+    const quarantine: RetainReplayState = {
+      ...completed, quarantine: "bank-mismatch", ...(completed.gate ? { gate: "operator" } : {}),
+    };
+    outcomeBytes = Math.max(outcomeBytes,
+      replayMetadataBytes(sending, attempts) - size,
+      replayMetadataBytes(quarantine, item.replayAttempts) - size);
+  }
+  return Math.max(protectionBytes + gateBytes, outcomeBytes);
+}
+
 export interface RetainQueueOptions {
   /** Path to the JSONL queue file. The parent directory must already exist. */
   filePath: string;
@@ -283,7 +315,8 @@ export class RetainQueue {
       item.replayState = state;
     }
     if (seen.size !== pending.size) throw new Error("missing retain queue identity");
-    this.writeAll(contents.items, contents);
+    const reservedBytes = updates.some((update) => update.state?.sending) ? replayOutcomeHeadroom(contents.items) : 0;
+    this.writeAll(contents.items, contents, reservedBytes);
   }
 
   /** Remove a single item by id. */
@@ -318,9 +351,8 @@ export class RetainQueue {
       changed = true;
     }
     if (seen.size !== operationIds.size) throw new Error("missing retain queue identity");
-    // Leave space for one in-flight marker so a fitting identity batch cannot
-    // fill the file and prevent the first request from being prepared.
-    if (changed) this.writeAll(contents.items, contents, Buffer.byteLength(',"replayState":{"sending":true}'));
+    // Identity upgrades must leave room to durably classify the next HTTP outcome.
+    if (changed) this.writeAll(contents.items, contents, replayOutcomeHeadroom(contents.items));
   }
 
   /** Persist a replay identity before the request is sent. */
