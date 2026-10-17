@@ -16,6 +16,7 @@ const {
 } = require("./dependency-files.cjs");
 
 const { DOCKERFILE, dockerOnly, dockerProvenance } = require("./docker-provenance.cjs");
+const { PATCH, UPSTREAM, codingDependencyPatch } = require("./coding-dependency-patch.cjs");
 
 function refresh(directory, number, head, base, output) {
   const root = resolve(directory);
@@ -70,6 +71,15 @@ function refresh(directory, number, head, base, output) {
   const baseline = Object.fromEntries(INPUTS.map((path) => [path, run("git", ["show", `${base}:${path}`])]));
   const prepared = bumpPackageInputs(baseline, original);
   for (const path of INPUTS) writeFileSync(join(root, path), prepared[path]);
+  writeFileSync(
+    join(root, PATCH),
+    codingDependencyPatch(
+      run("git", ["show", `${base}:${PATCH}`]),
+      JSON.parse(run("git", ["show", `${base}:${UPSTREAM}`])),
+      { packageJson: baseline[`${CODING}/package.json`], shrinkwrap: baseline[`${CODING}/npm-shrinkwrap.json`] },
+      { packageJson: prepared[`${CODING}/package.json`], shrinkwrap: prepared[`${CODING}/npm-shrinkwrap.json`] },
+    ),
+  );
   const tarballs = packagePaths(...MANIFESTS.map((path) => JSON.parse(read(path))));
   const provenance = updateProvenance(
     JSON.parse(read(PROVENANCE)),
