@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthenticatedClientFactory, type RouterClient } from "../src/shared/authenticated-client-factory.js";
 import { type PrincipalConfig, PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RetainAuthorizationError, RetainCoordinator } from "../src/shared/retain-coordinator.js";
+
 import { type QueuedRetain, RetainQueue } from "../src/upstream/src/retain-queue.js";
 
 vi.mock("node:timers/promises", async (importOriginal) => {
@@ -113,9 +114,7 @@ async function queuePrincipals(queueDir: string) {
       throw httpError(503);
     },
   });
-  await first.retain.retain("backend", {
-    content: "private backend transcript",
-  });
+  await first.retain.retain("backend", { content: "private backend transcript" });
   await first.retain.retain("main", { content: "private main transcript" });
   // Choose the failing queue from the actual directory order so each regression
   // proves that a later principal is reached on this filesystem.
@@ -527,10 +526,7 @@ describe("RetainCoordinator", () => {
           throw new TypeError("fetch failed");
         },
       });
-      await expect(first.retain.retain("main", request)).resolves.toEqual({
-        queued: true,
-        bank: "main",
-      });
+      await expect(first.retain.retain("main", request)).resolves.toEqual({ queued: true, bank: "main" });
       const initial = attempts[0];
       const initialId = initial.options?.operationId;
       expect(initialId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -654,10 +650,7 @@ describe("RetainCoordinator", () => {
     const restarted = makeStack({ queueDir, queueMaxBytes: 3000 });
     await restarted.retain.flushQueues();
     expect(restarted.fakeClients.get(blocked.principal)?.retains).toMatchObject([
-      {
-        content: JSON.parse(oversized).content,
-        options: { operationId: blocked.item.operationId },
-      },
+      { content: JSON.parse(oversized).content, options: { operationId: blocked.item.operationId } },
     ]);
     expect(() => readFileSync(blocked.path)).toThrow();
   });
@@ -689,10 +682,7 @@ describe("RetainCoordinator", () => {
       const restarted = makeStack({ queueDir });
       await restarted.retain.flushQueues();
       expect(restarted.fakeClients.get(blocked.principal)?.retains).toMatchObject([
-        {
-          content: blocked.item.content,
-          options: { operationId: blocked.item.operationId },
-        },
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
       ]);
       expect(readFileSync(target, "utf8")).toBe(blocked.raw);
       expect(statSync(target).mode & 0o777).toBe(0o644);
@@ -724,10 +714,7 @@ describe("RetainCoordinator", () => {
     const restarted = makeStack({ queueDir });
     await restarted.retain.flushQueues();
     expect(restarted.fakeClients.get(blocked.principal)?.retains).toMatchObject([
-      {
-        content: blocked.item.content,
-        options: { operationId: blocked.item.operationId },
-      },
+      { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
     ]);
     const archive = readdirSync(recoveryDir).find((file) => file.endsWith(".jsonl"));
     expect(readFileSync(join(recoveryDir, archive as string), "utf8")).toBe(corrupt);
@@ -809,12 +796,7 @@ describe("RetainCoordinator", () => {
 
   it("stops after a shared failure following delivery without changing operation IDs or retrying the lock", async () => {
     const [blocked, ready] = await queuePrincipals(queueDir);
-    const second = {
-      ...blocked.item,
-      id: "second-item",
-      content: "second item",
-      operationId: "second-operation",
-    };
+    const second = { ...blocked.item, id: "second-item", content: "second item", operationId: "second-operation" };
     const before = `${blocked.raw}${JSON.stringify(second)}\n`;
     writeFileSync(blocked.path, before, { mode: 0o600 });
     let lock: number | undefined;
@@ -840,10 +822,7 @@ describe("RetainCoordinator", () => {
       );
       expect(readFileSync(ready.path, "utf8")).toBe(ready.raw);
       expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
-        {
-          content: blocked.item.content,
-          options: { operationId: blocked.item.operationId },
-        },
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
       ]);
       expect(replay.fakeClients.has(ready.principal)).toBe(false);
       expect(logger.error).toHaveBeenCalledExactlyOnceWith(
@@ -858,18 +837,9 @@ describe("RetainCoordinator", () => {
       writeFileSync(blocked.path, before, { mode: 0o600 });
       await replay.retain.flushQueues();
       expect(replay.fakeClients.get(blocked.principal)?.retains).toMatchObject([
-        {
-          content: blocked.item.content,
-          options: { operationId: blocked.item.operationId },
-        },
-        {
-          content: blocked.item.content,
-          options: { operationId: blocked.item.operationId },
-        },
-        {
-          content: second.content,
-          options: { operationId: second.operationId },
-        },
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+        { content: blocked.item.content, options: { operationId: blocked.item.operationId } },
+        { content: second.content, options: { operationId: second.operationId } },
       ]);
       expect(replay.fakeClients.get(ready.principal)?.retains).toMatchObject([{ content: ready.item.content }]);
       expect(lockDelay).toHaveBeenCalledTimes(30);
@@ -1018,19 +988,11 @@ describe("RetainCoordinator", () => {
         throw httpError(503);
       },
     });
-    await failing.retain.retain("main", {
-      content: "first",
-      documentId: "document",
-      updateMode: "append",
-    });
+    await failing.retain.retain("main", { content: "first", documentId: "document", updateMode: "append" });
     const queueFile = join(queueDir, "hindsight-retain-queue.main.jsonl");
     const corrupt = 'private broken transcript\r\n{"content":"private invalid record"}\n';
     appendFileSync(queueFile, corrupt);
-    await failing.retain.retain("main", {
-      content: "second",
-      documentId: "document",
-      updateMode: "replace",
-    });
+    await failing.retain.retain("main", { content: "second", documentId: "document", updateMode: "replace" });
     const replay = makeStack({ queueDir, logger: log });
     await replay.retain.flushQueues();
     expect(
@@ -1100,10 +1062,7 @@ describe("RetainCoordinator", () => {
       await replay.retain.flushQueues();
     }
     expect(onAbandon).toHaveBeenCalledOnce();
-    expect(onAbandon.mock.calls[0][0]).toMatchObject({
-      bankId: "main",
-      content: "poison",
-    });
+    expect(onAbandon.mock.calls[0][0]).toMatchObject({ bankId: "main", content: "poison" });
     expect(onAbandon.mock.calls[0][1]).toBe(5);
     expect(log.error).not.toHaveBeenCalled();
     expect(() => readFileSync(queueFile, "utf8")).toThrow();
@@ -1190,14 +1149,8 @@ describe("RetainCoordinator", () => {
     const file = join(queueDir, "hindsight-retain-queue.main.jsonl");
     const before = readFileSync(file, "utf8");
     await expect(
-      stack.retain.retain("backend", {
-        content: "x",
-        metadata: { junk: "🚀".repeat(200) },
-      }),
-    ).rejects.toMatchObject({
-      name: "RetainQueueCapacityError",
-      limit: "bytes",
-    });
+      stack.retain.retain("backend", { content: "x", metadata: { junk: "🚀".repeat(200) } }),
+    ).rejects.toMatchObject({ name: "RetainQueueCapacityError", limit: "bytes" });
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
