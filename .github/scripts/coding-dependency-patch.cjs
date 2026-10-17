@@ -52,7 +52,7 @@ function codingDependencyPatch(patch, upstream, before, after) {
       }),
     );
     git(["init", "-q", "--object-format=sha1"]);
-    function tree(files) {
+    const tree = (files) => {
       git(["read-tree", "--empty"]);
       const entries = Object.entries(files)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -62,9 +62,9 @@ function codingDependencyPatch(patch, upstream, before, after) {
         });
       git(["update-index", "-z", "--index-info"], entries.join(""));
       return git(["write-tree"]).toString().trim();
-    }
+    };
     const base = tree(pristine);
-    function diff(inputs) {
+    const diff = (inputs) => {
       tree({ "package.json": inputs.packageJson, "npm-shrinkwrap.json": inputs.shrinkwrap });
       return git([
         "diff",
@@ -83,7 +83,7 @@ function codingDependencyPatch(patch, upstream, before, after) {
         "--dst-prefix=b/",
         base,
       ]).toString();
-    }
+    };
     // Reject drift rather than silently accepting a noncanonical baseline.
     if (diff(before) !== dependencies.join("")) throw new Error("Coding dependency baseline patch differs");
     const replacements = diff(after)
