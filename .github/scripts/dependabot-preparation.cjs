@@ -14,6 +14,7 @@ const {
 } = require("./dependency-files.cjs");
 
 const { DOCKERFILE, dockerProvenance, dockerOnly } = require("./docker-provenance.cjs");
+const { PATCH, UPSTREAM, codingDependencyPatch } = require("./coding-dependency-patch.cjs");
 
 const WORKFLOW = "dependabot-preparation.yml";
 const LEGACY_COMMIT_TITLE = "Regenerate dependency artifacts";
@@ -39,6 +40,24 @@ async function preparedInputs(github, repo, base, head) {
   const read = async (ref) =>
     Object.fromEntries(await Promise.all(INPUTS.map(async (path) => [path, await content(github, repo, path, ref)])));
   return bumpPackageInputs(await read(base), await read(head));
+}
+
+async function expectedCodingPatch(github, repo, base, inputs) {
+  const [patch, upstream, packageJson, shrinkwrap] = await Promise.all([
+    content(github, repo, PATCH, base),
+    content(github, repo, UPSTREAM, base),
+    content(github, repo, `${CODING}/package.json`, base),
+    content(github, repo, `${CODING}/npm-shrinkwrap.json`, base),
+  ]);
+  return codingDependencyPatch(
+    patch,
+    JSON.parse(upstream),
+    { packageJson, shrinkwrap },
+    {
+      packageJson: inputs[`${CODING}/package.json`],
+      shrinkwrap: inputs[`${CODING}/npm-shrinkwrap.json`],
+    },
+  );
 }
 
 async function expectedDockerProvenance(github, repo, base, head) {
@@ -100,6 +119,15 @@ async function dependencyCommits(github, repo, pull, commits) {
       if ((await content(github, repo, path, generated.sha)) !== expected[path]) {
         throw new Error(`Preparation commit changed more than the package patch version: ${path}`);
       }
+    }
+  }
+  if (data.files.some((file) => INPUTS.includes(file.filename) || file.filename === PATCH)) {
+    const expected = await preparedInputs(github, repo, pull.base.sha, parent);
+    if (
+      (await content(github, repo, PATCH, generated.sha)) !==
+      (await expectedCodingPatch(github, repo, pull.base.sha, expected))
+    ) {
+      throw new Error("Preparation commit changed the coding dependency patch unexpectedly");
     }
   }
   const changed = await github.paginate(github.rest.pulls.listFiles, {
@@ -217,6 +245,8 @@ async function validateNpmArtifacts(github, repo, payload, files) {
       throw new Error(`Generated package input differs from its patch bump: ${path}`);
     }
   }
+  const expectedPatch = await expectedCodingPatch(github, repo, payload.base, expectedInputs);
+  if (files.get(PATCH).toString() !== expectedPatch) throw new Error("Generated coding dependency patch differs");
   const expectedProvenance = updateProvenance(
     JSON.parse(await content(github, repo, PROVENANCE, payload.head)),
     expectedInputs[`${CODING}/package.json`],

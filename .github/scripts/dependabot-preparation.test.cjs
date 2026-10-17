@@ -25,6 +25,7 @@ const {
   waitForPublishedHead,
 } = require("./dependabot-preparation.cjs");
 const { requestValidation, runPolicy, runDispatchedPolicy } = require("./dependabot-validation.cjs");
+const { PATCH, UPSTREAM, codingDependencyPatch } = require("./coding-dependency-patch.cjs");
 
 const prGuardScript = execFileSync(
   "python3",
@@ -66,6 +67,89 @@ const manifest = {
   devDependencies: { example: "1.0.0", "@types/node": "22.20.0" },
 };
 const coding = { ...manifest, name: "@owner/coding" };
+const fixtureLock = (pkg) =>
+  JSON.stringify(
+    {
+      version: pkg.version,
+      packages: {
+        "": { version: pkg.version },
+        ...Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`node_modules/stable-${i}`, { version: "1.0.0" }])),
+      },
+    },
+    null,
+    2,
+  );
+function codingPatchFixture() {
+  const directory = mkdtempSync(join(tmpdir(), "coding-patch-fixture-"));
+  const git = (...args) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" });
+  const packageJson = JSON.stringify({ ...coding, name: "@upstream/coding" });
+  const shrinkwrap = fixtureLock(coding);
+  try {
+    git("init", "--quiet", "--object-format=sha1");
+    writeFileSync(join(directory, "package.json"), packageJson);
+    writeFileSync(join(directory, "package-lock.json"), shrinkwrap);
+    git("add", ".");
+    const tree = git("write-tree").trim();
+    git("rm", "--cached", "package-lock.json");
+    writeFileSync(join(directory, "package.json"), JSON.stringify(coding));
+    writeFileSync(join(directory, "npm-shrinkwrap.json"), shrinkwrap);
+    git("add", "package.json", "npm-shrinkwrap.json");
+    return {
+      patch: git(
+        "diff",
+        "--cached",
+        "--binary",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--find-renames=50%",
+        "-l1000",
+        "--no-color",
+        "--abbrev=7",
+        "--unified=1",
+        "--diff-algorithm=myers",
+        "--indent-heuristic",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        tree,
+      ),
+      upstream: { files: { "package.json": hash(packageJson), "package-lock.json": hash(shrinkwrap) } },
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+const codingFixture = codingPatchFixture();
+
+test("coding dependency patch refresh is exact, deterministic and preserves unrelated adaptations", () => {
+  const { readFileSync } = require("node:fs");
+  const before = { packageJson: JSON.stringify(coding), shrinkwrap: fixtureLock(coding) };
+  const after = {
+    packageJson: `${JSON.stringify({ ...coding, version: "1.0.1" }, null, 2)}\n`,
+    shrinkwrap: `${JSON.stringify({ ...JSON.parse(before.shrinkwrap), version: "1.0.1" }, null, 2)}\n`,
+  };
+  const unrelated =
+    "diff --git a/notes.txt b/notes.txt\nnew file mode 100644\nindex 0000000..ce01362\n--- /dev/null\n+++ b/notes.txt\n@@ -0,0 +1 @@\n+hello\n";
+  const baseline = unrelated + codingFixture.patch;
+  assert.equal(codingDependencyPatch(baseline, codingFixture.upstream, before, before), baseline);
+  const result = codingDependencyPatch(baseline, codingFixture.upstream, before, after);
+  assert.equal(result, codingDependencyPatch(baseline, codingFixture.upstream, before, after));
+  assert.ok(result.startsWith(unrelated));
+  const directory = mkdtempSync(join(tmpdir(), "coding-patch-apply-"));
+  try {
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ ...coding, name: "@upstream/coding" }));
+    writeFileSync(join(directory, "package-lock.json"), before.shrinkwrap);
+    execFileSync("git", ["apply", "-"], { cwd: directory, input: result });
+    assert.equal(readFileSync(join(directory, "package.json"), "utf8"), after.packageJson);
+    assert.equal(readFileSync(join(directory, "npm-shrinkwrap.json"), "utf8"), after.shrinkwrap);
+    assert.equal(readFileSync(join(directory, "notes.txt"), "utf8"), "hello\n");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+  assert.throws(() => codingDependencyPatch(baseline, { files: {} }, before, after), /pristine hash mismatch/);
+  assert.throws(() =>
+    codingDependencyPatch(baseline, codingFixture.upstream, { ...before, packageJson: "unrelated bytes" }, after),
+  );
+});
 const provenance = { "package.json": "old", "npm-shrinkwrap.json": "old", "src/index.ts": "preserved" };
 const commit = { sha: head, author: bot, commit: { verification: { verified: true } } };
 const context = { repo: { owner: "owner", repo: "repo" }, ref: "refs/heads/main", sha: base };
@@ -97,13 +181,10 @@ function harness() {
   const contents = {
     "package.json": JSON.stringify(manifest),
     [`${CODING}/package.json`]: JSON.stringify(coding),
-    ...Object.fromEntries(
-      [manifest, coding].map((pkg, index) => [
-        INPUTS[index * 2 + 1],
-        JSON.stringify({ version: pkg.version, packages: { "": { version: pkg.version } } }),
-      ]),
-    ),
+    ...Object.fromEntries([manifest, coding].map((pkg, index) => [INPUTS[index * 2 + 1], fixtureLock(pkg)])),
     [PROVENANCE]: JSON.stringify(provenance),
+    [PATCH]: codingFixture.patch,
+    [UPSTREAM]: JSON.stringify(codingFixture.upstream),
   };
   const github = {
     graphql: async (query, input) => {
@@ -158,6 +239,7 @@ function harness() {
   // artifacts whose hash pins the PR's own CI run byte-verifies.
   const artifacts = {
     ...Object.fromEntries(INPUTS.map((path) => [path, contents[path]])),
+    [PATCH]: contents[PATCH],
     [PROVENANCE]: JSON.stringify(
       updateProvenance(provenance, contents[`${CODING}/package.json`], contents[`${CODING}/npm-shrinkwrap.json`]),
     ),
@@ -290,20 +372,39 @@ test("publication accepts patch bumps and validates their signed generated commi
       );
     const artifacts = {
       ...prepared,
+      [PATCH]: codingDependencyPatch(
+        original[PATCH],
+        JSON.parse(original[UPSTREAM]),
+        {
+          packageJson: original[MANIFESTS[1]],
+          shrinkwrap: original[INPUTS[3]],
+        },
+        { packageJson: prepared[MANIFESTS[1]], shrinkwrap: prepared[INPUTS[3]] },
+      ),
       [PROVENANCE]: JSON.stringify(updateProvenance(provenance, prepared[MANIFESTS[1]], prepared[INPUTS[3]])),
       PACKAGE_SHA256: packagePaths(...MANIFESTS.map((path) => JSON.parse(prepared[path])))
         .sort()
         .map((path) => `${"a".repeat(64)}  ${path}\n`)
         .join(""),
-      PACKAGE_NIX_HASHES: Buffer.from(h.payload.files[2].contents, "base64").toString(),
+      PACKAGE_NIX_HASHES: Buffer.from(
+        h.payload.files.find((file) => file.path === "PACKAGE_NIX_HASHES").contents,
+        "base64",
+      ).toString(),
     };
     h.payload.files = generatedPaths().map((path) => ({
       path,
       contents: Buffer.from(artifacts[path]).toString("base64"),
     }));
+    prepared[PATCH] = artifacts[PATCH];
     h.state.files = indexes.map((index) => ({ filename: INPUTS[index * 2 + 1], status: "modified" }));
     await publish(h.github, context, h.payload, "unused", h.metadata);
     assert.deepEqual(await dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits), [commit]);
+    prepared[PATCH] = `${artifacts[PATCH]}\n`;
+    await assert.rejects(
+      dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits),
+      /coding dependency patch unexpectedly/,
+    );
+    prepared[PATCH] = artifacts[PATCH];
     prepared[MANIFESTS[indexes[0]]] = JSON.stringify({
       ...JSON.parse(prepared[MANIFESTS[indexes[0]]]),
       scripts: { build: "untrusted" },
@@ -312,6 +413,90 @@ test("publication accepts patch bumps and validates their signed generated commi
       dependencyCommits(h.github, context.repo, h.state.pull, h.state.commits),
       /more than the package patch version/,
     );
+  }
+});
+
+test("publication rejects a changed reconstruction patch before creating a commit", async () => {
+  const h = harness();
+  h.payload.files.find((file) => file.path === PATCH).contents = Buffer.from(`${codingFixture.patch}\n`).toString(
+    "base64",
+  );
+  await assert.rejects(publish(h.github, context, h.payload, "unused", h.metadata), /coding dependency patch differs/);
+  assert.equal(h.state.published.length, 0);
+});
+
+test("npm refresh emits a reconstruction patch for the prepared coding dependency inputs", () => {
+  const { readFileSync, chmodSync } = require("node:fs");
+  const directory = mkdtempSync(join(tmpdir(), "coding-dependency-refresh-"));
+  const source = join(directory, "source");
+  const bin = join(directory, "bin");
+  const output = join(directory, "artifacts.json");
+  const git = (...args) => execFileSync("git", ["-C", source, ...args], { encoding: "utf8" }).trim();
+  try {
+    mkdirSync(source);
+    mkdirSync(bin);
+    const baseline = {
+      "package.json": JSON.stringify(manifest),
+      "npm-shrinkwrap.json": fixtureLock(manifest),
+      [`${CODING}/package.json`]: JSON.stringify(coding),
+      [`${CODING}/npm-shrinkwrap.json`]: fixtureLock(coding),
+      [PATCH]: codingFixture.patch,
+      [UPSTREAM]: JSON.stringify(codingFixture.upstream),
+      [PROVENANCE]: JSON.stringify(provenance),
+      PACKAGE_NIX_HASHES: `source=sha256-${hash("old", "base64")}\nnpm_deps=sha256-${hash("deps", "base64")}\n`,
+      PACKAGE_SHA256: "old\n",
+      "scripts/verify-coding-upstream.mjs": "",
+      "scripts/verify-openclaw-overlay.mjs": "",
+    };
+    for (const [path, contents] of Object.entries(baseline)) {
+      mkdirSync(join(source, path, ".."), { recursive: true });
+      writeFileSync(join(source, path), contents);
+    }
+    writeFileSync(join(source, ".gitignore"), "node_modules/\npackages/\n");
+    git("init", "--quiet");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.invalid");
+    git("add", ".");
+    git("commit", "--quiet", "-m", "baseline");
+    const baseSha = git("rev-parse", "HEAD");
+    writeFileSync(
+      join(source, `${CODING}/package.json`),
+      JSON.stringify({ ...coding, devDependencies: { ...coding.devDependencies, example: "1.0.1" } }),
+    );
+    git("commit", "--quiet", "-am", "dependency update");
+    const revision = git("rev-parse", "HEAD");
+    writeFileSync(
+      join(bin, "npm"),
+      `#!${process.execPath}\nconst fs=require('node:fs'),p=require('node:path');
+if(process.argv[2]==='--version') console.log('11.19.1');
+else if(process.argv[2]==='pack') {const m=JSON.parse(fs.readFileSync('package.json'));fs.writeFileSync(p.join(process.argv[4],m.name.slice(1).replace('/','-')+'-'+m.version+'.tgz'),JSON.stringify(m));}\n`,
+    );
+    chmodSync(join(bin, "npm"), 0o755);
+    execFileSync(
+      process.execPath,
+      [join(__dirname, "refresh-dependency-artifacts.cjs"), source, "376", revision, baseSha, output],
+      { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdio: "pipe" },
+    );
+    const payload = JSON.parse(readFileSync(output, "utf8"));
+    const files = Object.fromEntries(
+      payload.files.map(({ path, contents }) => [path, Buffer.from(contents, "base64").toString()]),
+    );
+    assert.equal(JSON.parse(files[`${CODING}/package.json`]).version, "1.0.1");
+    assert.equal(
+      files[PATCH],
+      codingDependencyPatch(
+        codingFixture.patch,
+        codingFixture.upstream,
+        {
+          packageJson: baseline[`${CODING}/package.json`],
+          shrinkwrap: baseline[`${CODING}/npm-shrinkwrap.json`],
+        },
+        { packageJson: files[`${CODING}/package.json`], shrinkwrap: files[`${CODING}/npm-shrinkwrap.json`] },
+      ),
+    );
+    assert.notEqual(files[PATCH], codingFixture.patch);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

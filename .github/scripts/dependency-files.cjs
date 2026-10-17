@@ -1,5 +1,6 @@
 const { createHash } = require("node:crypto");
 const { isDeepStrictEqual } = require("node:util");
+const { PATCH } = require("./coding-dependency-patch.cjs");
 
 const CODING = "src/upstream/coding-agents";
 const PROVENANCE = "integrations/coding-agents/LOCAL_CHANGES.json";
@@ -23,7 +24,7 @@ function packagePath(manifest) {
 // Generated artifacts committed to Dependabot branches are text-only: package
 // tarballs are CI-built from source and pinned by their hashes, never committed.
 function generatedPaths() {
-  return [PROVENANCE, "PACKAGE_SHA256", "PACKAGE_NIX_HASHES", ...INPUTS];
+  return [PROVENANCE, "PACKAGE_SHA256", "PACKAGE_NIX_HASHES", ...INPUTS, PATCH];
 }
 
 function bumpPackageInputs(before, after) {
