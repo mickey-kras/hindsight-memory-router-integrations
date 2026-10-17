@@ -601,3 +601,22 @@ it("rejects replay metadata expansion without replacing an in-limit queue", () =
   expect(readFileSync(filePath, "utf8")).toBe(original);
   expect(queue.snapshot()).toEqual([JSON.parse(original)]);
 });
+
+it.each([16, 64 * 1024])("does not reserialize %i-byte payloads to reserve replay outcomes", (payloadBytes) => {
+  const queued = Array.from({ length: 50 }, (_, index) => item(`row-${index}`, { content: "x".repeat(payloadBytes) }));
+  writeFileSync(filePath, queued.map(line).join(""));
+  const queue = new RetainQueue({ filePath, maxReadBytes: 16 * 1024 * 1024 });
+  const stringify = vi.spyOn(JSON, "stringify");
+  try {
+    queue.ensureOperationIds(new Map(queued.map((row) => [row.id, `operation-${row.id}`])));
+    queue.setReplayState(queued[0].id, { sending: true });
+    // Two durable rewrites require one payload serialization per row each;
+    // outcome sizing must add none, regardless of transcript size.
+    const payloadCalls = stringify.mock.calls.filter(
+      ([value]: [unknown, ...unknown[]]) => typeof value === "object" && value !== null && "content" in value,
+    );
+    expect(payloadCalls).toHaveLength(queued.length * 2);
+  } finally {
+    stringify.mockRestore();
+  }
+});

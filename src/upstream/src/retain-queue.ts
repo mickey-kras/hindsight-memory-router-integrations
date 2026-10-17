@@ -184,40 +184,34 @@ function assertUniqueIdentities(items: QueuedRetain[]): void {
   }
 }
 
+function replayMetadataBytes(replayState: RetainReplayState | undefined, replayAttempts: number | undefined): number {
+  // Every valid row already has payload fields, so its first metadata field
+  // needs a leading comma. Ignore the braces and never serialize the payload.
+  const bytes = Buffer.byteLength(JSON.stringify({ replayState, replayAttempts })) - 2;
+  return bytes === 0 ? 0 : bytes + 1;
+}
+
 /** Reserve the largest durable HTTP outcome, including principal-wide denial protection. */
 function replayOutcomeHeadroom(items: QueuedRetain[]): number {
   let protectionBytes = 0;
   let gateBytes = 0;
   let outcomeBytes = 0;
   for (const item of items) {
-    const size = Buffer.byteLength(JSON.stringify(item));
+    const size = replayMetadataBytes(item.replayState, item.replayAttempts);
     const { sending: _sending, ...completed } = item.replayState ?? {};
-    const protectedItem = { ...item, replayState: { ...completed, protected: true } };
-    const protectedSize = Buffer.byteLength(JSON.stringify(protectedItem));
+    const protectedState: RetainReplayState = { ...completed, protected: true };
+    const protectedSize = replayMetadataBytes(protectedState, item.replayAttempts);
     protectionBytes += protectedSize - size;
-    gateBytes = Math.max(
-      gateBytes,
-      Buffer.byteLength(
-        JSON.stringify({
-          ...protectedItem,
-          replayState: { ...protectedItem.replayState, gate: "probe" },
-        }),
-      ) - protectedSize,
-    );
-    const sending = { ...item, replayState: { ...item.replayState, sending: true } };
-    const transient = {
-      ...sending,
-      replayAttempts: Math.min((item.replayAttempts ?? 0) + 1, Number.MAX_SAFE_INTEGER - 1),
+    gateBytes = Math.max(gateBytes,
+      replayMetadataBytes({ ...protectedState, gate: "probe" }, item.replayAttempts) - protectedSize);
+    const sending: RetainReplayState = { ...item.replayState, sending: true };
+    const attempts = Math.min((item.replayAttempts ?? 0) + 1, Number.MAX_SAFE_INTEGER - 1);
+    const quarantine: RetainReplayState = {
+      ...completed, quarantine: "bank-mismatch", ...(completed.gate ? { gate: "operator" } : {}),
     };
-    const quarantine = {
-      ...item,
-      replayState: { ...completed, quarantine: "bank-mismatch", ...(completed.gate ? { gate: "operator" } : {}) },
-    };
-    outcomeBytes = Math.max(
-      outcomeBytes,
-      Buffer.byteLength(JSON.stringify(transient)) - size,
-      Buffer.byteLength(JSON.stringify(quarantine)) - size,
-    );
+    outcomeBytes = Math.max(outcomeBytes,
+      replayMetadataBytes(sending, attempts) - size,
+      replayMetadataBytes(quarantine, item.replayAttempts) - size);
   }
   return Math.max(protectionBytes + gateBytes, outcomeBytes);
 }
