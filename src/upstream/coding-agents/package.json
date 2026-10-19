@@ -99,10 +99,10 @@
     "@napi-rs/keyring": "2.1.1",
     "jsonc-parser": "^3.3.1",
     "smol-toml": "^1.9.1",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.35",
+    "@opencode-ai/plugin": "^1.19.0",
     "@opencode-ai/sdk": "^1.18.9",
     "@opencode/plugin": "^2.0.26",
     "@types/node": "22.20.5",
