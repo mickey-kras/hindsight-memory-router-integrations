@@ -1647,7 +1647,7 @@ diff --git a/package-lock.json b/npm-shrinkwrap.json
 similarity index 82%
 rename from package-lock.json
 rename to npm-shrinkwrap.json
-index 1b95f63..c8dbb98 100644
+index 1b95f63..ae29204 100644
 --- a/package-lock.json
 +++ b/npm-shrinkwrap.json
 @@ -1,4 +1,4 @@
@@ -3980,9 +3980,15 @@ index 1b95f63..c8dbb98 100644
        "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
 -      "dev": true,
        "license": "MIT",
-@@ -4831,3 +4439,2 @@
-       "integrity": "sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==",
+@@ -4828,6 +4436,5 @@
+     "node_modules/hono": {
+-      "version": "4.13.7",
+-      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.7.tgz",
+-      "integrity": "sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==",
 -      "dev": true,
++      "version": "4.13.13",
++      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.13.tgz",
++      "integrity": "sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==",
        "license": "MIT",
 @@ -4850,12 +4457,2 @@
      },
@@ -9296,6 +9302,51 @@ index 45d23ed..4fd9124 100644
 -    memory +
 +    "", toolPrefix) + memory +
      "\n</hindsight_memory>"
+diff --git a/src/core/jsonl.test.ts b/src/core/jsonl.test.ts
+index ae86b74..c384029 100644
+--- a/src/core/jsonl.test.ts
++++ b/src/core/jsonl.test.ts
+@@ -64,2 +64,8 @@ describe("readJsonl", () => {
+ 
++  it("resets fragments after a multi-chunk record and preserves the final record", () => {
++    const large = "x".repeat(3 * 65536 + 17);
++    writeFileSync(file, `${large}\nsecond\n\nlast`);
++    expect(read()).toEqual([large, "second", "", "last"]);
++  });
++
+   it("yields nothing for a missing file instead of throwing", () => {
+diff --git a/src/core/jsonl.ts b/src/core/jsonl.ts
+index 830edfe..883ebd9 100644
+--- a/src/core/jsonl.ts
++++ b/src/core/jsonl.ts
+@@ -42,3 +42,3 @@ export function* readJsonl(path: string): Generator<string> {
+     const decoder = new StringDecoder("utf8");
+-    let pending = "";
++    let fragments: string[] = [];
+     let position = 0;
+@@ -49,12 +49,16 @@ export function* readJsonl(path: string): Generator<string> {
+       position += bytesRead;
+-      pending += decoder.write(buffer.subarray(0, bytesRead));
+-
++      const chunk = decoder.write(buffer.subarray(0, bytesRead));
++      let start = 0;
+       let newline: number;
+-      while ((newline = pending.indexOf("\n")) !== -1) {
+-        yield pending.slice(0, newline);
+-        pending = pending.slice(newline + 1);
++      while ((newline = chunk.indexOf("\n", start)) !== -1) {
++        fragments.push(chunk.slice(start, newline));
++        yield fragments.join("");
++        fragments = [];
++        start = newline + 1;
+       }
++      if (start < chunk.length) fragments.push(chunk.slice(start));
+     }
+ 
+-    pending += decoder.end();
++    fragments.push(decoder.end());
++    const pending = fragments.join("");
+     // A final record with no trailing newline still counts.
 diff --git a/src/core/knowledge-injection.ts b/src/core/knowledge-injection.ts
 index c393d7e..7305c59 100644
 --- a/src/core/knowledge-injection.ts

@@ -40,23 +40,27 @@ export function* readJsonl(path: string): Generator<string> {
     // StringDecoder holds back a trailing partial UTF-8 sequence, so a multi-byte character split
     // across two chunks is reassembled instead of becoming two replacement chars.
     const decoder = new StringDecoder("utf8");
-    let pending = "";
+    let fragments: string[] = [];
     let position = 0;
 
     for (;;) {
       const bytesRead = readSync(fd, buffer, 0, buffer.length, position);
       if (bytesRead <= 0) break;
       position += bytesRead;
-      pending += decoder.write(buffer.subarray(0, bytesRead));
-
+      const chunk = decoder.write(buffer.subarray(0, bytesRead));
+      let start = 0;
       let newline: number;
-      while ((newline = pending.indexOf("\n")) !== -1) {
-        yield pending.slice(0, newline);
-        pending = pending.slice(newline + 1);
+      while ((newline = chunk.indexOf("\n", start)) !== -1) {
+        fragments.push(chunk.slice(start, newline));
+        yield fragments.join("");
+        fragments = [];
+        start = newline + 1;
       }
+      if (start < chunk.length) fragments.push(chunk.slice(start));
     }
 
-    pending += decoder.end();
+    fragments.push(decoder.end());
+    const pending = fragments.join("");
     // A final record with no trailing newline still counts.
     if (pending) yield pending;
   } finally {
