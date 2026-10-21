@@ -62,6 +62,12 @@ describe("readJsonl", () => {
     expect(lines[1]).toBe("second");
   });
 
+  it("resets fragments after a multi-chunk record and preserves the final record", () => {
+    const large = "x".repeat(3 * 65536 + 17);
+    writeFileSync(file, `${large}\nsecond\n\nlast`);
+    expect(read()).toEqual([large, "second", "", "last"]);
+  });
+
   it("yields nothing for a missing file instead of throwing", () => {
     expect(read()).toEqual([]);
   });
