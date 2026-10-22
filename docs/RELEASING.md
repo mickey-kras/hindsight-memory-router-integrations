@@ -201,3 +201,5 @@ Preparation retains verified tarballs only after the candidate SHA exists. Publi
 
 Sonar restores coverage by the artifact ID returned by successful quality checks in the same workflow run. It installs both packages' locked dependencies on its own runner for TypeScript analysis without rebuilding packages or rerunning tests. Source SHA, run ID and report digest must match before scanning; the Sonar quality gate remains required. Failed checks do not publish coverage.
 
+
+CI dependency and policy changes follow [CI policy and independent review](CI_POLICY.md). Lockfiles use semantic validation; do not bootstrap dependency updates by appending hash admissions.
