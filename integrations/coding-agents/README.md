@@ -52,7 +52,7 @@ Run the pinned GitHub release artifact through npm (replace the release and pack
 npm exec --yes --package=https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v<release>/mickey-kras-hindsight-memory-router-coding-agents-<package-version>.tgz -- hindsight-coding-agents install
 ```
 
-The repository currently publishes GitHub release tarballs; it does not claim that the scoped package is available from the npm registry. If registry publication is enabled later, the equivalent pinned command is `npx @mickey-kras/hindsight-memory-router-coding-agents@<package-version> install`.
+Use GitHub release tarballs until [npm activation](../../docs/RELEASING.md#one-time-npm-setup) is verified.
 
 For a locally verified download, check the coding-agent tarball against the release's `PACKAGE_SHA256`, then run:
 
@@ -170,3 +170,4 @@ hindsight-coding-agents sign-out codex
 ```
 
 Sign-out deletes the local credential even when router revocation cannot be confirmed and reports that limitation. Such a session remains valid until expiry or operator revocation. Router sign-out does not sign out of the identity provider. Harnesses deliberately configured with the same router and credential reference share a session; sign-out affects all of them.
+

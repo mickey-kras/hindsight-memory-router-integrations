@@ -1,5 +1,11 @@
 # Hosted application client
 
+Download the OpenClaw `.tgz` from the [selected GitHub release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases), verify it against that release's `PACKAGE_SHA256`, then install:
+
+```sh
+npm install --save-exact /absolute/path/verified-openclaw.tgz
+```
+
 Hosted applications that own their process can import the shared HTTP client:
 
 ```ts
@@ -38,3 +44,4 @@ Knowledge pages here mean knowledge-base pages. Listing returns the router's tre
 The client reuses `AuthenticatedClientFactory` and `RouterTransport`: HTTPS validation, redirect rejection, bank checks, principal headers and sanitized errors are preserved. Requests have a 15-second deadline even with a caller cancellation signal, a 1 MiB serialized body cap and a 4 MiB response cap. Caller cancellation preserves the signal's reason before headers and during body reads; the deadline produces `TimeoutError`. Router quotas, scanning and quarantine still apply. A router 401/403 produces `AccessDeniedError` and disables that instance's credential; construct a new instance with a newly issued credential after resolving access. Other failures produce `RouterRequestError` with status and bounded retry delay; GET 404 becomes a sanitized 404 error. Discarded response bodies are cancelled on a best-effort basis without replacing the original failure. No retries are automatic.
 
 Routes were checked against `memory_router/request_dispatch.py`, `memory_router/facade_routes.py` and `openapi/openclaw.json` in `mickey-kras/hindsight-memory-router` at commit `e17a881184c89a4ed0030921ba5650d88fcd10a3`. Contract tests use synthetic fetch responses and independent synthetic deployments; they do not claim live router or upstream integration coverage.
+

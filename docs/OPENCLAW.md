@@ -71,3 +71,4 @@ The OpenClaw plugin fails initialization on macOS and other unsupported platform
 before accessing queue paths. macOS ACLs can
 grant access independently of BSD mode bits; this implementation does not verify
 or remove those ACLs. See Apple's [file system access-control policy](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemDetails/FileSystemDetails.html).
+

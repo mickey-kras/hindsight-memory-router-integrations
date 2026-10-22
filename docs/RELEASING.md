@@ -4,6 +4,8 @@
 
 ## Release
 
+Complete [npm setup](#one-time-npm-setup) before the first release using npm publishing.
+
 1. Merge the intended version changes into `main`.
 2. Open **Actions > release > Run workflow**, select **main**, and run.
 3. The same run validates main (including Sonar), prepares a frozen candidate, validates and publishes its packages, queues the next-version PR, and removes the completed candidate branch.
@@ -72,7 +74,11 @@ tarballs from the release commit, verifies them against `PACKAGE_SHA256`, and
 attaches the tarballs, `PACKAGE_SHA256`, and `PACKAGE_NIX_HASHES` to GitHub.
 Package attestations retain the authenticated workflow's main ref/SHA and record
 the validated candidate ref/SHA as an additional source dependency.
-There is no integrations Docker image or npm publication.
+The same verified archives are published to public npm with OIDC and npm provenance
+before next-version preparation and candidate cleanup. There is no integrations Docker image.
+An identical existing npm version is accepted only when its SHA-512 integrity and
+provenance metadata match; mismatches fail. Older package releases use a
+`release-X.Y.Z` npm tag without moving `latest` backwards.
 `latest` means the highest successfully released repository version; an older-line fix
 cannot move it backwards. The compatibility combination is authoritative in the
 integrations manifest, even when a newer router is available separately.
@@ -130,9 +136,55 @@ basis instead:
 10. Run main normally, release router, then release integrations. Verify the published
     manifest and that both registries' `latest` aliases resolve to the router release digest.
 
+## One-time npm setup
+
+Complete these steps for both `@mickey-kras/hindsight-memory-router-openclaw`
+and `@mickey-kras/hindsight-memory-router-coding-agents` before dispatching release:
+
+1. Create each package on npm before configuring its trusted publisher. Download
+   its tarball from an older verified GitHub release and check `PACKAGE_SHA256`.
+   The bootstrap version must be older than the first automated package version;
+   do not consume the planned automated version.
+2. As the npm owner, publish those exact archives locally:
+
+   ```sh
+   npm login --registry=https://registry.npmjs.org
+   npm publish /absolute/path/verified-openclaw.tgz --registry=https://registry.npmjs.org --access=public --ignore-scripts --tag=bootstrap
+   npm publish /absolute/path/verified-coding-agents.tgz --registry=https://registry.npmjs.org --access=public --ignore-scripts --tag=bootstrap
+   npm logout --registry=https://registry.npmjs.org
+   ```
+
+   Local publication does not generate npm provenance. The automated publisher
+   rejects existing versions without it, even when their bytes match. Use newer
+   package versions for the first automated release; update locks and hash pins.
+   Revoke any temporary token used for bootstrap and remove its local configuration.
+3. In each npm package's **Settings > Trusted publishing**, add GitHub Actions:
+
+   | Field | Value |
+   | --- | --- |
+   | Organization or user | `mickey-kras` |
+   | Repository | `hindsight-memory-router-integrations` |
+   | Workflow filename | `release.yml` |
+   | Environment | `release-automation` |
+   | Allowed action | `npm publish` |
+
+   npm validates the calling workflow (`release.yml`), not reusable `main.yml`.
+   Both grant `id-token: write`; the publishing job uses `release-automation`.
+   See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+4. Run the release with the newer package versions. Complete its first OIDC publish
+   within two days of creating the trusted publisher; recreate expired configurations.
+   No npm token is stored in GitHub.
+5. Verify both exact versions install from npm, their registry integrity matches
+   the GitHub tarballs, and npm displays provenance. Then switch installation docs
+   from GitHub tarballs to pinned npm versions. For OpenClaw, use
+   `openclaw plugins install npm:@mickey-kras/hindsight-memory-router-openclaw@<package-version>`;
+   the [current CLI](https://docs.openclaw.ai/cli/plugins/install) defaults
+   unprefixed package specs to ClawHub.
+
 ## Recovery
 
 - **Checks, upload, attestation, or follow-up failed:** use **Re-run failed jobs** on the original release run. The frozen candidate and tested tarballs are retained for 30 days. Existing tags and release assets must match the original bytes.
+- **npm publication failed:** the GitHub release may already be public. Rerun failed jobs on the original run; identical npm versions are verified and skipped, missing versions are published. Candidate cleanup and next-version preparation wait for both packages. Never replace an existing mismatched version.
 - **Cancelled:** use **Re-run all jobs** on that run. Cancellation does not delete the candidate or open failure issues.
 - **Preparation response was lost:** rerun the original run. It finds the candidate by its manifest and resumes without reserving another version or refreshing pins.
 - **Repeated dispatch from the same main snapshot:** automation requests a native retry of the original failed run or links to an active/successful run. It does not create a second publisher.
@@ -148,3 +200,4 @@ release automation does not delete them on failure or cancellation.
 Preparation retains verified tarballs only after the candidate SHA exists. Publication restores the immutable artifact ID from the same release run and main snapshot, rejects expired or ambiguous artifacts, then verifies the candidate package inventory and SHA-256 pins before the existing release preflight and attestations. Rerunning preparation reuses the retained artifact; it never overwrites it. Full candidate checks still run.
 
 Sonar restores coverage by the artifact ID returned by successful quality checks in the same workflow run. It installs both packages' locked dependencies on its own runner for TypeScript analysis without rebuilding packages or rerunning tests. Source SHA, run ID and report digest must match before scanning; the Sonar quality gate remains required. Failed checks do not publish coverage.
+
