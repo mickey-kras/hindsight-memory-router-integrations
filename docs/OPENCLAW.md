@@ -2,15 +2,15 @@
 
 [Documentation](README.md) | [Repository](../README.md)
 
-Requires Node.js 22.12.0 or later and an HTTPS Memory Router endpoint. Select the OpenClaw package version from the [release manifest](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases).
+Requires Node.js 22.12.0 or later and an HTTPS Memory Router endpoint. Install the OpenClaw `.tgz` from the [selected release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases), verifying its hash against that release's `PACKAGE_SHA256`.
 
-Install from public npm using the [OpenClaw plugin CLI](https://docs.openclaw.ai/cli/plugins/install):
+Install the downloaded archive using the [OpenClaw plugin CLI](https://docs.openclaw.ai/cli/plugins/install):
 
 ```sh
-openclaw plugins install @mickey-kras/hindsight-memory-router-openclaw@<package-version>
+openclaw plugins install /absolute/path/downloaded-openclaw.tgz
 ```
 
-Replace `<package-version>` with the manifest's OpenClaw version. The GitHub `.tgz` remains available for offline installation; verify it against the release's `PACKAGE_SHA256`. OpenClaw may require a newer Node.js version than this package's minimum. The root entrypoint supports ESM imports and CommonJS `require()` on Node.js 22.12.0 or later; `./hosted` supports ESM imports.
+Replace the path with the verified release artifact. OpenClaw may require a newer Node.js version than this package's minimum. The root entrypoint supports ESM imports and CommonJS `require()` on Node.js 22.12.0 or later; `./hosted` supports ESM imports.
 
 Windows is not currently supported for the OpenClaw retain queue: native lock ownership and crash recovery are verified on Linux, while the process-lock tests require POSIX signals. Use a local filesystem with OS file-lock support.
 
@@ -71,3 +71,4 @@ The OpenClaw plugin fails initialization on macOS and other unsupported platform
 before accessing queue paths. macOS ACLs can
 grant access independently of BSD mode bits; this implementation does not verify
 or remove those ACLs. See Apple's [file system access-control policy](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemDetails/FileSystemDetails.html).
+

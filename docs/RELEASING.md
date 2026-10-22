@@ -4,6 +4,8 @@
 
 ## Release
 
+Complete [npm setup](#one-time-npm-setup) before the first release using npm publishing.
+
 1. Merge the intended version changes into `main`.
 2. Open **Actions > release > Run workflow**, select **main**, and run.
 3. The same run validates main (including Sonar), prepares a frozen candidate, validates and publishes its packages, queues the next-version PR, and removes the completed candidate branch.
@@ -136,23 +138,48 @@ basis instead:
 
 ## One-time npm setup
 
-For both `@mickey-kras/hindsight-memory-router-openclaw` and
-`@mickey-kras/hindsight-memory-router-coding-agents`, configure a GitHub Actions
-trusted publisher in npm package settings:
+Complete these steps for both `@mickey-kras/hindsight-memory-router-openclaw`
+and `@mickey-kras/hindsight-memory-router-coding-agents` before dispatching release:
 
-| Field | Value |
-| --- | --- |
-| Organization or user | `mickey-kras` |
-| Repository | `hindsight-memory-router-integrations` |
-| Workflow filename | `release.yml` |
-| Environment | `release-automation` |
-| Allowed action | `npm publish` |
+1. Create each package on npm before configuring its trusted publisher. Download
+   its tarball from an older verified GitHub release and check `PACKAGE_SHA256`.
+   The bootstrap version must be older than the first automated package version;
+   do not consume the planned automated version.
+2. As the npm owner, publish those exact archives locally:
 
-Use the calling workflow filename (`release.yml`), not reusable `main.yml`.
-No npm token is stored in GitHub. Package ownership and initial package setup must
-be completed by the npm owner before releasing. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
-Verify both exact versions install from public npm and display provenance before
-considering registry activation complete.
+   ```sh
+   npm login --registry=https://registry.npmjs.org
+   npm publish /absolute/path/verified-openclaw.tgz --registry=https://registry.npmjs.org --access=public --ignore-scripts --tag=bootstrap
+   npm publish /absolute/path/verified-coding-agents.tgz --registry=https://registry.npmjs.org --access=public --ignore-scripts --tag=bootstrap
+   npm logout --registry=https://registry.npmjs.org
+   ```
+
+   Local publication does not generate npm provenance. The automated publisher
+   rejects existing versions without it, even when their bytes match. Use newer
+   package versions for the first automated release; update locks and hash pins.
+   Revoke any temporary token used for bootstrap and remove its local configuration.
+3. In each npm package's **Settings > Trusted publishing**, add GitHub Actions:
+
+   | Field | Value |
+   | --- | --- |
+   | Organization or user | `mickey-kras` |
+   | Repository | `hindsight-memory-router-integrations` |
+   | Workflow filename | `release.yml` |
+   | Environment | `release-automation` |
+   | Allowed action | `npm publish` |
+
+   npm validates the calling workflow (`release.yml`), not reusable `main.yml`.
+   Both grant `id-token: write`; the publishing job uses `release-automation`.
+   See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+4. Run the release with the newer package versions. Complete its first OIDC publish
+   within two days of creating the trusted publisher; recreate expired configurations.
+   No npm token is stored in GitHub.
+5. Verify both exact versions install from npm, their registry integrity matches
+   the GitHub tarballs, and npm displays provenance. Then switch installation docs
+   from GitHub tarballs to pinned npm versions. For OpenClaw, use
+   `openclaw plugins install npm:@mickey-kras/hindsight-memory-router-openclaw@<package-version>`;
+   the [current CLI](https://docs.openclaw.ai/cli/plugins/install) defaults
+   unprefixed package specs to ClawHub.
 
 ## Recovery
 
@@ -173,3 +200,4 @@ release automation does not delete them on failure or cancellation.
 Preparation retains verified tarballs only after the candidate SHA exists. Publication restores the immutable artifact ID from the same release run and main snapshot, rejects expired or ambiguous artifacts, then verifies the candidate package inventory and SHA-256 pins before the existing release preflight and attestations. Rerunning preparation reuses the retained artifact; it never overwrites it. Full candidate checks still run.
 
 Sonar restores coverage by the artifact ID returned by successful quality checks in the same workflow run. It installs both packages' locked dependencies on its own runner for TypeScript analysis without rebuilding packages or rerunning tests. Source SHA, run ID and report digest must match before scanning; the Sonar quality gate remains required. Failed checks do not publish coverage.
+

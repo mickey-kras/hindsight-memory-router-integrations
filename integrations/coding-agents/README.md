@@ -46,13 +46,13 @@ From an operator-provisioned project, ask your coding agent:
 
 > Install Memory Router for this harness using the pinned coding-agent release below. Use my existing HINDSIGHT_ROUTER_CONFIG and provisioned environment credentials. Do not ask me for JSON, tokens, or a server command.
 
-Install from public npm (replace `<package-version>` with the coding-agents version in the selected GitHub release manifest):
+Run the pinned GitHub release artifact through npm (replace the release and package version placeholders with values from the same published release):
 
 ```sh
-npm exec --yes --package=@mickey-kras/hindsight-memory-router-coding-agents@<package-version> -- hindsight-coding-agents install
+npm exec --yes --package=https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v<release>/mickey-kras-hindsight-memory-router-coding-agents-<package-version>.tgz -- hindsight-coding-agents install
 ```
 
-GitHub release tarballs contain the same bytes as the corresponding npm versions.
+Use GitHub release tarballs until [npm activation](../../docs/RELEASING.md#one-time-npm-setup) is verified.
 
 For a locally verified download, check the coding-agent tarball against the release's `PACKAGE_SHA256`, then run:
 
@@ -170,3 +170,4 @@ hindsight-coding-agents sign-out codex
 ```
 
 Sign-out deletes the local credential even when router revocation cannot be confirmed and reports that limitation. Such a session remains valid until expiry or operator revocation. Router sign-out does not sign out of the identity provider. Harnesses deliberately configured with the same router and credential reference share a session; sign-out affects all of them.
+
