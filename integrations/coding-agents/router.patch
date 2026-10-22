@@ -1647,7 +1647,7 @@ diff --git a/package-lock.json b/npm-shrinkwrap.json
 similarity index 82%
 rename from package-lock.json
 rename to npm-shrinkwrap.json
-index 1b95f63..ae29204 100644
+index 1b95f63..5853ee0 100644
 --- a/package-lock.json
 +++ b/npm-shrinkwrap.json
 @@ -1,4 +1,4 @@
@@ -1655,14 +1655,14 @@ index 1b95f63..ae29204 100644
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.8.1",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.3",
++  "version": "0.8.4",
    "lockfileVersion": 3,
 @@ -7,4 +7,11 @@
      "": {
 -      "name": "@vectorize-io/hindsight-coding-agents",
 -      "version": "0.8.1",
 +      "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+      "version": "0.8.3",
++      "version": "0.8.4",
 +      "dependencies": {
 +        "@modelcontextprotocol/sdk": "^1.32.1",
 +        "@napi-rs/keyring": "2.1.1",
@@ -1682,7 +1682,7 @@ index 1b95f63..ae29204 100644
 -        "@vectorize-io/hindsight-all": "^0.10.2",
 -        "jsonc-parser": "^3.3.1",
 -        "smol-toml": "^1.8.0",
-+        "@opencode/plugin": "^2.0.28",
++        "@opencode/plugin": "^2.0.29",
 +        "@types/node": "22.20.5",
          "tsup": "^8.3.0",
          "typescript": "^5.6.0",
@@ -2574,14 +2574,14 @@ index 1b95f63..ae29204 100644
 -      "version": "2.0.3",
 -      "resolved": "https://registry.npmjs.org/@opencode/ai/-/ai-2.0.3.tgz",
 -      "integrity": "sha512-SqrFdmgwCDWug95v7vpkT8asd64i/iimK67BVzvuCbtLfzWdUljzp3No4ytHXyVqLt/XkdyOuJA/NoGrDM8muw==",
-+      "version": "2.0.28",
-+      "resolved": "https://registry.npmjs.org/@opencode/ai/-/ai-2.0.28.tgz",
-+      "integrity": "sha512-zlxsnOJNbVc9f0pesQMk3q/1q/zWslxOmx+qdM3HQQMUP9smDoI7Is259+2SKE+edIHSpxMdXwiSxct148A6cQ==",
++      "version": "2.0.29",
++      "resolved": "https://registry.npmjs.org/@opencode/ai/-/ai-2.0.29.tgz",
++      "integrity": "sha512-Hu5U8FadWuI+do1ToBj9bhEL2wfP01JUaOWq8S6JaeHRaXcjvdsuCCFlGUtlA9PMn084gP4ewdInYPIv0B/98w==",
        "dev": true,
 @@ -1844,3 +1826,3 @@
          "@aws-sdk/credential-providers": "3.1057.0",
 -        "@opencode/schema": "2.0.3",
-+        "@opencode/schema": "2.0.28",
++        "@opencode/schema": "2.0.29",
          "@smithy/eventstream-codec": "4.2.14",
 @@ -1848,3 +1830,3 @@
          "aws4fetch": "1.0.20",
@@ -2608,9 +2608,9 @@ index 1b95f63..ae29204 100644
 -      "version": "2.0.3",
 -      "resolved": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.0.3.tgz",
 -      "integrity": "sha512-4xLLwi9PnUXHtfvsxVe7oVhRl/q8VRIFQS4Lfh3yjClfymIfyfX5/jCSwSbgTf5NgdrNGr20OPcjONZvCTPznA==",
-+      "version": "2.0.28",
-+      "resolved": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.0.28.tgz",
-+      "integrity": "sha512-YqcpULwPXLX70ICm/EPeFacnWsYtBmaCwVgO67HCuyFDiBNnQtY8DMhHzBgUtAAI0djYLGPbwEHvHp0ZTyrnHw==",
++      "version": "2.0.29",
++      "resolved": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.0.29.tgz",
++      "integrity": "sha512-ZK1oUWrHl8u/9pt7lEJVDNKhhXQWMdHvaUuQ/96o9tDbbN+XaYTe4p6gt86F5bm0w9YgspE3TEX9WriI402Pbw==",
        "dev": true,
 @@ -1871,15 +1849,13 @@
          "@ai-sdk/provider": "3.0.8",
@@ -2622,18 +2622,18 @@ index 1b95f63..ae29204 100644
 -        "@standard-schema/spec": "1.1.0",
 -        "effect": "4.0.0-rc.112",
 -        "zod": "4.1.8"
-+        "@opencode/ai": "2.0.28",
-+        "@opencode/client": "2.0.28",
-+        "@opencode/protocol": "2.0.28",
-+        "@opencode/schema": "2.0.28",
-+        "@opencode/util": "2.0.28",
++        "@opencode/ai": "2.0.29",
++        "@opencode/client": "2.0.29",
++        "@opencode/protocol": "2.0.29",
++        "@opencode/schema": "2.0.29",
++        "@opencode/util": "2.0.29",
 +        "effect": "4.0.1"
        },
        "peerDependencies": {
 -        "@opencode/theme": "2.0.3",
 -        "@opentui/core": ">=0.5.10",
 -        "@opentui/solid": ">=0.5.10",
-+        "@opencode/theme": "2.0.28",
++        "@opencode/theme": "2.0.29",
 +        "@opentui/core": ">=0.5.17",
 +        "@opentui/solid": ">=0.5.17",
          "solid-js": ">=1.9.0"
@@ -2642,16 +2642,16 @@ index 1b95f63..ae29204 100644
 -      "version": "2.0.3",
 -      "resolved": "https://registry.npmjs.org/@opencode/client/-/client-2.0.3.tgz",
 -      "integrity": "sha512-b+LcpMI131fXnGqf+O+9Y33H4XmwAkQibfYvtpEOROftkTpkcMj3R7WW/wGl2VTBNTZECAk2Yd+TACTzzAwk0A==",
-+      "version": "2.0.28",
-+      "resolved": "https://registry.npmjs.org/@opencode/client/-/client-2.0.28.tgz",
-+      "integrity": "sha512-YV0Yxk93/K2h4Xy/sEW/4ZYGMwn7ltxG2Y/Vdy2VCIZ2z0/r9MI6x5/XawSNfCvImBxuHkQNbYtu9Rgp3ArJ4g==",
++      "version": "2.0.29",
++      "resolved": "https://registry.npmjs.org/@opencode/client/-/client-2.0.29.tgz",
++      "integrity": "sha512-fxjzqFAXEGiMDCzCfuKPyZbmrLQAwv0JQIi2rXfrjh3uE3UvItfqPjsiW1/sVPncJvu4UiRXHi+/0ksv3uHDPA==",
        "dev": true,
 @@ -1908,7 +1884,7 @@
        "dependencies": {
 -        "@opencode/protocol": "2.0.3",
 -        "@opencode/schema": "2.0.3"
-+        "@opencode/protocol": "2.0.28",
-+        "@opencode/schema": "2.0.28"
++        "@opencode/protocol": "2.0.29",
++        "@opencode/schema": "2.0.29"
        },
        "peerDependencies": {
 -        "effect": "4.0.0-rc.112",
@@ -2687,15 +2687,15 @@ index 1b95f63..ae29204 100644
 -      "version": "2.0.3",
 -      "resolved": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.3.tgz",
 -      "integrity": "sha512-DNHbkLDTuAyMsmVdnjuKulcfoDbllW2dxt4W19r2aJEYvswJpEO9168CSK6Sjbx1FOh/B9yL7SQgoDRMd4K5Vw==",
-+      "version": "2.0.28",
-+      "resolved": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.28.tgz",
-+      "integrity": "sha512-yfc0SDa7FxqSDZRC0olACnhB7Gvsx8X0ji0gEmO2xunCswNiJTCPUngcIKphxN5NFeMl/A5E0iNG4q39KW5fyA==",
++      "version": "2.0.29",
++      "resolved": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.29.tgz",
++      "integrity": "sha512-Eik6a2u2znmWdyPgpxCnMXJXySslG0Yj/XQzmM/Z/3pAxy0nMJnKLaFznnvXPNoPPII14L+CH7kUhBjLtOPGgQ==",
        "dev": true,
 @@ -1952,4 +1914,4 @@
        "dependencies": {
 -        "@opencode/schema": "2.0.3",
 -        "effect": "4.0.0-rc.112"
-+        "@opencode/schema": "2.0.28",
++        "@opencode/schema": "2.0.29",
 +        "effect": "4.0.1"
        }
 @@ -1957,16 +1919,12 @@
@@ -2718,9 +2718,9 @@ index 1b95f63..ae29204 100644
 -      "version": "2.0.3",
 -      "resolved": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.3.tgz",
 -      "integrity": "sha512-thPeBbqw4+SkZ/0LOuqfahSRGuWogRa/wwfIVyiQYsoE0vzLx8XUpHQ+FSUWkdz6llDtP0+ZsyBqXUMpXmPgbg==",
-+      "version": "2.0.28",
-+      "resolved": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.28.tgz",
-+      "integrity": "sha512-NHl42ngFN6uLCjtmtooYlEGEayng9ZFc+30DAqQuPcvKpMWsO23OqximHlukxtErp209C4f9LW+OJH/6k60+yw==",
++      "version": "2.0.29",
++      "resolved": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.29.tgz",
++      "integrity": "sha512-2qSyUGaeItugP3QujZrBhg2f4a4wdL9ab0m0fObHM+hlZ659YmWGzBRNI9qWR7At8AI9gnDCmgnnrQrx5/aprg==",
        "dev": true,
 @@ -1975,3 +1933,3 @@
          "@standard-schema/spec": "1.1.0",
@@ -2747,9 +2747,9 @@ index 1b95f63..ae29204 100644
 -      "version": "2.0.3",
 -      "resolved": "https://registry.npmjs.org/@opencode/util/-/util-2.0.3.tgz",
 -      "integrity": "sha512-6DQyOUtJW0kU6pLBEpncIyUH1nmXa8Z2jcsBEYummKmHCwZaiIkBowjWMGWKsV4G42IPMP1jYUMfD9hTRmX+RA==",
-+      "version": "2.0.28",
-+      "resolved": "https://registry.npmjs.org/@opencode/util/-/util-2.0.28.tgz",
-+      "integrity": "sha512-Bf81ZULhR3FU1MKX+IKrka7RMKMIeWSLgtyA3AlCtK3pMVzV6uN6WnQcot0tzgwiYx40UGaLGqlz3JXCEvwSnA==",
++      "version": "2.0.29",
++      "resolved": "https://registry.npmjs.org/@opencode/util/-/util-2.0.29.tgz",
++      "integrity": "sha512-o0xmrV5MFzB4hhapow4tSbStXAWF27598tDabqq+damJAuvPCBGorDBciosenXpOnNsEHhJm37l5KwOhb1+SNA==",
        "dev": true,
 @@ -1996,5 +1950,5 @@
        "dependencies": {
@@ -2941,9 +2941,9 @@ index 1b95f63..ae29204 100644
 -      "version": "8.10.2",
 -      "resolved": "https://registry.npmjs.org/undici/-/undici-8.10.2.tgz",
 -      "integrity": "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==",
-+      "version": "8.11.2",
-+      "resolved": "https://registry.npmjs.org/undici/-/undici-8.11.2.tgz",
-+      "integrity": "sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==",
++      "version": "8.12.1",
++      "resolved": "https://registry.npmjs.org/undici/-/undici-8.12.1.tgz",
++      "integrity": "sha512-usz3OVQBeh1LxNn0DzU0voLXMgn5CU/WUdpBsY6Ti5afNao+vTkmn4H/NxoXolc10cOqe2+YIG0Hspq2rsl64w==",
        "dev": true,
 @@ -2215,5 +2085,5 @@
      "node_modules/@opentelemetry/api-logs": {
@@ -4879,7 +4879,7 @@ index 1b95f63..ae29204 100644
 -      "dev": true,
        "license": "ISC",
 diff --git a/package.json b/package.json
-index 46dec2c..044bbaa 100644
+index 46dec2c..4e06d08 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,8 +1,8 @@
@@ -4887,7 +4887,7 @@ index 46dec2c..044bbaa 100644
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.8.1",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.3",
++  "version": "0.8.4",
    "repository": {
      "type": "git",
 -    "url": "https://github.com/vectorize-io/hindsight.git",
@@ -4931,7 +4931,7 @@ index 46dec2c..044bbaa 100644
 -    "@vectorize-io/hindsight-all": "^0.10.2",
 -    "jsonc-parser": "^3.3.1",
 -    "smol-toml": "^1.8.0",
-+    "@opencode/plugin": "^2.0.28",
++    "@opencode/plugin": "^2.0.29",
 +    "@types/node": "22.20.5",
      "tsup": "^8.3.0",
      "typescript": "^5.6.0",
