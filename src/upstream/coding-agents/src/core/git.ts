@@ -5,6 +5,7 @@
  *  - `ingestGitLog`/`gitLogText`: the last N commit MESSAGES ONLY, aggregated into ONE document
  *    (default). Cheap (one extraction op total).
  */
+import { AccessDeniedError } from "@memory-router/shared/bank-access";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { projectNameOf } from "./bank";
@@ -277,7 +278,8 @@ export async function ingestGitLog(
     log(`[gitlog] done: ${n} commit messages ingested as 1 document under strategy 'gitlog'`);
     return 0;
   } catch (e) {
-    log(`  ! gitlog ingest failed: ${(e as Error).message?.slice(0, 120)}`);
+    if (e instanceof AccessDeniedError) throw e;
+    log("  ! gitlog ingest failed");
     return 1;
   }
 }
@@ -326,7 +328,10 @@ export async function syncGitLog(
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   const head = gitHeadSha(repo);
-  const current = head !== null && (await gitLogIsCurrent(client, repo, head).catch(() => false));
+  const current = head !== null && (await gitLogIsCurrent(client, repo, head).catch((error: unknown) => {
+    if (error instanceof AccessDeniedError) throw error;
+    return false;
+  }));
   if (current) {
     log("[gitlog] current with HEAD — skipping");
     return 0;
