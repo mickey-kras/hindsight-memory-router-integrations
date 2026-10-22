@@ -9,7 +9,7 @@ import yaml
 workflow = Path(__file__).resolve().parents[1] / "workflows/policy-guard.yml"
 steps = yaml.safe_load(workflow.read_text())["jobs"]["guard"]["steps"]
 source = []
-for index, step in enumerate(steps[2:5]):
+for index, step in enumerate(steps[2:-1]):
     operator = ">" if index == 0 else ">>"
     prefix = (
         "set -euo pipefail\n"
