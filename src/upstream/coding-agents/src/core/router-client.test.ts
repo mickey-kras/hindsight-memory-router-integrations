@@ -10,6 +10,7 @@ import { managedBank } from "@memory-router/coding-agents/runtime";
 import { ensureDaemon } from "./daemon";
 import { applyBankConfig, loadConfig, resolveConfig } from "./config";
 import { HindsightClient } from "./hindsight";
+import { repoNameOf, syncGitLog } from "./git";
 
 let directory: string;
 let configPath: string;
@@ -491,4 +492,51 @@ it("operation polling leaves rate-limit retry to its caller", async () => {
   }));
   await expect(client().activeOperations()).rejects.toMatchObject({ statusCode: 429, retryAfterMs: 60_000 });
   expect(send).toHaveBeenCalledOnce();
+});
+
+function gitLogBaseline(): { id: string; tags: string[] } {
+  const git = (...args: string[]): string => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim();
+  git("init", "-q");
+  git("config", "user.name", "Test User");
+  git("config", "user.email", "test@example.com");
+  git("commit", "-q", "--allow-empty", "-m", "initial history");
+  const base: string = git("rev-parse", "HEAD");
+  git("commit", "-q", "--allow-empty", "-m", "new history");
+  return { id: `gitlog:${repoNameOf(directory)}`, tags: [`gitlog-head:${base}`] };
+}
+
+it("sends complete git history through the guarded router without append", async () => {
+  const document = gitLogBaseline();
+  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname.endsWith("/version")) return Response.json({ api_version: "1.1.0" });
+    if (parsed.pathname.endsWith("/config")) return Response.json({ config: { store_document_text: true } });
+    if (parsed.pathname.endsWith("/documents")) return Response.json({ items: parsed.searchParams.has("q") ? [document] : [], total: 1 });
+    return Response.json({ operation_id: "accepted" });
+  });
+  const c = client();
+  await expect(syncGitLog(c, directory, { limit: 10 })).resolves.toBe(0);
+  await expect(syncGitLog(c, directory, { limit: 10 })).resolves.toBe(0);
+  const writes = send.mock.calls.filter(([, init]) => init?.method === "POST");
+  expect(writes).toHaveLength(2);
+  const bodies = writes.map(([, init]) => JSON.parse(String(init?.body)) as { operation_id: string; items: { content: string; update_mode: string; document_id: string }[] });
+  expect(bodies.every((body) => body.operation_id === undefined)).toBe(true);
+  expect(bodies[0].items[0].document_id).toBe(document.id);
+  expect(bodies.every((body) => body.items[0].update_mode === undefined)).toBe(true);
+  expect(bodies[0].items[0].content).toContain("new history");
+  expect(bodies[0].items[0].content).toContain("initial history");
+  for (const [url, init] of send.mock.calls) {
+    expect(String(url)).toMatch(/^https:\/\/router\.test\//);
+    expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${credential}`);
+    expect(new Headers(init?.headers).get("x-memory-router-agent")).toBe("codex");
+    expect(init?.redirect).toBe("error");
+  }
+});
+
+it.each([401, 403])("stops git-log synchronization after denied freshness probe %s", async (status) => {
+  gitLogBaseline();
+  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("SECRET_BODY", { status }));
+  await expect(syncGitLog(client(), directory, { limit: 10 })).rejects.toThrow(AccessDeniedError);
+  expect(send).toHaveBeenCalledOnce();
+  expect(send.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
 });

@@ -7,6 +7,7 @@ export default defineConfig({
       "src/core/runtime-lifecycle.test.ts",
       "src/core/status.test.ts",
       "src/core/seed.test.ts",
+      "src/core/git.gitlog.test.ts",
       "src/core/runtime.test.ts",
       "src/core/hook.test.ts",
       "src/core/session-cache.test.ts",

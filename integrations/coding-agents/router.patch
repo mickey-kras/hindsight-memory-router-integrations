@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..e9f8533
+index 0000000..a1fc652
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,51 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
@@ -30,11 +30,11 @@ index 0000000..e9f8533
 +
 +Dependencies are classified by their package declarations; bundling does not make declared runtime dependencies development-only. Direct runtime dependencies are `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml` and `zod`. Development dependencies are `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript` and `vitest`.
 +
-+The complete override inventory is `@opencode/plugin > @opentelemetry/core` (`>=2.8.0 <3.0.0`), `esbuild` (`>=0.25.0 <1.0.0`), `fast-uri` (`>=3.1.6 <4.0.0`), `hono` (`>=4.13.7 <5.0.0`), `http-cache-semantics` (`4.3.0`), `ip-address` (`>=10.5.1 <11.0.0`), `postcss` (`>=8.5.23 <9.0.0`) and `vite` (`>=6.4.3 <7.0.0`). These ranges constrain the dependency graph; exact resolved versions are in `npm-shrinkwrap.json`. Reassess compatibility and advisories when updating, rather than assuming these overrides are permanently required or sufficient.
++The complete override inventory is `@opencode/plugin > @opentelemetry/core` (`>=2.8.0 <3.0.0`), `esbuild` (`>=0.25.0 <1.0.0`), `fast-uri` (`>=3.1.6 <4.0.0`), `hono` (`>=4.13.11 <5.0.0`), `http-cache-semantics` (`4.3.0`), `ip-address` (`>=10.5.1 <11.0.0`), `postcss` (`>=8.5.23 <9.0.0`) and `vite` (`>=6.4.3 <7.0.0`). These ranges constrain the dependency graph; exact resolved versions are in `npm-shrinkwrap.json`. Reassess compatibility and advisories when updating, rather than assuming these overrides are permanently required or sufficient.
 +
 +Survey admission is scoped to the managed router URL, principal and bank. Tokens never enter lease keys; credential rotation keeps the same lease. Normal config cannot override the managed principal. No CodeQL suppression is used.
 +
-+Upstream baseline is coding-agents 0.8.1 at the shared v1.0.0 commit. Downstream package versions remain independent. The managed README, generated companion skill and disabled daemon implementation remain router-owned: upstream endpoint setup, dynamic banks, local daemon and update instructions are unsupported. The package uses npm-shrinkwrap.json; upstream package-lock.json stays intentionally absent.
++Upstream baseline is coding-agents 0.8.2 at the shared v1.1.0 release commit. Downstream package versions remain independent. The managed README, generated companion skill and disabled daemon implementation remain router-owned: upstream endpoint setup, dynamic banks, local daemon and update instructions are unsupported. The package uses npm-shrinkwrap.json; upstream package-lock.json stays intentionally absent.
 +
 +New upstream append capability, retry budgets, query bounds, page scoping and document freshness reads use the existing guarded client. Version probing accepts GET /v1/version and falls back to /version; authorization failures remain terminal. Router error bodies are redacted, so a 404 cannot latch page support off based on its upstream body.
 +
@@ -53,6 +53,8 @@ index 0000000..e9f8533
 +Sync requires a confirmed zero active-operation count. Unavailable or malformed operation probes remain unknown; background settlement retries for up to 15 minutes and reports unconfirmed settlement at timeout. Authorization denial remains terminal.
 +
 +Persistent runtimes admit at most 256 sessions per workspace. Explicit host disposal releases completed state; admission evicts the least-recently-used idle session when end events are unavailable. Active prompts, transcript fetches, retains and dirty or buffered cursors stay pinned. When every slot is pinned, new sessions skip automatic recall/retention with a `session_capacity_reached` diagnostic; existing work continues. Evicted sessions resume with a full transcript replacement. OpenCode2 global events require current scoped-prompt admission, and keyed injection never falls back to another session. Cline keeps only the latest prompt ID for up to 256 sessions. Usage counters restart after eviction, so resumed transcripts can repeat local usage records.
++
++Managed git-log synchronization retains bounded full replacement semantics. Upstream incremental appends lack an expected-base precondition: two asynchronous writes from the same persisted head can overlap after HEAD changes, despite distinct operation IDs. The append implementation is not imported until that concurrency contract exists. Authorization denials remain terminal; the maintained git-log tests cover pending writes across changed heads.
 diff --git a/LICENSE b/LICENSE
 new file mode 100644
 index 0000000..f572d61
@@ -83,7 +85,7 @@ index 0000000..f572d61
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
 diff --git a/README.md b/README.md
-index 05f6ace..282fb28 100644
+index 2e112b1..d7612c1 100644
 --- a/README.md
 +++ b/README.md
 @@ -1,886 +1,30 @@
@@ -95,7 +97,7 @@ index 05f6ace..282fb28 100644
 -(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Kimi Code**, **Factory Droid**, **ZCode**, **TraeCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**, **WorkBuddy**, **CodeBuddy**). Ingestion is fully
 -automatic — there is no setup command: a repo's git history and conversations flow into its memory
 -bank in the background as you work.
-+Source: `vectorize-io/hindsight/hindsight-integrations/coding-agents`, v0.8.1.
++Source: `vectorize-io/hindsight/hindsight-integrations/coding-agents`, v0.8.2.
 +The superseded per-agent integrations are not imported.
  
 -The premise: most of a real fix is derivable from the code, but the _last mile_ often hinges on a
@@ -995,7 +997,7 @@ index 05f6ace..282fb28 100644
 +      "mapPathToBank": { "/work/other": "D" }
 +    }
    }
-@@ -889,338 +33,26 @@ once, in the plugin's config, and it travels in the same import that creates the
+@@ -889,342 +33,26 @@ once, in the plugin's config, and it travels in the same import that creates the
  
 -The keys are the bank-config API's own field names, passed straight through, so anything the
 -bank-config accepts can go here. They follow the same additive rule as the template: written only
@@ -1333,8 +1335,12 @@ index 05f6ace..282fb28 100644
 -  "✅ completed" once its findings land. It is retained under the `survey` strategy, whose marker
 -  rule extracts **nothing** from a status marker, and it drives the re-survey cadence
 -  (`surveyRefreshCommits`) and `surveyBaseline` in sync status.
--- `gitlog:<repo>` — the aggregated commit-message seed document, re-upserted rather than duplicated
--  when the seed runs again.
+-- `gitlog:<repo>` — the aggregated commit-message seed document, oldest commit first. Once seeded it
+-  is kept current by **appending** only the commits since the one its `gitlog-head:<sha>` tag
+-  names, so a new commit costs the extraction of its own message, not of the whole log. It is
+-  written in full again (bounded by `seedLimit`) only when an append cannot describe HEAD: the
+-  recorded commit is no longer an ancestor of HEAD (a rebase, a force-push), more than `seedLimit`
+-  commits are new, or the server cannot append safely.
 +Legacy managed JSON keys `recallTimeoutMs`, `recallMaxTokens`, `retainQueueFlushIntervalMs`, `queueMaxAgeMs`, `queueMaxItems`, `queueMaxBytes` and `queueDir` are accepted and validated for compatibility but have no effect in coding agents. Remove them when migrating; tune retrieval in normal coding-agent config. There is no OpenClaw-style durable outage queue or replay timer here; ingestion uses the upstream retry/cursor mechanisms. Managed `queueMaxAgeMs` accepts `-1` or a positive integer and rejects `0`, unlike OpenClaw.
  
 -### When memory seems to be missing
@@ -1354,15 +1360,15 @@ index 05f6ace..282fb28 100644
 +See `DEVIATIONS.md` for intentional differences and `UPSTREAM.json` for exact provenance.
 diff --git a/UPSTREAM.json b/UPSTREAM.json
 new file mode 100644
-index 0000000..493a600
+index 0000000..62e1b70
 --- /dev/null
 +++ b/UPSTREAM.json
 @@ -0,0 +1,263 @@
 +{
-+  "commit": "39c65ffe2f140d0c84cee58566cad8900c5b9908",
++  "commit": "a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5",
 +  "files": {
 +    ".gitignore": "adb911f1ff2d2103411b4bbe90a167b4c7ef5acd38231fff55519c581f2bbd1b",
-+    "README.md": "93c6c188f47536022afff8d836496f4268e07a39cc007a5d449ebfadfc0be21c",
++    "README.md": "87f35964226b72c8a8bcdfec5f7d6d1d1e07187bd29ebe2b27241f77669ab830",
 +    "cordis.patch.yml": "0109fe6515d1c4fb25f30d14fa532f341a116d58e813864eb764053b9cbcceae",
 +    "e2e/Dockerfile.base": "c0f450ed6ee4c0cf0d7ea4420e4108fcd46e7360fef9a257392a6148d1ec1910",
 +    "e2e/Dockerfile.claude-code": "aa2087e40d91384d76de9962c804b5fc1fbed5ad4af49d17689ade4239baa186",
@@ -1389,12 +1395,12 @@ index 0000000..493a600
 +    "e2e/zcode-e2e-exec.sh": "66d9ad1fc55356c931fe5ae53bee4ce42863fce80270b5a29fa742898e919703",
 +    "hooks/hooks.json": "1d0617fd75a5729fa5b5fdb67b248384eaa74bf2c647c3b494b2fe05d83e292e",
 +    "index.js": "4d906968db9b5d32c27db47799700b1b4739cd16bd3322c23b8842593af3264d",
-+    "package-lock.json": "ca2b39660d53b0f5f3ff3c887f40540165286ab865fea74bf9a7a1845938a0c9",
-+    "package.json": "12510aa835394fe548839f92d32a35449277544128c771dbcea8d6906bb466c8",
-+    "plugin.json": "7d39522d47063c2c9fc9bfbd64c3bbea1da8f830423420ccff8bbe64ad15e133",
++    "package-lock.json": "df25ee2d0444348448a4875682389bed0bec4213d78681a1df4047b9984b5d17",
++    "package.json": "c1ea323677927a79f295e0ecb3730c21f982edb59d27254f3b6d3ca6f41d2020",
++    "plugin.json": "bc6827dbba0bdf1b48d9c76d017c79ed72203ad31d095a8a124ac25ee13cd407",
 +    "scripts/build-skill.mjs": "6aa241650e1c76905a86dd6b6ccaa544786ad7246c62554f2c548a064b404b80",
-+    "skill/SKILL.md": "30d04263f840c03f6ad90293255165bac108db662754488343717ccb800580f5",
 +    "skill-src/preamble.md": "711d0830e7192a55fc725226d41c47bf993437687f1d1dfd5a84056c1cbe8b64",
++    "skill/SKILL.md": "dd3a78db3e533f5053fb3f478d8de5971d0a4473cc26b48ed1107630bea1ff27",
 +    "src/antigravity-hook.ts": "fba83a6133dee3058d4e0cc596ee9cfbd9197bdbb58f54b1530c47a2b8b7c74f",
 +    "src/antigravity-statusline.test.ts": "e3e4b1f93967dbf0133cb87677978dd422b672a02d1138829f4fdcac1a6069d5",
 +    "src/antigravity-statusline.ts": "9e4fd2f6ed17bceff7a80b9078384e523b2b18bb84779f289f8b467a204bf614",
@@ -1435,9 +1441,9 @@ index 0000000..493a600
 +    "src/core/git-layout.test.ts": "19b035a97d52457c70b78e9a79128d23aa0ecd5f0ceca47a0415141f8f413848",
 +    "src/core/git-layout.ts": "2f4be171b6252d41cb0d9582c0879cca92206e28ca82ea6a24c187ce68bafc19",
 +    "src/core/git-stderr.test.ts": "e32bf64f33620020a129d35396897a9d53799e0c66d8a6b6f6333065f0b6b3b7",
-+    "src/core/git.gitlog.test.ts": "f8a5d7bdc371f3cf45b8b40f7f92b0b2dd433afdabf6d209ef478fc5f8add175",
++    "src/core/git.gitlog.test.ts": "845ba224163f97d8815b1f7e7efcfec2c5d5e2c8dfb1ec8ee829fb700ad36cc3",
 +    "src/core/git.test.ts": "3adf7e25fc5ccb6dfbe39b2c7e4edb723c6403f3397a387f5f82d0f83076649f",
-+    "src/core/git.ts": "0bd216aa92701608b1d4729cea15863d9b87bcf67bb77d698223f5cf4c16e26c",
++    "src/core/git.ts": "74af05b42c09c2d37d0287303a0e149c4c88ebe049bb17e13de86343e6bc7f41",
 +    "src/core/hindsight.pages.test.ts": "130af6279155e3f6a96b71b237ef1351528a119a24685ea8c337551979901110",
 +    "src/core/hindsight.test.ts": "8ef84394a5a06c63126bf9663814e2b35f72f0bfd913420582ebf9c155628441",
 +    "src/core/hindsight.ts": "0b3a204f84f3bd2f2317d5bcab31ea9ffb0ba94a05c48b4ac5f9e5aa8d7d65b8",
@@ -1570,6 +1576,7 @@ index 0000000..493a600
 +    "src/grok-hook.ts": "59f85f9a5cc26c82c748bd993c54dfa929f36237985ba0e8262d3b9d031d120e",
 +    "src/grok-sessionstart-hook.ts": "e80a45a2571139008472fb13b27958c31f3ff158f05b7e0693d502bd69ca5128",
 +    "src/grok-stop-hook.ts": "abb8c9b7523a79d54d38244996fff821ea222d9141501cda7d0231c5307b74d0",
++    "src/harness.e2e.test.ts": "cf3d328fb6efafeef83dad2822248d7ea76c3e5ab91e91cfc28d06fe643fdcb7",
 +    "src/harness/hook-lifecycle.test.ts": "c1acb1be5417e777456b248e3243e2d1e71f7463e9a5a00838af328314fd2438",
 +    "src/harness/hook-lifecycle.ts": "71f704b1227ef50d8eb9a00c833d5a9b677b890f6db3baa976a66932efc52a63",
 +    "src/harness/opencode.test.ts": "ec7529733b5c599724a8dd80c6873fe4d061920fb8cb5e5204290f4415292244",
@@ -1582,7 +1589,6 @@ index 0000000..493a600
 +    "src/harness/plugin-entry.ts": "3b6a14000cc9c8c90ff07af6b0cabc33ad8c32f424b18ac0fef56b8ea29e514b",
 +    "src/harness/registry.test.ts": "ea3fd02adfeca8c07c695b47ef4c2a3799665e7289a36e08712bca3c376fbd35",
 +    "src/harness/registry.ts": "75b56ebbc527d4a30efe554e479dc8606b8dd6b205161fd497abe51d886a8d24",
-+    "src/harness.e2e.test.ts": "cf3d328fb6efafeef83dad2822248d7ea76c3e5ab91e91cfc28d06fe643fdcb7",
 +    "src/hindsight-seed.ts": "f1a45eabde45121f4979fcc5b94bd0966a43c0c0277172b45e273a1f093b5c38",
 +    "src/index.ts": "f98fb7b77d62fd74176fe572a232fda6436591eba9fec109aeb13047a4a03841",
 +    "src/install-ui.test.ts": "e44d5a0009ce1f56aab547e1cf11c63ef4caad9c81f85f1753a8dd38b056930e",
@@ -1619,7 +1625,7 @@ index 0000000..493a600
 +  },
 +  "path": "hindsight-integrations/coding-agents",
 +  "source": "https://github.com/vectorize-io/hindsight",
-+  "version": "0.8.1"
++  "version": "0.8.2"
 +}
 diff --git a/cordis.patch.yml b/cordis.patch.yml
 index 37c51c0..f37dae8 100644
@@ -1647,22 +1653,22 @@ diff --git a/package-lock.json b/npm-shrinkwrap.json
 similarity index 82%
 rename from package-lock.json
 rename to npm-shrinkwrap.json
-index 1b95f63..5853ee0 100644
+index db7c1f9..a725332 100644
 --- a/package-lock.json
 +++ b/npm-shrinkwrap.json
 @@ -1,4 +1,4 @@
  {
 -  "name": "@vectorize-io/hindsight-coding-agents",
--  "version": "0.8.1",
+-  "version": "0.8.2",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.4",
++  "version": "0.8.5",
    "lockfileVersion": 3,
 @@ -7,4 +7,11 @@
      "": {
 -      "name": "@vectorize-io/hindsight-coding-agents",
--      "version": "0.8.1",
+-      "version": "0.8.2",
 +      "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+      "version": "0.8.4",
++      "version": "0.8.5",
 +      "dependencies": {
 +        "@modelcontextprotocol/sdk": "^1.32.1",
 +        "@napi-rs/keyring": "2.1.1",
@@ -3980,15 +3986,9 @@ index 1b95f63..5853ee0 100644
        "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
 -      "dev": true,
        "license": "MIT",
-@@ -4828,6 +4436,5 @@
-     "node_modules/hono": {
--      "version": "4.13.7",
--      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.7.tgz",
--      "integrity": "sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==",
+@@ -4831,3 +4439,2 @@
+       "integrity": "sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==",
 -      "dev": true,
-+      "version": "4.13.13",
-+      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.13.tgz",
-+      "integrity": "sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==",
        "license": "MIT",
 @@ -4850,12 +4457,2 @@
      },
@@ -4708,15 +4708,7 @@ index 1b95f63..5853ee0 100644
        "integrity": "sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==",
 -      "dev": true,
        "license": "MIT",
-@@ -7254,7 +6891,8 @@
-     "node_modules/vite": {
--      "version": "6.4.3",
--      "resolved": "https://registry.npmjs.org/vite/-/vite-6.4.3.tgz",
--      "integrity": "sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==",
-+      "version": "6.4.4",
-+      "resolved": "https://registry.npmjs.org/vite/-/vite-6.4.4.tgz",
-+      "integrity": "sha512-xGjU/SyjeNyb0E4KxXBvYz/1C+3JXuujvf2hXNOtnlcE+58o5ajd9N2/n2VhkiJvpCP2qQasnUpx5PXNeI+p1Q==",
-       "dev": true,
+@@ -7259,2 +6896,3 @@
        "license": "MIT",
 +      "peer": true,
        "dependencies": {
@@ -4879,15 +4871,15 @@ index 1b95f63..5853ee0 100644
 -      "dev": true,
        "license": "ISC",
 diff --git a/package.json b/package.json
-index 46dec2c..4e06d08 100644
+index 93436a9..eb0db2b 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,8 +1,8 @@
  {
 -  "name": "@vectorize-io/hindsight-coding-agents",
--  "version": "0.8.1",
+-  "version": "0.8.2",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.4",
++  "version": "0.8.5",
    "repository": {
      "type": "git",
 -    "url": "https://github.com/vectorize-io/hindsight.git",
@@ -4903,7 +4895,7 @@ index 46dec2c..4e06d08 100644
 +    "DEVIATIONS.md",
 +    "npm-shrinkwrap.json"
    ],
-@@ -90,27 +93,29 @@
+@@ -90,24 +93,25 @@
      "build": "tsup",
 -    "skill:build": "node scripts/build-skill.mjs",
 -    "clean": "rm -rf dist",
@@ -4944,9 +4936,8 @@ index 46dec2c..4e06d08 100644
 +      "@opentelemetry/core": ">=2.8.0 <3.0.0"
 +    },
      "esbuild": ">=0.25.0 <1.0.0",
-     "fast-uri": ">=3.1.6 <4.0.0",
--    "hono": ">=4.13.5 <5.0.0",
-+    "hono": ">=4.13.7 <5.0.0",
+@@ -115,2 +119,3 @@
+     "hono": ">=4.13.11 <5.0.0",
 +    "http-cache-semantics": "4.3.0",
      "ip-address": ">=10.5.1 <11.0.0",
 diff --git a/scripts/build-skill.mjs b/scripts/build-skill.mjs
@@ -5158,7 +5149,7 @@ index 118cae5..639b990 100644
 +access, report the verified correction for an authorized writer; do not attempt a write or change
 +credentials.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index 7f6088d..acdd7a5 100644
+index 7bbe6ba..acdd7a5 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
 @@ -2,7 +2,7 @@
@@ -5217,7 +5208,7 @@ index 7f6088d..acdd7a5 100644
 +- With writable access and session retention enabled, the **current conversation** is captured
 +  automatically at session end — say so; no tool needed.
  - An **external document, notes, or durable findings** → `hindsight_ingest_document(title, content)`.
-@@ -61,670 +64,71 @@ source contradicts it), FIX THE RECORD — don't just ignore it. Call
+@@ -61,674 +64,71 @@ source contradicts it), FIX THE RECORD — don't just ignore it. Call
  
 -Newer facts supersede older ones in retrieval, so one clear correction permanently outranks the
 -stale memory. Do this whenever you catch a wrong injected memory, a stale knowledge-page claim, or
@@ -5878,8 +5869,12 @@ index 7f6088d..acdd7a5 100644
 -  "✅ completed" once its findings land. It is retained under the `survey` strategy, whose marker
 -  rule extracts **nothing** from a status marker, and it drives the re-survey cadence
 -  (`surveyRefreshCommits`) and `surveyBaseline` in sync status.
--- `gitlog:<repo>` — the aggregated commit-message seed document, re-upserted rather than duplicated
--  when the seed runs again.
+-- `gitlog:<repo>` — the aggregated commit-message seed document, oldest commit first. Once seeded it
+-  is kept current by **appending** only the commits since the one its `gitlog-head:<sha>` tag
+-  names, so a new commit costs the extraction of its own message, not of the whole log. It is
+-  written in full again (bounded by `seedLimit`) only when an append cannot describe HEAD: the
+-  recorded commit is no longer an ancestor of HEAD (a rebase, a force-push), more than `seedLimit`
+-  commits are new, or the server cannot append safely.
 -
 -### When memory seems to be missing
 -
@@ -8433,7 +8428,7 @@ index 0000000..da2f474
 +was already running when the plugin was installed has no SessionStart behind it; its first prompt
 +after the install self-heals.
 diff --git a/src/core/git.gitlog.test.ts b/src/core/git.gitlog.test.ts
-index 5bb1a1f..1217425 100644
+index 1f5be83..be387dd 100644
 --- a/src/core/git.gitlog.test.ts
 +++ b/src/core/git.gitlog.test.ts
 @@ -84,3 +84,3 @@ describe("gitLogText", () => {
@@ -8441,25 +8436,345 @@ index 5bb1a1f..1217425 100644
 -    expect(gitLogNewestAuthorDate(dir)).toMatch(/^\d{4}-\d\d-\d\dT[\d:]+[+-Z][\d:]*$/);
 +    expect(gitLogNewestAuthorDate(dir)).toMatch(/^\d{4}-\d\d-\d\dT[\d:]+[+Z-][\d:]*$/);
      expect(gitLogText(dir, 10)).toMatch(/^[0-9a-f]+ \d{4}-\d\d-\d\d Test User\nfeat: signed$/);
+@@ -296,3 +296,3 @@ describe("syncGitLog", () => {
+ 
+-describe("syncGitLog appends", () => {
++describe("syncGitLog managed replacements", () => {
+   beforeEach(() => {
+@@ -350,3 +350,3 @@ describe("syncGitLog appends", () => {
+ 
+-  it("appends only the commits since the recorded one, oldest first, then skips", async () => {
++  it("replaces changed history oldest first, then skips", async () => {
+     commit(dir, "feat: c1");
+@@ -362,10 +362,10 @@ describe("syncGitLog appends", () => {
+     const [content, , id, tags, strategy] = retain.mock.calls[1];
+-    expect(optsOf(1).updateMode).toBe("append");
+-    expect(optsOf(1).operationId).toMatch(/^[0-9a-f-]{36}$/);
++    expect(optsOf(1).updateMode).toBeUndefined();
++    expect(optsOf(1).operationId).toBeUndefined();
+     expect(strategy).toBe("gitlog");
+-    expect(content).not.toContain("feat: c1");
+-    expect(content).not.toContain("feat: c2");
++    expect(content).toContain("feat: c1");
++    expect(content).toContain("feat: c2");
+     expect(content.indexOf("feat: c3")).toBeLessThan(content.indexOf("feat: c4"));
+     expect(tags).toContain(`gitlog-head:${head(dir)}`);
+-    // The appended document reads exactly like a full write of the same history.
++    // The document matches the current bounded history.
+     expect(docs.get(id)?.body).toBe(gitLogText(dir, 10));
+@@ -376,15 +376,28 @@ describe("syncGitLog appends", () => {
+ 
+-  it("gives a re-submitted append the same operation id, so the server applies it once", async () => {
++  it("keeps pending changed-HEAD writes complete without overlapping appends", async () => {
+     commit(dir, "feat: c1");
+-    const { client, retain, docs, optsOf } = server();
+-    await syncGitLog(client, dir, { limit: 10 });
+-    const seeded = structuredClone(docs.get(`gitlog:${repoNameOf(dir)}`)!);
++    const base: string = head(dir);
++    const queued: { content: string; opts: RetainOpts }[] = [];
++    const client = {
++      bank: "test-bank",
++      listDocumentIds: async () => new Set<string>(),
++      documentTags: async () => [`gitlog-head:${base}`],
++      supportsAppendRetain: async () => true,
++      retain: async (content: string, _context: string, _id: string, _tags: string[], _strategy: string, opts: RetainOpts = {}) => {
++        queued.push({ content, opts });
++      },
++    } as unknown as HindsightClient;
+     commit(dir, "feat: c2");
+-
+     await syncGitLog(client, dir, { limit: 10 });
+-    docs.set(`gitlog:${repoNameOf(dir)}`, seeded); // the append's outcome was never learned
++    commit(dir, "feat: c3");
+     await syncGitLog(client, dir, { limit: 10 });
+ 
+-    expect(retain).toHaveBeenCalledTimes(3);
+-    expect(optsOf(2).operationId).toBe(optsOf(1).operationId);
++    expect(queued).toHaveLength(2);
++    let stored: string = "";
++    for (const pending of queued) {
++      expect(pending.opts.updateMode).toBeUndefined();
++      stored = pending.opts.updateMode === "append" ? `${stored}\n${pending.content}` : pending.content;
++      expect(stored.split("feat: c2")).toHaveLength(2);
++    }
++    expect(stored).toBe(gitLogText(dir, 10));
+   });
+@@ -442,3 +455,3 @@ describe("syncGitLog appends", () => {
+ 
+-  it("appends a merged branch's commits after the stored ones instead of rewriting the log", async () => {
++  it("replaces the bounded log after merging another branch", async () => {
+     commit(dir, "feat: c1");
+@@ -446,3 +459,2 @@ describe("syncGitLog appends", () => {
+     await syncGitLog(client, dir, { limit: 10 });
+-    const stored = docs.get(`gitlog:${repoNameOf(dir)}`)!.body;
+     execFileSync("git", ["-C", dir, "checkout", "-q", "-b", "side"]);
+@@ -455,5 +467,5 @@ describe("syncGitLog appends", () => {
+ 
+-    expect(optsOf(1).updateMode).toBe("append");
++    expect(optsOf(1).updateMode).toBeUndefined();
+     const body = docs.get(`gitlog:${repoNameOf(dir)}`)!.body;
+-    expect(body.startsWith(stored)).toBe(true);
++    expect(body).toBe(gitLogText(dir, 10));
+     expect(body).toContain("feat: on the side branch");
 diff --git a/src/core/git.ts b/src/core/git.ts
-index 5012d6e..2793c9d 100644
+index 414168a..f9761b1 100644
 --- a/src/core/git.ts
 +++ b/src/core/git.ts
-@@ -235,6 +235,6 @@ export async function ingestGitLog(
+@@ -7,2 +7,3 @@
+  */
++import { AccessDeniedError } from "@memory-router/shared/bank-access";
+ import { execFileSync } from "node:child_process";
+@@ -13,3 +14,2 @@ import type { RetainStamp } from "./retain-stamp";
+ import { pool } from "./util";
+-import { uuidV5 } from "./uuid";
+ 
+@@ -18,4 +18,2 @@ const RS = "\x1e"; // record separator between commits in gitLogText
+ const GITLOG_HEAD = "gitlog-head:"; // tag naming the commit the git-log document was written at
+-const GITLOG_FORMAT = `--format=%h${US}%ad${US}%an${US}%s${US}%b${RS}`;
+-const GITLOG_DIVIDER = "\n\n---\n\n"; // between two commit records in the git-log document
+ 
+@@ -180,6 +178,2 @@ export async function ingestGit(
+  * every commit used to.
+- *
+- * This text is now what a FULL write sends — the first seed, or a history the stored document no
+- * longer describes. Keeping an existing document current appends only the new commits instead
+- * (see appendGitLog), so neither the window's steps nor a merged branch rewrites what is stored.
+  */
+@@ -199,3 +193,3 @@ export function gitLogText(repo: string, limit: number): string {
+       "--date=short",
+-      GITLOG_FORMAT
++      `--format=%h${US}%ad${US}%an${US}%s${US}%b${RS}`
+     );
+@@ -204,8 +198,2 @@ export function gitLogText(repo: string, limit: number): string {
+   }
+-  return gitLogRecords(raw).join(GITLOG_DIVIDER);
+-}
+-
+-/** `git log --format=GITLOG_FORMAT` output as one "<shortsha> <date> <author>\n<message>" record
+- *  per commit, in the order git printed them. */
+-function gitLogRecords(raw: string): string[] {
+   return raw
+@@ -219,34 +207,4 @@ function gitLogRecords(raw: string): string[] {
+       return `${header}\n${msg}`;
+-    });
+-}
+-
+-/**
+- * The records of the non-merge commits reachable from `head` but not from `baseSha`, OLDEST first —
+- * exactly what the git-log document written at `baseSha` lacks, in the order they belong at its
+- * end. Null when `baseSha` is not a full object name or not an ancestor of `head` (a rebase, a
+- * force-push, a branch that diverged from the last writer): there the document holds commits
+- * `head` does not, and only a full re-send describes its history.
+- */
+-function gitLogRecordsSince(repo: string, baseSha: string, head: string): string[] | null {
+-  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(baseSha)) return null;
+-  try {
+-    git(repo, "merge-base", "--is-ancestor", baseSha, head);
+-  } catch {
+-    return null; // exit 1 = not an ancestor; anything else (unknown object) is no better
+-  }
+-  try {
+-    return gitLogRecords(
+-      git(
+-        repo,
+-        "log",
+-        "--no-merges",
+-        "--reverse",
+-        "--date=short",
+-        GITLOG_FORMAT,
+-        `${baseSha}..${head}`
+-      )
+-    );
+-  } catch {
+-    return null;
+-  }
++    })
++    .join("\n\n---\n\n");
+ }
+@@ -268,52 +226,2 @@ export function gitLogNewestAuthorDate(repo: string): string | null {
+ 
+-type GitLogOpts = { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp };
+-
+-/**
+- * Write `content` to the repository's canonical git-log document — a replace, or with `append` an
+- * append onto the stored body. Both paths go through here so the document's tags, context and
+- * timestamp never depend on which one wrote last.
+- */
+-async function retainGitLog(
+-  client: HindsightClient,
+-  repo: string,
+-  content: string,
+-  opts: GitLogOpts,
+-  head: string | null,
+-  append?: { operationId: string }
+-): Promise<void> {
+-  const repoName = repoNameOf(repo);
+-  // The gitlog-head:<sha> tag records the commit this document is written at: the deepen engine
+-  // writes it again only when HEAD has moved past that commit (see gitLogIsCurrent), and an
+-  // append starts from it (see appendGitLog). An append REPLACES the document's tags with these,
+-  // so the tag always names the newest commit the stored body holds — which is why the caller
+-  // passes the HEAD it built `content` from rather than this reading HEAD again.
+-  const stamp = opts.stampFor?.();
+-  const tags = [
+-    ...new Set([
+-      ...(stamp?.tags ?? []),
+-      "source:git",
+-      "source:git-log",
+-      ...(head ? [`${GITLOG_HEAD}${head}`] : []),
+-    ]),
+-  ];
+-  await client.retain(
+-    content,
+-    // No commit count: an append makes the document longer than any count a replace wrote.
+-    `git commit-message history for ${repoName}`,
+-    `gitlog:${repoName}`,
+-    tags,
+-    "gitlog",
+-    {
+-      // Anchor the document in time on the newest commit it contains, so extraction can date the
+-      // facts it pulls out of these messages. Previously no timestamp was passed at all: retain
+-      // then stamped "now", the extraction prompt got `Event Date: Unknown`, and every fact landed
+-      // with a null occurred_start/occurred_end — invisible to temporal search (#3602).
+-      timestamp: gitLogNewestAuthorDate(repo) ?? undefined,
+-      // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
+-      metadata: Object.keys(stamp?.metadata ?? {}).length ? stamp?.metadata : undefined,
+-      ...(append ? { updateMode: "append" as const, operationId: append.operationId } : {}),
+-    }
+-  );
+-}
+-
+ /**
+@@ -328,7 +236,6 @@ export async function ingestGitLog(
    repo: string,
--  opts: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp } = { limit: 300 }
+-  opts: GitLogOpts = { limit: 300 }
 +  opts?: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp }
  ): Promise<number> {
 -  const log = opts.log ?? (() => {});
+-  const head = gitHeadSha(repo);
 -  const text = gitLogText(repo, opts.limit);
 +  const log = opts?.log ?? (() => {});
 +  const text = gitLogText(repo, opts?.limit ?? 300);
    if (!text) {
-@@ -251,3 +251,3 @@ export async function ingestGitLog(
-     const head = gitHeadSha(repo);
--    const stamp = opts.stampFor?.();
+@@ -338,6 +245,34 @@ export async function ingestGitLog(
+   const repoName = repoNameOf(repo);
+-  const n = text.split(GITLOG_DIVIDER).length;
++  const n = text.split("\n\n---\n\n").length;
+   log(`[gitlog] ingesting last ${n} commit messages for ${repoName} as ONE document …`);
+   try {
+-    await retainGitLog(client, repo, text, opts, head);
++    // The gitlog-head:<sha> tag records the commit this document is written at: the deepen engine
++    // re-upserts it (same id — replaces, never duplicates) only when HEAD has moved past that
++    // commit (see gitLogIsCurrent).
++    const head = gitHeadSha(repo);
 +    const stamp = opts?.stampFor?.();
-     const tags = [
++    const tags = [
++      ...new Set([
++        ...(stamp?.tags ?? []),
++        "source:git",
++        "source:git-log",
++        ...(head ? [`${GITLOG_HEAD}${head}`] : []),
++      ]),
++    ];
++    await client.retain(
++      text,
++      `git commit-message history (last ${n}) for ${repoName}`,
++      `gitlog:${repoName}`,
++      tags,
++      "gitlog",
++      {
++        // Anchor the document in time on the newest commit it contains, so extraction can date the
++        // facts it pulls out of these messages. Previously no timestamp was passed at all: retain
++        // then stamped "now", the extraction prompt got `Event Date: Unknown`, and every fact landed
++        // with a null occurred_start/occurred_end — invisible to temporal search (#3602).
++        timestamp: gitLogNewestAuthorDate(repo) ?? undefined,
++        // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
++        metadata: Object.keys(stamp?.metadata ?? {}).length ? stamp?.metadata : undefined,
++      }
++    );
+     log(`[gitlog] done: ${n} commit messages ingested as 1 document under strategy 'gitlog'`);
+@@ -345,54 +280,4 @@ export async function ingestGitLog(
+   } catch (e) {
+-    log(`  ! gitlog ingest failed: ${(e as Error).message?.slice(0, 120)}`);
+-    return 1;
+-  }
+-}
+-
+-/**
+- * Bring the git-log document up to HEAD by APPENDING only the commits it lacks, oldest first.
+- *
+- * A replace re-sends the whole log for every new commit. The server's delta retain keeps a stored
+- * chunk only when the text before it is unchanged, so whatever moves the text — a commit merged
+- * into the middle of the date order, the window's start advancing — makes it re-extract the whole
+- * log, every time. An append cannot move what is stored: the new records land after it, and only
+- * they are extracted.
+- *
+- * Returns null when an append cannot describe HEAD, and the caller replaces instead: no document
+- * or no gitlog-head tag (first seed), a recorded commit that is not an ancestor of HEAD (a rebase,
+- * a force-push, a diverged worktree), more new commits than the seed `limit` (a replace bounded by
+- * the limit is smaller), or a server that cannot append safely (no `operation_id` dedupe, or a bank
+- * that does not store document text — see HindsightClient.supportsAppendRetain).
+- */
+-async function appendGitLog(
+-  client: HindsightClient,
+-  repo: string,
+-  opts: GitLogOpts,
+-  head: string
+-): Promise<number | null> {
+-  const log = opts.log ?? (() => {});
+-  const canonical = `gitlog:${repoNameOf(repo)}`;
+-  const tags = await client.documentTags?.(canonical).catch(() => undefined);
+-  const base = tags?.find((t) => t.startsWith(GITLOG_HEAD))?.slice(GITLOG_HEAD.length);
+-  if (!base) return null;
+-  const records = gitLogRecordsSince(repo, base, head);
+-  if (records === null || records.length > opts.limit) return null;
+-  if (!records.length) {
+-    // Only merge commits since the recorded one: the log has nothing to add.
+-    log("[gitlog] no new non-merge commits — skipping");
+-    return 0;
+-  }
+-  const appendable = await client.supportsAppendRetain?.().catch(() => false);
+-  if (!appendable) return null;
+-  // The server joins an append onto the stored body with one "\n"; the leading divider makes the
+-  // join the same divider that separates every other pair of records.
+-  const content = GITLOG_DIVIDER.slice(1) + records.join(GITLOG_DIVIDER);
+-  // Same base + same new commits = same operation, so a re-submitted append is collapsed into the
+-  // first one server-side rather than applied twice.
+-  const operationId = uuidV5(`${client.bank}\n${canonical}\nappend\n${base}\n${content}`);
+-  log(`[gitlog] appending ${records.length} new commit message(s) to ${canonical} …`);
+-  try {
+-    await retainGitLog(client, repo, content, opts, head, { operationId });
+-    return 0;
+-  } catch (e) {
+-    log(`  ! gitlog append failed: ${(e as Error).message?.slice(0, 120)}`);
++    if (e instanceof AccessDeniedError) throw e;
++    log("  ! gitlog ingest failed");
+     return 1;
+@@ -431,4 +316,3 @@ export async function gitLogIsCurrent(
+ /**
+- * Ensure this repository's canonical aggregated git-log document is current: append the commits
+- * it lacks when it was written at an ancestor of HEAD (appendGitLog), replace it otherwise.
++ * Ensure this repository's canonical aggregated git-log document is current.
+  *
+@@ -442,3 +326,3 @@ export async function syncGitLog(
+   repo: string,
+-  opts: GitLogOpts
++  opts: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp }
+ ): Promise<number> {
+@@ -446,3 +330,6 @@ export async function syncGitLog(
+   const head = gitHeadSha(repo);
+-  const current = head !== null && (await gitLogIsCurrent(client, repo, head).catch(() => false));
++  const current = head !== null && (await gitLogIsCurrent(client, repo, head).catch((error: unknown) => {
++    if (error instanceof AccessDeniedError) throw error;
++    return false;
++  }));
+   if (current) {
+@@ -451,5 +338,3 @@ export async function syncGitLog(
+   }
+-  return (
+-    (head ? await appendGitLog(client, repo, opts, head) : null) ?? ingestGitLog(client, repo, opts)
+-  );
++  return ingestGitLog(client, repo, opts);
+ }
 diff --git a/src/core/hindsight.pages.test.ts b/src/core/hindsight.pages.test.ts
 index 823d7d6..c061b5e 100644
 --- a/src/core/hindsight.pages.test.ts
@@ -10608,10 +10923,10 @@ index 0507e5e..b985ad1 100644
      stamp: buildRetainStamp(cfg, {
 diff --git a/src/core/router-client.test.ts b/src/core/router-client.test.ts
 new file mode 100644
-index 0000000..77326cf
+index 0000000..2b3463b
 --- /dev/null
 +++ b/src/core/router-client.test.ts
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,542 @@
 +import { execFileSync } from "node:child_process";
 +import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 +import { buildSessionStartContext } from "./session-start";
@@ -10624,6 +10939,7 @@ index 0000000..77326cf
 +import { ensureDaemon } from "./daemon";
 +import { applyBankConfig, loadConfig, resolveConfig } from "./config";
 +import { HindsightClient } from "./hindsight";
++import { repoNameOf, syncGitLog } from "./git";
 +
 +let directory: string;
 +let configPath: string;
@@ -11105,6 +11421,53 @@ index 0000000..77326cf
 +  }));
 +  await expect(client().activeOperations()).rejects.toMatchObject({ statusCode: 429, retryAfterMs: 60_000 });
 +  expect(send).toHaveBeenCalledOnce();
++});
++
++function gitLogBaseline(): { id: string; tags: string[] } {
++  const git = (...args: string[]): string => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim();
++  git("init", "-q");
++  git("config", "user.name", "Test User");
++  git("config", "user.email", "test@example.com");
++  git("commit", "-q", "--allow-empty", "-m", "initial history");
++  const base: string = git("rev-parse", "HEAD");
++  git("commit", "-q", "--allow-empty", "-m", "new history");
++  return { id: `gitlog:${repoNameOf(directory)}`, tags: [`gitlog-head:${base}`] };
++}
++
++it("sends complete git history through the guarded router without append", async () => {
++  const document = gitLogBaseline();
++  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
++    const parsed = new URL(String(url));
++    if (parsed.pathname.endsWith("/version")) return Response.json({ api_version: "1.1.0" });
++    if (parsed.pathname.endsWith("/config")) return Response.json({ config: { store_document_text: true } });
++    if (parsed.pathname.endsWith("/documents")) return Response.json({ items: parsed.searchParams.has("q") ? [document] : [], total: 1 });
++    return Response.json({ operation_id: "accepted" });
++  });
++  const c = client();
++  await expect(syncGitLog(c, directory, { limit: 10 })).resolves.toBe(0);
++  await expect(syncGitLog(c, directory, { limit: 10 })).resolves.toBe(0);
++  const writes = send.mock.calls.filter(([, init]) => init?.method === "POST");
++  expect(writes).toHaveLength(2);
++  const bodies = writes.map(([, init]) => JSON.parse(String(init?.body)) as { operation_id: string; items: { content: string; update_mode: string; document_id: string }[] });
++  expect(bodies.every((body) => body.operation_id === undefined)).toBe(true);
++  expect(bodies[0].items[0].document_id).toBe(document.id);
++  expect(bodies.every((body) => body.items[0].update_mode === undefined)).toBe(true);
++  expect(bodies[0].items[0].content).toContain("new history");
++  expect(bodies[0].items[0].content).toContain("initial history");
++  for (const [url, init] of send.mock.calls) {
++    expect(String(url)).toMatch(/^https:\/\/router\.test\//);
++    expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${credential}`);
++    expect(new Headers(init?.headers).get("x-memory-router-agent")).toBe("codex");
++    expect(init?.redirect).toBe("error");
++  }
++});
++
++it.each([401, 403])("stops git-log synchronization after denied freshness probe %s", async (status) => {
++  gitLogBaseline();
++  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("SECRET_BODY", { status }));
++  await expect(syncGitLog(client(), directory, { limit: 10 })).rejects.toThrow(AccessDeniedError);
++  expect(send).toHaveBeenCalledOnce();
++  expect(send.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
 +});
 diff --git a/src/core/router-survey.test.ts b/src/core/router-survey.test.ts
 new file mode 100644
@@ -18263,10 +18626,10 @@ index 9b72278..f954d3a 100644
 +  ]
  }
 diff --git a/vitest.config.ts b/vitest.config.ts
-index 68a1104..134362d 100644
+index 68a1104..066e593 100644
 --- a/vitest.config.ts
 +++ b/vitest.config.ts
-@@ -1,20 +1,34 @@
+@@ -1,20 +1,35 @@
  import { defineConfig } from "vitest/config";
 -import { tmpdir } from "node:os";
 -import { join } from "node:path";
@@ -18292,6 +18655,7 @@ index 68a1104..134362d 100644
 +      "src/core/runtime-lifecycle.test.ts",
 +      "src/core/status.test.ts",
 +      "src/core/seed.test.ts",
++      "src/core/git.gitlog.test.ts",
 +      "src/core/runtime.test.ts",
 +      "src/core/hook.test.ts",
 +      "src/core/session-cache.test.ts",
