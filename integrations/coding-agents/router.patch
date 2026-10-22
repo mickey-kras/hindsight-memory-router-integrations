@@ -1653,7 +1653,7 @@ diff --git a/package-lock.json b/npm-shrinkwrap.json
 similarity index 82%
 rename from package-lock.json
 rename to npm-shrinkwrap.json
-index db7c1f9..79d35e7 100644
+index db7c1f9..0d6eb5e 100644
 --- a/package-lock.json
 +++ b/npm-shrinkwrap.json
 @@ -1,4 +1,4 @@
@@ -1661,14 +1661,14 @@ index db7c1f9..79d35e7 100644
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.8.2",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.6",
++  "version": "0.8.7",
    "lockfileVersion": 3,
 @@ -7,4 +7,11 @@
      "": {
 -      "name": "@vectorize-io/hindsight-coding-agents",
 -      "version": "0.8.2",
 +      "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+      "version": "0.8.6",
++      "version": "0.8.7",
 +      "dependencies": {
 +        "@modelcontextprotocol/sdk": "^1.32.1",
 +        "@napi-rs/keyring": "2.1.1",
@@ -4014,9 +4014,15 @@ index db7c1f9..79d35e7 100644
        "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
 -      "dev": true,
        "license": "ISC"
-@@ -5006,3 +4581,2 @@
-       "integrity": "sha512-7H/2gFSIitxc0hG3nOI1glS8QLo/EHBFFLk8vEUjXY/xu0AdL8jZ9U1IzO2PUm0d2D/ofQcAifb0g6OBkt8U7w==",
+@@ -5003,6 +4578,5 @@
+     "node_modules/ip-address": {
+-      "version": "10.7.2",
+-      "resolved": "https://registry.npmjs.org/ip-address/-/ip-address-10.7.2.tgz",
+-      "integrity": "sha512-7H/2gFSIitxc0hG3nOI1glS8QLo/EHBFFLk8vEUjXY/xu0AdL8jZ9U1IzO2PUm0d2D/ofQcAifb0g6OBkt8U7w==",
 -      "dev": true,
++      "version": "10.7.4",
++      "resolved": "https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz",
++      "integrity": "sha512-DWBMKyeM25D70nrIiTkgQth59/G+naKOTep6huF9j+GmeK3DMD60Zvxg5d5qQnz+38AHgou6ean2LECX+lrKDg==",
        "license": "MIT",
 @@ -5016,3 +4590,2 @@
        "integrity": "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==",
@@ -5555,7 +5561,7 @@ index db7c1f9..79d35e7 100644
 -      "dev": true,
        "license": "ISC",
 diff --git a/package.json b/package.json
-index 93436a9..1a1e5f7 100644
+index 93436a9..ee18250 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,8 +1,8 @@
@@ -5563,7 +5569,7 @@ index 93436a9..1a1e5f7 100644
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.8.2",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.6",
++  "version": "0.8.7",
    "repository": {
      "type": "git",
 -    "url": "https://github.com/vectorize-io/hindsight.git",
