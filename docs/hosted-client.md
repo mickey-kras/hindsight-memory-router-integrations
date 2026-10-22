@@ -1,5 +1,11 @@
 # Hosted application client
 
+Install the OpenClaw package version recorded in the selected release manifest:
+
+```sh
+npm install --save-exact @mickey-kras/hindsight-memory-router-openclaw@<package-version>
+```
+
 Hosted applications that own their process can import the shared HTTP client:
 
 ```ts

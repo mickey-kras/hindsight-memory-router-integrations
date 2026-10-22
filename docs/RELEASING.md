@@ -72,7 +72,11 @@ tarballs from the release commit, verifies them against `PACKAGE_SHA256`, and
 attaches the tarballs, `PACKAGE_SHA256`, and `PACKAGE_NIX_HASHES` to GitHub.
 Package attestations retain the authenticated workflow's main ref/SHA and record
 the validated candidate ref/SHA as an additional source dependency.
-There is no integrations Docker image or npm publication.
+The same verified archives are published to public npm with OIDC and npm provenance
+before next-version preparation and candidate cleanup. There is no integrations Docker image.
+An identical existing npm version is accepted only when its SHA-512 integrity and
+provenance metadata match; mismatches fail. Older package releases use a
+`release-X.Y.Z` npm tag without moving `latest` backwards.
 `latest` means the highest successfully released repository version; an older-line fix
 cannot move it backwards. The compatibility combination is authoritative in the
 integrations manifest, even when a newer router is available separately.
@@ -130,9 +134,30 @@ basis instead:
 10. Run main normally, release router, then release integrations. Verify the published
     manifest and that both registries' `latest` aliases resolve to the router release digest.
 
+## One-time npm setup
+
+For both `@mickey-kras/hindsight-memory-router-openclaw` and
+`@mickey-kras/hindsight-memory-router-coding-agents`, configure a GitHub Actions
+trusted publisher in npm package settings:
+
+| Field | Value |
+| --- | --- |
+| Organization or user | `mickey-kras` |
+| Repository | `hindsight-memory-router-integrations` |
+| Workflow filename | `release.yml` |
+| Environment | `release-automation` |
+| Allowed action | `npm publish` |
+
+Use the calling workflow filename (`release.yml`), not reusable `main.yml`.
+No npm token is stored in GitHub. Package ownership and initial package setup must
+be completed by the npm owner before releasing. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+Verify both exact versions install from public npm and display provenance before
+considering registry activation complete.
+
 ## Recovery
 
 - **Checks, upload, attestation, or follow-up failed:** use **Re-run failed jobs** on the original release run. The frozen candidate and tested tarballs are retained for 30 days. Existing tags and release assets must match the original bytes.
+- **npm publication failed:** the GitHub release may already be public. Rerun failed jobs on the original run; identical npm versions are verified and skipped, missing versions are published. Candidate cleanup and next-version preparation wait for both packages. Never replace an existing mismatched version.
 - **Cancelled:** use **Re-run all jobs** on that run. Cancellation does not delete the candidate or open failure issues.
 - **Preparation response was lost:** rerun the original run. It finds the candidate by its manifest and resumes without reserving another version or refreshing pins.
 - **Repeated dispatch from the same main snapshot:** automation requests a native retry of the original failed run or links to an active/successful run. It does not create a second publisher.
