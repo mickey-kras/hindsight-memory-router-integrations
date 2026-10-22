@@ -287,7 +287,7 @@ jobs:
         if: ${{ !cancelled() }}
       - name: Upload Trivy SARIF
         if: ${{ !cancelled() && steps.revalidated.outputs.upload == 'true' }}
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee
         with:
           checkout_path: ${{ runner.temp }}/scan
           sarif_file: ${{ runner.temp }}/reports/trivy.sarif
