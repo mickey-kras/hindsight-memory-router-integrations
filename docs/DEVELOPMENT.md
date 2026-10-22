@@ -2,7 +2,9 @@
 
 [Documentation](README.md) | [Repository](../README.md)
 
-Requires Node.js 22.12.0 or later. From the repository root:
+Use Node.js 22.23.3 and npm 11.19.1, matching CI, for development and builds.
+The coding-agent build tool requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`;
+installed packages continue to support Node.js 22.12.0 or later. From the repository root:
 
 ```sh
 npm ci
