@@ -1,16 +1,16 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-openclaw",
-  "version": "0.14.4",
+  "version": "0.14.5",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@mickey-kras/hindsight-memory-router-openclaw",
-      "version": "0.14.4",
+      "version": "0.14.5",
       "license": "MIT",
       "dependencies": {
         "@vectorize-io/hindsight-agent-sdk": "0.1.1",
-        "@vectorize-io/hindsight-client": "1.0.0",
+        "@vectorize-io/hindsight-client": "1.1.0",
         "fs-native-extensions": "^1.5.1"
       },
       "devDependencies": {
@@ -2057,9 +2057,9 @@
       }
     },
     "node_modules/@vectorize-io/hindsight-client": {
-      "version": "1.0.0",
-      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-1.0.0.tgz",
-      "integrity": "sha512-QQIainWu2jN9z65GuNitQxRos8Lg7o3RwBv/w+PRaJWcwvhBE0PtPtF7xL3NqTLARccqpDYB11aaa7Iklu2goA==",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@vectorize-io/hindsight-client/-/hindsight-client-1.1.0.tgz",
+      "integrity": "sha512-Tqx7SKEbKZnf9L1tnla3vIDNt83eKFCneHe8GsSQJbmAn0rY8U13fT9Jg5ZP8G/phns5Fk5tZWmagaUlVTzpCA==",
       "license": "MIT"
     },
     "node_modules/@vitest/coverage-v8": {

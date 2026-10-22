@@ -1,6 +1,6 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "repository": {
     "type": "git",
     "url": "https://github.com/mickey-kras/hindsight-memory-router-integrations.git",
@@ -116,7 +116,7 @@
     },
     "esbuild": ">=0.25.0 <1.0.0",
     "fast-uri": ">=3.1.6 <4.0.0",
-    "hono": ">=4.13.7 <5.0.0",
+    "hono": ">=4.13.11 <5.0.0",
     "http-cache-semantics": "4.3.0",
     "ip-address": ">=10.5.1 <11.0.0",
     "postcss": ">=8.5.23 <9.0.0",

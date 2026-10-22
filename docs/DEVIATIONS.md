@@ -17,7 +17,7 @@ Base: `vectorize-io/hindsight` OpenClaw integration `v1.0.0`.
 
 Reused source: `src/upstream/src/{retain-queue,session-patterns,types}.ts`.
 
-OpenClaw direct production dependencies: `@vectorize-io/hindsight-agent-sdk@0.1.1`, `@vectorize-io/hindsight-client@1.0.0` and `fs-native-extensions@^1.5.1`. The client package supplies types required by the exported TypeScript declarations, including `MinScores`.
+OpenClaw direct production dependencies: `@vectorize-io/hindsight-agent-sdk@0.1.1`, `@vectorize-io/hindsight-client@1.1.0` and `fs-native-extensions@^1.5.1`. The client package supplies types required by the exported TypeScript declarations, including `MinScores`.
 
 Dependency declarations and exact resolved versions are authoritative in each package's `package.json` and `npm-shrinkwrap.json`. See the [dependency inventory](DEVELOPMENT.md#dependency-inventory).
 

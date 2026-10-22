@@ -1,7 +1,7 @@
 1ded85ec591b37c7969939e9ac0223a47d53764f2b13c7f84368114373b0387c  ./.gitignore
 546b37a3ab7fbd236ff769765a2a9012713280c9a73ddbba65490fe1dadf194b  ./README.md
 e847f8cd5b53f3cfe121c8e59711ccf7d2e075c9fd88086a7926ef95a54e0490  ./openclaw.plugin.json
-f9706b55c95ad382b508f2ce3c4e4182a5cf9cc57c3be12a3c8d7b653e5dcce8  ./package-lock.json
+feb5b34ff0c08d3d2b49829d0ced44934bcc4edd33a949d1f0300b74f5edf93a  ./package-lock.json
 9b43d33c7e67ac7f4a6e573a682a0f258928ada66b659bf0afcd5c8be3e37112  ./package.json
 5149f2b55e3c86ebab03768969fdb2dd23f7bfda4e885190197a15ce81d2cffb  ./scripts/doctor-check-selftest.sh
 cf81bc0d6321dec7a86bf663bf039223532f8e9ccf261e2556ca2e447cb6e84f  ./scripts/pack-manifest.mjs
