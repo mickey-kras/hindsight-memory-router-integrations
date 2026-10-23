@@ -163,6 +163,46 @@ class AdmissionTests(unittest.TestCase):
         self.reviews.append({**self.reviews[0], 'id': 3, 'state': 'DISMISSED'})
         self.assertFalse(self.approved())
 
+    def test_npm_publisher_sources_require_exact_head_owner_admission(self):
+        for path in (
+            '.github/scripts/publish-npm.cjs',
+            '.github/trusted-ci/publish-npm.test.cjs',
+            '.github/scripts/verify-package-inventory.cjs',
+            '.github/scripts/coding-dependency-patch.cjs',
+            '.github/scripts/dependency-files.cjs',
+        ):
+            original = (ROOT / path).read_text()
+            for mutation in ('unchanged', 'unapproved', 'stale', 'dismissed', 'approved', 'removed', 'renamed'):
+                self.guard.failures.clear()
+                self.reviews = [{'id': 1, 'user': {'id': 24433677, 'login': 'mickey-kras', 'type': 'User'},
+                                 'state': 'DISMISSED' if mutation == 'dismissed' else 'APPROVED',
+                                 'commit_id': ('c' if mutation == 'stale' else 'a') * 40}]
+                content = original if mutation == 'unchanged' else original + '\nthrow new Error("unreviewed publisher change");\n'
+                entry = {'filename': path, 'status': 'modified'}
+                if mutation == 'removed':
+                    entry['status'] = 'removed'
+                elif mutation == 'renamed':
+                    entry = {'filename': path + '.moved', 'previous_filename': path, 'status': 'renamed'}
+                with self.subTest(path=path, mutation=mutation):
+                    admitted = mutation not in ('unchanged', 'unapproved') and self.approved()
+                    with patch.dict('os.environ', {'GUARD_FIXTURE_DIR': 'test'}), patch.object(
+                        self.guard, 'base_file', return_value=original
+                    ), patch.object(
+                        self.guard, 'resolve_pr_context', return_value=('a' * 40, 'OWNER', 'mickey-kras')
+                    ), patch.object(self.guard, 'owner_approved', return_value=admitted), patch.object(
+                        self.guard, 'load_files', return_value=[entry]
+                    ), patch.object(self.guard, 'fetch_file', return_value=content), patch('builtins.print'):
+                        if mutation in ('unchanged', 'approved'):
+                            self.guard.main()
+                            self.assertEqual(self.guard.failures, [])
+                            continue
+                        with self.assertRaises(SystemExit):
+                            self.guard.main()
+                    removal = mutation in ('removed', 'renamed')
+                    reason = 'must not be removed or renamed' if removal else 'require independent exact-head owner approval'
+                    self.assertIn(path + ':', '\n'.join(self.guard.failures))
+                    self.assertIn(reason, '\n'.join(self.guard.failures))
+
     def test_wrong_head_self_approval_and_missing_rules_fail(self):
         self.reviews[0]['commit_id'] = 'c' * 40
         self.assertFalse(self.approved())
