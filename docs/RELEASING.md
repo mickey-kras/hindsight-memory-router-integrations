@@ -54,7 +54,7 @@ An upstream Hindsight upgrade does not dictate any part's version number.
 
 Main resolves the latest stable Hindsight release to a concrete version, commit and
 image digest. Router compatibility checks and smoke tests share that resolution. Preparation resolves again and freezes the result in `compat/hindsight.json` and
-`release.json`. A release run never look up a newer upstream version.
+`release.json`. The release runs never look up a newer upstream version.
 
 Source-drift failures still need review. Preparation does not accept new hashes.
 
