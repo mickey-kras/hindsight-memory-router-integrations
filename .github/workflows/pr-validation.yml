@@ -7,14 +7,24 @@ concurrency:
   group: pr-validation-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.number }}
   cancel-in-progress: true
 jobs:
+  docs-ste:
+    uses: ./.github/workflows/docs-ste.yml
+    permissions:
+      contents: read
   guard:
     name: guard
+    needs: [docs-ste]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     steps:
+      - name: Require documentation checks
+        env:
+          DOCS_STE: ${{ needs.docs-ste.result }}
+        run: test "$DOCS_STE" = success
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
         with:
           egress-policy: audit
@@ -94,3 +104,4 @@ jobs:
       expected_head:
         description: Prepared Dependabot commit
         required: true
+

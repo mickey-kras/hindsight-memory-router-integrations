@@ -1,64 +1,65 @@
 ---
 name: hindsight-coding-agent
-description: How this machine's Hindsight coding-agent memory works — the plugin behind the 🧠 banner. Use when the user says "store/remember this in hindsight", asks what the memory/knowledge pages are, needs managed project memory setup or troubleshooting, or something memory-related looks broken.
+description: Use this skill for the managed Hindsight coding-agent memory behind the 🧠 banner. Use it to store memories, explain knowledge pages, configure project memory, or investigate memory failures.
 ---
 
 # Hindsight Coding-Agent Memory
 
-This machine runs the managed Memory Router coding-agent integration. All memory requests go
-through the operator-provisioned HTTPS router and its per-principal bank grants. The router
-applies scanning, quarantine and quotas. A client setting cannot grant access.
+This machine uses the managed Memory Router coding-agent integration.
+All memory requests use the operator-provisioned HTTPS router and its per-principal bank grants.
+The router applies scanning, quarantine and quotas. A client setting cannot grant access.
 
 ## Automatic lifecycle
 
-- The operator maps this project and harness to an explicit bank. Worktrees use their configured
-  project mapping; no bank is created or selected from a repository name.
-- For writable principals, session-start hooks can seed and update memory from recent commits
-  and a read-only codebase survey, and refresh coding knowledge pages. There is no manual ingest
-  command needed for this background work. The operator provisions bank configuration and the
-  coding missions/strategies before ingestion.
-- Session-start and prompt hooks inject memory according to `autoInject`: `reflect`, `pages`,
-  `recall`, or `none`. Follow the injected retrieval guide when no memory is injected.
-- Writable sessions retain their transcripts automatically at session end; persistent harnesses
-  also retain during the session. Read-only principals skip ingestion and write-back, and their
-  write tools are unavailable. Respect `disabled` and `retainSessions` settings.
-- Use the tool names exposed by this harness. Examples below show the default `hindsight_`
-  namespace; the installed skill and guidance use the operator's configured namespace.
+- The operator maps this project and harness to an explicit bank.
+  Worktrees use their configured project mapping. The integration does not create or select a bank from a repository name.
+- For writable principals, session-start hooks can seed and update memory from recent commits and a read-only codebase survey.
+  These hooks can also refresh coding knowledge pages. This background work does not need a manual ingest command.
+  The operator configures banks and coding missions and strategies before ingestion.
+- Session-start and prompt hooks inject memory according to `autoInject`: `reflect`, `pages`, `recall`, or `none`.
+  If hooks inject no memory, follow the injected retrieval guide.
+- Writable sessions retain their transcripts automatically at session end.
+  Persistent harnesses also retain transcripts during the session.
+  Read-only principals skip ingestion and write-back. Their write tools are unavailable.
+  Obey the `disabled` and `retainSessions` settings.
+- Use the tool names that this harness exposes.
+  The examples below use the default `hindsight_` namespace.
+  The installed skill and guidance use the operator's configured namespace.
 
-## Storing things deliberately
+## Store information
 
-When the user says "store this in hindsight" / "remember this":
+When the user says "store this in hindsight" or "remember this", use these rules:
 
-- With writable access and session retention enabled, the **current conversation** is captured
-  automatically at session end — say so; no tool needed.
-- An **external document, notes, or durable findings** → `hindsight_ingest_document(title, content)`.
-- A **new feature/initiative being started** → `hindsight_capture_initiative(title, summary)`,
-  right after the plan is agreed and before code is written.
-- A **plan that materially changed** (goal, scope, or rationale — including mid-implementation) →
-  call `hindsight_capture_initiative` again with `relates_to_page_id` set to that initiative's page
-  id, summarising the _current_ intent. Same page, updated plan — never a second page. Trivial
-  course-corrections don't count.
+- With writable access and session retention, the integration captures the current conversation automatically at session end.
+  Tell the user. No tool call is necessary.
+- For external documents, notes, or durable findings, use `hindsight_ingest_document(title, content)`.
+- For a new feature or initiative, use `hindsight_capture_initiative(title, summary)` after agreement on the plan and before code changes.
+- If the goal, scope, or rationale changes materially, call `hindsight_capture_initiative` again.
+  This includes changes during implementation.
+  Set `relates_to_page_id` to the initiative's page ID. Describe the current intent.
+  Update the same page. Do not create a second page for the changed plan.
+  Small corrections do not need this update.
 
-## Retrieving
+## Retrieve information
 
-- `hindsight_search_knowledge_pages(query)` — FIRST STOP for project questions (components,
-  conventions, past decisions, initiatives). Server-side hybrid search, fast.
-- `hindsight_read_knowledge_page(page_id)` / `hindsight_list_knowledge_pages` — read pages fully.
-- `hindsight_reflect(query)` — deep reasoning over the whole memory for WHY questions and exact
-  decided values; slower (seconds), use deliberately.
-- Credit visibly whenever memory informs an answer: start that part with
-  `🧠 From Hindsight memory (<page>): …` — and never credit memory that didn't contribute.
+- For project questions, first use `hindsight_search_knowledge_pages(query)`.
+  Questions can concern components, conventions, past decisions, or initiatives.
+  This tool uses fast hybrid search on the server.
+- To read complete pages, use `hindsight_read_knowledge_page(page_id)` or `hindsight_list_knowledge_pages`.
+- For reasons and exact agreed values, use `hindsight_reflect(query)`.
+  This tool reasons over the complete memory. It is slower and takes seconds. Use it when necessary.
+- If memory contributes to an answer, start that part with `🧠 From Hindsight memory (<page>): …`.
+  Do not credit memory that did not contribute.
 
-## Correcting wrong or stale memory
+## Correct incorrect or stale memory
 
-If you verify that something Hindsight served is wrong or outdated (the code, git, or an external
-source contradicts it), FIX THE RECORD — don't just ignore it. Call
-`hindsight_ingest_document` with:
+If code, git, or an external source disproves retrieved memory or shows that it needs an update, correct the record.
+Do not only ignore it. Call `hindsight_ingest_document` with these fields:
 
-- **title**: `Correction: <topic>` (e.g. `Correction: retry policy 4xx set`)
-- **content**: (1) what memory claimed, (2) what is verifiably true now, (3) the evidence you
-  checked (file/commit/output). Quote exact values verbatim.
+- **title**: `Correction: <topic>` (for example, `Correction: retry policy 4xx set`).
+- **content**: State the memory's claim, the verified current fact, and the evidence from a file, commit, or output.
+  Quote exact values without changes.
 
-Include the evidence in the correction so future retrieval can resolve the conflict. With read-only
-access, report the verified correction for an authorized writer; do not attempt a write or change
-credentials.
+Include the evidence so that future retrieval can resolve the conflict.
+With read-only access, report the verified correction to an authorized writer.
+Do not try to write or change credentials.

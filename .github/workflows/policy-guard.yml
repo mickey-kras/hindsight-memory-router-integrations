@@ -914,6 +914,7 @@ jobs:
                   if not re.search(r'(?m)^\s*' + pattern, content):
                       fail(f'{path}: missing source safety contract: {contract}')
           AUTOMATION_SHAPES = {
+              '.github/workflows/docs-ste.yml': ('28c93b5213df65323768e136417909b78626406b480bb5dfca7d0fe4a1785f00',),
               '.github/workflows/trusted-codeql.yml': ('230f65f68125d5a4ae977e1e48b2ded28d8da8141422ef9188b56f38354e6365',),
               '.github/workflows/trusted-ci.yml': ('5cb1b4d5cf6320d48a69247884edf214791a54ab22af3a7f385a64ea0b300ed5',),
               '.github/workflows/trusted-aislop.yml': ('943fdcd4e062b54cfa904ca3812774ca4798a8eed92c35cb9c097e992af748b4',),
@@ -932,7 +933,7 @@ jobs:
               '.github/workflows/dependabot-auto-merge.yml': ('dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f',),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9',),
               '.github/workflows/pr-branch-updater.yml': ('380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
-              '.github/workflows/pr-validation.yml': ('36a2d2395c7a3d382eedd46dfe5e84b7ff5e628a98e700f5be8813005b0bf2cb',),
+              '.github/workflows/pr-validation.yml': '49667571a2b83f9abd464fe4405d8b9fa2fed7640db0acd1574e80adeb62364d',
               '.github/workflows/branch-policy.yml': ('ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
           }
           SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': ('cfe792bb08eb9006273d786fbb939fd6ba91a9292e030687bccdef3f2506b4b9','d40b1aae998d17a674818c8acc1a1929745d0132c1489740984b84e2a6aa292e'), '.github/workflows/codeql.yml': '84f29bf0578ccdbba6b0c623763b590c9678ca3711716121988722534cd94ff1'}
@@ -1176,11 +1177,15 @@ jobs:
 
 
           RELEASE_SOURCE_HASHES = {
+              '.github/scripts/docs-ste.test.py': '7cf4e434f2a3cd8f5968570e712c44ea50bf7d8300f90f7ebdc44bed9910c053',
+              '.ste.yml': '15f7ba5edd8c302b63642715020d62898623c098833d2fa4f200cbf7758f668c',
+              '.vale.ini': 'a065a9c5134a7c47c9b3a35f76a4945c7fc203358a1f4e211e530e11859703d0',
+              '.vale/styles/config/vocabularies/Project/accept.txt': '3b3aca4e207bf30940fa2e078dcacc4d8dca32ee0b31240360925653655c8768',
               '.github/scripts/ci-admission.test.py': 'f4b51bd2f4390abdb9986038bd63be9e8b146c26216a503fcb38485075bff37e',
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '44f39a8e5be7c00cef424ac3dfa703f9dacbb501c4bee9c5b8f90cb144e2bef2',
-              '.github/scripts/trusted-ci-activation.json': '9f9ada9aad9236ad71ed86bbfbc5cf22f15ad662c6e07e795754b455bc1a0b14',
+              '.github/scripts/trusted-ci-activation.json': '6d348a212316c7862b90e79fd09f1f6af0f479a3c97a3127b90112b88a6c6962',
               '.github/trusted-ci/.aislop/config.yml': '798f947468c6b556b14b802f650a3c4dda6a9302ed1238e13aa078e2380472eb',
               '.github/trusted-ci/findings.cjs': '8062166755f5eb47298efe5588ca2a91e0b8de06ef7d50fc05b311f640b11602',
               '.github/trusted-ci/npm-audit.cjs': 'f28a085b4a5b4b391dcc1e0e266cb756e107cf2e40f7f8af33c66ab22f6b6d4c',
@@ -1213,7 +1218,7 @@ jobs:
               '.github/scripts/release.cjs': 'a334be73f4e1ae13358e51504bb3826aa2a49100ff55fcd434af052186ea68c2',
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': '9c4679fd2e40b8170eeb6de6c9e14b62274a92596396928e13d52a7ffc75c1e5',
-              '.github/scripts/release-policy.test.py': 'c601910d09695c3f6d596f484572241ecf4ad408afbd4cd23008b9d14302ea5b',
+              '.github/scripts/release-policy.test.py': 'ba4a0334c787005a3378f1780909ee9a398f1240c881659c419f492bdb0cbe4b',
               '.github/scripts/release-cleanup.cjs': 'bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8',
               '.github/scripts/release-cleanup.test.cjs': '1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956',
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',

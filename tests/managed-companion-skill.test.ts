@@ -36,11 +36,12 @@ describe("managed router companion skill", () => {
     expect(skill).toContain("Session-start and prompt hooks");
     expect(skill).toContain("Correction:");
     expect(skill).not.toContain(`${prefix}list_banks`);
-    expect(skill).toContain("Ask the operator to verify assigned bank");
+    expect(skill).toContain("ask the operator to check assigned bank");
     expect(skill).not.toMatch(
       /npx|apiToken|apiUrl|HINDSIGHT_API|hindsight\.vectorize\.io|localhost:8888|cloud|daemon|--api-url|--api-token|--server/i,
     );
-    expect(skill).toContain("Do not ask the user to paste JSON or credentials, edit the managed JSON");
+    expect(skill).toContain("Do not ask the user to paste JSON or credentials.");
+    expect(skill).toContain("Do not edit the managed JSON");
     if (prefix === "team_") expect(skill).not.toMatch(/hindsight_(?:reflect|ingest_document|diagnose|sync_status)/);
   });
 });

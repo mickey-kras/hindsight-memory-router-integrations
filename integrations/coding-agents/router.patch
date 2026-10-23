@@ -1,60 +1,175 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..a1fc652
+index 0000000..14bef01
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,166 @@
 +# Router deviations
 +
-+- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream endpoint/token/dynamic-bank configuration.
-+- `optInOnly` is enforced from managed mappings. Normal config cannot rename banks or override identity/credentials.
-+- All HTTP requests use the shared bank/operation guard. Bank listing intersects router-visible banks with configured IDs.
-+- Recall/reflect fan out through the shared coordinator. Other reads remain explicitly bank-addressed.
-+- 401/403 are terminal; upstream credential retry is replaced by runtime environment resolution on each request.
-+- Optional human mode resolves a short-lived session from native OS secure storage on every request. Browser login uses the router's loopback OIDC/PKCE exchange; sign-out revokes and deletes the session. Persistent application credentials remain separate.
-+- Redirects and raw server error bodies are blocked. Automatic upstream replacement and installer token migration are disabled.
-+- Diagnostic and ordinary log files use an allowlist of timing, counts, booleans and bounded classifications at every verbosity. Prompts, answers, failure text, identifiers, paths, URLs and arbitrary progress messages are omitted; no content-debug mode is provided. Existing log files are not purged by an upgrade.
-+- Upstream transcript parsing, provenance tags, retain payloads, hooks and harness adapters remain the baseline, with deliberate routing, privacy, installer and reliability adaptations. This is not a claim of identical behavior; the changes and source hashes below define the maintained differences.
-+- Manual document ingestion uses the shared exact-title hash identity. Legacy IDs remain untouched; see the root README migration note.
-+- `src/core/inject.ts` rewords the reflect rendering rules to "commit, PR and issue ids": the upstream "commit/PR/issue" slash token trips the Memory Router encoded-payload request scan, which rejects the reflect query with 422 suspicious_content.
++- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream configuration for endpoints, tokens and dynamic banks.
++- Managed mappings enforce `optInOnly`. Normal configuration cannot rename banks or override identity or credentials.
++- All HTTP requests use the shared guard for banks and operations. Bank listing intersects router-visible banks with configured IDs.
++- Recall and reflect use the shared coordinator to read multiple banks. Other reads need an explicit bank address.
++- A 401/403 response is terminal. Runtime environment resolution on each request replaces upstream credential retry.
++- Optional human mode resolves a short-lived session from native OS secure storage on every request.
++  Browser login uses the router's loopback OIDC exchange with PKCE. Sign-out revokes and deletes the session.
++  Persistent application credentials remain separate.
++- The client blocks redirects and raw server error bodies. The integration disables automatic upstream replacement and installer token migration.
++- At every verbosity, diagnostic and ordinary log files contain only timing, counts, booleans and bounded classifications.
++  They omit prompts, answers, failure text, identifiers, paths, URLs and arbitrary progress messages.
++  There is no content-debug mode. An upgrade does not remove existing log files.
++- Upstream transcript parsing, provenance tags, retain payloads, hooks and harness adapters remain the baseline.
++  This fork changes routing, privacy, installation and reliability. It does not claim the same behavior.
++  The changes and source hashes below define the maintained differences.
++- Manual document ingestion uses the shared exact-title hash identity. Legacy IDs do not change. See the migration note in the root README.
++- `src/core/inject.ts` changes the reflect rendering rules to "commit, PR and issue ids".
++  The upstream token `commit/PR/issue` triggers the Memory Router encoded-payload request scan.
++  That scan rejects the reflect query with 422 suspicious_content.
 +
-+The source hashes in `UPSTREAM.json` describe the pristine snapshot. `LOCAL_CHANGES.json` pins adapted files.
-+The regression suite covers unchanged transcript/provenance code; root tests cover the changed security contracts.
-+Live harness and deployed Memory Router compatibility must be verified before rollout.
++The source hashes in `UPSTREAM.json` describe the original snapshot. `LOCAL_CHANGES.json` pins adapted files.
++The regression suite covers unchanged code for transcripts and provenance. Root tests cover the changed security contracts.
 +
-+Bank configuration is operator-managed (`manageBankConfig: false`). Provision coding missions/strategies before ingestion. Read-only principals disable automatic ingestion and write-back. Local usage can read existing host transcripts, but journal-only hosts capture prompts and replies only when session retention is enabled and the principal can write the resolved bank.
-+Session state uses per-user private directories (0700 on POSIX), regular files (0600), and exclusive atomic temporary files. Owned legacy directories are secured and migrated; symlinks, hard links, and foreign-owned paths are rejected.
-+Memory content is not reused from session caches; lifecycle flags remain cached. A denied application-token value remains blocked until it changes; human credentials require explicit login after expiry or denial.
++Before deployment, check compatibility with live harnesses and the deployed Memory Router.
 +
-+Reliability fixes use explicit sorting, global replacements, Node ANSI stripping, optional arguments, and non-empty installer regex matches. Transcript escape decoding retains UTF-16 surrogate behavior.
++The operator manages bank configuration (`manageBankConfig: false`). Before ingestion, configure coding missions and strategies.
++Read-only principals disable automatic ingestion and write-back. Local usage can read existing host transcripts.
 +
-+Dependencies are classified by their package declarations; bundling does not make declared runtime dependencies development-only. Direct runtime dependencies are `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml` and `zod`. Development dependencies are `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript` and `vitest`.
++Journal-only hosts capture prompts and replies only if session retention applies and the principal can write the resolved bank.
 +
-+The complete override inventory is `@opencode/plugin > @opentelemetry/core` (`>=2.8.0 <3.0.0`), `esbuild` (`>=0.25.0 <1.0.0`), `fast-uri` (`>=3.1.6 <4.0.0`), `hono` (`>=4.13.11 <5.0.0`), `http-cache-semantics` (`4.3.0`), `ip-address` (`>=10.5.1 <11.0.0`), `postcss` (`>=8.5.23 <9.0.0`) and `vite` (`>=6.4.3 <7.0.0`). These ranges constrain the dependency graph; exact resolved versions are in `npm-shrinkwrap.json`. Reassess compatibility and advisories when updating, rather than assuming these overrides are permanently required or sufficient.
++Session state uses per-user private directories (0700 on POSIX), regular files (0600), and exclusive atomic temporary files.
++The integration secures and migrates owned legacy directories. It rejects symlinks, hard links, and foreign-owned paths.
 +
-+Survey admission is scoped to the managed router URL, principal and bank. Tokens never enter lease keys; credential rotation keeps the same lease. Normal config cannot override the managed principal. No CodeQL suppression is used.
++It does not reuse memory content from session caches. Lifecycle flags remain cached.
++A denied application-token value remains blocked until it changes. Human credentials need explicit login after expiry or denial.
 +
-+Upstream baseline is coding-agents 0.8.2 at the shared v1.1.0 release commit. Downstream package versions remain independent. The managed README, generated companion skill and disabled daemon implementation remain router-owned: upstream endpoint setup, dynamic banks, local daemon and update instructions are unsupported. The package uses npm-shrinkwrap.json; upstream package-lock.json stays intentionally absent.
++Reliability fixes use explicit sorting, global replacements, Node ANSI stripping, optional arguments, and non-empty installer regex matches.
++Transcript escape decoding retains UTF-16 surrogate behavior.
 +
-+New upstream append capability, retry budgets, query bounds, page scoping and document freshness reads use the existing guarded client. Version probing accepts GET /v1/version and falls back to /version; authorization failures remain terminal. Router error bodies are redacted, so a 404 cannot latch page support off based on its upstream body.
++Package declarations classify dependencies. Bundling does not make declared runtime dependencies development-only.
++Direct runtime dependencies are `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml` and `zod`.
++Development dependencies are `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript` and `vitest`.
 +
-+Grok tool-hook context is stored privately and delivered only after managed credentials and the current project mapping are validated. Its handoff key includes endpoint, primary bank, the canonical physical path of the recorded session root, session, a hash of the actual effective principal and the complete managed read-bank scope. Moving into a subdirectory preserves the handoff only while both the live directory and recorded root remain authorized for the same bank and the live directory remains physically inside that root. Every bank that could contribute to aggregated memory is freshly authorized in parallel under one shared 15-second deadline before delivery; scope/principal changes and server revocations reject the handoff. The effective endpoint, physical workspace and project mapping are resolved again after awaited reads and grant probes. Authorization failures discard it permanently. Tokens never enter identity keys. Pending context uses immutable blocks with atomic claims per publication; concurrent tools may deliver separate blocks, and waiting-block deduplication is best-effort. Delivery reads at most 64 blocks per event, leaving later blocks for subsequent events; terminal denial discards the bound scope's pending snapshot. Session caches retain attempt counters and lifecycle flags, never memory content.
++The complete override inventory is:
 +
-+New Kimi, WorkBuddy, CodeBuddy and TraeCode entries use managed identity and branded registration names. Trae workspace MCP files are written only by explicit transactional installation for operator-mapped projects; hooks only report the workspace-MCP gate. Global settings and workspace SQLite enable switches remain user-managed.
++| Dependency | Range |
++| --- | --- |
++| `@opencode/plugin > @opentelemetry/core` | `>=2.8.0 <3.0.0` |
++| `esbuild` | `>=0.25.0 <1.0.0` |
++| `fast-uri` | `>=3.1.6 <4.0.0` |
++| `hono` | `>=4.13.11 <5.0.0` |
++| `http-cache-semantics` | `4.3.0` |
++| `ip-address` | `>=10.5.1 <11.0.0` |
++| `postcss` | `>=8.5.23 <9.0.0` |
++| `vite` | `>=6.4.3 <7.0.0` |
 +
-+Managed settings are reapplied after every path/bank override, including paths without a bank section. Project prompt tuning stays available; read-only principals cannot restore ingestion, surveys or bank management. The shared transport composes over the current host dispatcher to disable Undici's header/body timeout caps while preserving the request's AbortSignal deadline and proxy setup.
++These ranges constrain the dependency graph. `npm-shrinkwrap.json` contains exact resolved versions.
++When you update dependencies, assess compatibility and advisories again.
++Do not assume that these overrides remain necessary or enough.
 +
-+SessionStart readiness probes propagate terminal authorization failures before launching further background work; transient failures retain their fallback behavior. Append capabilities and accepted-operation cursors belong to one bank, so a managed bank switch re-probes the destination and starts from a replacement transcript. Grok's native hooks file and generated backup, and Trae's generated JSON backups, are covered by installer transactions.
++Survey admission uses the managed router URL, principal and bank as its scope.
++Tokens never enter lease keys. Credential rotation keeps the same lease.
 +
-+Multi-source conversation retention preserves rollout contributions in their original order and rereads their sources when rebuilding the shared document. Sources must remain readable, including replies previously retained before their transcript was flushed. Reconstruction supports up to 16 source references and refuses any decoded source or assembled document exceeding 32 MiB of serialized turns or 100,000 turns. Missing or ambiguous sources, unknown legacy continuation boundaries, moving copied prefixes and exceeded limits stop the write with a diagnostic instead of replacing the document with incomplete data. Single-source and persistent-runtime retention retain their existing size behavior.
++Normal configuration cannot override the managed principal. The code uses no CodeQL suppression.
 +
-+SessionStart propagates failures to the shared lifecycle entrypoint. Hook lifecycle entrypoints observe rejected work, emit one fixed stderr diagnostic and exit 1 without adding protocol stdout. Authorization denial remains terminal. Seed launch waits only for the child spawn/error event; failure is reported without raw exception text, and manual success means launched, not extraction complete.
++The upstream baseline is coding-agents 0.8.2 at the shared v1.1.0 release commit. Downstream package versions remain independent.
++The router maintains the managed README, generated companion skill and disabled daemon implementation.
++This fork does not support upstream endpoint setup, dynamic banks, local daemon and update instructions.
 +
-+Sync requires a confirmed zero active-operation count. Unavailable or malformed operation probes remain unknown; background settlement retries for up to 15 minutes and reports unconfirmed settlement at timeout. Authorization denial remains terminal.
++The package uses npm-shrinkwrap.json. Upstream package-lock.json remains intentionally absent.
 +
-+Persistent runtimes admit at most 256 sessions per workspace. Explicit host disposal releases completed state; admission evicts the least-recently-used idle session when end events are unavailable. Active prompts, transcript fetches, retains and dirty or buffered cursors stay pinned. When every slot is pinned, new sessions skip automatic recall/retention with a `session_capacity_reached` diagnostic; existing work continues. Evicted sessions resume with a full transcript replacement. OpenCode2 global events require current scoped-prompt admission, and keyed injection never falls back to another session. Cline keeps only the latest prompt ID for up to 256 sessions. Usage counters restart after eviction, so resumed transcripts can repeat local usage records.
++New upstream append capability, retry budgets, query bounds, page scoping and document freshness reads use the existing guarded client.
++Version probing accepts GET /v1/version and falls back to /version. Authorization failures remain terminal.
 +
-+Managed git-log synchronization retains bounded full replacement semantics. Upstream incremental appends lack an expected-base precondition: two asynchronous writes from the same persisted head can overlap after HEAD changes, despite distinct operation IDs. The append implementation is not imported until that concurrency contract exists. Authorization denials remain terminal; the maintained git-log tests cover pending writes across changed heads.
++The router removes error body content. Thus, a 404 cannot disable page support based on its upstream body.
++
++Grok tool-hook context uses private storage. Delivery requires valid managed credentials and a valid current project mapping.
++The handoff key contains these fields:
++
++- Endpoint and primary bank.
++- Canonical physical path of the recorded session root.
++- Session.
++- Hash of the actual effective principal.
++- Complete managed read-bank scope.
++
++A move into a subdirectory preserves the handoff only under both conditions:
++
++- The live directory and recorded root remain authorized for the same bank.
++- The live directory remains physically inside that root.
++
++Before delivery, every bank that can contribute memory receives a new authorization check.
++These checks run in parallel under one shared 15-second deadline.
++Changes to scope or principal and server revocations reject the handoff.
++After awaited reads and grant probes, the integration resolves the effective endpoint, physical workspace and project mapping again.
++
++Authorization failures discard the handoff permanently. Tokens never enter identity keys.
++
++Pending context uses immutable blocks with atomic claims per publication.
++Concurrent tools can deliver separate blocks. Waiting-block deduplication is best-effort.
++
++Delivery reads at most 64 blocks per event. Later blocks remain for next events.
++Terminal denial discards the bound scope's pending snapshot.
++
++Session caches retain retry counters and lifecycle flags. They never retain memory content.
++
++New Kimi, WorkBuddy, CodeBuddy and TraeCode entries use managed identity and branded registration names.
++Only explicit transactional installation writes MCP files for Trae workspaces for operator-mapped projects.
++Hooks only report the workspace-MCP gate. Users manage global settings and workspace SQLite enable switches.
++
++The integration reapplies managed settings after every override for paths or banks, including paths without a bank section.
++Project prompt adjustments remain available. Read-only principals cannot restore ingestion, surveys or bank management.
++The shared transport uses the current host dispatcher to disable Undici's timeout caps for headers and bodies.
++
++It preserves the request's AbortSignal deadline and proxy setup.
++
++Before further background work starts, SessionStart readiness probes propagate terminal authorization failures.
++Transient failures retain their fallback behavior. Append capabilities and accepted-operation cursors belong to one bank.
++Thus, a managed bank switch probes the destination again and starts from a replacement transcript.
++
++Installer transactions cover Grok's native hooks file and generated backup. They also cover Trae's generated JSON backups.
++
++Multi-source conversation retention preserves rollout contributions in their original order.
++It reads their sources again when it rebuilds the shared document.
++Sources must remain readable, including replies retained before the host flushed their transcript.
++Reconstruction supports up to 16 source references.
++
++It rejects any decoded source or assembled document that exceeds 32 MiB of serialized turns or 100,000 turns.
++The following conditions stop the write with a diagnostic:
++
++- Missing or ambiguous sources.
++- Unknown legacy continuation boundaries.
++- Moving copied prefixes.
++- Exceeded limits.
++
++The integration does not replace the document with incomplete data.
++Single-source and persistent-runtime retention keep their existing size behavior.
++
++SessionStart propagates failures to the shared lifecycle entrypoint.
++Hook lifecycle entrypoints observe rejected work, emit one fixed stderr diagnostic and exit 1 without protocol stdout.
++Authorization denial remains terminal. Seed launch waits only for the child spawn or error event.
++
++Failure reports omit raw exception text. Manual success means that launch occurred. It does not mean that extraction is complete.
++
++Sync requires a confirmed zero active-operation count. Unavailable or malformed operation probes remain unknown.
++
++Background settlement retries for up to 15 minutes. At timeout, it reports unconfirmed settlement. Authorization denial remains terminal.
++
++Persistent runtimes admit at most 256 sessions per workspace. When the host explicitly disposes of a session, the runtime releases completed state.
++If end events are unavailable, admission evicts the least-recently-used idle session.
++Active prompts, transcript fetches, retains and dirty or buffered cursors stay pinned.
++
++If all slots stay pinned, new sessions skip automatic recall and retention with a `session_capacity_reached` diagnostic. Existing work continues.
++Evicted sessions resume with a full transcript replacement.
++
++OpenCode2 global events need current scoped-prompt admission. Keyed injection never falls back to another session.
++Cline keeps only the latest prompt ID for up to 256 sessions.
++
++Usage counters restart after eviction. Thus, resumed transcripts can repeat local usage records.
++
++Managed git-log synchronization retains bounded full replacement semantics. Upstream incremental appends lack an expected-base precondition.
++Two asynchronous writes from the same persisted head can overlap after HEAD changes, despite distinct operation IDs.
++This fork does not import the append implementation until that concurrency contract exists.
++
++Authorization denials remain terminal. The maintained git-log tests cover pending writes across changed heads.
 diff --git a/LICENSE b/LICENSE
 new file mode 100644
 index 0000000..f572d61
@@ -85,7 +200,7 @@ index 0000000..f572d61
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
 diff --git a/README.md b/README.md
-index 2e112b1..d7612c1 100644
+index 2e112b1..e32aca1 100644
 --- a/README.md
 +++ b/README.md
 @@ -1,886 +1,30 @@
@@ -98,7 +213,7 @@ index 2e112b1..d7612c1 100644
 -automatic — there is no setup command: a repo's git history and conversations flow into its memory
 -bank in the background as you work.
 +Source: `vectorize-io/hindsight/hindsight-integrations/coding-agents`, v0.8.2.
-+The superseded per-agent integrations are not imported.
++This fork does not import the superseded per-agent integrations.
  
 -The premise: most of a real fix is derivable from the code, but the _last mile_ often hinges on a
 -project-specific decision that isn't in the code at all — a rounding rule, a retry allowlist, a
@@ -699,7 +814,7 @@ index 2e112b1..d7612c1 100644
 -that may use it:
 -
 -```jsonc
- {
+-{
 -  "optInOnly": true,
 -  "optInPaths": ["~/work/client-x", "~/oss"],
 -}
@@ -853,14 +968,7 @@ index 2e112b1..d7612c1 100644
 -    // seed it, but ask your question instead of the built-in one
 -    "Key decisions and rationale": {
 -      "source_query": "What did we decide about data retention, encryption and PII handling, and why? Prefer decisions that constrain what new code may do.",
-+  "routerUrl": "https://memory-router.example.internal",
-+  "principals": {
-+    "codex": {
-+      "tokenEnv": "MEMORY_ROUTER_CODEX_TOKEN",
-+      "writeBank": "A",
-+      "additionalReadBanks": ["B", "C"],
-+      "mapPathToBank": { "/work/project": "A" }
-     },
+-    },
 -  },
 -}
 -```
@@ -922,12 +1030,19 @@ index 2e112b1..d7612c1 100644
 -`pages` only reworks the five above. To add a page, name it under `customPages`:
 -
 -```jsonc
--{
+ {
 -  "customPages": {
 -    "Security posture": {
 -      "source_query": "What are this project's security decisions — authn, secrets handling, PII, dependency policy — and what do they constrain in new code?",
 -      "tags": ["knowledge:decision"],
--    },
++  "routerUrl": "https://memory-router.example.internal",
++  "principals": {
++    "codex": {
++      "tokenEnv": "MEMORY_ROUTER_CODEX_TOKEN",
++      "writeBank": "A",
++      "additionalReadBanks": ["B", "C"],
++      "mapPathToBank": { "/work/project": "A" }
+     },
 -    "Operational runbook": {
 -      "source_query": "How does this project get deployed, monitored and rolled back? What has broken in production, and what fixed it?",
 +    "claude-code": {
@@ -997,7 +1112,7 @@ index 2e112b1..d7612c1 100644
 +      "mapPathToBank": { "/work/other": "D" }
 +    }
    }
-@@ -889,342 +33,26 @@ once, in the plugin's config, and it travels in the same import that creates the
+@@ -889,342 +33,52 @@ once, in the plugin's config, and it travels in the same import that creates the
  
 -The keys are the bank-config API's own field names, passed straight through, so anything the
 -bank-config accepts can go here. They follow the same additive rule as the template: written only
@@ -1186,29 +1301,41 @@ index 2e112b1..d7612c1 100644
 -carries — `[[], ["source:chat"]]` for a session transcript, `[[], ["source:git"]]` for a commit
 -diff. Read an axis back with `tags: ["source:git"], tags_match: "exact"`, and the merged view with
 -`tags: [], tags_match: "exact"`.
--
++Before you start a harness, resolve each named environment variable through the deployment's secret manager.
++Give each harness only its own token. Never put token values in JSON, arguments, or this repository.
++First, create matching grants for each principal, bank and scope in Memory Router.
+ 
 -A document carrying two `source:` tags gets a scope for each, and that is deliberate rather than
 -duplication. The commit-message seed is tagged `source:git` and `source:git-log`, so
 -`source:git-log` is fed only by the seed — what the commit _messages_ say — while `source:git` also
 -collects every per-commit diff under `gitIngest: "full"`. Two questions, two answers, each
 -deduplicated within itself by consolidation. A fact belonging to more than one axis is the point.
--
++Client routing does not grant access. The router controls access through its grants.
+ 
 -This cannot be expressed as a scope list. The server treats an explicit `list[list[str]]` as
 -unconditional — it is not filtered against the memory's own tags — so a configured
 -`[[], ["source:git"], ["source:chat"]]` writes every document into all three, and the `source:git`
 -scope fills with beliefs built from chat transcripts. Only a per-document decision separates them.
--
++Install the verified release coding-agents tarball.
++Run its `hindsight-coding-agents install` command.
++The upstream harness hooks, plugin entrypoints, transcript readers, and background ingestion remain packaged.
+ 
 -It costs one extra consolidation pass per document, and it reads only `source:`, so a volatile
 -provenance tag never becomes a scope. The global scope is still written first and unchanged, so the
 -untagged observations knowledge pages read are unaffected.
--
++Install from this artifact. Do not replace it with upstream's `npx` installer.
+ 
 -`"per_tag"` and `"all_combinations"` split further still, and an explicit `[["project:demo"], …]`
 -declares the scopes literally. `HINDSIGHT_OBSERVATION_SCOPES` sets the scalar modes; a scope list is
 -file-only. Changing this does not rewrite observations already consolidated under the old scoping —
 -they stay where they were built, and new work accrues under the new setting.
--
++Only explicit managed path mappings opt a project in. Child directories inherit their mapping.
++For writable projects, use the principal's write bank in mappings. For a read-only principal, map an assigned read bank.
+ 
 -<!-- skill:end -->
--
++Unmapped paths, unknown harnesses, and missing secrets stop access. The integration does not create dynamic repository banks.
++Normal upstream configuration can adjust prompts and ingestion. It cannot change identity, credentials, endpoint, or grants.
+ 
 -## Ingestion internals (no CLI)
 -
 -There is no user-facing ingest command — the deepen engine (`dist/deepen.js`) is spawned by every
@@ -1230,7 +1357,9 @@ index 2e112b1..d7612c1 100644
 -  -e HINDSIGHT_API_LLM_API_KEY=$GEMINI_API_KEY -e HINDSIGHT_API_LLM_MODEL=gemini-2.5-flash \
 -  ghcr.io/vectorize-io/hindsight:latest
 -```
--
++The integration ignores `banks.<id>.bank` and path-level bank renames.
++To change banks, change the operator-managed `mapPathToBank` and matching server grants.
+ 
 -## Companion skill (generated)
 -
 -Every skills-capable host gets `skill/SKILL.md`, which teaches the agent what this integration does
@@ -1300,36 +1429,40 @@ index 2e112b1..d7612c1 100644
 -```bash
 -npx @vectorize-io/hindsight-coding-agents stats
 -```
--
++Coding agents accept and validate legacy managed JSON keys for compatibility. These keys have no effect:
++`recallTimeoutMs`, `recallMaxTokens`, `retainQueueFlushIntervalMs`, `queueMaxAgeMs`, `queueMaxItems`, `queueMaxBytes` and `queueDir`.
++During migration, remove them. Adjust the retrieval settings in normal coding-agent configuration.
+ 
 -### Is the memory ready yet?
--
++Coding agents have no OpenClaw-style durable outage queue or replay timer. Ingestion uses the upstream retry and cursor mechanisms.
++Managed `queueMaxAgeMs` accepts `-1` or a positive integer. Unlike OpenClaw, it rejects `0`.
+ 
 -`hindsight_sync_status` — the agent-facing tool, `dist/status.js` for scripts — answers exactly
 -that: `"synced": true` means the seeded memory is queryable. It also reports gitlog freshness, how
 -far per-commit deepening has got, the codebase survey's state (`surveyBaseline` is the HEAD the last
 -survey started from, `surveyDocs` counts the findings documents that have landed, 0–4 — a baseline
 -with no findings retries automatically), and the extraction operations still in flight.
--
++`pageRefreshEveryTurns` and `HINDSIGHT_PAGE_REFRESH_EVERY_TURNS` do not reduce hook page-list reads.
++Session caches omit page lists that contain memory. Each prompt hook fetches newly authorized pages.
+ 
 -### Resetting a repo's memory
-+Resolve each named environment variable through the deployment's secret manager before launching that harness.
-+Give each harness only its own token. Never put token values in JSON, arguments, or this repository.
-+Create matching per-principal + bank + scope grants in Memory Router first.
++The setting controls how often hooks inject the roster and tool guide. It does not control how often hooks fetch the guide.
++An omitted value or `0` means every turn (`1`). The setting does not configure persistent-plugin refresh behavior.
  
 -Delete its bank on the server. The bank is the **only** state this integration keeps, so the next
 -session in that repo is a true first open — seed and survey run again from scratch. There are no
 -client-side files to clean up.
-+**client routing != authorization; Memory Router grants are authoritative**
++Do not restore cached memory content to control refresh frequency.
  
 -### Marker documents you may notice
-+Install the verified release coding-agents tarball and run its `hindsight-coding-agents install` command.
-+The upstream harness hooks, plugin entrypoints, transcript readers, and background ingestion remain packaged.
-+Install from this artifact; do not run upstream's `npx` installer over it.
++Recall and reflect read the assigned union, with a 4,096-token shared budget.
++Recall and reflect use the caller's configured deadline:
  
 -Two document ids exist for the machinery's own bookkeeping. Both are safe to ignore and safe to
 -delete:
-+Only explicit managed path mappings opt a project in. Child directories inherit their mapping.
-+Use the principal's write bank in mappings for writable projects; map an assigned read bank for a read-only principal.
-+Unmapped paths, unknown harnesses, and missing secrets fail closed. No dynamic repository banks.
-+Upstream normal config may tune prompts and ingestion, but cannot change identity, credentials, endpoint, or grants. `banks.<id>.bank` and path-level bank renames are ignored; change the operator-managed `mapPathToBank` and matching server grants instead.
++- Automatic retrieval uses `injectTimeoutMs` (7,000 ms).
++- Automatic reflect uses `reflectTimeoutMs` (20,000 ms).
++- The reflect tool uses `reflectToolTimeoutMs`. If omitted, this is the greater of 330,000 ms and the configured `reflectTimeoutMs`. An explicit positive tool timeout can be lower.
  
 -- `survey-baseline:<sha>` — reads "🛰️ researching…" while a codebase survey runs and flips to
 -  "✅ completed" once its findings land. It is retained under the `survey` strategy, whose marker
@@ -1341,23 +1474,21 @@ index 2e112b1..d7612c1 100644
 -  written in full again (bounded by `seedLimit`) only when an append cannot describe HEAD: the
 -  recorded commit is no longer an ancestor of HEAD (a rebase, a force-push), more than `seedLimit`
 -  commits are new, or the server cannot append safely.
-+Legacy managed JSON keys `recallTimeoutMs`, `recallMaxTokens`, `retainQueueFlushIntervalMs`, `queueMaxAgeMs`, `queueMaxItems`, `queueMaxBytes` and `queueDir` are accepted and validated for compatibility but have no effect in coding agents. Remove them when migrating; tune retrieval in normal coding-agent config. There is no OpenClaw-style durable outage queue or replay timer here; ingestion uses the upstream retry/cursor mechanisms. Managed `queueMaxAgeMs` accepts `-1` or a positive integer and rejects `0`, unlike OpenClaw.
++Generic requests without a caller signal default to 15 seconds.
++If you increase a hook deadline, also allow enough time in the host hook configuration.
++Transient failures return partial results with a diagnostic. Any 401/403 discards all results.
  
 -### When memory seems to be missing
-+`pageRefreshEveryTurns` (and `HINDSIGHT_PAGE_REFRESH_EVERY_TURNS`) does not reduce hook page-list reads: memory-bearing page lists are deliberately omitted from session caches, so each prompt hook fetches freshly authorized pages. The setting still controls how often the roster/tool guide is injected, not how often it is fetched; omission or `0` means every turn (`1`). It does not configure persistent-plugin refresh behavior. Do not restore cached memory content to implement a cadence.
++Other reads for banks, configuration and pages use an explicit assigned bank. Mutations can target only the write bank.
  
 -Failures never break the agent: a reflect, page fetch or retain that fails degrades to an ordinary
 -memoryless turn and is recorded in the logs. "No memory" is therefore a log question — check the
 -diag file for whether `session_start` and `deepen_started` ever fired for that bank. A session that
 -was already running when the plugin was installed has no SessionStart behind it; its first prompt
 -after the install self-heals.
-+Recall and reflect read the assigned union, with a 4,096-token shared budget.
-+Recall/reflect use the caller's configured deadline: automatic retrieval uses `injectTimeoutMs` (7,000 ms), automatic reflect uses `reflectTimeoutMs` (20,000 ms), and the reflect tool uses `reflectToolTimeoutMs` (when omitted, the greater of 330,000 ms and the configured `reflectTimeoutMs`; an explicit positive tool timeout can be lower). Generic requests without a caller signal default to 15 seconds. Raising a hook deadline also requires enough time in the host hook configuration.
-+Transient failures return partial results with a diagnostic. Any 401/403 discards all results.
-+Other bank/config/page reads use an explicit assigned bank; mutations cannot target additional read banks.
++See `DEVIATIONS.md` for intentional differences and `UPSTREAM.json` for exact provenance.
  
 -<!-- skill:end -->
-+See `DEVIATIONS.md` for intentional differences and `UPSTREAM.json` for exact provenance.
 diff --git a/UPSTREAM.json b/UPSTREAM.json
 new file mode 100644
 index 0000000..62e1b70
@@ -5715,24 +5846,26 @@ index 4579d4b..9b23714 100644
    }
 diff --git a/skill-src/managed-router.md b/skill-src/managed-router.md
 new file mode 100644
-index 0000000..f5fd117
+index 0000000..6ca5b6e
 --- /dev/null
 +++ b/skill-src/managed-router.md
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,72 @@
 +## Managed setup and updates
 +
-+Use the existing operator-provisioned `HINDSIGHT_ROUTER_CONFIG` absolute path and named credential
-+environment variables. The operator supplies the HTTPS router URL, principal grants, project bank
-+mapping and optional tool namespace. `HINDSIGHT_MCP_HARNESS` selects the trusted harness identity
-+when needed. Launch the harness in the same provisioned environment from a mapped project.
++Use the existing operator-provisioned `HINDSIGHT_ROUTER_CONFIG` absolute path and named credential environment variables.
++The operator supplies the HTTPS router URL, principal grants, project bank mapping and optional tool namespace.
++When necessary, `HINDSIGHT_MCP_HARNESS` selects the trusted harness identity.
++Start the harness in the same configured environment from a mapped project.
 +
-+Do not ask the user to paste JSON or credentials, edit the managed JSON, copy tokens into harness
-+settings, or start a memory server. Missing provisioning or ambiguous identity requires the
-+operator to repair the deployment. Unmapped projects and missing credentials fail closed.
++Do not ask the user to paste JSON or credentials.
++Do not edit the managed JSON, copy tokens into harness settings, or start a memory server.
++If configuration is missing or identity is ambiguous, the operator must repair the deployment.
++Unmapped projects and missing credentials stop access.
 +
-+Install or update only using the integration's pinned release tarball. Select the release and
-+package version from the same published release, verify the artifact against that release's
-+`PACKAGE_SHA256`, and run:
++Use only the integration's pinned release tarball to install or update the integration.
++Select the release and package version from the same published release.
++Check the artifact against that release's `PACKAGE_SHA256`.
++Run this command:
 +
 +```sh
 +npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-coding-agents install
@@ -5740,72 +5873,72 @@ index 0000000..f5fd117
 +
 +The release download path is:
 +`https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v<release>/mickey-kras-hindsight-memory-router-coding-agents-<package-version>.tgz`.
-+Do not leave version placeholders unresolved. Explicit `install codex`, another supported harness,
-+or `install all` is available when the existing managed configuration supports it. The installer
-+checks the selected principals, credentials, project mapping and adapter prerequisites before
-+changing the host. For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installation so the installer
-+can allowlist the required environment variable names without embedding their values.
++Replace all version placeholders.
++If the existing managed configuration supports it, use explicit `install codex`, another supported harness, or `install all`.
++Before host changes, the installer checks the selected principals, credentials, project mapping and adapter prerequisites.
 +
-+After changing the operator's credential environment variable name or tool namespace, reinstall
-+from the verified artifact. Namespace changes require reinstalling the companion skill and tool
-+registration together. The managed tool prefix controls tool definitions and guidance; ordinary
-+per-bank settings cannot override it.
++For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installation.
++The installer can then allow the required environment variable names without storing their values.
 +
-+## Checking the integration
++If the operator's credential environment variable name or tool namespace changes, reinstall from the verified artifact.
++Namespace changes need reinstallation of the companion skill and tool registration together.
++The managed tool prefix controls tool definitions and guidance. Ordinary per-bank settings cannot override it.
 +
-+Check the session banner and available memory tools first. Use `hindsight_sync_status` for ingestion
-+progress and `hindsight_diagnose` for sanitized diagnostic information when these tools are available.
-+If memory seems stale, inspect progress before repeating ingestion or inventing another bank.
-+Use the diagnostics to confirm the current project bank. Ask the operator to verify assigned bank
-+grants and project mappings in the managed configuration when access or bank selection is unclear.
++## Check the integration
 +
-+Missing hooks or tools usually require reinstalling the selected harness from the verified artifact
-+with its managed environment. Review the harness's plugin/hook registration and sanitized logs;
-+never print credential values. A 401/403 stops requests for that credential. Ask the operator to
-+resolve authorization and restart with the provisioned credential; do not try another principal,
-+URL or bank. Rate limits and quarantine decisions are enforced by the router and are not bypassed
-+by local settings. Continue coding without memory when the harness fails open, and state any
-+material lack of memory evidence.
++First, check the session banner and available memory tools.
++If available, use `hindsight_sync_status` for ingestion progress.
++If available, use `hindsight_diagnose` for diagnostics with sensitive data removed.
++If memory seems stale, inspect progress before another ingestion try or selection of another bank.
 +
-+Operational coding-agent settings such as `autoInject`, `retainSessions`, `disabled`, git survey
-+limits and logging may be configured by the operator in the supported coding-agent settings.
-+The managed routing boundary owns bank access and transport; do not create banks, rewrite bank
-+configuration, provision servers or substitute a provider client. Background ingestion and hooks
-+use the same router boundary as interactive tools.
++Use the diagnostics to confirm the current project bank.
++If access or bank selection is unclear, ask the operator to check assigned bank grants and managed project mappings.
++
++Missing hooks or tools usually need reinstallation of the selected harness from the verified artifact with its managed environment.
++Review the harness's registration of plugins and hooks and logs with sensitive data removed. Never print credential values.
++A 401/403 response stops requests for that credential.
++
++Ask the operator to resolve authorization and restart with the configured credential.
++Do not try another principal, URL or bank.
++The router enforces rate limits and quarantine decisions. Local settings cannot bypass them.
++
++If the harness permits work without memory, continue coding. State any material lack of memory evidence.
++
++The operator can configure supported coding-agent settings such as `autoInject`, `retainSessions`, `disabled`, git survey limits and logging.
++Through managed routing, the integration controls transport and access to banks.
++Do not create banks, change bank configuration, configure servers, or substitute a provider client.
++Background ingestion and hooks use the same router boundary as interactive tools.
 +
 +### Optional branding
 +
-+The operator may set `toolPrefix` in the same managed router JSON. The default `hindsight_`
-+keeps the upstream names. Tool, skill, registration and display names derive from that one
-+value. Package
-+names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants
-+remain unchanged. Use the names registered in the current session; do not guess aliases.
++The operator can set `toolPrefix` in the same managed router JSON.
++The default `hindsight_` keeps the upstream names.
++Tool, skill, registration and display names derive from that one value.
++Package names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants do not change.
 +
-+A branding change requires the pinned installer (`install` or `update`) and a fresh session.
-+The installer migrates only managed entries and refuses unrelated name collisions. A stale
-+managed skill namespace fails closed until reinstall; never repair this by changing bank
-+assignments, credentials or the operational memory workflow above.
++Use the names registered in the current session. Do not guess aliases.
++
++A branding change requires the pinned installer (`install` or `update`) and a new session.
++The installer migrates only managed entries and rejects unrelated name collisions.
++A stale managed skill namespace stops access until reinstallation.
++Do not repair this condition through changes to bank assignments, credentials or the operational memory workflow above.
 diff --git a/skill-src/preamble.md b/skill-src/preamble.md
-index 118cae5..639b990 100644
+index 118cae5..8af7c6a 100644
 --- a/skill-src/preamble.md
 +++ b/skill-src/preamble.md
 @@ -2,3 +2,3 @@
  name: hindsight-coding-agent
 -description: How this machine's Hindsight coding-agent memory works — the plugin behind the 🧠 banner. Use when the user says "store/remember this in hindsight", asks what the memory/knowledge pages are, wants to configure per-repo memory (disable, rename banks, git depth), or something memory-related looks broken.
-+description: How this machine's Hindsight coding-agent memory works — the plugin behind the 🧠 banner. Use when the user says "store/remember this in hindsight", asks what the memory/knowledge pages are, needs managed project memory setup or troubleshooting, or something memory-related looks broken.
++description: Use this skill for the managed Hindsight coding-agent memory behind the 🧠 banner. Use it to store memories, explain knowledge pages, configure project memory, or investigate memory failures.
  ---
-@@ -7,19 +7,21 @@ description: How this machine's Hindsight coding-agent memory works — the plug
+@@ -7,55 +7,59 @@ description: How this machine's Hindsight coding-agent memory works — the plug
  
 -This machine runs the `hindsight-coding-agents` plugin: long-term project memory for coding
 -sessions, backed by a Hindsight server. You (the agent) are already wired into it — this skill
 -explains what happens automatically, which tools you have, and how to configure or debug it.
-+This machine runs the managed Memory Router coding-agent integration. All memory requests go
-+through the operator-provisioned HTTPS router and its per-principal bank grants. The router
-+applies scanning, quarantine and quotas. A client setting cannot grant access.
- 
+-
 -## What happens automatically (no action needed)
-+## Automatic lifecycle
- 
+-
 -- **Per-repo memory bank**: each repository resolves to a bank (shown in the session banner:
 -  `↳ memory bank “coding-agent::<repo>”`). Worktrees share the main repo's bank.
 -- **Ingestion builds itself**: on first open, the bank is seeded from recent commit messages and a
@@ -5817,42 +5950,109 @@ index 118cae5..639b990 100644
 -  searches the knowledge pages first and reflects only when they are too shallow).
 -- **Write-back**: the session transcript is retained into the bank automatically at session end
 -  (per-turn on opencode). The user never needs to "save" a conversation.
-+- The operator maps this project and harness to an explicit bank. Worktrees use their configured
-+  project mapping; no bank is created or selected from a repository name.
-+- For writable principals, session-start hooks can seed and update memory from recent commits
-+  and a read-only codebase survey, and refresh coding knowledge pages. There is no manual ingest
-+  command needed for this background work. The operator provisions bank configuration and the
-+  coding missions/strategies before ingestion.
-+- Session-start and prompt hooks inject memory according to `autoInject`: `reflect`, `pages`,
-+  `recall`, or `none`. Follow the injected retrieval guide when no memory is injected.
-+- Writable sessions retain their transcripts automatically at session end; persistent harnesses
-+  also retain during the session. Read-only principals skip ingestion and write-back, and their
-+  write tools are unavailable. Respect `disabled` and `retainSessions` settings.
-+- Use the tool names exposed by this harness. Examples below show the default `hindsight_`
-+  namespace; the installed skill and guidance use the operator's configured namespace.
- 
-@@ -29,3 +31,4 @@ When the user says "store this in hindsight" / "remember this":
- 
+-
+-## Storing things deliberately
+-
+-When the user says "store this in hindsight" / "remember this":
+-
 -- The **current conversation** is captured automatically at session end — say so; no tool needed.
-+- With writable access and session retention enabled, the **current conversation** is captured
-+  automatically at session end — say so; no tool needed.
- - An **external document, notes, or durable findings** → `hindsight_ingest_document(title, content)`.
-@@ -58,4 +61,4 @@ source contradicts it), FIX THE RECORD — don't just ignore it. Call
- 
+-- An **external document, notes, or durable findings** → `hindsight_ingest_document(title, content)`.
+-- A **new feature/initiative being started** → `hindsight_capture_initiative(title, summary)`,
+-  right after the plan is agreed and before code is written.
+-- A **plan that materially changed** (goal, scope, or rationale — including mid-implementation) →
+-  call `hindsight_capture_initiative` again with `relates_to_page_id` set to that initiative's page
+-  id, summarising the _current_ intent. Same page, updated plan — never a second page. Trivial
+-  course-corrections don't count.
+-
+-## Retrieving
+-
+-- `hindsight_search_knowledge_pages(query)` — FIRST STOP for project questions (components,
+-  conventions, past decisions, initiatives). Server-side hybrid search, fast.
+-- `hindsight_read_knowledge_page(page_id)` / `hindsight_list_knowledge_pages` — read pages fully.
+-- `hindsight_reflect(query)` — deep reasoning over the whole memory for WHY questions and exact
+-  decided values; slower (seconds), use deliberately.
+-- Credit visibly whenever memory informs an answer: start that part with
+-  `🧠 From Hindsight memory (<page>): …` — and never credit memory that didn't contribute.
+-
+-## Correcting wrong or stale memory
+-
+-If you verify that something Hindsight served is wrong or outdated (the code, git, or an external
+-source contradicts it), FIX THE RECORD — don't just ignore it. Call
+-`hindsight_ingest_document` with:
+-
+-- **title**: `Correction: <topic>` (e.g. `Correction: retry policy 4xx set`)
+-- **content**: (1) what memory claimed, (2) what is verifiably true now, (3) the evidence you
+-  checked (file/commit/output). Quote exact values verbatim.
+-
 -Newer facts supersede older ones in retrieval, so one clear correction permanently outranks the
 -stale memory. Do this whenever you catch a wrong injected memory, a stale knowledge-page claim, or
 -an outdated decision — silent disregard leaves the trap armed for the next session.
-+Include the evidence in the correction so future retrieval can resolve the conflict. With read-only
-+access, report the verified correction for an authorized writer; do not attempt a write or change
-+credentials.
++This machine uses the managed Memory Router coding-agent integration.
++All memory requests use the operator-provisioned HTTPS router and its per-principal bank grants.
++The router applies scanning, quarantine and quotas. A client setting cannot grant access.
++
++## Automatic lifecycle
++
++- The operator maps this project and harness to an explicit bank.
++  Worktrees use their configured project mapping. The integration does not create or select a bank from a repository name.
++- For writable principals, session-start hooks can seed and update memory from recent commits and a read-only codebase survey.
++  These hooks can also refresh coding knowledge pages. This background work does not need a manual ingest command.
++  The operator configures banks and coding missions and strategies before ingestion.
++- Session-start and prompt hooks inject memory according to `autoInject`: `reflect`, `pages`, `recall`, or `none`.
++  If hooks inject no memory, follow the injected retrieval guide.
++- Writable sessions retain their transcripts automatically at session end.
++  Persistent harnesses also retain transcripts during the session.
++  Read-only principals skip ingestion and write-back. Their write tools are unavailable.
++  Obey the `disabled` and `retainSessions` settings.
++- Use the tool names that this harness exposes.
++  The examples below use the default `hindsight_` namespace.
++  The installed skill and guidance use the operator's configured namespace.
++
++## Store information
++
++When the user says "store this in hindsight" or "remember this", use these rules:
++
++- With writable access and session retention, the integration captures the current conversation automatically at session end.
++  Tell the user. No tool call is necessary.
++- For external documents, notes, or durable findings, use `hindsight_ingest_document(title, content)`.
++- For a new feature or initiative, use `hindsight_capture_initiative(title, summary)` after agreement on the plan and before code changes.
++- If the goal, scope, or rationale changes materially, call `hindsight_capture_initiative` again.
++  This includes changes during implementation.
++  Set `relates_to_page_id` to the initiative's page ID. Describe the current intent.
++  Update the same page. Do not create a second page for the changed plan.
++  Small corrections do not need this update.
++
++## Retrieve information
++
++- For project questions, first use `hindsight_search_knowledge_pages(query)`.
++  Questions can concern components, conventions, past decisions, or initiatives.
++  This tool uses fast hybrid search on the server.
++- To read complete pages, use `hindsight_read_knowledge_page(page_id)` or `hindsight_list_knowledge_pages`.
++- For reasons and exact agreed values, use `hindsight_reflect(query)`.
++  This tool reasons over the complete memory. It is slower and takes seconds. Use it when necessary.
++- If memory contributes to an answer, start that part with `🧠 From Hindsight memory (<page>): …`.
++  Do not credit memory that did not contribute.
++
++## Correct incorrect or stale memory
++
++If code, git, or an external source disproves retrieved memory or shows that it needs an update, correct the record.
++Do not only ignore it. Call `hindsight_ingest_document` with these fields:
++
++- **title**: `Correction: <topic>` (for example, `Correction: retry policy 4xx set`).
++- **content**: State the memory's claim, the verified current fact, and the evidence from a file, commit, or output.
++  Quote exact values without changes.
++
++Include the evidence so that future retrieval can resolve the conflict.
++With read-only access, report the verified correction to an authorized writer.
++Do not try to write or change credentials.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index 7bbe6ba..acdd7a5 100644
+index 7bbe6ba..8cc0cca 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
 @@ -2,7 +2,7 @@
  name: hindsight-coding-agent
 -description: How this machine's Hindsight coding-agent memory works — the plugin behind the 🧠 banner. Use when the user says "store/remember this in hindsight", asks what the memory/knowledge pages are, wants to configure per-repo memory (disable, rename banks, git depth), or something memory-related looks broken.
-+description: How this machine's Hindsight coding-agent memory works — the plugin behind the 🧠 banner. Use when the user says "store/remember this in hindsight", asks what the memory/knowledge pages are, needs managed project memory setup or troubleshooting, or something memory-related looks broken.
++description: Use this skill for the managed Hindsight coding-agent memory behind the 🧠 banner. Use it to store memories, explain knowledge pages, configure project memory, or investigate memory failures.
  ---
  
 -<!-- GENERATED from README.md (its skill:begin regions) + skill-src/preamble.md.
@@ -5860,7 +6060,7 @@ index 7bbe6ba..acdd7a5 100644
 +<!-- GENERATED from skill-src/preamble.md + skill-src/managed-router.md.
 +     Edit those, then run: node scripts/build-skill.mjs -->
  
-@@ -10,19 +10,21 @@ description: How this machine's Hindsight coding-agent memory works — the plug
+@@ -10,725 +10,132 @@ description: How this machine's Hindsight coding-agent memory works — the plug
  
 -This machine runs the `hindsight-coding-agents` plugin: long-term project memory for coding
 -sessions, backed by a Hindsight server. You (the agent) are already wired into it — this skill
@@ -5879,34 +6079,40 @@ index 7bbe6ba..acdd7a5 100644
 -  searches the knowledge pages first and reflects only when they are too shallow).
 -- **Write-back**: the session transcript is retained into the bank automatically at session end
 -  (per-turn on opencode). The user never needs to "save" a conversation.
-+This machine runs the managed Memory Router coding-agent integration. All memory requests go
-+through the operator-provisioned HTTPS router and its per-principal bank grants. The router
-+applies scanning, quarantine and quotas. A client setting cannot grant access.
-+
-+## Automatic lifecycle
-+
-+- The operator maps this project and harness to an explicit bank. Worktrees use their configured
-+  project mapping; no bank is created or selected from a repository name.
-+- For writable principals, session-start hooks can seed and update memory from recent commits
-+  and a read-only codebase survey, and refresh coding knowledge pages. There is no manual ingest
-+  command needed for this background work. The operator provisions bank configuration and the
-+  coding missions/strategies before ingestion.
-+- Session-start and prompt hooks inject memory according to `autoInject`: `reflect`, `pages`,
-+  `recall`, or `none`. Follow the injected retrieval guide when no memory is injected.
-+- Writable sessions retain their transcripts automatically at session end; persistent harnesses
-+  also retain during the session. Read-only principals skip ingestion and write-back, and their
-+  write tools are unavailable. Respect `disabled` and `retainSessions` settings.
-+- Use the tool names exposed by this harness. Examples below show the default `hindsight_`
-+  namespace; the installed skill and guidance use the operator's configured namespace.
- 
-@@ -32,3 +34,4 @@ When the user says "store this in hindsight" / "remember this":
- 
+-
+-## Storing things deliberately
+-
+-When the user says "store this in hindsight" / "remember this":
+-
 -- The **current conversation** is captured automatically at session end — say so; no tool needed.
-+- With writable access and session retention enabled, the **current conversation** is captured
-+  automatically at session end — say so; no tool needed.
- - An **external document, notes, or durable findings** → `hindsight_ingest_document(title, content)`.
-@@ -61,674 +64,71 @@ source contradicts it), FIX THE RECORD — don't just ignore it. Call
- 
+-- An **external document, notes, or durable findings** → `hindsight_ingest_document(title, content)`.
+-- A **new feature/initiative being started** → `hindsight_capture_initiative(title, summary)`,
+-  right after the plan is agreed and before code is written.
+-- A **plan that materially changed** (goal, scope, or rationale — including mid-implementation) →
+-  call `hindsight_capture_initiative` again with `relates_to_page_id` set to that initiative's page
+-  id, summarising the _current_ intent. Same page, updated plan — never a second page. Trivial
+-  course-corrections don't count.
+-
+-## Retrieving
+-
+-- `hindsight_search_knowledge_pages(query)` — FIRST STOP for project questions (components,
+-  conventions, past decisions, initiatives). Server-side hybrid search, fast.
+-- `hindsight_read_knowledge_page(page_id)` / `hindsight_list_knowledge_pages` — read pages fully.
+-- `hindsight_reflect(query)` — deep reasoning over the whole memory for WHY questions and exact
+-  decided values; slower (seconds), use deliberately.
+-- Credit visibly whenever memory informs an answer: start that part with
+-  `🧠 From Hindsight memory (<page>): …` — and never credit memory that didn't contribute.
+-
+-## Correcting wrong or stale memory
+-
+-If you verify that something Hindsight served is wrong or outdated (the code, git, or an external
+-source contradicts it), FIX THE RECORD — don't just ignore it. Call
+-`hindsight_ingest_document` with:
+-
+-- **title**: `Correction: <topic>` (e.g. `Correction: retry policy 4xx set`)
+-- **content**: (1) what memory claimed, (2) what is verifiably true now, (3) the evidence you
+-  checked (file/commit/output). Quote exact values verbatim.
+-
 -Newer facts supersede older ones in retrieval, so one clear correction permanently outranks the
 -stale memory. Do this whenever you catch a wrong injected memory, a stale knowledge-page claim, or
 -an outdated decision — silent disregard leaves the trap armed for the next session.
@@ -6550,18 +6756,133 @@ index 7bbe6ba..acdd7a5 100644
 -far per-commit deepening has got, the codebase survey's state (`surveyBaseline` is the HEAD the last
 -survey started from, `surveyDocs` counts the findings documents that have landed, 0–4 — a baseline
 -with no findings retries automatically), and the extraction operations still in flight.
--
++This machine uses the managed Memory Router coding-agent integration.
++All memory requests use the operator-provisioned HTTPS router and its per-principal bank grants.
++The router applies scanning, quarantine and quotas. A client setting cannot grant access.
++
++## Automatic lifecycle
++
++- The operator maps this project and harness to an explicit bank.
++  Worktrees use their configured project mapping. The integration does not create or select a bank from a repository name.
++- For writable principals, session-start hooks can seed and update memory from recent commits and a read-only codebase survey.
++  These hooks can also refresh coding knowledge pages. This background work does not need a manual ingest command.
++  The operator configures banks and coding missions and strategies before ingestion.
++- Session-start and prompt hooks inject memory according to `autoInject`: `reflect`, `pages`, `recall`, or `none`.
++  If hooks inject no memory, follow the injected retrieval guide.
++- Writable sessions retain their transcripts automatically at session end.
++  Persistent harnesses also retain transcripts during the session.
++  Read-only principals skip ingestion and write-back. Their write tools are unavailable.
++  Obey the `disabled` and `retainSessions` settings.
++- Use the tool names that this harness exposes.
++  The examples below use the default `hindsight_` namespace.
++  The installed skill and guidance use the operator's configured namespace.
+ 
 -### Resetting a repo's memory
--
++## Store information
++
++When the user says "store this in hindsight" or "remember this", use these rules:
+ 
 -Delete its bank on the server. The bank is the **only** state this integration keeps, so the next
 -session in that repo is a true first open — seed and survey run again from scratch. There are no
 -client-side files to clean up.
--
++- With writable access and session retention, the integration captures the current conversation automatically at session end.
++  Tell the user. No tool call is necessary.
++- For external documents, notes, or durable findings, use `hindsight_ingest_document(title, content)`.
++- For a new feature or initiative, use `hindsight_capture_initiative(title, summary)` after agreement on the plan and before code changes.
++- If the goal, scope, or rationale changes materially, call `hindsight_capture_initiative` again.
++  This includes changes during implementation.
++  Set `relates_to_page_id` to the initiative's page ID. Describe the current intent.
++  Update the same page. Do not create a second page for the changed plan.
++  Small corrections do not need this update.
++
++## Retrieve information
++
++- For project questions, first use `hindsight_search_knowledge_pages(query)`.
++  Questions can concern components, conventions, past decisions, or initiatives.
++  This tool uses fast hybrid search on the server.
++- To read complete pages, use `hindsight_read_knowledge_page(page_id)` or `hindsight_list_knowledge_pages`.
++- For reasons and exact agreed values, use `hindsight_reflect(query)`.
++  This tool reasons over the complete memory. It is slower and takes seconds. Use it when necessary.
++- If memory contributes to an answer, start that part with `🧠 From Hindsight memory (<page>): …`.
++  Do not credit memory that did not contribute.
++
++## Correct incorrect or stale memory
++
++If code, git, or an external source disproves retrieved memory or shows that it needs an update, correct the record.
++Do not only ignore it. Call `hindsight_ingest_document` with these fields:
++
++- **title**: `Correction: <topic>` (for example, `Correction: retry policy 4xx set`).
++- **content**: State the memory's claim, the verified current fact, and the evidence from a file, commit, or output.
++  Quote exact values without changes.
++
++Include the evidence so that future retrieval can resolve the conflict.
++With read-only access, report the verified correction to an authorized writer.
++Do not try to write or change credentials.
++
++## Managed setup and updates
++
++Use the existing operator-provisioned `HINDSIGHT_ROUTER_CONFIG` absolute path and named credential environment variables.
++The operator supplies the HTTPS router URL, principal grants, project bank mapping and optional tool namespace.
++When necessary, `HINDSIGHT_MCP_HARNESS` selects the trusted harness identity.
++Start the harness in the same configured environment from a mapped project.
++
++Do not ask the user to paste JSON or credentials.
++Do not edit the managed JSON, copy tokens into harness settings, or start a memory server.
++If configuration is missing or identity is ambiguous, the operator must repair the deployment.
++Unmapped projects and missing credentials stop access.
++
++Use only the integration's pinned release tarball to install or update the integration.
++Select the release and package version from the same published release.
++Check the artifact against that release's `PACKAGE_SHA256`.
++Run this command:
++
++```sh
++npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-coding-agents install
++```
++
++The release download path is:
++`https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v<release>/mickey-kras-hindsight-memory-router-coding-agents-<package-version>.tgz`.
++Replace all version placeholders.
++If the existing managed configuration supports it, use explicit `install codex`, another supported harness, or `install all`.
++Before host changes, the installer checks the selected principals, credentials, project mapping and adapter prerequisites.
++
++For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installation.
++The installer can then allow the required environment variable names without storing their values.
++
++If the operator's credential environment variable name or tool namespace changes, reinstall from the verified artifact.
++Namespace changes need reinstallation of the companion skill and tool registration together.
++The managed tool prefix controls tool definitions and guidance. Ordinary per-bank settings cannot override it.
++
++## Check the integration
++
++First, check the session banner and available memory tools.
++If available, use `hindsight_sync_status` for ingestion progress.
++If available, use `hindsight_diagnose` for diagnostics with sensitive data removed.
++If memory seems stale, inspect progress before another ingestion try or selection of another bank.
++
++Use the diagnostics to confirm the current project bank.
++If access or bank selection is unclear, ask the operator to check assigned bank grants and managed project mappings.
++
++Missing hooks or tools usually need reinstallation of the selected harness from the verified artifact with its managed environment.
++Review the harness's registration of plugins and hooks and logs with sensitive data removed. Never print credential values.
++A 401/403 response stops requests for that credential.
++
++Ask the operator to resolve authorization and restart with the configured credential.
++Do not try another principal, URL or bank.
++The router enforces rate limits and quarantine decisions. Local settings cannot bypass them.
++
++If the harness permits work without memory, continue coding. State any material lack of memory evidence.
+ 
 -### Marker documents you may notice
--
++The operator can configure supported coding-agent settings such as `autoInject`, `retainSessions`, `disabled`, git survey limits and logging.
++Through managed routing, the integration controls transport and access to banks.
++Do not create banks, change bank configuration, configure servers, or substitute a provider client.
++Background ingestion and hooks use the same router boundary as interactive tools.
+ 
 -Two document ids exist for the machinery's own bookkeeping. Both are safe to ignore and safe to
 -delete:
--
++### Optional branding
+ 
 -- `survey-baseline:<sha>` — reads "🛰️ researching…" while a codebase survey runs and flips to
 -  "✅ completed" once its findings land. It is retained under the `survey` strategy, whose marker
 -  rule extracts **nothing** from a status marker, and it drives the re-survey cadence
@@ -6572,84 +6893,23 @@ index 7bbe6ba..acdd7a5 100644
 -  written in full again (bounded by `seedLimit`) only when an append cannot describe HEAD: the
 -  recorded commit is no longer an ancestor of HEAD (a rebase, a force-push), more than `seedLimit`
 -  commits are new, or the server cannot append safely.
--
++The operator can set `toolPrefix` in the same managed router JSON.
++The default `hindsight_` keeps the upstream names.
++Tool, skill, registration and display names derive from that one value.
++Package names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants do not change.
+ 
 -### When memory seems to be missing
--
++Use the names registered in the current session. Do not guess aliases.
+ 
 -Failures never break the agent: a reflect, page fetch or retain that fails degrades to an ordinary
 -memoryless turn and is recorded in the logs. "No memory" is therefore a log question — check the
 -diag file for whether `session_start` and `deepen_started` ever fired for that bank. A session that
 -was already running when the plugin was installed has no SessionStart behind it; its first prompt
 -after the install self-heals.
-+Include the evidence in the correction so future retrieval can resolve the conflict. With read-only
-+access, report the verified correction for an authorized writer; do not attempt a write or change
-+credentials.
-+
-+## Managed setup and updates
-+
-+Use the existing operator-provisioned `HINDSIGHT_ROUTER_CONFIG` absolute path and named credential
-+environment variables. The operator supplies the HTTPS router URL, principal grants, project bank
-+mapping and optional tool namespace. `HINDSIGHT_MCP_HARNESS` selects the trusted harness identity
-+when needed. Launch the harness in the same provisioned environment from a mapped project.
-+
-+Do not ask the user to paste JSON or credentials, edit the managed JSON, copy tokens into harness
-+settings, or start a memory server. Missing provisioning or ambiguous identity requires the
-+operator to repair the deployment. Unmapped projects and missing credentials fail closed.
-+
-+Install or update only using the integration's pinned release tarball. Select the release and
-+package version from the same published release, verify the artifact against that release's
-+`PACKAGE_SHA256`, and run:
-+
-+```sh
-+npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-coding-agents install
-+```
-+
-+The release download path is:
-+`https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v<release>/mickey-kras-hindsight-memory-router-coding-agents-<package-version>.tgz`.
-+Do not leave version placeholders unresolved. Explicit `install codex`, another supported harness,
-+or `install all` is available when the existing managed configuration supports it. The installer
-+checks the selected principals, credentials, project mapping and adapter prerequisites before
-+changing the host. For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installation so the installer
-+can allowlist the required environment variable names without embedding their values.
-+
-+After changing the operator's credential environment variable name or tool namespace, reinstall
-+from the verified artifact. Namespace changes require reinstalling the companion skill and tool
-+registration together. The managed tool prefix controls tool definitions and guidance; ordinary
-+per-bank settings cannot override it.
-+
-+## Checking the integration
-+
-+Check the session banner and available memory tools first. Use `hindsight_sync_status` for ingestion
-+progress and `hindsight_diagnose` for sanitized diagnostic information when these tools are available.
-+If memory seems stale, inspect progress before repeating ingestion or inventing another bank.
-+Use the diagnostics to confirm the current project bank. Ask the operator to verify assigned bank
-+grants and project mappings in the managed configuration when access or bank selection is unclear.
-+
-+Missing hooks or tools usually require reinstalling the selected harness from the verified artifact
-+with its managed environment. Review the harness's plugin/hook registration and sanitized logs;
-+never print credential values. A 401/403 stops requests for that credential. Ask the operator to
-+resolve authorization and restart with the provisioned credential; do not try another principal,
-+URL or bank. Rate limits and quarantine decisions are enforced by the router and are not bypassed
-+by local settings. Continue coding without memory when the harness fails open, and state any
-+material lack of memory evidence.
-+
-+Operational coding-agent settings such as `autoInject`, `retainSessions`, `disabled`, git survey
-+limits and logging may be configured by the operator in the supported coding-agent settings.
-+The managed routing boundary owns bank access and transport; do not create banks, rewrite bank
-+configuration, provision servers or substitute a provider client. Background ingestion and hooks
-+use the same router boundary as interactive tools.
-+
-+### Optional branding
-+
-+The operator may set `toolPrefix` in the same managed router JSON. The default `hindsight_`
-+keeps the upstream names. Tool, skill, registration and display names derive from that one
-+value. Package
-+names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants
-+remain unchanged. Use the names registered in the current session; do not guess aliases.
-+
-+A branding change requires the pinned installer (`install` or `update`) and a fresh session.
-+The installer migrates only managed entries and refuses unrelated name collisions. A stale
-+managed skill namespace fails closed until reinstall; never repair this by changing bank
-+assignments, credentials or the operational memory workflow above.
++A branding change requires the pinned installer (`install` or `update`) and a new session.
++The installer migrates only managed entries and rejects unrelated name collisions.
++A stale managed skill namespace stops access until reinstallation.
++Do not repair this condition through changes to bank assignments, credentials or the operational memory workflow above.
 diff --git a/src/antigravity-statusline.test.ts b/src/antigravity-statusline.test.ts
 index df76d3d..0118726 100644
 --- a/src/antigravity-statusline.test.ts

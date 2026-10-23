@@ -1,0 +1,130 @@
+name: docs-ste
+
+# ASD-STE100 Simplified Technical English gate for the documentation.
+# ste-cli checks the writing rules of the standard. Vale checks the STE style of vale-llm-slop.
+# These checks do not prove full Issue 9 compliance or validate dictionary meanings.
+
+'on':
+  workflow_call:
+
+concurrency:
+  group: docs-ste-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ste-cli:
+    name: ste-cli
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: audit
+
+      - name: Prepare documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/docs-ste"
+          mkdir -p "$stage"
+          git ls-files --cached --others --exclude-standard -z -- ':(icase)*.md' ':(icase)*.markdown' |
+            while IFS= read -r -d '' path; do
+              case "/${path,,}" in
+                /src/upstream/coding-agents/src/core/fixtures/baseline-companion-skill.md|*/.git/*|*/node_modules/*|*/.vale/styles/*|*/.architecture-site/*|*/dist/*|*/build/*|*/coverage/*|*/generated/*|*/licenses/*|*/license.md|*/license.markdown|*/third_party_notices.md|*/third_party_notices.markdown|*/changelog.md|*/changelog.markdown) continue ;;
+              esac
+              mkdir -p "$stage/$(dirname -- "$path")"
+              # Append a suffix to preserve distinct source paths and use the Markdown parser.
+              cp -- "$path" "$stage/$path.md"
+            done
+          git ls-files -z -- ':(icase)*.json' |
+            while IFS= read -r -d '' spec; do
+              case "/${spec,,}" in
+                */node_modules/*|*/dist/*|*/build/*|*/coverage/*) continue ;;
+              esac
+              jq -e 'type == "object" and (has("openapi") or has("swagger"))' "$spec" > /dev/null || {
+                status=$?
+                test "$status" = 1 && continue
+                exit "$status"
+              }
+              mkdir -p "$stage/$(dirname -- "$spec")"
+            jq -r 'paths(type == "string") as $p |
+              select(["description", "summary", "title"] | index($p[-1])) |
+              "## `" + ($p | map(tostring) | join("/")) + "`\n\n" + getpath($p) + "\n"' \
+              "$spec" > "$stage/$spec.md"
+            done
+
+      - name: Test documentation gates
+        run: python3 .github/scripts/docs-ste.test.py
+
+      # The action checks the release archive against checksums.txt before it runs. Config: .ste.yml.
+      - uses: TudorAndrei/ste-cli@8e73821bba6ef980930553fb24ca1ade2895aabf # v0.10.1
+        with:
+          version: 0.10.1
+          format: text
+          args: >-
+            --warnings-as-errors --all ${{ runner.temp }}/docs-ste
+
+  vale:
+    name: vale
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: audit
+
+      - name: Prepare documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/docs-ste"
+          mkdir -p "$stage"
+          git ls-files --cached --others --exclude-standard -z -- ':(icase)*.md' ':(icase)*.markdown' |
+            while IFS= read -r -d '' path; do
+              case "/${path,,}" in
+                /src/upstream/coding-agents/src/core/fixtures/baseline-companion-skill.md|*/.git/*|*/node_modules/*|*/.vale/styles/*|*/.architecture-site/*|*/dist/*|*/build/*|*/coverage/*|*/generated/*|*/licenses/*|*/license.md|*/license.markdown|*/third_party_notices.md|*/third_party_notices.markdown|*/changelog.md|*/changelog.markdown) continue ;;
+              esac
+              mkdir -p "$stage/$(dirname -- "$path")"
+              # Append a suffix to preserve distinct source paths and use the Markdown parser.
+              cp -- "$path" "$stage/$path.md"
+            done
+          git ls-files -z -- ':(icase)*.json' |
+            while IFS= read -r -d '' spec; do
+              case "/${spec,,}" in
+                */node_modules/*|*/dist/*|*/build/*|*/coverage/*) continue ;;
+              esac
+              jq -e 'type == "object" and (has("openapi") or has("swagger"))' "$spec" > /dev/null || {
+                status=$?
+                test "$status" = 1 && continue
+                exit "$status"
+              }
+              mkdir -p "$stage/$(dirname -- "$spec")"
+            jq -r 'paths(type == "string") as $p |
+              select(["description", "summary", "title"] | index($p[-1])) |
+              "## `" + ($p | map(tostring) | join("/")) + "`\n\n" + getpath($p) + "\n"' \
+              "$spec" > "$stage/$spec.md"
+            done
+
+      # Config: .vale.ini. "vale sync" downloads the pinned vale-llm-slop release.
+      - uses: vale-cli/vale-action@518a9136acc6e6668ce7c00d367051e0941e87ff # v3.0.0
+        with:
+          version: 3.25.1
+          files: ${{ runner.temp }}/docs-ste
+          config: .vale.ini
+          filter_mode: nofilter
+          fail_level: warning
+          # Without this, the action passes when the findings are more than the annotation limit.
+          fail_on_error: true
+
+
