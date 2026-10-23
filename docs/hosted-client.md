@@ -1,6 +1,8 @@
 # Hosted application client
 
-Download the OpenClaw `.tgz` from the [selected GitHub release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases), verify it against that release's `PACKAGE_SHA256`, then install:
+Download the OpenClaw `.tgz` from the [selected GitHub release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases).
+Verify it against that release's `PACKAGE_SHA256`.
+Install the verified archive:
 
 ```sh
 npm install --save-exact /absolute/path/verified-openclaw.tgz
@@ -24,9 +26,9 @@ const recalled = await memory.recall("reference-memory", { query: "Project facts
 const reflection = await memory.reflect("reference-memory", { query: "What should we do next?", budget: "low" });
 ```
 
-Supply explicit bank access and a principal credential issued by the router operator. Every operation takes an explicit bank. The write bank is also readable. Local access checks constrain the caller; router per-bank scope grants remain authoritative and may reject any request. There is no bank provisioning, upstream Hindsight URL/client, credential lookup/fallback, automatic deployment fallback, queue or data synchronization. Each instance owns its authenticated factory and transport; deployments share no credentials or denial state. Keep coding-agents for the local harness integration.
+Supply explicit bank access and a principal credential issued by the router operator. Every operation takes an explicit bank. The write bank is also readable. Local access checks constrain the caller. Router scope grants for each bank control access and can reject any request. There is no bank provisioning, upstream Hindsight URL/client, credential lookup/fallback, automatic deployment fallback, queue or data synchronization. Each instance owns its authenticated factory and transport. Deployments share no credentials or denial state. Keep coding-agents for the local harness integration.
 
-All paths below are relative to `/v1/default/banks/{bank}`. Request fields use the router's snake_case wire names. Documents and knowledge-base requests/responses with open schemas use `FacadeObject` (`Record<string, unknown>`), so the client does not promise undocumented fields.
+All paths below are relative to `/v1/default/banks/{bank}`. Request fields use the router's snake_case wire names. Document and knowledge-base requests and responses with open schemas use `FacadeObject` (`Record<string, unknown>`). The client does not promise undocumented fields.
 
 | Methods | Supported facade routes |
 | --- | --- |
@@ -39,9 +41,12 @@ All paths below are relative to `/v1/default/banks/{bank}`. Request fields use t
 | `createKnowledgePage`, `getKnowledgePage` | POST `/knowledge-base/pages`, GET `/knowledge-base/pages/{page_id}` |
 | `updateKnowledgePage`, `deleteKnowledgePage` | PATCH and DELETE `/knowledge-base/nodes/{node_id}` |
 
-Knowledge pages here mean knowledge-base pages. Listing returns the router's tree shape; updates and deletes require the node ID returned by the router, which is distinct from a page ID. The existing OpenClaw SDK knowledge tools use mental models and remain a separate surface.
+Knowledge pages here mean knowledge-base pages. Listing returns the router's tree shape. Updates and deletes require the router's node ID. This differs from a page ID. The existing OpenClaw SDK knowledge tools use mental models and remain a separate surface.
 
-The client reuses `AuthenticatedClientFactory` and `RouterTransport`: HTTPS validation, redirect rejection, bank checks, principal headers and sanitized errors are preserved. Requests have a 15-second deadline even with a caller cancellation signal, a 1 MiB serialized body cap and a 4 MiB response cap. Caller cancellation preserves the signal's reason before headers and during body reads; the deadline produces `TimeoutError`. Router quotas, scanning and quarantine still apply. A router 401/403 produces `AccessDeniedError` and disables that instance's credential; construct a new instance with a newly issued credential after resolving access. Other failures produce `RouterRequestError` with status and bounded retry delay; GET 404 becomes a sanitized 404 error. Discarded response bodies are cancelled on a best-effort basis without replacing the original failure. No retries are automatic.
+The client reuses `AuthenticatedClientFactory` and `RouterTransport`: HTTPS validation, redirect rejection, bank checks, principal headers and sanitized errors are preserved. Requests have a 15-second deadline, including requests with a caller cancellation signal.
+They have a 1 MiB serialized body limit and a 4 MiB response limit. Caller cancellation preserves the signal's reason before headers and during body reads. The deadline produces `TimeoutError`. Router quotas, scanning and quarantine still apply. A router 401/403 produces `AccessDeniedError` and disables that instance's credential.
+After you resolve access, construct a new instance with a newly issued credential. Other failures produce `RouterRequestError` with status and a bounded retry delay. GET 404 becomes a sanitized 404 error. Discarded response bodies are cancelled on a best-effort basis without replacing the original failure. No retries are automatic.
 
-Routes were checked against `memory_router/request_dispatch.py`, `memory_router/facade_routes.py` and `openapi/openclaw.json` in `mickey-kras/hindsight-memory-router` at commit `e17a881184c89a4ed0030921ba5650d88fcd10a3`. Contract tests use synthetic fetch responses and independent synthetic deployments; they do not claim live router or upstream integration coverage.
+Routes were checked against `memory_router/request_dispatch.py`, `memory_router/facade_routes.py` and `openapi/openclaw.json` in `mickey-kras/hindsight-memory-router` at commit `e17a881184c89a4ed0030921ba5650d88fcd10a3`. Contract tests use synthetic fetch responses and independent synthetic deployments. They do not establish live router or upstream integration coverage.
+
 

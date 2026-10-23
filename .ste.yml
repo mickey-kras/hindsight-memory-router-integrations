@@ -1,0 +1,9 @@
+# ste-cli configuration for the ASD-STE100 documentation gate.
+# These checks do not verify the official Issue 9 dictionary.
+presets: [software]
+exclude:
+  - "*requirements.txt"
+  - "THIRD_PARTY_NOTICES.md"
+  - "licenses/**"
+  - "CHANGELOG.md"
+

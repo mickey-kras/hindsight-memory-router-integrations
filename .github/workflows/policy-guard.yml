@@ -908,6 +908,7 @@ jobs:
                   if not re.search(r'(?m)^\s*' + pattern, content):
                       fail(f'{path}: missing source safety contract: {contract}')
           AUTOMATION_SHAPES = {
+              '.github/workflows/docs-ste.yml': ('5943dfbf03911fb55496665ca4aba7f77afcf2983e2fb88e71c10c6029a48f83',),
               '.github/workflows/trusted-codeql.yml': ('230f65f68125d5a4ae977e1e48b2ded28d8da8141422ef9188b56f38354e6365',),
               '.github/workflows/trusted-ci.yml': ('aeb9368828e75ef3643323c863a853baa7addf42af46bfd9d0849db507c6e0ab', '5cb1b4d5cf6320d48a69247884edf214791a54ab22af3a7f385a64ea0b300ed5',),
               '.github/workflows/trusted-aislop.yml': ('943fdcd4e062b54cfa904ca3812774ca4798a8eed92c35cb9c097e992af748b4',),
@@ -926,7 +927,7 @@ jobs:
               '.github/workflows/dependabot-auto-merge.yml': ('fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34','602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19','ccfefaafd622388ee9362ce6b95d66079be875a6cd85684be592c6a8edb74a0e','9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff','a4b213e59f85428e8cd204c6f4d01fc45da64fa1fe5b8fb0dc1373bdae6f1907','dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f'),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3','dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05','c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9'),
               '.github/workflows/pr-branch-updater.yml': ('3afd2e64a2f2b9ca6753b18bbdc93c661435b64c2dc5ccb1170f40a14a565570','e547a3d1fef04bd9a0779c63b92d59c6a9cdb59adde74c571293c4c949ff94cb','116a2be104db278bd07aa3042aef1c36f9d0f08fb2c279c7aa6ec048155e9310','380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
-              '.github/workflows/pr-validation.yml': ('e771be1b2936354e13c4557f2f1c4702d17e44a84c492169d8c587ab741db4f3','6971f39e8655728bbe953f4bb5e5af53312917d390db22df5e0caa5d3e22104a','306d0070aeb2a19b505b0dc05c2de9df2a0d3989cb19a414fb6fe8efc50af5ae','b451b158e10360d7ad8b80a0fa7ee14bbfd19555cd746fbc0b7a0e17acf5eead','599cd9a2b6444ab5b8b6a94476de81e893190e5117d954de2b289f47f3b37a08', 'ffb6ab2ef2411b37f7edc54830516a56abf5456452be8ebd37947bee883ff200', 'd402427ee0d35ce143220b202ef1c28b9d9a2b84e03328d6d1a49100272e9215',),
+              '.github/workflows/pr-validation.yml': ('1e38c9696ade480d629d856f722536fe2573d462abf13e5b65b2814ad904060b', '5565cd5c80e14b8cbb7083981fefef900f94851ba4c40ef4b2bab15aa8b172ca'),
               '.github/workflows/branch-policy.yml': ('ffaa08e4de5cb84378bae286f5329450981ec51f3451b142f36c5d1ae529941c','e08d429ddd7b64f5c01602987580adae94570d54e42623efc01f11846a44b68f','ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
           }
           SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': ('cfe792bb08eb9006273d786fbb939fd6ba91a9292e030687bccdef3f2506b4b9','d40b1aae998d17a674818c8acc1a1929745d0132c1489740984b84e2a6aa292e'), '.github/workflows/codeql.yml': '84f29bf0578ccdbba6b0c623763b590c9678ca3711716121988722534cd94ff1'}
@@ -957,10 +958,14 @@ jobs:
                           step['uses'] = re.sub(r'@[0-9a-f]{40}$','@PINNED', uses)
               return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
           RELEASE_SOURCE_HASHES = {
+              '.vale/styles/config/vocabularies/Project/accept.txt': '3b3aca4e207bf30940fa2e078dcacc4d8dca32ee0b31240360925653655c8768',
+              '.vale.ini': 'a065a9c5134a7c47c9b3a35f76a4945c7fc203358a1f4e211e530e11859703d0',
+              '.ste.yml': '15f7ba5edd8c302b63642715020d62898623c098833d2fa4f200cbf7758f668c',
+              '.github/scripts/docs-ste.test.py': '9f956fd7500f4ca6aab623e5b409f5a8cde33bab187a3913578963963ce7c104',
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '75606043457a38ea831f90e0954e9f7ff956892137ab7aaedc6456de964e3983',
-              '.github/scripts/trusted-ci-activation.json': '9f9ada9aad9236ad71ed86bbfbc5cf22f15ad662c6e07e795754b455bc1a0b14',
+              '.github/scripts/trusted-ci-activation.json': '6d348a212316c7862b90e79fd09f1f6af0f479a3c97a3127b90112b88a6c6962',
               '.github/trusted-ci/.aislop/config.yml': '798f947468c6b556b14b802f650a3c4dda6a9302ed1238e13aa078e2380472eb',
               '.github/trusted-ci/findings.cjs': '8062166755f5eb47298efe5588ca2a91e0b8de06ef7d50fc05b311f640b11602',
               '.github/trusted-ci/npm-audit.cjs': 'f28a085b4a5b4b391dcc1e0e266cb756e107cf2e40f7f8af33c66ab22f6b6d4c',
@@ -995,7 +1000,7 @@ jobs:
               '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77','f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36','e5c150df0b2cd53c7c552d2a6af9a340afaa1d94900f0f695363b978fc88bba8','04cdad684a138433c2db8ab9c5086ee1d671523aeeea7a0b3ff807fde1c5fd69','412d76a8d9c99e8a695a4e1e2d5b440c7367101c6af8e6a777c2b48565ea1af3','4e3480ad9e385ba501ec1ea23d8fa943f0eb6e1107f9db2b8e1b416800582f7d','2a457b1eec191dd86b2a64f6593863d674618f58db0d7c5748de220b3cb77dc9','a334be73f4e1ae13358e51504bb3826aa2a49100ff55fcd434af052186ea68c2'),
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5','f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23','f206b57c6feb37a573b3a8cd9f211dd6d7e9a216d5121e6459978ca6f4fdd31f','5d2f482546b4ba0431717950c49f7533dd37381efa00017551995d2d39789540','214c7178e1e2cc01e38e96a6b8cc29e9e2b1aab3c24e8c290e99d328054201a4','5571e081f47f4568443728b74846cd54a18cf51eac205115e48da74bcdbd9f40','8ffd8de74374fce6eae741e02ae49afe0e24d0f49229c92ba523494c94e2af9b','9c4679fd2e40b8170eeb6de6c9e14b62274a92596396928e13d52a7ffc75c1e5'),
-              '.github/scripts/release-policy.test.py': ('747fc3fa4f0ceb1c0e8df3a9a54c7efe3b750d2d205e6646ed4b7ce32abefb89','eb63cc2003afe088b57a4a036a487885a680e6919da437a1ec49c19eb66e0e30'),
+              '.github/scripts/release-policy.test.py': ('a2491f202ef651437c992980d462883c51ae56e08ea7df576a7fa5c07207370a','747fc3fa4f0ceb1c0e8df3a9a54c7efe3b750d2d205e6646ed4b7ce32abefb89','eb63cc2003afe088b57a4a036a487885a680e6919da437a1ec49c19eb66e0e30'),
               '.github/scripts/release-cleanup.cjs': ('f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533','3ec27d21d0df5fad08222606bce4bb3eaa07226f72ae3bd37c3e70bf83ff87e9','bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8'),
               '.github/scripts/release-cleanup.test.cjs': ('99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd','9495c6943363dfb0984573d0efce88e95e25cbb0c7691cb52bfc0a5820ada5be','1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956'),
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',

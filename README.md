@@ -7,9 +7,9 @@
 [![main + SonarQube](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/main.yml?query=branch%3Amain)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-kras/hindsight-memory-router). Give each agent a credential, one optional write bank and additional read banks, so agents can share selected memories without sharing every bank. Memory Router enforces access; client routing does not grant it.
+Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-kras/hindsight-memory-router). Give each agent a credential, one optional write bank and additional read banks. Agents can then share selected memories without sharing every bank. Memory Router enforces access. Client routing does not grant it.
 
-The two release packages are OpenClaw and coding agents; coding-agent MCP is included in the latter. Install only the integration your client needs; each can be used separately. These integrations require Memory Router and its Hindsight backend, but not GPU Workload Supervisor.
+The two release packages are OpenClaw and coding agents. The coding-agents package includes coding-agent MCP. Install only the integration your client needs. Each integration can operate separately. These integrations require Memory Router and its Hindsight backend, but not GPU Workload Supervisor.
 
 ## How it fits together
 
@@ -25,9 +25,9 @@ The two release packages are OpenClaw and coding agents; coding-agent MCP is inc
 
 ## Install
 
-Requires Node.js 22.12.0 or later, an HTTPS Memory Router endpoint and server-side principal/bank/scope grants.
+You need Node.js 22.12.0 or later and an HTTPS Memory Router endpoint. You also need server-side grants for the principal, banks and scopes.
 
-Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases) and verify its SHA-256 against `PACKAGE_SHA256` from the same release source. Packages are built by CI; tarballs are not kept in this repository.
+Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases). Verify its SHA-256 against `PACKAGE_SHA256` from the same release source. CI builds the packages. This repository does not store tarballs.
 
 | Client | Setup |
 | --- | --- |
@@ -39,7 +39,8 @@ Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras
 
 1. Create the principal's grants in Memory Router. Keep each harness's token in your secret manager.
 2. Create an operator-managed JSON file using the [configuration example](integrations/coding-agents/README.md). Set its HTTPS router URL, principal, token environment variable and explicit project-to-bank mapping.
-3. Export the named token and harness identity from your operator-managed environment, then run from the mapped project:
+3. Export the named token and harness identity from your operator-managed environment.
+4. From the mapped project, run:
 
 ```sh
 export HINDSIGHT_ROUTER_CONFIG=/absolute/path/router.json
@@ -48,9 +49,9 @@ npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-
 
 Keep the same managed environment when launching the harness. [Coding-agent setup](integrations/coding-agents/README.md) includes the pinned release URL command and agent prompt.
 
-For people using coding agents, optional [browser login](integrations/coding-agents/README.md#human-login) stores a short-lived credential in OS secure storage. Hosted applications can continue using persistent principals.
+Coding agents support optional [browser login](integrations/coding-agents/README.md#human-login). This stores a short-lived credential in OS secure storage. Hosted applications can continue to use persistent principals.
 
-For Codex, export `HINDSIGHT_ROUTER_CONFIG` before running the installer so it can allowlist the required environment variables. Unmapped projects, unknown harnesses and missing secrets fail closed. Do not overwrite this installation with upstream's `npx` installer.
+For Codex, export `HINDSIGHT_ROUTER_CONFIG` before you run the installer. The installer can then allowlist the required environment variables. Unmapped projects, unknown harnesses and missing secrets prevent access. Do not overwrite this installation with upstream's `npx` installer.
 
 ## Documentation
 
@@ -61,4 +62,5 @@ For Codex, export `HINDSIGHT_ROUTER_CONFIG` before running the installer so it c
 - [All documentation](docs/README.md), including builds, upgrades and releases
 
 [MIT license](LICENSE).
+
 

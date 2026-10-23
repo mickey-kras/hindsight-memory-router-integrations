@@ -28,6 +28,11 @@ PATHS = [
     ".github/workflows/release.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/pr-validation.yml",
+    ".github/workflows/docs-ste.yml",
+    ".github/scripts/docs-ste.test.py",
+    ".ste.yml",
+    ".vale.ini",
+    ".vale/styles/config/vocabularies/Project/accept.txt",
     ".github/workflows/branch-policy.yml",
     ".github/workflows/aislop.yml",
     ".github/workflows/codeql.yml",
@@ -64,6 +69,8 @@ def policy(overrides=None):
         if "node_modules" not in path.parts and path.is_file() and path.suffix in {".yml", ".yaml", ".cjs", ".mjs", ".py", ".sh", ".json"}
     }
     files["package.json"] = (ROOT / "package.json").read_text()
+    for path in [".ste.yml", ".vale.ini", ".vale/styles/config/vocabularies/Project/accept.txt"]:
+        files[path] = (ROOT / path).read_text()
     files.update(overrides or {})
     guard = yaml.safe_load(GUARD.read_text())
     steps = guard["jobs"]["guard"]["steps"]
@@ -246,6 +253,27 @@ class ReleasePolicyTests(unittest.TestCase):
             identity = "inputs.candidate_sha || github.sha"
         self.assertEqual(steps["Retain Gitleaks report"]["with"]["name"],
                          "gitleaks-${{ " + identity + " }}-${{ github.run_attempt }}")
+
+    def test_documentation_workflow_and_rules_cannot_be_disabled(self):
+        for path in [".github/workflows/docs-ste.yml", ".ste.yml", ".vale.ini",
+                     ".vale/styles/config/vocabularies/Project/accept.txt",
+                     ".github/scripts/docs-ste.test.py"]:
+            with self.subTest(path=path):
+                self.assertTrue(policy({path: (ROOT / path).read_text() + "\nchanged\n"}))
+        path = ".github/workflows/pr-validation.yml"
+        original = yaml.safe_load((ROOT / path).read_text())
+        for mutation in ["remove", "skip", "dependency", "result"]:
+            doc = yaml.safe_load((ROOT / path).read_text())
+            if mutation == "remove":
+                del doc["jobs"]["docs-ste"]
+            elif mutation == "skip":
+                doc["jobs"]["docs-ste"]["if"] = False
+            elif mutation == "dependency":
+                del doc["jobs"]["guard"]["needs"]
+            else:
+                doc["jobs"]["guard"]["steps"][0]["run"] = "true"
+            self.assertNotEqual(doc, original)
+            self.assertTrue(policy({path: yaml.safe_dump(doc)}))
 
     def test_reviewed_release_workflows_pass(self):
         self.assertEqual(policy(), [])
@@ -557,3 +585,4 @@ else:
 
 if __name__ == "__main__":
     unittest.main()
+

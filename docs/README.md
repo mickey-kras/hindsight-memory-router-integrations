@@ -2,7 +2,7 @@
 
 [Repository](../README.md)
 
-Choose the guide for your client: [OpenClaw](OPENCLAW.md), [coding agents](../integrations/coding-agents/README.md), or the [hosted HTTP client](hosted-client.md). The two release packages require an HTTPS router endpoint and matching server grants. Coding-agent MCP is included in the coding-agents package.
+Choose your client guide: [OpenClaw](OPENCLAW.md), [coding agents](../integrations/coding-agents/README.md), or the [hosted HTTP client](hosted-client.md). The two release packages require an HTTPS router endpoint and matching server grants. Coding-agent MCP is included in the coding-agents package.
 
 ## Install and use
 
@@ -24,6 +24,7 @@ Choose the guide for your client: [OpenClaw](OPENCLAW.md), [coding agents](../in
 
 ## Retained upstream references
 
-Use the setup guides above for this fork. Vendored files describe upstream behavior and are hash-tracked: [upstream README](../src/upstream/coding-agents/README.md), [deviations](../src/upstream/coding-agents/DEVIATIONS.md), [skill instructions](../src/upstream/coding-agents/skill/SKILL.md) and [skill preamble](../src/upstream/coding-agents/skill-src/preamble.md).
+Use the setup guides above for this fork. Vendored files describe upstream behavior. Provenance hashes track these files: [upstream README](../src/upstream/coding-agents/README.md), [deviations](../src/upstream/coding-agents/DEVIATIONS.md), [skill instructions](../src/upstream/coding-agents/skill/SKILL.md) and [skill preamble](../src/upstream/coding-agents/skill-src/preamble.md).
 
 [License](../LICENSE).
+
