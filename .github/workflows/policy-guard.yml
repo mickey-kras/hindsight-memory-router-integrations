@@ -1181,7 +1181,7 @@ jobs:
               '.ste.yml': '15f7ba5edd8c302b63642715020d62898623c098833d2fa4f200cbf7758f668c',
               '.vale.ini': 'a065a9c5134a7c47c9b3a35f76a4945c7fc203358a1f4e211e530e11859703d0',
               '.vale/styles/config/vocabularies/Project/accept.txt': '3b3aca4e207bf30940fa2e078dcacc4d8dca32ee0b31240360925653655c8768',
-              '.github/scripts/ci-admission.test.py': 'f4b51bd2f4390abdb9986038bd63be9e8b146c26216a503fcb38485075bff37e',
+              '.github/scripts/ci-admission.test.py': '5c7ff2b7199db4fcd35a61fa0f637e520aaada48a44b1055a29a59deb87d9a75',
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '44f39a8e5be7c00cef424ac3dfa703f9dacbb501c4bee9c5b8f90cb144e2bef2',
@@ -1248,6 +1248,10 @@ jobs:
           cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
               '.github/scripts/npm-audit.cjs': gate_npm_audit_script,
               '.github/scripts/sync-sonar-findings.py': gate_sonar_reporter,
+              '.github/scripts/publish-npm.cjs': gate_review_controls,
+              '.github/trusted-ci/publish-npm.test.cjs': gate_review_controls,
+              '.github/scripts/verify-package-inventory.cjs': gate_review_controls,
+              '.github/scripts/coding-dependency-patch.cjs': gate_review_controls,
               '.semgrep.yml': gate_semgrep,
               '.github/dependabot.yml': gate_dependabot,
               'package.json': gate_package_json,
@@ -1263,6 +1267,11 @@ jobs:
           GATES.update({path: gate_release_source for path in RELEASE_SOURCE_HASHES})
           GATES.update({path: gate_lockfile for path in LOCKFILES})
           GATES.update({path: gate_dependency_preparation for path in DEPENDABOT_SOURCE_CONTRACTS})
+          # The publish job loads this helper through verify-package-inventory.cjs.
+          def gate_publish_dependency(path, content):
+              gate_dependency_preparation(path, content)
+              gate_review_controls(path, content)
+          GATES['.github/scripts/dependency-files.cjs'] = gate_publish_dependency
           protected = set(GATES)
           def load_files():
               with open(os.environ['FILES_JSON'], encoding='utf-8') as handle:

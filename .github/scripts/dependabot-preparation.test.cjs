@@ -1402,7 +1402,6 @@ test("trusted policy enforces source contracts while allowing benign implementat
   const mutations = {
     ".github/scripts/docker-provenance.cjs": ["function dockerProvenance(", "function renamedDockerProvenance("],
     ".github/scripts/dependabot-auto-merge.cjs": ["const MINIMUM_SCORE = 75;", "const MINIMUM_SCORE = 0;"],
-    ".github/scripts/dependency-files.cjs": ["function validateChecksums(", "function renamedValidateChecksums("],
     ".github/scripts/dependabot-preparation.cjs": ["expectedHeadOid: payload.head,", "expectedHeadOid: undefined,"],
     ".github/scripts/refresh-dependency-artifacts.cjs": [
       'run("git", ["merge-base", "--is-ancestor", base, head]);',
@@ -1414,14 +1413,18 @@ test("trusted policy enforces source contracts while allowing benign implementat
       "if False:",
     ],
   };
+  // The publish job loads this helper, so every change needs exact-head owner approval.
+  const ownerGated = ".github/scripts/dependency-files.cjs";
   const workflow = ".github/workflows/dependabot-preparation.yml";
-  const files = [...Object.keys(mutations), workflow];
+  const files = [...Object.keys(mutations), ownerGated, workflow];
   const directory = mkdtempSync(join(tmpdir(), "preparation-contracts-"));
   try {
     for (const path of files) {
       mkdirSync(join(directory, path, ".."), { recursive: true });
       cpSync(join(root, path), join(directory, path));
     }
+    mkdirSync(join(directory, "base", ownerGated, ".."), { recursive: true });
+    cpSync(join(root, ownerGated), join(directory, "base", ownerGated));
     for (const [name, value] of Object.entries({
       head_sha: head,
       author_association: "OWNER",
@@ -1456,6 +1459,21 @@ test("trusted policy enforces source contracts while allowing benign implementat
       }
       setFiles();
     }
+    const helper = readFileSync(join(directory, ownerGated), "utf8");
+    writeFileSync(join(directory, ownerGated), `${helper}\n// benign maintenance comment\n`);
+    assert.throws(check, /Command failed/, ownerGated);
+    writeFileSync(join(directory, ownerGated), helper);
+    for (const status of ["removed", "renamed"]) {
+      setFiles([
+        {
+          filename: status === "renamed" ? `${ownerGated}.renamed` : ownerGated,
+          previous_filename: ownerGated,
+          status,
+        },
+      ]);
+      assert.throws(check, /Command failed/, `${ownerGated} ${status}`);
+    }
+    setFiles();
     const originalWorkflow = readFileSync(join(directory, workflow), "utf8");
     writeFileSync(
       join(directory, workflow),
