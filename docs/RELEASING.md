@@ -169,7 +169,7 @@ and `@mickey-kras/hindsight-memory-router-coding-agents` before dispatching rele
    Local publication does not generate npm provenance. The automated publisher
    rejects existing versions without it, even when their bytes match. Use newer package versions for the first automated release. Update locks and hash pins.
 
-Revoke any temporary bootstrap token. Remove the local configuration for that token.
+   Revoke any temporary bootstrap token. Remove the local configuration for that token.
 
 3. In each npm package's **Settings > Trusted publishing**, add GitHub Actions:
 
@@ -182,13 +182,16 @@ Revoke any temporary bootstrap token. Remove the local configuration for that to
    | Allowed action | `npm publish` |
 
    npm validates the calling workflow (`release.yml`), not reusable `main.yml`. Both grant `id-token: write`. The publishing job uses `release-automation`. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
-4.
 
-Run the release with the newer package versions. Complete its first OIDC publish
-   within two days of creating the trusted publisher. Recreate expired configurations. GitHub stores no npm token.
-5.
+4. Run the release with the newer package versions.
 
-Check that both exact versions install from npm. Check that their registry integrity matches the GitHub tarballs. Check that npm displays provenance. Then change installation docs from GitHub tarballs to pinned npm versions.
+   Complete its first OIDC publish within two days of creating the trusted publisher.
+   Recreate expired configurations. GitHub stores no npm token.
+
+5. Check that both exact versions install from npm.
+
+   Check that their registry integrity matches the GitHub tarballs. Check that npm displays provenance.
+   Then change installation docs from GitHub tarballs to pinned npm versions.
 
 For OpenClaw, use
    `openclaw plugins install npm:@mickey-kras/hindsight-memory-router-openclaw@<package-version>`. The [current CLI](https://docs.openclaw.ai/cli/plugins/install) defaults
