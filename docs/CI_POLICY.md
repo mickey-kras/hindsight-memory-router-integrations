@@ -19,6 +19,7 @@ The review route is deliberately closed unless all of these hold:
 - The PR author is a GitHub bot, separate from `mickey-kras` (owner ID `24433677`). An owner-authored PR cannot self-admit.
 - The base branch's CODEOWNERS assigns `/.github/` to `@mickey-kras`.
 - GitHub's effective base-branch rules require code-owner review, dismiss stale approvals, and require approval of the latest push by someone other than its pusher.
+- Their applicable repository source must remain active with the same review parameters and no bypass actors. If the API hides bypass actors, a trusted administrator readback must match its exact repository, ruleset ID and revision.
 - The owner's latest decisive review is `APPROVED` and identifies the exact current head SHA. A later dismissal or request for changes revokes admission.
 
 Re-run the guard after approval. A new commit needs new approval and new verification. Native rules must remain active: they prevent merging after dismissal or an unapproved push even if an earlier guard check is green. API errors fail closed. Do not add a candidate-executing `pull_request_review` workflow to automate this rerun.
@@ -28,6 +29,14 @@ Re-run the guard after approval. A new commit needs new approval and new verific
 The checked-in `.github/rulesets/require-ci-owner-review.json` is an additive ruleset template, not proof that the rule is installed. Import it in repository Settings → Rules → Rulesets without replacing the existing required-check, scan, branch, or release rules. Confirm it applies to `main` and `release/*`, is active, and has no bypass actors. The required approval and last-push requirements also affect PRs outside `.github`; this is deliberate identity separation. GitHub can omit bypass details from read-only API responses, so the administrator must verify no bypass grants during rollout and preserve that configuration; the guard does not receive administration credentials.
 
 Provision a dedicated implementation GitHub App with only repository contents and pull-request write access and workflow write access when needed. Keep administration, owner review, release credentials, and bypass permission out of that identity. Install it only on the intended repositories and configure the implementation connection to use it. Commit authorship text is not identity separation. The human owner's credentials must not be available to the implementer. Existing release automation is not an implementation identity.
+
+Find the applicable `ruleset_id` through `GET /repos/{owner}/{repo}/rules/branches/{branch}`. With an administrator's local `gh` login, read the full source:
+
+```sh
+gh api repos/mickey-kras/hindsight-memory-router-integrations/rulesets/RULESET_ID --jq 'if has("bypass_actors") and .bypass_actors == [] then {repository: .source, ruleset_id: .id, updated_at: .updated_at, bypass_actors: []} else error("Administrator readback must show no bypass actors") end'
+```
+
+Replace `RULESET_ID` with its numeric ID. Store the output JSON in the repository Actions variable `CI_POLICY_SETTINGS_REVIEW`. Only an administrator may configure this trusted variable. The guard needs this readback when the read-only API hides bypass actors. It rejects missing, malformed or stale readbacks and any visible nonempty bypass list. Repeat the administrator readback after any ruleset change; never give the guard an administrator credential.
 
 Before activation, test a bot-authored PR with an unknown code hash: it must fail before review, pass only after exact-head owner approval, and fail again after a new commit, dismissal, or a missing native control. Also test a registry-only lock patch without editing policy pins. Read back effective rules and check the real workflow results; local fixtures alone do not qualify the rollout.
 

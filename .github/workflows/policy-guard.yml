@@ -932,7 +932,7 @@ jobs:
               '.github/workflows/dependabot-auto-merge.yml': ('dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f',),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9',),
               '.github/workflows/pr-branch-updater.yml': ('380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
-              '.github/workflows/pr-validation.yml': ('d402427ee0d35ce143220b202ef1c28b9d9a2b84e03328d6d1a49100272e9215',),
+              '.github/workflows/pr-validation.yml': ('36a2d2395c7a3d382eedd46dfe5e84b7ff5e628a98e700f5be8813005b0bf2cb',),
               '.github/workflows/branch-policy.yml': ('ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
           }
           SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': ('cfe792bb08eb9006273d786fbb939fd6ba91a9292e030687bccdef3f2506b4b9','d40b1aae998d17a674818c8acc1a1929745d0132c1489740984b84e2a6aa292e'), '.github/workflows/codeql.yml': '84f29bf0578ccdbba6b0c623763b590c9678ca3711716121988722534cd94ff1'}
@@ -1058,6 +1058,39 @@ jobs:
                   return (Path(fixtures) / 'base' / path).read_text()
               return fetch_file(path, pr_context['base']['sha'])
 
+          def review_required(rule):
+              if not isinstance(rule, dict) or not isinstance(rule.get('parameters'), dict):
+                  return False
+              settings = rule['parameters']
+              count = settings.get('required_approving_review_count')
+              required = ('require_code_owner_review', 'dismiss_stale_reviews_on_push', 'require_last_push_approval')
+              return rule.get('type') == 'pull_request' and type(count) is int and count >= 1 and all(settings.get(key) is True for key in required)
+
+          def review_source_active(rule):
+              repository = f'{os.environ["OWNER"]}/{os.environ["REPO"]}'
+              rule_id = rule.get('ruleset_id')
+              if type(rule_id) is not int or rule_id <= 0 or rule.get('ruleset_source_type') != 'Repository' or rule.get('ruleset_source') != repository:
+                  return False
+              source = api_json(f'rulesets/{rule_id}')
+              if not isinstance(source, dict) or type(source.get('id')) is not int or source['id'] != rule_id or source.get('source_type') != 'Repository' or source.get('source') != repository:
+                  return False
+              if source.get('enforcement') != 'active' or source.get('target') != 'branch' or not isinstance(source.get('rules'), list) or not any(review_required(item) for item in source['rules']):
+                  return False
+              if 'bypass_actors' in source:
+                  return type(source['bypass_actors']) is list and source['bypass_actors'] == []
+              # The read-only token hides bypasses; bind the administrator's
+              # no-bypass readback to this exact repository, source and revision.
+              try:
+                  from datetime import datetime
+                  reviewed = unique_json(os.environ.get('CI_POLICY_SETTINGS_REVIEW', ''))
+                  revision = source.get('updated_at')
+                  if not isinstance(revision, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', revision):
+                      return False
+                  datetime.strptime(revision, '%Y-%m-%dT%H:%M:%SZ')
+              except (ValueError, TypeError):
+                  return False
+              return isinstance(reviewed, dict) and reviewed.get('repository') == repository and type(reviewed.get('ruleset_id')) is int and reviewed['ruleset_id'] == rule_id and reviewed.get('updated_at') == revision and type(reviewed.get('bypass_actors')) is list and reviewed['bypass_actors'] == []
+
           def owner_approved():
               user = pr_context.get('user', {})
               if user.get('type') != 'Bot' or user.get('id') == OWNER_ID or user.get('login') == OWNER_LOGIN:
@@ -1071,8 +1104,7 @@ jobs:
               if owners != [f'/.github/ @{OWNER_LOGIN}']:
                   return False
               rules = api_json('rules/branches/' + quote(base['ref'], safe=''), paginate=True)
-              required = ('require_code_owner_review', 'dismiss_stale_reviews_on_push', 'require_last_push_approval')
-              if not any(rule.get('type') == 'pull_request' and rule.get('parameters', {}).get('required_approving_review_count', 0) >= 1 and all(rule.get('parameters', {}).get(key) is True for key in required) for rule in rules):
+              if not isinstance(rules, list) or not any(review_required(rule) and review_source_active(rule) for rule in rules):
                   return False
               reviews = api_json(f'pulls/{os.environ["PR_NUMBER"]}/reviews?per_page=100', paginate=True)
               decisions = [review for review in reviews if review.get('user', {}).get('id') == OWNER_ID
@@ -1144,7 +1176,7 @@ jobs:
 
 
           RELEASE_SOURCE_HASHES = {
-              '.github/scripts/ci-admission.test.py': 'f983d2ed5d90fac6a462d1d58eef8f158a5db8b368168cb963854e1bbd83e1b0',
+              '.github/scripts/ci-admission.test.py': 'f4b51bd2f4390abdb9986038bd63be9e8b146c26216a503fcb38485075bff37e',
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '44f39a8e5be7c00cef424ac3dfa703f9dacbb501c4bee9c5b8f90cb144e2bef2',
@@ -1395,6 +1427,7 @@ jobs:
           OWNER: ${{ github.event.repository.owner.login }}
           REPO: ${{ github.event.repository.name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          CI_POLICY_SETTINGS_REVIEW: ${{ vars.CI_POLICY_SETTINGS_REVIEW }}
         run: |
           set -euo pipefail
           export FILES_JSON="${RUNNER_TEMP}/files.json"

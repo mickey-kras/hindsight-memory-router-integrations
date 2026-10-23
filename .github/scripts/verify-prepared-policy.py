@@ -20,6 +20,14 @@ for index, step in enumerate(steps[2:-1]):
         raise ValueError("Unexpected trusted policy source")
     source.append(run[len(prefix):-len("POLICY_SOURCE\n")])
 
+if sys.argv[1] == "--live":
+    subprocess.run(
+        [sys.executable, "-c", "".join(source)],
+        env={key: value for key, value in os.environ.items() if key not in {"GUARD_FIXTURE_DIR", "FILES_JSON"}},
+        check=True,
+    )
+    sys.exit(0)
+
 fixture = Path(sys.argv[1]).resolve()
 subprocess.run(
     [sys.executable, "-c", "".join(source)],

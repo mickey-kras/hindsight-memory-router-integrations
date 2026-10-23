@@ -3,7 +3,10 @@ import base64
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -43,7 +46,8 @@ class AdmissionTests(unittest.TestCase):
         }
         self.lock_path = '.github/scripts/package-lock.json'
         self.lock = json.loads((ROOT / self.lock_path).read_text())
-        self.rules = [{'type': 'pull_request', 'parameters': {
+        self.rules = [{'type': 'pull_request', 'ruleset_id': 42, 'ruleset_source_type': 'Repository',
+                       'ruleset_source': 'mickey-kras/test', 'parameters': {
             'required_approving_review_count': 1,
             'require_code_owner_review': True,
             'dismiss_stale_reviews_on_push': True,
@@ -51,6 +55,9 @@ class AdmissionTests(unittest.TestCase):
         }}]
         self.reviews = [{'id': 1, 'user': {'id': 24433677, 'login': 'mickey-kras', 'type': 'User'},
                          'state': 'APPROVED', 'commit_id': 'a' * 40}]
+        self.source = {'id': 42, 'source_type': 'Repository', 'source': 'mickey-kras/test',
+                       'enforcement': 'active', 'target': 'branch', 'updated_at': '2026-10-23T00:00:00Z',
+                       'bypass_actors': [], 'rules': copy.deepcopy(self.rules)}
 
     def lock_errors(self, lock):
         with patch.object(self.guard, 'base_file', return_value=json.dumps(self.lock)), patch.object(
@@ -59,13 +66,50 @@ class AdmissionTests(unittest.TestCase):
             self.guard.gate_lockfile(self.lock_path, lock if isinstance(lock, str) else json.dumps(lock))
         return list(self.guard.failures)
 
-    def approved(self):
+    def approved(self, settings_review=''):
         def api(path, paginate=False):
+            if path.startswith('rulesets/'):
+                self.assertEqual(path, 'rulesets/42')
+                return self.source
             return self.rules if path.startswith('rules/') else self.reviews
-        with patch.dict('os.environ', {'OWNER': 'mickey-kras', 'REPO': 'test', 'PR_NUMBER': '1'}), patch.object(
+        with patch.dict('os.environ', {'OWNER': 'mickey-kras', 'REPO': 'test', 'PR_NUMBER': '1',
+                                      'CI_POLICY_SETTINGS_REVIEW': settings_review}), patch.object(
             self.guard, 'base_file', return_value='/.github/ @mickey-kras\n'
         ), patch.object(self.guard, 'api_json', side_effect=api):
             return self.guard.owner_approved()
+
+    def settings_review(self, **values):
+        return json.dumps({'repository': 'mickey-kras/test', 'ruleset_id': 42,
+                           'updated_at': '2026-10-23T00:00:00Z', 'bypass_actors': [], **values})
+
+    def test_redacted_bypasses_need_exact_current_administrator_readback(self):
+        del self.source['bypass_actors']
+        for value in ['', '{}', 'null', '[]', '{', self.settings_review(repository='other/repo'),
+                      self.settings_review(ruleset_id=43), self.settings_review(ruleset_id=True),
+                      self.settings_review(ruleset_id='42'), self.settings_review(updated_at='2026-10-22T00:00:00Z'),
+                      self.settings_review(bypass_actors=[{}])]:
+            with self.subTest(value=value):
+                self.assertFalse(self.approved(value))
+        self.assertTrue(self.approved(self.settings_review()))
+        self.source['updated_at'] = '2026-10-23T00:00:01Z'
+        self.assertFalse(self.approved(self.settings_review()))
+
+    def test_readback_cannot_override_bypasses_or_disabled_or_weakened_source(self):
+        original = copy.deepcopy(self.source)
+        for values in [{'bypass_actors': [{'actor_id': 123, 'actor_type': 'Integration', 'bypass_mode': 'pull_request'}]},
+                       {'bypass_actors': None}, {'bypass_actors': {}}, {'bypass_actors': ''},
+                       {'enforcement': 'disabled'}, {'enforcement': 'evaluate'}, {'target': 'tag'}, {'id': 43},
+                       {'source_type': 'Organization'}, {'source': 'other/repo'}, {'rules': []},
+                       {'rules': [{'type': 'pull_request', 'parameters': {'required_approving_review_count': 1}}]}]:
+            self.source = {**original, **values}
+            with self.subTest(values=values):
+                self.assertFalse(self.approved(self.settings_review()))
+        self.source = original
+        for values in [{'ruleset_id': 0}, {'ruleset_id': True}, {'ruleset_id': '42'},
+                       {'ruleset_source_type': 'Organization'}, {'ruleset_source': 'other/repo'}]:
+            self.rules = [{**original['rules'][0], **values}]
+            with self.subTest(values=values):
+                self.assertFalse(self.approved(self.settings_review()))
 
     def test_registry_patch_needs_no_hash_admission(self):
         key = 'node_modules/ip-address'
@@ -226,6 +270,57 @@ class AdmissionTests(unittest.TestCase):
         ), patch.object(self.guard, 'api_json', side_effect=RuntimeError('API unavailable')):
             with self.assertRaises(RuntimeError):
                 self.guard.owner_approved()
+
+    def test_real_pr_policy_entrypoint_reads_live_review_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            gh = directory / 'gh'
+            gh.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
+from pathlib import Path
+data = json.loads(Path(os.environ['API_RESPONSES']).read_text())
+value = data[sys.argv[2]]
+print(value if isinstance(value, str) else json.dumps(value))
+''')
+            gh.chmod(0o755)
+            responses = directory / 'responses.json'
+            prefix = 'repos/mickey-kras/test/'
+            pull = {**self.guard.pr_context, 'number': 1, 'state': 'open', 'author_association': 'NONE'}
+            self.source.pop('bypass_actors')
+            data = {
+                prefix + 'pulls/1': pull,
+                prefix + 'pulls/1/files?per_page=100': [[{'filename': '.github/scripts/release-settings.cjs', 'status': 'modified'}]],
+                prefix + 'rules/branches/main': [self.rules],
+                prefix + 'rulesets/42': self.source,
+                prefix + 'pulls/1/reviews?per_page=100': [self.reviews],
+                prefix + 'contents/.github/CODEOWNERS?ref=' + 'b' * 40: '/.github/ @mickey-kras\n',
+                prefix + 'contents/.github/scripts/release-settings.cjs?ref=' + 'a' * 40: '// independently reviewed update\n',
+            }
+            command = ['node', '-e', "require('./.github/scripts/dependabot-validation.cjs').runPolicy({}, {owner:'mickey-kras',repo:'test'}, {number:1}, [], {live:true}).catch(error=>{console.error(error);process.exit(1)})"]
+            environment = {**os.environ, 'PATH': str(directory) + os.pathsep + os.environ['PATH'],
+                           'API_RESPONSES': str(responses), 'GH_TOKEN': 'test-read-only',
+                           'GUARD_FIXTURE_DIR': 'must-not-be-used', 'FILES_JSON': 'must-not-be-used',
+                           'CI_POLICY_SETTINGS_REVIEW': self.settings_review()}
+            responses.write_text(json.dumps(data))
+            passed = subprocess.run(command, env=environment, text=True, capture_output=True)
+            self.assertEqual(passed.returncode, 0, passed.stderr)
+            for mutation in ('missing-readback', 'bypass', 'stale', 'disabled', 'dismissed'):
+                changed = copy.deepcopy(data)
+                trial_env = dict(environment)
+                if mutation == 'missing-readback':
+                    trial_env['CI_POLICY_SETTINGS_REVIEW'] = ''
+                elif mutation == 'bypass':
+                    changed[prefix + 'rulesets/42']['bypass_actors'] = [{'actor_id': 123}]
+                elif mutation == 'stale':
+                    changed[prefix + 'rulesets/42']['updated_at'] = '2026-10-23T00:00:01Z'
+                elif mutation == 'disabled':
+                    changed[prefix + 'rulesets/42']['enforcement'] = 'disabled'
+                else:
+                    changed[prefix + 'pulls/1/reviews?per_page=100'][0][0]['state'] = 'DISMISSED'
+                responses.write_text(json.dumps(changed))
+                with self.subTest(mutation=mutation):
+                    failed = subprocess.run(command, env=trial_env, text=True, capture_output=True)
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertIn('release automation must match its reviewed policy', failed.stderr)
 
 
 if __name__ == '__main__':
