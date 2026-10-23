@@ -1,6 +1,6 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-openclaw",
-  "version": "0.14.5",
+  "version": "0.14.6",
   "description": "Per-agent OpenClaw memory routing plugin for hindsight-memory-router (forks vectorize-io/hindsight OpenClaw integration v1.0.0)",
   "main": "dist/plugin.js",
   "types": "dist/plugin.d.ts",
@@ -54,7 +54,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@types/node": "22.20.5",
-    "@vitest/coverage-v8": "5.0.4",
+    "@vitest/coverage-v8": "5.0.5",
     "aislop": "0.18.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
