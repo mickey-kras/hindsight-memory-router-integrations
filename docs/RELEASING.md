@@ -228,3 +228,5 @@ A preparation rerun reuses the retained artifact. It never overwrites it. Full c
 Sonar restores coverage by the artifact ID returned by successful quality checks in the same workflow run. It installs both packages' locked dependencies on its own runner for TypeScript analysis without rebuilding packages or rerunning tests. Before scanning, source SHA, run ID and report digest must match. The Sonar quality gate remains required. Failed checks do not publish coverage.
 
 
+
+CI dependency and policy changes follow [CI policy and independent review](CI_POLICY.md). Lockfiles use semantic validation. Do not bootstrap dependency updates with more hash admissions.

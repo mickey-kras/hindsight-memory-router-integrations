@@ -71,6 +71,8 @@ def policy(overrides=None):
     files["package.json"] = (ROOT / "package.json").read_text()
     for path in [".ste.yml", ".vale.ini", ".vale/styles/config/vocabularies/Project/accept.txt"]:
         files[path] = (ROOT / path).read_text()
+    baseline = dict(files)
+    baseline[".github/CODEOWNERS"] = (ROOT / ".github/CODEOWNERS").read_text()
     files.update(overrides or {})
     guard = yaml.safe_load(GUARD.read_text())
     steps = guard["jobs"]["guard"]["steps"]
@@ -111,6 +113,10 @@ new AsyncFunction('github', 'context', 'core', 'require', input.script)(github, 
         program.write_text(source)
         fixtures = directory / "fixtures"
         fixtures.mkdir()
+        for path, content in baseline.items():
+            target = fixtures / "base" / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
         for path, content in files.items():
             target = fixtures / path
             target.parent.mkdir(parents=True, exist_ok=True)

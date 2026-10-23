@@ -41,6 +41,10 @@ jobs:
           set -euo pipefail
           cat <<'POLICY_SOURCE' > "$RUNNER_TEMP/policy_guard.py"
           import hashlib
+          import copy
+          import base64
+          from pathlib import Path
+          from urllib.parse import quote
           import json
           import os
           import re
@@ -511,6 +515,12 @@ jobs:
               for name in AISLOP_REQUIRED_STEPS:
                   step = step_named(status, name)
                   if step is not None:
+          POLICY_SOURCE
+
+      - name: Policy source 2
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                       check_gate_step(path, 'status', step, allow_if=name in AISLOP_CONDITIONED_STEPS)
               # Exact-if contracts: conditioned steps must match their pinned
               # expressions byte-for-byte after whitespace normalization, so a
@@ -521,12 +531,6 @@ jobs:
                   ('Upload Aislop SARIF', AISLOP_UPLOAD_IF),
               ):
                   step = step_named(status, name)
-          POLICY_SOURCE
-
-      - name: Policy source 2
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   if step is not None and normalize_condition(step.get('if', '')) not in (expected, expected.replace('always()', '!cancelled()')):
                       fail(f'aislop.yml: {name} if condition must stay exactly: {expected}')
               for name, needles in AISLOP_RUN_SIGNATURES.items():
@@ -624,17 +628,19 @@ jobs:
           )
 
           def gate_policy_guard(path, content):
+              if content != base_file(path) and not review_admitted:
+                  fail(f'{path}: policy changes require independent exact-head owner approval')
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
               # Reassemble the bounded inline source steps for the same
               # structural checks used for the original single-step guard.
               physical = doc.get('jobs', {}).get('guard', {}).get('steps', [])
-              if len(physical) != 6:
-                  fail('policy-guard.yml: guard must have exactly 6 steps')
+              if len(physical) != 7:
+                  fail('policy-guard.yml: guard must have exactly 7 steps')
                   return
               source = []
-              for index, step in enumerate(physical[2:5]):
+              for index, step in enumerate(physical[2:6]):
                   operator = '>' if index == 0 else '>>'
                   prefix = (
                       "set -euo pipefail\n"
@@ -656,7 +662,7 @@ jobs:
                       fail('policy-guard.yml: nested source terminator')
                       return
                   source.append(chunk)
-              execute = physical[5]
+              execute = physical[6]
               expected_run = (
                   'set -euo pipefail\n'
                   'export FILES_JSON="${RUNNER_TEMP}/files.json"\n'
@@ -910,25 +916,25 @@ jobs:
           AUTOMATION_SHAPES = {
               '.github/workflows/docs-ste.yml': ('28c93b5213df65323768e136417909b78626406b480bb5dfca7d0fe4a1785f00',),
               '.github/workflows/trusted-codeql.yml': ('230f65f68125d5a4ae977e1e48b2ded28d8da8141422ef9188b56f38354e6365',),
-              '.github/workflows/trusted-ci.yml': ('aeb9368828e75ef3643323c863a853baa7addf42af46bfd9d0849db507c6e0ab', '5cb1b4d5cf6320d48a69247884edf214791a54ab22af3a7f385a64ea0b300ed5',),
+              '.github/workflows/trusted-ci.yml': ('5cb1b4d5cf6320d48a69247884edf214791a54ab22af3a7f385a64ea0b300ed5',),
               '.github/workflows/trusted-aislop.yml': ('943fdcd4e062b54cfa904ca3812774ca4798a8eed92c35cb9c097e992af748b4',),
-              '.github/workflows/ci.yml': ('a61ad4bd1c6a7281742a1090d48988453afadc1f89a88cae76ac7c6ecee9e55a','2b0e78b64d2a2f55ae8bf8b07c3e902dad15ba47ed66d96b5a821216917e57ed','94b99e1708f6e5fe3b78725113b4529a52768bd2972e455c5e01d69da6d53ce4','af4b2e3a471a3def863507c7f4b2bff6e9f20870ed424d4fbe32b4b1f19bed24','6afcaffa52e85b54ead0cda2122fd6cccf420c4cea40ec50d02eea8e3ca189aa','11dd037626f6a9ebfc01313ca396d46b7b963c0c370a2a3d38c4d575b787d8e6','b4b2b6359d18d81170a107431e6944dfddc49daba1f348c39095a9bcd9214ed2','c1933ebe0bfef3541249290db3cf43e407abc2c452b4f8295a4669119b03fba8','d510602234d8deae63e37b4ed575cc6d56df16792ddb46eb17e7a4fc35f360e6','8eb9a49d5364907d297539cd11e9f701619eadca0ff6463615ed4c184b543f2e','1260da0fbf6eb14066be840ed97568f8e248c3c09a0feb878b748213c991c12c', '68b180a3d03b7e7c246e9154f4b46776ba0ffc8a5d97aafdfd380640c144d771',),
-              '.github/workflows/main.yml': ('656f5d9b3fefabf005d9729dac8d373bbe983f14550f3d4dd9e103df892225d8','8a430a9d9f31f86e068bfef5e7922d6232ca993cfc623a5a384b142858ac152e','4582de5ce1a6038033af10ea8ecf80094ab9b6ee30164121f4981827968794cd','75a7e0b32354eda8f53c1f51e454a77100add23738005c1b1a4da7f18784b746','11ebd1dbdd531ee9cd928002296cb0fce8e1e1e19204e5cc4f3e973672ad19da','39af26a5e2dd7f9fde43ffb1b0ca867d31433e1af2a00a0fdaba3016a164d2da','5cb2724f04882313fd92d84afcd5797c6ce62bbdf1183d3595f00e467c5e5c54','978986c5c4297bae695520a4ed1e17055c5fd41ade6e8afed8152a1003ec4259','f6e820ffb5bb391007a9b8e5ffc626a019233a8d9dacd2d6e173ed74faa19c16','11743111a6054b09a0f6b26014b8667565499ce2aa90c1252a17b1e84201760d','c14dd84414cd95fa0540f0e9a8d82d418bc7e3aa13366ed17443850ad0ee4a2d','63acb62bcc32e691693589147f5583b0f6903181a0272ff6685379b940b11098','f057995cab13e53280a6d2f9ba65275ec5599429d7fa2a5efe6c7fed85e2cc3b','d908ff6b8019f924567d359d63506f427a9ed308f0f030fc1fa1d59ddc087dcc','f39bbb9fb2b3a0088e93271d640e4de38940457861b9cfc83595a71cf2787df6','8999b3924049dfe9e7ac475a35e11bf7e18021f3a03098dc59662484c4562696','e6d13b3f4b346bc46528eb2cc9fd5d3174c2b5808bbceaf7ed657b5e1be61b92','ba514fdf2c8cfec51f66719975d584673116d9efc6e62c237e3205666e9f26d9', '5b2968e9444d11de70666989ea734a5ab9a16000361f496cd9f9e162766e69f5', '60488a3eb67c61df1905f11e00e0ff870d69c09bda0e020725d9b5e604e7cdb8', '750193f7b75ec36df96dec3c8544a6c40f20f7724013326bb8d3c49e9d538138',),
+              '.github/workflows/ci.yml': ('68b180a3d03b7e7c246e9154f4b46776ba0ffc8a5d97aafdfd380640c144d771',),
+              '.github/workflows/main.yml': ('750193f7b75ec36df96dec3c8544a6c40f20f7724013326bb8d3c49e9d538138',),
+              '.github/workflows/release.yml': ('60a6c456de88aa5cf1e498440ef3af44a2f2bfa06f06404913d0451c95c8a064',),
+              '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
           POLICY_SOURCE
 
       - name: Policy source 3
         run: |
           set -euo pipefail
           cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
-              '.github/workflows/release.yml': ('e20163669d0d5dd2f9e6bce99bba5a1d7af68811d0307845f294a8f74bbf2f13','da465353760360545d0778cfa231e95db8af7033065a9f0fe13f1e19321748f5','2a1f59d94062e04d72667b2d8f4c15a5ec58115ac6dbbfa356d4140cc7dd31e3','6f0608e02206116936a94d1d690682e1ed024c0bd748f28b3cc28d02708b106c','40b04e291989c5a6f2fb42d72d2006b4b9cb692a9ec0615fafad8b34d615cce2','b25089c268d59c2ef1a3bdd6cff38d45e0a66d7783df15e5945380443b617341','25044af5b0e4965e298b60315c03a349ddefdaf9aae1da215ab4f140c5519caf','a5849ba2d0d95b62d6c9eaadd246bde56ebd4df2b9df38090e1e4a332dc66a8c','abe8bd3abc97d53c756756eae006c2c61a949dfb02530ae99c38e52df3e18dc2','60a6c456de88aa5cf1e498440ef3af44a2f2bfa06f06404913d0451c95c8a064',),
-              '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
-              '.github/workflows/dependabot-preparation.yml': ('5782edc05e95995fa5c45f190a42707a595a633e6bf5b19430ce2e203a90a92c','c8d826e549d44cdbb850df7580e681957b76c8755510a9be7517c0978447b171','82cb9992e9aec4e8cd43a02d94cf114e95eb9421bc35acef60fd2fdb671f1d09','c5dc2fec63ea7d7f310b2c1076b21214ba6c864969d03657a83de899b030c96a','e122ae56a9db3626a2aa1c47454144741c2a61bb3914c16c0307af6534c92cd9','284be32dfbfd5211c4a7e7734a52e00a5e4ae7735549c1fd59f13280e4cec4ef','523375bdbb0d23c2e9b9137493c4f038cab0b442f4b5f99ac6910f291b0e0c8f','e041f04e059d1d5aef839e0ce78226ac710bebba175c7855f3dbdd1383f4579d','e189cc59c7ea9caed559805e7eba3422a2179efd199deb3b931f4519c22265c8',),
-              '.github/workflows/dependabot-policy-tests.yml': ('157b9cac1669869fdacb9b9780bfaec7ffb5d01a63f803b3f1e09cbc7697b448','cca01ac24c69ad0d733f8df35ed213fa77dcd05ca7a2fea7ff1ff48ef7493f21',),
-              '.github/workflows/dependabot-auto-merge.yml': ('fb5f349934afdfa5b91febd2f488555786567fa544008f3d2102c2c8064c8a34','602dafcb019bf440543a000636872c9f686f4bc03d7bb7520f2c7a10cd079d19','ccfefaafd622388ee9362ce6b95d66079be875a6cd85684be592c6a8edb74a0e','9503c0aac84b00640a8d66c4bb12368bc50d21c48fe5b12ff98773a46c155fff','a4b213e59f85428e8cd204c6f4d01fc45da64fa1fe5b8fb0dc1373bdae6f1907','dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f'),
-              '.github/workflows/dependabot-auto-merge-refresh.yml': ('67e17654cd814abc8b700944738dc336703c96f3ae7275480d887dc66aabc2e3','dd153c52fc6ce9939abdad79f5682bce6e7c982e3731394a17a1e86b2e001a05','c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9'),
-              '.github/workflows/pr-branch-updater.yml': ('3afd2e64a2f2b9ca6753b18bbdc93c661435b64c2dc5ccb1170f40a14a565570','e547a3d1fef04bd9a0779c63b92d59c6a9cdb59adde74c571293c4c949ff94cb','116a2be104db278bd07aa3042aef1c36f9d0f08fb2c279c7aa6ec048155e9310','380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
-              '.github/workflows/pr-validation.yml': ('1e38c9696ade480d629d856f722536fe2573d462abf13e5b65b2814ad904060b', '5565cd5c80e14b8cbb7083981fefef900f94851ba4c40ef4b2bab15aa8b172ca'),
-              '.github/workflows/branch-policy.yml': ('ffaa08e4de5cb84378bae286f5329450981ec51f3451b142f36c5d1ae529941c','e08d429ddd7b64f5c01602987580adae94570d54e42623efc01f11846a44b68f','ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
+              '.github/workflows/dependabot-preparation.yml': ('e189cc59c7ea9caed559805e7eba3422a2179efd199deb3b931f4519c22265c8',),
+              '.github/workflows/dependabot-policy-tests.yml': ('ef110c6898d32976da870e69ac82de8e6b9239123395f99c41d1daa2ebd3e4c5',),
+              '.github/workflows/dependabot-auto-merge.yml': ('dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f',),
+              '.github/workflows/dependabot-auto-merge-refresh.yml': ('c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9',),
+              '.github/workflows/pr-branch-updater.yml': ('380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
+              '.github/workflows/pr-validation.yml': '49667571a2b83f9abd464fe4405d8b9fa2fed7640db0acd1574e80adeb62364d',
+              '.github/workflows/branch-policy.yml': ('ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
           }
           SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': ('cfe792bb08eb9006273d786fbb939fd6ba91a9292e030687bccdef3f2506b4b9','d40b1aae998d17a674818c8acc1a1929745d0132c1489740984b84e2a6aa292e'), '.github/workflows/codeql.yml': '84f29bf0578ccdbba6b0c623763b590c9678ca3711716121988722534cd94ff1'}
 
@@ -940,15 +946,77 @@ jobs:
               if isinstance(expected, str): expected = (expected,)
               return doc is not None and workflow_shape(doc) in expected
 
+          def check_automation_invariants(path, doc):
+              baseline = load_yaml(base_file(path))
+              if doc.get('on', doc.get(True)) != baseline.get('on', baseline.get(True)):
+                  fail(f'{path}: reviewed changes must preserve workflow triggers')
+              if doc.get('permissions') != baseline.get('permissions'):
+                  fail(f'{path}: reviewed changes must preserve top-level permissions')
+              for key in (set(doc) | set(baseline)) - {'jobs', 'name'}:
+                  if doc.get(key) != baseline.get(key):
+                      fail(f'{path}: workflow control {key} must remain unchanged')
+              previous_jobs = dict(iter_jobs(baseline))
+              current_jobs = dict(iter_jobs(doc))
+              for name, previous in previous_jobs.items():
+                  current = current_jobs.get(name)
+                  if current is None:
+                      fail(f'{path}: required job {name} was removed')
+                      continue
+                  for key in (set(previous) | set(current)) - {'steps', 'name'}:
+                      value = previous.get(key)
+                      actual = current.get(key)
+                      if key == 'uses' and isinstance(value, str) and isinstance(actual, str):
+                          value = re.sub(r'@[0-9a-f]{40}$', '@PINNED', value)
+                          actual = re.sub(r'@[0-9a-f]{40}$', '@PINNED', actual)
+                      if actual != value:
+                          fail(f'{path}: required job {name} contract {key} changed')
+                  for key in ('if', 'continue-on-error', 'strategy', 'timeout-minutes'):
+                      if current.get(key) != previous.get(key):
+                          fail(f'{path}: required job {name} control {key} changed')
+                  def step_contract(step):
+                      value = dict(step)
+                      if isinstance(value.get('uses'), str):
+                          value['uses'] = re.sub(r'@[0-9a-f]{40}$', '@PINNED', value['uses'])
+                      return value
+                  remaining = iter(step_contract(step) for step in iter_steps(current))
+                  for step in iter_steps(previous):
+                      expected = step_contract(step)
+                      if not any(candidate == expected for candidate in remaining):
+                          fail(f'{path}: required steps of {name} must retain their commands and controls')
+                          break
+              for name, job in iter_jobs(doc):
+                  if job.get('permissions') != previous_jobs.get(name, {}).get('permissions'):
+                      fail(f'{path}: reviewed changes must preserve job permissions')
+                  if job.get('secrets') != previous_jobs.get(name, {}).get('secrets'):
+                      fail(f'{path}: reviewed changes must preserve secret forwarding')
+                  uses = [job.get('uses')] + [step.get('uses') for step in iter_steps(job)]
+                  for value in uses:
+                      if value is not None and (not isinstance(value, str) or (not value.startswith('./') and not PIN_RE.search(value))):
+                          fail(f'{path}: actions must stay pinned to full commit SHAs')
+                  if GUARD_EVENT in workflow_events(doc):
+                      if job.get('uses'):
+                          fail(f'{path}: privileged PR workflows cannot call reusable workflows')
+                      scan_env(path, name, job.get('env'))
+                      for step in iter_steps(job):
+                          if str(step.get('uses', '')).startswith('actions/checkout@'):
+                              fail(f'{path}: privileged PR workflows cannot check out code')
+                          scan_env(path, name, step.get('env'))
+                          scan_contributor_refs(path, name, str(step.get('run', '')))
+              if GUARD_EVENT in workflow_events(doc):
+                  scan_env(path, 'workflow', doc.get('env'))
+
           def gate_automation(path, content):
               doc = parse_yaml_file(path, content, 'workflow')
               if doc is None:
                   return
               digest = workflow_shape(doc)
-              if digest not in AUTOMATION_SHAPES[path]:
+              if digest not in AUTOMATION_SHAPES[path] and review_admitted:
+                  check_automation_invariants(path, doc)
+              if digest not in AUTOMATION_SHAPES[path] and not review_admitted:
                   fail(f'{path}: automation must match its reviewed workflow shape')
 
           def workflow_shape(doc):
+              doc = copy.deepcopy(doc)
               if True in doc:
                   doc['on'] = doc.pop(True)
               for _, job in iter_jobs(doc):
@@ -957,14 +1025,166 @@ jobs:
                       if isinstance(uses, str):
                           step['uses'] = re.sub(r'@[0-9a-f]{40}$','@PINNED', uses)
               return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
+          LOCKFILES = {'.github/scripts/package-lock.json', '.github/trusted-ci/package-lock.json'}
+          OWNER_LOGIN = 'mickey-kras'
+          OWNER_ID = 24433677
+          pr_context = {}
+          review_admitted = False
+
+          def unique_json(content):
+              def pairs(items):
+                  result = {}
+                  for key, value in items:
+                      if key in result:
+                          raise ValueError(f'duplicate JSON key: {key}')
+                      result[key] = value
+                  return result
+              return json.loads(content, object_pairs_hook=pairs)
+
+          def api_json(suffix, paginate=False):
+              args = ['gh', 'api', f'repos/{os.environ["OWNER"]}/{os.environ["REPO"]}/{suffix}']
+              if paginate:
+                  args += ['--paginate', '--slurp']
+              result = subprocess.run(args, capture_output=True, text=True, check=True, timeout=60)
+              data = unique_json(result.stdout)
+              if paginate:
+                  if not isinstance(data, list) or any(not isinstance(page, list) for page in data):
+                      raise ValueError('invalid paginated API response')
+                  return [item for page in data for item in page]
+              return data
+
+          def base_file(path):
+              fixtures = os.environ.get('GUARD_FIXTURE_DIR')
+              if fixtures:
+                  return (Path(fixtures) / 'base' / path).read_text()
+              return fetch_file(path, pr_context['base']['sha'])
+
+          def review_required(rule):
+              if not isinstance(rule, dict) or not isinstance(rule.get('parameters'), dict):
+                  return False
+              settings = rule['parameters']
+              count = settings.get('required_approving_review_count')
+              required = ('require_code_owner_review', 'dismiss_stale_reviews_on_push', 'require_last_push_approval')
+              return rule.get('type') == 'pull_request' and type(count) is int and count >= 1 and all(settings.get(key) is True for key in required)
+
+          def review_source_active(rule):
+              repository = f'{os.environ["OWNER"]}/{os.environ["REPO"]}'
+              rule_id = rule.get('ruleset_id')
+              if type(rule_id) is not int or rule_id <= 0 or rule.get('ruleset_source_type') != 'Repository' or rule.get('ruleset_source') != repository:
+                  return False
+              source = api_json(f'rulesets/{rule_id}')
+              if not isinstance(source, dict) or type(source.get('id')) is not int or source['id'] != rule_id or source.get('source_type') != 'Repository' or source.get('source') != repository:
+                  return False
+              if source.get('enforcement') != 'active' or source.get('target') != 'branch' or not isinstance(source.get('rules'), list) or not any(review_required(item) for item in source['rules']):
+                  return False
+              if 'bypass_actors' in source:
+                  return type(source['bypass_actors']) is list and source['bypass_actors'] == []
+              # The read-only token hides bypasses; bind the administrator's
+              # no-bypass readback to this exact repository, source and revision.
+              try:
+                  from datetime import datetime
+                  reviewed = unique_json(os.environ.get('CI_POLICY_SETTINGS_REVIEW', ''))
+                  revision = source.get('updated_at')
+                  if not isinstance(revision, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', revision):
+                      return False
+                  datetime.strptime(revision, '%Y-%m-%dT%H:%M:%SZ')
+              except (ValueError, TypeError):
+                  return False
+              return isinstance(reviewed, dict) and reviewed.get('repository') == repository and type(reviewed.get('ruleset_id')) is int and reviewed['ruleset_id'] == rule_id and reviewed.get('updated_at') == revision and type(reviewed.get('bypass_actors')) is list and reviewed['bypass_actors'] == []
+
+          def owner_approved():
+              user = pr_context.get('user', {})
+              if user.get('type') != 'Bot' or user.get('id') == OWNER_ID or user.get('login') == OWNER_LOGIN:
+                  return False
+              base = pr_context.get('base', {})
+              if base.get('repo', {}).get('full_name') != f'{os.environ["OWNER"]}/{os.environ["REPO"]}':
+                  return False
+              if os.environ['OWNER'] != OWNER_LOGIN:
+                  return False
+              owners = [line.strip() for line in base_file('.github/CODEOWNERS').splitlines() if line.strip() and not line.lstrip().startswith('#')]
+              if owners != [f'/.github/ @{OWNER_LOGIN}']:
+                  return False
+              rules = api_json('rules/branches/' + quote(base['ref'], safe=''), paginate=True)
+              if not isinstance(rules, list) or not any(review_required(rule) and review_source_active(rule) for rule in rules):
+                  return False
+              reviews = api_json(f'pulls/{os.environ["PR_NUMBER"]}/reviews?per_page=100', paginate=True)
+              decisions = [review for review in reviews if review.get('user', {}).get('id') == OWNER_ID
+                           and review.get('user', {}).get('login') == OWNER_LOGIN
+                           and review.get('user', {}).get('type') == 'User'
+                           and review.get('state') in ('APPROVED', 'CHANGES_REQUESTED', 'DISMISSED')]
+              latest = max(decisions, key=lambda review: review['id'], default={})
+              return latest.get('state') == 'APPROVED' and latest.get('commit_id') == pr_context['head']['sha']
+
+          def gate_lockfile(path, content):
+              try:
+                  if len(content) > 5_000_000:
+                      raise ValueError('lockfile exceeds size limit')
+                  lock = unique_json(content)
+                  previous = unique_json(base_file(path))
+                  manifest_path = path.rsplit('/', 1)[0] + '/package.json'
+                  manifest = unique_json(fetch_file(manifest_path, pr_context['head']['sha']))
+                  gate_release_source(manifest_path, fetch_file(manifest_path, pr_context['head']['sha']))
+                  if type(lock.get('lockfileVersion')) is not int or lock['lockfileVersion'] != 3:
+                      raise ValueError('lockfileVersion must be 3')
+                  if set(lock) - {'name', 'version', 'lockfileVersion', 'requires', 'packages'}:
+                      raise ValueError('unexpected top-level lock metadata')
+                  packages = lock.get('packages')
+                  if not isinstance(packages, dict) or not packages or '' not in packages or len(packages) > 10000:
+                      raise ValueError('invalid packages map')
+                  root = packages['']
+                  if not isinstance(root, dict):
+                      raise ValueError('invalid root package')
+                  for field in ('name', 'version', 'dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'engines'):
+                      if root.get(field) != manifest.get(field):
+                          raise ValueError(f'root {field} differs from gated manifest')
+                  if any(key in root for key in ('resolved', 'integrity', 'link', 'hasInstallScript', 'inBundle')):
+                      raise ValueError('root package contains dependency execution metadata')
+                  for key, package in packages.items():
+                      if not key:
+                          continue
+                      if not re.fullmatch(r'(?:node_modules/(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+/)*node_modules/(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+', key) or any(part in ('.', '..') for part in key.split('/')):
+                          raise ValueError(f'invalid package path: {key}')
+                      if not isinstance(package, dict) or any(field in package for field in ('link', 'inBundle', 'hasShrinkwrap')):
+                          raise ValueError(f'{key}: links and bundled dependencies forbidden')
+                      resolved = package.get('resolved', '')
+                      if not isinstance(resolved, str) or not re.fullmatch(r'https://registry\.npmjs\.org/(?:@[a-zA-Z0-9._-]+/)?[a-zA-Z0-9._-]+/-/[a-zA-Z0-9._-]+\.tgz', resolved):
+                          raise ValueError(f'{key}: registry HTTPS tarball required')
+                      if any(part in ('.', '..') for part in resolved.split('/')):
+                          raise ValueError(f'{key}: tarball path traversal forbidden')
+                      if not isinstance(package.get('version'), str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', package['version']):
+                          raise ValueError(f'{key}: registry version required')
+                      name = key.rsplit('node_modules/', 1)[1]
+                      effective_name = package.get('name', name)
+                      if effective_name != name and previous.get('packages', {}).get(key, {}).get('name') != effective_name:
+                          raise ValueError(f'{key}: new package alias forbidden')
+                      name = effective_name
+                      if not isinstance(name, str) or not re.fullmatch(r'(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+', name):
+                          raise ValueError(f'{key}: invalid package name')
+                      tarball = name.rsplit('/', 1)[-1]
+                      if resolved != f'https://registry.npmjs.org/{name}/-/{tarball}-{package["version"]}.tgz':
+                          raise ValueError(f'{key}: tarball identity differs from package path/version')
+                      integrity = package.get('integrity', '')
+                      if not isinstance(integrity, str) or not re.fullmatch(r'sha512-[A-Za-z0-9+/]{86}==', integrity):
+                          raise ValueError(f'{key}: sha512 integrity required')
+                      digest = base64.b64decode(integrity[7:], validate=True)
+                      if len(digest) != 64 or base64.b64encode(digest).decode() != integrity[7:]:
+                          raise ValueError(f'{key}: noncanonical integrity')
+                      script = package.get('hasInstallScript', False)
+                      if type(script) is not bool or (script and previous.get('packages', {}).get(key, {}).get('hasInstallScript') is not True):
+                          raise ValueError(f'{key}: new install script forbidden')
+              except (ValueError, KeyError, TypeError) as exc:
+                  fail(f'{path}: {exc}')
+
+
           RELEASE_SOURCE_HASHES = {
-              '.vale/styles/config/vocabularies/Project/accept.txt': '3b3aca4e207bf30940fa2e078dcacc4d8dca32ee0b31240360925653655c8768',
-              '.vale.ini': 'a065a9c5134a7c47c9b3a35f76a4945c7fc203358a1f4e211e530e11859703d0',
-              '.ste.yml': '15f7ba5edd8c302b63642715020d62898623c098833d2fa4f200cbf7758f668c',
               '.github/scripts/docs-ste.test.py': '7cf4e434f2a3cd8f5968570e712c44ea50bf7d8300f90f7ebdc44bed9910c053',
+              '.ste.yml': '15f7ba5edd8c302b63642715020d62898623c098833d2fa4f200cbf7758f668c',
+              '.vale.ini': 'a065a9c5134a7c47c9b3a35f76a4945c7fc203358a1f4e211e530e11859703d0',
+              '.vale/styles/config/vocabularies/Project/accept.txt': '3b3aca4e207bf30940fa2e078dcacc4d8dca32ee0b31240360925653655c8768',
+              '.github/scripts/ci-admission.test.py': 'f4b51bd2f4390abdb9986038bd63be9e8b146c26216a503fcb38485075bff37e',
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
-              '.github/trusted-ci/policy.test.py': '75606043457a38ea831f90e0954e9f7ff956892137ab7aaedc6456de964e3983',
+              '.github/trusted-ci/policy.test.py': '44f39a8e5be7c00cef424ac3dfa703f9dacbb501c4bee9c5b8f90cb144e2bef2',
               '.github/scripts/trusted-ci-activation.json': '6d348a212316c7862b90e79fd09f1f6af0f479a3c97a3127b90112b88a6c6962',
               '.github/trusted-ci/.aislop/config.yml': '798f947468c6b556b14b802f650a3c4dda6a9302ed1238e13aa078e2380472eb',
               '.github/trusted-ci/findings.cjs': '8062166755f5eb47298efe5588ca2a91e0b8de06ef7d50fc05b311f640b11602',
@@ -983,39 +1203,49 @@ jobs:
               '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
               '.github/trusted-ci/workflows.test.cjs': 'f4a4ed456ac26cac3ca4a86c7a36ea05d1c92aacd253e0ad6a5258b355741eca',
               '.github/trusted-ci/trivyignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-              '.github/trusted-ci/scan-tree.cjs': ('8502994efbcc163470e4905aff1a9cf582f3bb43ed72f2f2cc9c8d07a8c839ec','815aec01051ecee9ba0a2d7d592f8aeebf93a82ea89a986556f773dc2f8c81e3'),
+              '.github/trusted-ci/scan-tree.cjs': '815aec01051ecee9ba0a2d7d592f8aeebf93a82ea89a986556f773dc2f8c81e3',
               '.github/trusted-ci/aislop.test.cjs': '17bcdfe2e89570b7c8ea51b707c0400db06f3345d70101c4d7eb668774772084',
               '.github/trusted-ci/gitleaks.toml': '27630a96d6c55755cc37620f3933d5cab94b1eb78a726a32e11212972525d76e',
               '.github/trusted-ci/identity.cjs': 'f456693577a70cfa91888a20de9d1e0cc28429583a9f03fd8b49ad2924e00f12',
-              '.github/trusted-ci/package-lock.json': '6c86a529845d85f0b07a0deaf3eb49f9a0cf8c42bfed8c1f7efbe7ae22f4f837',
               '.github/scripts/coverage-artifact.cjs': '9b37bf2b0e3bcd836011e4da2611b133fb750c0be43ad0d1e525bd33dc93aed0',
               '.github/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
               '.github/scripts/combination-identity.cjs': '28da02fbdd428f83a87973b3cccb963fb7bd2236ca7457957f792c98b31e0c12',
-              '.github/scripts/package.json': ('9c5ae4358d83ef9a326dedb33bec455aed50f32107ba0f72b502059f92a95aa5','db0324a5389e1d9005519058dff2b4f17b2b8632c8392e87d2a0b0d1a5be3470'),
-              '.github/scripts/package-lock.json': ('a30b945b4f5442d808fa1a690bbb5a6889d2057b7a1299d67eedf4a5ee729d6e','f550ad0ec8aec53e0aadfe7d38ce0df154daf73ef6feefc333537c2a824ec600'),
-              '.github/scripts/combination.cjs': ('dad2f629eca60a28c0979d286edc1954ac487911a70355f5d9c83692ed15af0c','7866bdaf091681673f643b9e70221ff3d828e2198dfb5a41bd5bb3da6ee94850'),
-              '.github/scripts/combination-smoke.sh': ('3074e9c0b6b8f4c3e8e36586478a93f37271694dff5b93511ac6946717f5d53f','052e5e4155cff8f5c8b19eda4b908aa5b69441f4e6461ae8af8572cb183c49e1','6fe4bc2445f0ae10c4443556757bdb0a83e00b0861f4ab72b4d6c484ad575cbb'),
-              '.github/scripts/combination-smoke.mjs': ('7bdb7f4b189c8ab538eaa49ad16395da9d9fb9950f8d263cc68dafb9e6587622','14c32c344feb9b026613f67e1dbfd465ef2ab3195b1b4cc0e05b2e8e337e3f51','858c23df82e6fd4b2c69713aa7c0fd0243d8bb27ad3152017d76847d55c4fdb6'),
-              '.github/scripts/combination.test.cjs': ('0008d735feeed59bc33640f18265846aa644392f1f6f4a3617a7bed3f0bc81d2','de885e0207e66dcd3a2e3210b15c5fd3059c17452aa58b54579300d010e9562b','3d2d763b4213340109fe6c909e7e693142a1e926a839a2d3053dfa307af191d7'),
-              '.github/scripts/release.cjs': ('736f4e5ab5fe509cd668e42874b46ad5b88c58a33cba2a2f435ff556d697eb77','f2c1c6d417b98128fbec0208082fba12349135f391f25745c92966f64970fa36','e5c150df0b2cd53c7c552d2a6af9a340afaa1d94900f0f695363b978fc88bba8','04cdad684a138433c2db8ab9c5086ee1d671523aeeea7a0b3ff807fde1c5fd69','412d76a8d9c99e8a695a4e1e2d5b440c7367101c6af8e6a777c2b48565ea1af3','4e3480ad9e385ba501ec1ea23d8fa943f0eb6e1107f9db2b8e1b416800582f7d','2a457b1eec191dd86b2a64f6593863d674618f58db0d7c5748de220b3cb77dc9','a334be73f4e1ae13358e51504bb3826aa2a49100ff55fcd434af052186ea68c2'),
+              '.github/scripts/package.json': 'db0324a5389e1d9005519058dff2b4f17b2b8632c8392e87d2a0b0d1a5be3470',
+              '.github/scripts/combination.cjs': '7866bdaf091681673f643b9e70221ff3d828e2198dfb5a41bd5bb3da6ee94850',
+              '.github/scripts/combination-smoke.sh': '6fe4bc2445f0ae10c4443556757bdb0a83e00b0861f4ab72b4d6c484ad575cbb',
+              '.github/scripts/combination-smoke.mjs': '858c23df82e6fd4b2c69713aa7c0fd0243d8bb27ad3152017d76847d55c4fdb6',
+              '.github/scripts/combination.test.cjs': '3d2d763b4213340109fe6c909e7e693142a1e926a839a2d3053dfa307af191d7',
+              '.github/scripts/release.cjs': 'a334be73f4e1ae13358e51504bb3826aa2a49100ff55fcd434af052186ea68c2',
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
-              '.github/scripts/release.test.cjs': ('8d85014180b0cd2cf70506f45ba37901b67d2161c20cf35ee0b11c7d0f5c02f5','f31a7fcd041ccebd6a5d49469dcb86c87690f90e3009c0d72bb6657926d14b23','f206b57c6feb37a573b3a8cd9f211dd6d7e9a216d5121e6459978ca6f4fdd31f','5d2f482546b4ba0431717950c49f7533dd37381efa00017551995d2d39789540','214c7178e1e2cc01e38e96a6b8cc29e9e2b1aab3c24e8c290e99d328054201a4','5571e081f47f4568443728b74846cd54a18cf51eac205115e48da74bcdbd9f40','8ffd8de74374fce6eae741e02ae49afe0e24d0f49229c92ba523494c94e2af9b','9c4679fd2e40b8170eeb6de6c9e14b62274a92596396928e13d52a7ffc75c1e5'),
-              '.github/scripts/release-policy.test.py': ('a2491f202ef651437c992980d462883c51ae56e08ea7df576a7fa5c07207370a','747fc3fa4f0ceb1c0e8df3a9a54c7efe3b750d2d205e6646ed4b7ce32abefb89','eb63cc2003afe088b57a4a036a487885a680e6919da437a1ec49c19eb66e0e30'),
-              '.github/scripts/release-cleanup.cjs': ('f31cb3ea4b968458393cc82b4b4a0ee86497da9a662b661293ebb6dec1db7533','3ec27d21d0df5fad08222606bce4bb3eaa07226f72ae3bd37c3e70bf83ff87e9','bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8'),
-              '.github/scripts/release-cleanup.test.cjs': ('99460dea0599164221f7d65d0b97e263f0a30e4e0423080019ec88ee7ddc03cd','9495c6943363dfb0984573d0efce88e95e25cbb0c7691cb52bfc0a5820ada5be','1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956'),
+              '.github/scripts/release.test.cjs': '9c4679fd2e40b8170eeb6de6c9e14b62274a92596396928e13d52a7ffc75c1e5',
+              '.github/scripts/release-policy.test.py': 'ba4a0334c787005a3378f1780909ee9a398f1240c881659c419f492bdb0cbe4b',
+              '.github/scripts/release-cleanup.cjs': 'bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8',
+              '.github/scripts/release-cleanup.test.cjs': '1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956',
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
               '.github/scripts/release-follow-up.cjs': '2f3c5bf87be932cc949c19ad8dc3029dcdd7aad9fdf7256f3a4c78ff63fc3f3e',
           }
           def gate_release_source(path, content):
               expected = RELEASE_SOURCE_HASHES[path]
               if isinstance(expected, str): expected = (expected,)
-              if hashlib.sha256(content.encode()).hexdigest() not in expected:
+              if hashlib.sha256(content.encode()).hexdigest() not in expected and not review_admitted:
                   fail(f'{path}: release automation must match its reviewed policy')
+          def gate_review_controls(path, content):
+              if content != base_file(path) and not review_admitted:
+                  fail(f'{path}: review controls require independent exact-head owner approval')
+
           GATES = {
+              '.github/CODEOWNERS': gate_review_controls,
+              '.github/rulesets/require-ci-owner-review.json': gate_review_controls,
               '.github/workflows/aislop.yml': gate_aislop,
               '.github/workflows/codeql.yml': gate_codeql,
               '.github/workflows/policy-guard.yml': gate_policy_guard,
               '.aislop/config.yml': gate_aislop_config,
+          POLICY_SOURCE
+
+      - name: Policy source 4
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
               '.github/scripts/npm-audit.cjs': gate_npm_audit_script,
               '.github/scripts/sync-sonar-findings.py': gate_sonar_reporter,
               '.semgrep.yml': gate_semgrep,
@@ -1031,6 +1261,7 @@ jobs:
           assert not (GATES.keys() & AUTOMATION_SHAPES.keys())
           GATES.update({path: gate_automation for path in AUTOMATION_SHAPES})
           GATES.update({path: gate_release_source for path in RELEASE_SOURCE_HASHES})
+          GATES.update({path: gate_lockfile for path in LOCKFILES})
           GATES.update({path: gate_dependency_preparation for path in DEPENDABOT_SOURCE_CONTRACTS})
           protected = set(GATES)
           def load_files():
@@ -1053,6 +1284,7 @@ jobs:
           TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
           DEPENDABOT_LOGIN = 'dependabot[bot]'
           def resolve_pr_context():
+              global pr_context
               fixture_dir = os.environ.get('GUARD_FIXTURE_DIR')
               if fixture_dir:
                   values = {}
@@ -1065,6 +1297,7 @@ jobs:
                   sha = values['head_sha']
                   association = values['author_association']
                   login = values['author_login']
+                  pr_context = {'head': {'sha': sha}, 'user': {'login': login, 'type': 'User'}}
               else:
                   result = subprocess.run(
                       [
@@ -1082,6 +1315,7 @@ jobs:
                       raise RuntimeError(f'unexpected pull request response: {exc}') from exc
                   if not isinstance(payload, dict):
                       raise RuntimeError('unexpected pull request response')
+                  pr_context = payload
                   head = payload.get('head')
                   sha = head.get('sha') if isinstance(head, dict) else None
                   association = payload.get('author_association')
@@ -1116,8 +1350,10 @@ jobs:
                   raise RuntimeError(f'{path}: empty content at head')
               return content
           def main():
+              global review_admitted
               head_sha, author_association, author_login = resolve_pr_context()
-              files = load_files()
+              review_admitted = owner_approved()
+              files = load_files() if os.environ.get('GUARD_FIXTURE_DIR') else api_json(f'pulls/{os.environ["PR_NUMBER"]}/files?per_page=100', paginate=True)
               if len(files) >= 3000:
                   fail(
                       f'changed-file list has {len(files)} entries; '
@@ -1135,11 +1371,15 @@ jobs:
                       removed_or_renamed.add(filename)
                   if entry.get('status') == 'renamed' and isinstance(previous, str):
                       removed_or_renamed.add(previous)
+              forbidden_npm = {'.npmrc', '.github/.npmrc'} | {path.rsplit('/', 1)[0] + suffix for path in LOCKFILES for suffix in ('/.npmrc', '/npm-shrinkwrap.json')}
+              if changed & forbidden_npm:
+                  fail('CI npm configuration and shadow shrinkwrap files must not change')
               protected_package_change = any(path.startswith('packages/') for path in changed)
               if changed & protected or protected_package_change:
                   if (
                       author_association.upper() not in TRUSTED_ASSOCIATIONS
                       and author_login != DEPENDABOT_LOGIN
+                      and not review_admitted
                   ):
                       fail(
                           'protected gate files changed by an untrusted author '
@@ -1147,7 +1387,7 @@ jobs:
                           f'login={author_login or "unknown"}); require OWNER, MEMBER or '
                           'COLLABORATOR, or dependabot[bot]'
                       )
-              if changed & set(DEPENDABOT_SOURCE_CONTRACTS) and (
+              if not review_admitted and changed & set(DEPENDABOT_SOURCE_CONTRACTS) and (
                   author_association.upper() not in TRUSTED_ASSOCIATIONS or author_login.endswith('[bot]')
               ):
                   fail('Dependabot automation source changes require a trusted human author: OWNER, MEMBER or COLLABORATOR')
@@ -1166,6 +1406,10 @@ jobs:
                   if path not in changed or path in removed_or_renamed:
                       continue
                   GATES[path](path, fetch_file(path, head_sha))
+              if not os.environ.get('GUARD_FIXTURE_DIR'):
+                  current = api_json(f'pulls/{os.environ["PR_NUMBER"]}')
+                  if current.get('state') != 'open' or current.get('head', {}).get('sha') != head_sha or current.get('base', {}).get('sha') != pr_context.get('base', {}).get('sha'):
+                      fail('pull request changed during evaluation; rerun guard')
               if failures:
                   print('Policy guard failed:')
                   for message in failures:
@@ -1188,6 +1432,7 @@ jobs:
           OWNER: ${{ github.event.repository.owner.login }}
           REPO: ${{ github.event.repository.name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          CI_POLICY_SETTINGS_REVIEW: ${{ vars.CI_POLICY_SETTINGS_REVIEW }}
         run: |
           set -euo pipefail
           export FILES_JSON="${RUNNER_TEMP}/files.json"

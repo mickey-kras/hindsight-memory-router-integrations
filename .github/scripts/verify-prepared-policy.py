@@ -9,7 +9,7 @@ import yaml
 workflow = Path(__file__).resolve().parents[1] / "workflows/policy-guard.yml"
 steps = yaml.safe_load(workflow.read_text())["jobs"]["guard"]["steps"]
 source = []
-for index, step in enumerate(steps[2:5]):
+for index, step in enumerate(steps[2:-1]):
     operator = ">" if index == 0 else ">>"
     prefix = (
         "set -euo pipefail\n"
@@ -19,6 +19,14 @@ for index, step in enumerate(steps[2:5]):
     if not run.startswith(prefix) or not run.endswith("POLICY_SOURCE\n"):
         raise ValueError("Unexpected trusted policy source")
     source.append(run[len(prefix):-len("POLICY_SOURCE\n")])
+
+if sys.argv[1] == "--live":
+    subprocess.run(
+        [sys.executable, "-c", "".join(source)],
+        env={key: value for key, value in os.environ.items() if key not in {"GUARD_FIXTURE_DIR", "FILES_JSON"}},
+        check=True,
+    )
+    sys.exit(0)
 
 fixture = Path(sys.argv[1]).resolve()
 subprocess.run(

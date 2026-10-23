@@ -37,6 +37,9 @@ jobs:
           sparse-checkout: .github
       - name: Validate PR with the trusted policy
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_POLICY_SETTINGS_REVIEW: ${{ vars.CI_POLICY_SETTINGS_REVIEW }}
         with:
           script: |
             const { execFileSync } = require('node:child_process');
@@ -55,7 +58,7 @@ jobs:
                 current.base.sha !== trustedMainSha || context.ref !== `refs/pull/${current.number}/merge`
               ) throw new Error("PR head or trusted policy revision changed");
               const files = await github.paginate(github.rest.pulls.listFiles, { ...params, per_page: 100 });
-              await policy(github, context.repo, current, files);
+              await policy(github, context.repo, current, files, { live: true });
               const { data: latest } = await github.rest.pulls.get(params);
               if (latest.state !== "open" || latest.head.sha !== current.head.sha || latest.base.sha !== current.base.sha) {
                 throw new Error("PR changed during policy validation");
