@@ -107,7 +107,17 @@ async function readFile(github, repo, path, ref) {
   return decoded.toString("utf8");
 }
 
-async function runPolicy(github, repo, pull, files) {
+async function runPolicy(github, repo, pull, files, { live = false } = {}) {
+  if (live) {
+    if (!process.env.GH_TOKEN) throw new Error("Live policy requires a read-only GitHub token");
+    execFileSync("python3", [join(__dirname, "verify-prepared-policy.py"), "--live"], {
+      env: { ...process.env, OWNER: repo.owner, REPO: repo.repo, PR_NUMBER: String(pull.number) },
+      encoding: "utf8",
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+    });
+    return;
+  }
   const fixture = mkdtempSync(join(tmpdir(), "prepared-policy-"));
   try {
     for (const [name, value] of Object.entries({

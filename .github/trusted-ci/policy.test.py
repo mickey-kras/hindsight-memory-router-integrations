@@ -25,23 +25,27 @@ def policy(overrides=None):
 
 class TrustedScannerBootstrapTests(unittest.TestCase):
     def activation(self):
-        return json.loads((ROOT / ".github/scripts/trusted-ci-activation.json").read_text())
+        fixture = json.loads((ROOT / ".github/scripts/trusted-ci-activation.json").read_text())
+        # The activation records caller refs, not indefinite executable rollback admission.
+        fixture["files"] = {}
+        return fixture
 
-    def test_future_callers_are_admitted_only_at_the_reviewed_immutable_source(self):
+    def test_current_callers_are_admitted_only_at_the_reviewed_immutable_source(self):
         fixture = self.activation()
         self.assertRegex(fixture["source_sha"], r"^[a-f0-9]{40}$")
-        self.assertEqual(policy({**fixture["workflows"], **fixture["files"]}), [])
-        for path, content in fixture["workflows"].items():
+        current = {path: (ROOT / path).read_text() for path in fixture["workflows"]}
+        self.assertEqual(policy(current), [])
+        for path, content in current.items():
             if fixture["source_sha"] not in content:
                 continue
             with self.subTest(path=path):
                 changed = content.replace(fixture["source_sha"], "f" * 40)
-                self.assertTrue(policy({**fixture["workflows"], **fixture["files"], path: changed}))
+                self.assertTrue(policy({**current, path: changed}))
 
-    def test_activation_test_update_requires_exact_reviewed_bytes(self):
-        fixture = self.activation()
+    def test_historical_activation_code_is_not_readmitted(self):
+        fixture = json.loads((ROOT / ".github/scripts/trusted-ci-activation.json").read_text())
         for path, content in fixture["files"].items():
-            self.assertTrue(policy({**fixture["workflows"], **fixture["files"], path: content + "\nchanged"}))
+            self.assertTrue(policy({path: content}))
 
     def test_immutable_closure_and_configs_cannot_be_changed_or_disabled(self):
         for path in [

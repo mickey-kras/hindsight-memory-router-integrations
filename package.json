@@ -79,6 +79,7 @@
   "overrides": {
     "@vectorize-io/hindsight-agent-sdk": {
       "@vectorize-io/hindsight-client": "1.1.0"
-    }
+    },
+    "ip-address": ">=10.7.4 <11.0.0"
   }
 }
