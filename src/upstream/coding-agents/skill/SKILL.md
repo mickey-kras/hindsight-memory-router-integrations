@@ -1,6 +1,6 @@
 ---
 name: hindsight-coding-agent
-description: How this machine's Hindsight coding-agent memory works — the plugin behind the 🧠 banner. Use when the user says "store/remember this in hindsight", asks what the memory/knowledge pages are, needs managed project memory setup or troubleshooting, or something memory-related looks broken.
+description: Use this skill for the managed Hindsight coding-agent memory behind the 🧠 banner. Use it to store memories, explain knowledge pages, configure project memory, or investigate memory failures.
 ---
 
 <!-- GENERATED from skill-src/preamble.md + skill-src/managed-router.md.
@@ -8,78 +8,81 @@ description: How this machine's Hindsight coding-agent memory works — the plug
 
 # Hindsight Coding-Agent Memory
 
-This machine runs the managed Memory Router coding-agent integration. All memory requests go
-through the operator-provisioned HTTPS router and its per-principal bank grants. The router
-applies scanning, quarantine and quotas. A client setting cannot grant access.
+This machine uses the managed Memory Router coding-agent integration.
+All memory requests use the operator-provisioned HTTPS router and its per-principal bank grants.
+The router applies scanning, quarantine and quotas. A client setting cannot grant access.
 
 ## Automatic lifecycle
 
-- The operator maps this project and harness to an explicit bank. Worktrees use their configured
-  project mapping; no bank is created or selected from a repository name.
-- For writable principals, session-start hooks can seed and update memory from recent commits
-  and a read-only codebase survey, and refresh coding knowledge pages. There is no manual ingest
-  command needed for this background work. The operator provisions bank configuration and the
-  coding missions/strategies before ingestion.
-- Session-start and prompt hooks inject memory according to `autoInject`: `reflect`, `pages`,
-  `recall`, or `none`. Follow the injected retrieval guide when no memory is injected.
-- Writable sessions retain their transcripts automatically at session end; persistent harnesses
-  also retain during the session. Read-only principals skip ingestion and write-back, and their
-  write tools are unavailable. Respect `disabled` and `retainSessions` settings.
-- Use the tool names exposed by this harness. Examples below show the default `hindsight_`
-  namespace; the installed skill and guidance use the operator's configured namespace.
+- The operator maps this project and harness to an explicit bank.
+  Worktrees use their configured project mapping. The integration does not create or select a bank from a repository name.
+- For writable principals, session-start hooks can seed and update memory from recent commits and a read-only codebase survey.
+  These hooks can also refresh coding knowledge pages. This background work does not require a manual ingest command.
+  The operator configures banks and coding missions/strategies before ingestion.
+- Session-start and prompt hooks inject memory according to `autoInject`: `reflect`, `pages`, `recall`, or `none`.
+  If no memory is injected, follow the injected retrieval guide.
+- Writable sessions retain their transcripts automatically at session end.
+  Persistent harnesses also retain transcripts during the session.
+  Read-only principals skip ingestion and write-back. Their write tools are unavailable.
+  Obey the `disabled` and `retainSessions` settings.
+- Use the tool names that this harness exposes.
+  The examples below use the default `hindsight_` namespace.
+  The installed skill and guidance use the operator's configured namespace.
 
-## Storing things deliberately
+## Store information
 
-When the user says "store this in hindsight" / "remember this":
+When the user says "store this in hindsight" or "remember this", use these rules:
 
-- With writable access and session retention enabled, the **current conversation** is captured
-  automatically at session end — say so; no tool needed.
-- An **external document, notes, or durable findings** → `hindsight_ingest_document(title, content)`.
-- A **new feature/initiative being started** → `hindsight_capture_initiative(title, summary)`,
-  right after the plan is agreed and before code is written.
-- A **plan that materially changed** (goal, scope, or rationale — including mid-implementation) →
-  call `hindsight_capture_initiative` again with `relates_to_page_id` set to that initiative's page
-  id, summarising the _current_ intent. Same page, updated plan — never a second page. Trivial
-  course-corrections don't count.
+- If writable access and session retention are enabled, the integration captures the current conversation automatically at session end.
+  Tell the user. No tool call is necessary.
+- For external documents, notes, or durable findings, use `hindsight_ingest_document(title, content)`.
+- For a new feature or initiative, use `hindsight_capture_initiative(title, summary)` after agreement on the plan and before code changes.
+- If the goal, scope, or rationale changes materially, call `hindsight_capture_initiative` again.
+  This includes changes during implementation.
+  Set `relates_to_page_id` to the initiative's page ID. Describe the current intent.
+  Update the same page. Do not create a second page for the changed plan.
+  Small corrections do not require this update.
 
-## Retrieving
+## Retrieve information
 
-- `hindsight_search_knowledge_pages(query)` — FIRST STOP for project questions (components,
-  conventions, past decisions, initiatives). Server-side hybrid search, fast.
-- `hindsight_read_knowledge_page(page_id)` / `hindsight_list_knowledge_pages` — read pages fully.
-- `hindsight_reflect(query)` — deep reasoning over the whole memory for WHY questions and exact
-  decided values; slower (seconds), use deliberately.
-- Credit visibly whenever memory informs an answer: start that part with
-  `🧠 From Hindsight memory (<page>): …` — and never credit memory that didn't contribute.
+- For project questions, first use `hindsight_search_knowledge_pages(query)`.
+  Questions can concern components, conventions, past decisions, or initiatives.
+  This tool uses fast hybrid search on the server.
+- To read complete pages, use `hindsight_read_knowledge_page(page_id)` or `hindsight_list_knowledge_pages`.
+- For reasons and exact agreed values, use `hindsight_reflect(query)`.
+  This tool reasons over the complete memory. It is slower and takes seconds. Use it when necessary.
+- If memory contributes to an answer, start that part with `🧠 From Hindsight memory (<page>): …`.
+  Do not credit memory that did not contribute.
 
-## Correcting wrong or stale memory
+## Correct incorrect or stale memory
 
-If you verify that something Hindsight served is wrong or outdated (the code, git, or an external
-source contradicts it), FIX THE RECORD — don't just ignore it. Call
-`hindsight_ingest_document` with:
+If code, git, or an external source proves that retrieved memory is incorrect or outdated, correct the record.
+Do not only ignore it. Call `hindsight_ingest_document` with these fields:
 
-- **title**: `Correction: <topic>` (e.g. `Correction: retry policy 4xx set`)
-- **content**: (1) what memory claimed, (2) what is verifiably true now, (3) the evidence you
-  checked (file/commit/output). Quote exact values verbatim.
+- **title**: `Correction: <topic>` (for example, `Correction: retry policy 4xx set`).
+- **content**: State the memory's claim, the verified current fact, and the evidence from a file, commit, or output.
+  Quote exact values without changes.
 
-Include the evidence in the correction so future retrieval can resolve the conflict. With read-only
-access, report the verified correction for an authorized writer; do not attempt a write or change
-credentials.
+Include the evidence so that future retrieval can resolve the conflict.
+With read-only access, report the verified correction to an authorized writer.
+Do not attempt a write or change credentials.
 
 ## Managed setup and updates
 
-Use the existing operator-provisioned `HINDSIGHT_ROUTER_CONFIG` absolute path and named credential
-environment variables. The operator supplies the HTTPS router URL, principal grants, project bank
-mapping and optional tool namespace. `HINDSIGHT_MCP_HARNESS` selects the trusted harness identity
-when needed. Launch the harness in the same provisioned environment from a mapped project.
+Use the existing operator-provisioned `HINDSIGHT_ROUTER_CONFIG` absolute path and named credential environment variables.
+The operator supplies the HTTPS router URL, principal grants, project bank mapping and optional tool namespace.
+When necessary, `HINDSIGHT_MCP_HARNESS` selects the trusted harness identity.
+Start the harness in the same configured environment from a mapped project.
 
-Do not ask the user to paste JSON or credentials, edit the managed JSON, copy tokens into harness
-settings, or start a memory server. Missing provisioning or ambiguous identity requires the
-operator to repair the deployment. Unmapped projects and missing credentials fail closed.
+Do not ask the user to paste JSON or credentials.
+Do not edit the managed JSON, copy tokens into harness settings, or start a memory server.
+If configuration is missing or identity is ambiguous, the operator must repair the deployment.
+Unmapped projects and missing credentials stop access.
 
-Install or update only using the integration's pinned release tarball. Select the release and
-package version from the same published release, verify the artifact against that release's
-`PACKAGE_SHA256`, and run:
+Use only the integration's pinned release tarball to install or update the integration.
+Select the release and package version from the same published release.
+Verify the artifact against that release's `PACKAGE_SHA256`.
+Run this command:
 
 ```sh
 npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-coding-agents install
@@ -87,48 +90,47 @@ npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-
 
 The release download path is:
 `https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v<release>/mickey-kras-hindsight-memory-router-coding-agents-<package-version>.tgz`.
-Do not leave version placeholders unresolved. Explicit `install codex`, another supported harness,
-or `install all` is available when the existing managed configuration supports it. The installer
-checks the selected principals, credentials, project mapping and adapter prerequisites before
-changing the host. For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installation so the installer
-can allowlist the required environment variable names without embedding their values.
+Replace all version placeholders.
+If the existing managed configuration supports it, use explicit `install codex`, another supported harness, or `install all`.
+Before host changes, the installer checks the selected principals, credentials, project mapping and adapter prerequisites.
+For Codex, export `HINDSIGHT_ROUTER_CONFIG` before installation.
+The installer can then allow the required environment variable names without storing their values.
 
-After changing the operator's credential environment variable name or tool namespace, reinstall
-from the verified artifact. Namespace changes require reinstalling the companion skill and tool
-registration together. The managed tool prefix controls tool definitions and guidance; ordinary
-per-bank settings cannot override it.
+If the operator's credential environment variable name or tool namespace changes, reinstall from the verified artifact.
+Namespace changes require reinstallation of the companion skill and tool registration together.
+The managed tool prefix controls tool definitions and guidance. Ordinary per-bank settings cannot override it.
 
-## Checking the integration
+## Check the integration
 
-Check the session banner and available memory tools first. Use `hindsight_sync_status` for ingestion
-progress and `hindsight_diagnose` for sanitized diagnostic information when these tools are available.
-If memory seems stale, inspect progress before repeating ingestion or inventing another bank.
-Use the diagnostics to confirm the current project bank. Ask the operator to verify assigned bank
-grants and project mappings in the managed configuration when access or bank selection is unclear.
+First, check the session banner and available memory tools.
+If available, use `hindsight_sync_status` for ingestion progress.
+If available, use `hindsight_diagnose` for diagnostics with sensitive data removed.
+If memory seems stale, inspect progress before another ingestion attempt or selection of another bank.
+Use the diagnostics to confirm the current project bank.
+If access or bank selection is unclear, ask the operator to verify assigned bank grants and managed project mappings.
 
-Missing hooks or tools usually require reinstalling the selected harness from the verified artifact
-with its managed environment. Review the harness's plugin/hook registration and sanitized logs;
-never print credential values. A 401/403 stops requests for that credential. Ask the operator to
-resolve authorization and restart with the provisioned credential; do not try another principal,
-URL or bank. Rate limits and quarantine decisions are enforced by the router and are not bypassed
-by local settings. Continue coding without memory when the harness fails open, and state any
-material lack of memory evidence.
+Missing hooks or tools usually require reinstallation of the selected harness from the verified artifact with its managed environment.
+Review the harness's plugin/hook registration and logs with sensitive data removed. Never print credential values.
+A 401/403 response stops requests for that credential.
+Ask the operator to resolve authorization and restart with the configured credential.
+Do not try another principal, URL or bank.
+The router enforces rate limits and quarantine decisions. Local settings cannot bypass them.
+If the harness permits work without memory, continue coding. State any material lack of memory evidence.
 
-Operational coding-agent settings such as `autoInject`, `retainSessions`, `disabled`, git survey
-limits and logging may be configured by the operator in the supported coding-agent settings.
-The managed routing boundary owns bank access and transport; do not create banks, rewrite bank
-configuration, provision servers or substitute a provider client. Background ingestion and hooks
-use the same router boundary as interactive tools.
+The operator can configure supported coding-agent settings such as `autoInject`, `retainSessions`, `disabled`, git survey limits and logging.
+The managed routing boundary controls bank access and transport.
+Do not create banks, change bank configuration, configure servers, or substitute a provider client.
+Background ingestion and hooks use the same router boundary as interactive tools.
 
 ### Optional branding
 
-The operator may set `toolPrefix` in the same managed router JSON. The default `hindsight_`
-keeps the upstream names. Tool, skill, registration and display names derive from that one
-value. Package
-names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants
-remain unchanged. Use the names registered in the current session; do not guess aliases.
+The operator can set `toolPrefix` in the same managed router JSON.
+The default `hindsight_` keeps the upstream names.
+Tool, skill, registration and display names derive from that one value.
+Package names, `HINDSIGHT_*` environment variables, configuration paths, principals and bank grants do not change.
+Use the names registered in the current session. Do not guess aliases.
 
-A branding change requires the pinned installer (`install` or `update`) and a fresh session.
-The installer migrates only managed entries and refuses unrelated name collisions. A stale
-managed skill namespace fails closed until reinstall; never repair this by changing bank
-assignments, credentials or the operational memory workflow above.
+A branding change requires the pinned installer (`install` or `update`) and a new session.
+The installer migrates only managed entries and rejects unrelated name collisions.
+A stale managed skill namespace stops access until reinstallation.
+Do not repair this condition through changes to bank assignments, credentials or the operational memory workflow above.
