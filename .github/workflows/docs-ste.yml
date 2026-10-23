@@ -8,7 +8,7 @@ name: docs-ste
   workflow_call:
 
 concurrency:
-  group: docs-ste-${{ github.event.pull_request.number }}
+  group: docs-ste-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -67,6 +67,7 @@ jobs:
       - uses: TudorAndrei/ste-cli@8e73821bba6ef980930553fb24ca1ade2895aabf # v0.10.1
         with:
           version: 0.10.1
+          format: text
           args: >-
             --warnings-as-errors --all ${{ runner.temp }}/docs-ste
 

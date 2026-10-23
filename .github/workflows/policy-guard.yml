@@ -908,7 +908,7 @@ jobs:
                   if not re.search(r'(?m)^\s*' + pattern, content):
                       fail(f'{path}: missing source safety contract: {contract}')
           AUTOMATION_SHAPES = {
-              '.github/workflows/docs-ste.yml': ('5943dfbf03911fb55496665ca4aba7f77afcf2983e2fb88e71c10c6029a48f83',),
+              '.github/workflows/docs-ste.yml': ('28c93b5213df65323768e136417909b78626406b480bb5dfca7d0fe4a1785f00',),
               '.github/workflows/trusted-codeql.yml': ('230f65f68125d5a4ae977e1e48b2ded28d8da8141422ef9188b56f38354e6365',),
               '.github/workflows/trusted-ci.yml': ('aeb9368828e75ef3643323c863a853baa7addf42af46bfd9d0849db507c6e0ab', '5cb1b4d5cf6320d48a69247884edf214791a54ab22af3a7f385a64ea0b300ed5',),
               '.github/workflows/trusted-aislop.yml': ('943fdcd4e062b54cfa904ca3812774ca4798a8eed92c35cb9c097e992af748b4',),
@@ -961,7 +961,7 @@ jobs:
               '.vale/styles/config/vocabularies/Project/accept.txt': '3b3aca4e207bf30940fa2e078dcacc4d8dca32ee0b31240360925653655c8768',
               '.vale.ini': 'a065a9c5134a7c47c9b3a35f76a4945c7fc203358a1f4e211e530e11859703d0',
               '.ste.yml': '15f7ba5edd8c302b63642715020d62898623c098833d2fa4f200cbf7758f668c',
-              '.github/scripts/docs-ste.test.py': '9f956fd7500f4ca6aab623e5b409f5a8cde33bab187a3913578963963ce7c104',
+              '.github/scripts/docs-ste.test.py': '7cf4e434f2a3cd8f5968570e712c44ea50bf7d8300f90f7ebdc44bed9910c053',
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '75606043457a38ea831f90e0954e9f7ff956892137ab7aaedc6456de964e3983',

@@ -1,4 +1,4 @@
-# Hindsight Memory Router integrations
+# Integrations for Hindsight Memory Router
 
 [![PR validation](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/pr-validation.yml/badge.svg?event=pull_request)](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/pr-validation.yml?query=event%3Apull_request)
 [![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25%20%28CI--gated%29-brightgreen)](vitest.config.ts)
@@ -7,9 +7,9 @@
 [![main + SonarQube](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/mickey-kras/hindsight-memory-router-integrations/actions/workflows/main.yml?query=branch%3Amain)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-kras/hindsight-memory-router). Give each agent a credential, one optional write bank and additional read banks. Agents can then share selected memories without sharing every bank. Memory Router enforces access. Client routing does not grant it.
+Connect OpenClaw and coding agents to [Memory Router](https://github.com/mickey-kras/hindsight-memory-router). Give each agent a credential, one optional write bank and more read banks. Agents can then share selected memories without sharing every bank. Memory Router enforces access. Client routing does not grant it.
 
-The two release packages are OpenClaw and coding agents. The coding-agents package includes coding-agent MCP. Install only the integration your client needs. Each integration can operate separately. These integrations require Memory Router and its Hindsight backend, but not GPU Workload Supervisor.
+The two release packages are OpenClaw and coding agents. The coding-agents package includes coding-agent MCP. Install the integration your client needs. Each integration works separately. These integrations need Memory Router and its Hindsight backend, but not GPU Workload Supervisor.
 
 ## How it fits together
 
@@ -17,29 +17,36 @@ The two release packages are OpenClaw and coding agents. The coding-agents packa
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture/overview-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture/overview-light.svg">
-    <img alt="Agents use Integrations, Memory Router, and Hindsight; Integrations are highlighted; access rules and quarantine belong to the router." src="https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture/overview-light.svg">
+    <img alt="Agents use Integrations, Memory Router, and Hindsight. Integrations are highlighted. Access rules and quarantine belong to the router." src="https://raw.githubusercontent.com/mickey-kras/hindsight-memory-router-integrations/main/docs/architecture/overview-light.svg">
   </picture>
 </a>
 
-[Explore the architecture and request flows](https://mickey-kras.github.io/hindsight-memory-router/) | [Memory Router repository](https://github.com/mickey-kras/hindsight-memory-router)
+[Explore the architecture and request flows](https://mickey-kras.github.io/hindsight-memory-router/).
+
+[Repository for Memory Router](https://github.com/mickey-kras/hindsight-memory-router).
 
 ## Install
 
-You need Node.js 22.12.0 or later and an HTTPS Memory Router endpoint. You also need server-side grants for the principal, banks and scopes.
+You need Node.js 22.12.0 or later and an HTTPS endpoint for Memory Router. You also need server-side grants for the principal, banks and scopes.
 
-Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases). Verify its SHA-256 against `PACKAGE_SHA256` from the same release source. CI builds the packages. This repository does not store tarballs.
+Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases). Check the SHA-256 against `PACKAGE_SHA256` from the same release source. CI builds the packages. This repository does not store tarballs.
 
-| Client | Setup |
+| Client | Procedure |
 | --- | --- |
-| Hosted agents/apps | Use the [typed router HTTP client](docs/hosted-client.md). |
+| Hosted agents and apps | Use the [typed router HTTP client](docs/hosted-client.md). |
 | OpenClaw | Install the OpenClaw release artifact, then configure the [`hindsight-memory-router` plugin](docs/OPENCLAW.md). |
 | Codex, Claude Code, OpenCode and other coding agents | Install the coding-agents artifact and follow [coding-agent setup](integrations/coding-agents/README.md). |
 
 ## Quick start: coding agents
 
 1. Create the principal's grants in Memory Router. Keep each harness's token in your secret manager.
-2. Create an operator-managed JSON file using the [configuration example](integrations/coding-agents/README.md). Set its HTTPS router URL, principal, token environment variable and explicit project-to-bank mapping.
+
+2. Create an operator-managed JSON file using the [configuration example](integrations/coding-agents/README.md).
+
+   Set the HTTPS router URL, principal, token environment variable and explicit project-to-bank mapping.
+
 3. Export the named token and harness identity from your operator-managed environment.
+
 4. From the mapped project, run:
 
 ```sh
@@ -55,11 +62,13 @@ For Codex, export `HINDSIGHT_ROUTER_CONFIG` before you run the installer. The in
 
 ## Documentation
 
-- [OpenClaw configuration and queue storage](docs/OPENCLAW.md)
-- [Coding-agent configuration](integrations/coding-agents/README.md)
-- [Hosted router HTTP client](docs/hosted-client.md)
-- [Routing, failure handling and ingest identity](docs/BEHAVIOR.md)
-- [All documentation](docs/README.md), including builds, upgrades and releases
+Use these guides.
+
+- [OpenClaw configuration and queue storage](docs/OPENCLAW.md).
+- [Configuration for coding agents](integrations/coding-agents/README.md).
+- [HTTP client for hosted apps](docs/hosted-client.md).
+- [Routing, failure handling and ingest identity](docs/BEHAVIOR.md).
+- [All documentation](docs/README.md), including builds, upgrades and releases.
 
 [MIT license](LICENSE).
 

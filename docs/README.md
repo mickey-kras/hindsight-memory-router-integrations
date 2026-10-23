@@ -2,7 +2,7 @@
 
 [Repository](../README.md)
 
-Choose your client guide: [OpenClaw](OPENCLAW.md), [coding agents](../integrations/coding-agents/README.md), or the [hosted HTTP client](hosted-client.md). The two release packages require an HTTPS router endpoint and matching server grants. Coding-agent MCP is included in the coding-agents package.
+Choose your client guide: [OpenClaw](OPENCLAW.md), [coding agents](../integrations/coding-agents/README.md), or the [hosted HTTP client](hosted-client.md). The two release packages need an HTTPS router endpoint and matching server grants. The coding-agents package includes coding-agent MCP.
 
 ## Install and use
 
@@ -16,11 +16,11 @@ Choose your client guide: [OpenClaw](OPENCLAW.md), [coding agents](../integratio
 - [Shared architecture and request flows](https://mickey-kras.github.io/hindsight-memory-router/)
 - [Memory Router documentation](https://github.com/mickey-kras/hindsight-memory-router/blob/main/docs/README.md): server deployment, credentials and bank grants
 
-## Maintain
+## Maintenance
 
-- [Build and verify](DEVELOPMENT.md)
+- [Build and check](DEVELOPMENT.md)
 - [Upgrade vendored integrations](UPGRADING.md) and [local deviations](DEVIATIONS.md)
-- [Release packages](RELEASING.md) and [dependency updates](dependabot.md)
+- [Packages for release](RELEASING.md) and [dependency updates](dependabot.md)
 
 ## Retained upstream references
 

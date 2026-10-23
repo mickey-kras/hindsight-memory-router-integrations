@@ -34,7 +34,9 @@ class DocumentationGateTests(unittest.TestCase):
                 self.assertEqual(completed.returncode == 0, result == "success")
 
     def test_both_jobs_discover_markdown_and_extract_openapi_prose(self):
-        jobs = self.workflow("docs-ste")["jobs"]
+        workflow = self.workflow("docs-ste")
+        self.assertIn("github.event.pull_request.number || github.ref", workflow["concurrency"]["group"])
+        jobs = workflow["jobs"]
         self.assertEqual(set(jobs), {"ste-cli", "vale"})
         for name, job in jobs.items():
             with self.subTest(job=name), tempfile.TemporaryDirectory() as directory:
