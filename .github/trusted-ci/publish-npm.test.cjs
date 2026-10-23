@@ -23,9 +23,14 @@ function metadata(pkg) {
 function scenario(existing = []) {
   const published = new Map(existing.map((pkg) => [pkg.name, metadata(pkg)]));
   const calls = [];
+  let elapsed = 0;
   return {
     calls,
     published,
+    elapsed: () => elapsed,
+    advance: (delay) => {
+      elapsed += delay;
+    },
     options: {
       packages,
       read: () => bytes,
@@ -35,7 +40,10 @@ function scenario(existing = []) {
         const pkg = packages.find((item) => args[1].endsWith(item.path));
         published.set(pkg.name, metadata(pkg));
       },
-      wait: async () => {},
+      now: () => elapsed,
+      wait: async (delay) => {
+        elapsed += delay;
+      },
     },
   };
 }
@@ -110,21 +118,137 @@ test("does not move latest backwards for an older package release", async () => 
 
 test("waits for registry visibility and verifies the published bytes", async () => {
   const { options, published } = scenario();
-  let waits = 0;
+  const waits = [];
   const lookup = options.lookup;
-  options.lookup = (name, version) => (published.has(name) && waits === 0 ? null : lookup(name, version));
-  options.wait = async () => {
-    waits++;
+  options.lookup = (name, version) => (published.has(name) && waits.length === 0 ? null : lookup(name, version));
+  const wait = options.wait;
+  options.wait = async (delay) => {
+    waits.push(delay);
+    await wait(delay);
   };
   await publishPackages(options);
-  assert.equal(waits, 1);
+  assert.deepEqual(waits, [10_000]);
 });
 
-test("fails when publication never becomes visible", async () => {
-  const { options } = scenario();
-  options.publish = () => {};
-  await assert.rejects(publishPackages(options), /publication not visible/);
+test("waits several minutes for each accepted publication without publishing twice", async () => {
+  const { options, calls, published, elapsed } = scenario();
+  const acceptedAt = new Map();
+  const publish = options.publish;
+  options.publish = (args) => {
+    publish(args);
+    const pkg = packages.find((item) => args[1].endsWith(item.path));
+    acceptedAt.set(pkg.name, elapsed());
+  };
+  options.lookup = (name, version) => {
+    const accepted = acceptedAt.get(name);
+    return version !== "latest" && accepted !== undefined && elapsed() - accepted >= 180_000
+      ? published.get(name)
+      : null;
+  };
+  await publishPackages(options);
+  assert.equal(elapsed(), 360_000);
+  assert.equal(calls.length, 2);
 });
+
+test("starts the visibility window after a slow publication", async () => {
+  const { options, calls, elapsed, advance } = scenario();
+  options.publish = (args) => {
+    calls.push(args);
+    advance(60_000);
+  };
+  await assert.rejects(publishPackages(options), /publication not visible/);
+  assert.equal(elapsed(), 360_000);
+});
+
+test("checks metadata that becomes visible during the final wait", async () => {
+  const { options, calls, published, elapsed } = scenario([packages[1]]);
+  const lookup = options.lookup;
+  options.lookup = (name, version) => (name === packages[0].name && elapsed() < 295_000 ? null : lookup(name, version));
+  await publishPackages(options);
+  assert.equal(elapsed(), 300_000);
+  assert.equal(calls.length, 1);
+  assert.ok(published.has(packages[0].name));
+});
+
+test("fails after the bounded visibility window without publishing another package", async () => {
+  const { options, calls, elapsed } = scenario();
+  const waits = [];
+  const wait = options.wait;
+  options.wait = async (delay) => {
+    waits.push(delay);
+    await wait(delay);
+  };
+  options.publish = (args) => calls.push(args);
+  await assert.rejects(publishPackages(options), /publication not visible: .*rerun failed jobs/);
+  assert.equal(elapsed(), 300_000);
+  assert.ok(waits.every((delay) => delay <= 10_000));
+  assert.equal(calls.length, 1);
+});
+
+test("counts slow metadata requests against the visibility deadline", async () => {
+  const { options, calls, elapsed, advance } = scenario();
+  const waits = [];
+  const wait = options.wait;
+  options.wait = async (delay) => {
+    waits.push(delay);
+    await wait(delay);
+  };
+  options.publish = (args) => calls.push(args);
+  options.lookup = async () => {
+    if (calls.length) advance(7_000);
+    return null;
+  };
+  await assert.rejects(publishPackages(options), /publication not visible/);
+  assert.equal(waits.at(-1), 300_000 - 17_000 * (waits.length - 1) - 7_000);
+  assert.ok(elapsed() <= 307_000);
+  assert.equal(calls.length, 1);
+});
+
+test("keeps waiting through registry errors after publication", async () => {
+  const { options, calls, published } = scenario();
+  let failures = 0;
+  const lookup = options.lookup;
+  options.lookup = async (name, version) => {
+    if (calls.length && version !== "latest" && failures < 3) {
+      failures++;
+      throw new Error("npm metadata request failed: HTTP 503");
+    }
+    return lookup(name, version);
+  };
+  await publishPackages(options);
+  assert.equal(failures, 3);
+  assert.equal(calls.length, 2);
+  assert.equal(published.size, 2);
+});
+
+test("reports the last registry error when publication never becomes visible", async () => {
+  const { options, calls } = scenario();
+  options.publish = (args) => calls.push(args);
+  options.lookup = async () => {
+    if (calls.length) throw new Error("npm metadata request failed: HTTP 429");
+    return null;
+  };
+  await assert.rejects(publishPackages(options), /not visible: .*last error: npm metadata request failed: HTTP 429/);
+  assert.equal(calls.length, 1);
+});
+
+for (const defect of ["integrity", "provenance"]) {
+  test(`rejects newly visible ${defect} mismatch without waiting or publishing another package`, async () => {
+    const { options, calls, published } = scenario();
+    const publish = options.publish;
+    options.publish = (args) => {
+      publish(args);
+      const result = published.get(packages[0].name);
+      if (defect === "integrity") result.dist.integrity = "sha512-other";
+      else delete result.dist.attestations;
+    };
+    options.wait = async () => {
+      throw new Error("must not wait on invalid metadata");
+    };
+    await assert.rejects(publishPackages(options), /mismatch|provenance missing/);
+    assert.equal(calls.length, 1);
+  });
+}
 
 test("rejects wrong package inventories and paths", async () => {
   for (const invalid of [[], [packages[0], packages[0]], [{ ...packages[0], path: "other.tgz" }, packages[1]]]) {

@@ -33,6 +33,7 @@ async function publishPackages({
   lookup = metadata,
   publish = (args) => execFileSync("npm", args, { stdio: "inherit", timeout: 120_000 }),
   wait = sleep,
+  now = () => performance.now(),
 }) {
   if (
     !Array.isArray(packages) ||
@@ -74,13 +75,30 @@ async function publishPackages({
       "--tag",
       tag,
     ]);
-    let published;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      published = await lookup(pkg.name, pkg.version);
-      if (published) break;
-      if (attempt < 4) await wait(2000 * (attempt + 1));
+    // npm can accept a publication several minutes before serving its metadata.
+    // Registry errors count as not yet visible; one slow request may overrun the window.
+    const deadline = now() + 300_000;
+    let lastError;
+    const poll = async () => {
+      try {
+        return await lookup(pkg.name, pkg.version);
+      } catch (error) {
+        lastError = error;
+        return null;
+      }
+    };
+    let published = await poll();
+    while (!published) {
+      const remaining = deadline - now();
+      if (remaining <= 0) {
+        const cause = lastError ? ` (last error: ${lastError.message})` : "";
+        throw new Error(
+          `npm publication not visible: ${pkg.name}@${pkg.version}${cause}; rerun failed jobs once npm serves it`,
+        );
+      }
+      await wait(Math.min(10_000, remaining));
+      published = await poll();
     }
-    if (!published) throw new Error(`npm publication not visible: ${pkg.name}@${pkg.version}`);
     verifyPublished(pkg, published, integrity);
   }
 }
