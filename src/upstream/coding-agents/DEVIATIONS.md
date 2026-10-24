@@ -48,8 +48,9 @@ The complete override inventory is:
 | Dependency | Range |
 | --- | --- |
 | `@opencode/plugin > @opentelemetry/core` | `>=2.8.0 <3.0.0` |
+| `@opencode-ai/plugin > zod` | `>=4.6.6 <5.0.0` |
 | `esbuild` | `>=0.25.0 <1.0.0` |
-| `fast-uri` | `>=3.1.6 <4.0.0` |
+| `fast-uri` | `>=3.1.9 <4.0.0` |
 | `hono` | `>=4.13.11 <5.0.0` |
 | `http-cache-semantics` | `4.3.0` |
 | `ip-address` | `>=10.5.1 <11.0.0` |
