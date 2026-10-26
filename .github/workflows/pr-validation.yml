@@ -25,7 +25,7 @@ jobs:
         env:
           DOCS_STE: ${{ needs.docs-ste.result }}
         run: test "$DOCS_STE" = success
-      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2
         with:
           egress-policy: audit
       - name: Read the trusted main policy
