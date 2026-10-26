@@ -214,6 +214,33 @@ class AdmissionTests(unittest.TestCase):
         self.guard.pr_context['user'] = {'type': 'User', 'login': 'mickey-kras', 'id': 24433677}
         self.assertFalse(self.approved())
 
+    def test_policy_guard_admits_only_harden_runner_pin_and_comment_changes(self):
+        path = '.github/workflows/policy-guard.yml'
+        before = (ROOT / path).read_text()
+        action = next(line for line in before.splitlines() if line.strip().startswith(
+            '- uses: step-security/harden-runner@'
+        ))
+        prefix = action.split('@')[0] + '@'
+        for changed in (
+            before.replace(action, prefix + 'f' * 40),
+            before.replace(action, prefix + 'f' * 40 + ' # v2.22.2'),
+            before.replace(action, action.split('#')[0].rstrip() + ' # v2.22.2'),
+        ):
+            self.guard.failures.clear()
+            with self.subTest(change='harden-runner'), patch.object(self.guard, 'base_file', return_value=before):
+                self.guard.gate_policy_guard(path, changed)
+                self.assertEqual(self.guard.failures, [])
+        for mutation, changed in (
+            ('trigger', before.replace('pull_request_target', 'workflow_run', 1)),
+            ('permission', before.replace('contents: read', 'contents: write', 1)),
+            ('source', before.replace("'safe_load', 'protected'", "'safe_load'", 1)),
+            ('execution', before.replace('python3 "$RUNNER_TEMP/policy_guard.py"', 'python3 -c "pass"', 1)),
+        ):
+            self.guard.failures.clear()
+            with self.subTest(change=mutation), patch.object(self.guard, 'base_file', return_value=before):
+                self.guard.gate_policy_guard(path, changed)
+                self.assertIn('require independent exact-head owner approval', '\n'.join(self.guard.failures))
+
     def test_review_does_not_waive_workflow_invariants(self):
         path = '.github/workflows/trusted-ci.yml'
         before = (ROOT / path).read_text()
