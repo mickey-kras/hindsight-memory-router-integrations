@@ -1044,3 +1044,73 @@ test("cleanup retry resumes after deleting its candidate when pruning an older b
     await followUp.deletePublishedBranch(m);
     assert.equal(m.state.refs["heads/release/0.0.9"], undefined);
   }));
+
+test("a later main dispatch resumes the original run without checking new package bytes", () =>
+  fixture(async () => {
+    const m = mock();
+    integrationPrepared(m);
+    recoveryApi(m);
+    m.context.sha = "d".repeat(40);
+    m.state.refs["heads/main"].object.sha = m.context.sha;
+    m.state.branches = [{ name: "release/0.1.0" }];
+    writeFileSync("packages/example-openclaw-0.12.0.tgz", "new main package bytes");
+    m.github.rest.repos.getLatestRelease = () => {
+      throw new Error("must not refresh pins");
+    };
+    await release.prepare(m);
+    assert.equal(m.outputs.sha, undefined);
+    assert.equal(m.outputs.resume_sha, sha);
+    assert.equal(m.outputs.resume_run, 5);
+    await release.resumePreparedRelease({
+      ...m,
+      version: m.outputs.version,
+      sha: m.outputs.resume_sha,
+      runId: m.outputs.resume_run,
+    });
+    assert.deepEqual(m.state.calls, ["retry-failed"]);
+  }));
+
+for (const defect of ["run", "version", "base", "commits", "workflow", "renamed workflow", "ancestry"]) {
+  test(`recovery rejects a retained candidate with invalid ${defect}`, () =>
+    fixture(async () => {
+      const m = mock();
+      integrationPrepared(m);
+      recoveryApi(m);
+      m.context.sha = "d".repeat(40);
+      if (defect === "run") m.state.prepared.preparation_run = 7;
+      if (defect === "version") m.state.prepared.version = "0.2.0";
+      if (defect === "base") m.state.prepared.base = sha;
+      if (defect === "commits") m.state.comparison.total_commits = 2;
+      if (defect === "workflow") m.state.comparison.files = [{ filename: ".github/workflows/release.yml" }];
+      if (defect === "renamed workflow")
+        m.state.comparison.files = [{ filename: "moved.yml", previous_filename: ".github/workflows/release.yml" }];
+      if (defect === "ancestry") {
+        const compare = m.github.rest.repos.compareCommitsWithBasehead;
+        m.github.rest.repos.compareCommitsWithBasehead = (args) =>
+          args.basehead.endsWith(m.context.sha) ? { data: { status: "diverged" } } : compare(args);
+      }
+      await assert.rejects(
+        release.resumePreparedRelease({ ...m, version: "0.1.0", sha, runId: 5 }),
+        /Recovery|Originating/,
+      );
+      assert.deepEqual(m.state.calls, []);
+    }));
+}
+
+for (const status of ["in_progress", "completed"]) {
+  test(`recovery does not restart an ${status} successful or active run`, () =>
+    fixture(async () => {
+      const m = mock();
+      integrationPrepared(m);
+      recoveryApi(m, "success");
+      const getRun = m.github.rest.actions.getWorkflowRun;
+      m.github.rest.actions.getWorkflowRun = async () => {
+        const response = await getRun();
+        response.data.status = status;
+        return response;
+      };
+      m.context.sha = "d".repeat(40);
+      await release.resumePreparedRelease({ ...m, version: "0.1.0", sha, runId: 5 });
+      assert.deepEqual(m.state.calls, []);
+    }));
+}
