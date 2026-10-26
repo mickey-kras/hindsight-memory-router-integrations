@@ -200,6 +200,7 @@ For OpenClaw, use
 ## Recovery
 
 - **Checks, upload, attestation, or follow-up failed:** use **Re-run failed jobs** on the original release run. The run keeps the frozen candidate and tested tarballs for 30 days. Existing tags and release assets must match the original bytes.
+- **npm visibility delay:** after npm accepts each package, the publisher checks its metadata for up to 20 minutes. Checks start 10 seconds apart and increase to a maximum of 60 seconds. Temporary registry failures do not stop these checks. Integrity or provenance mismatches stop publication.
 - **npm publication failed:** the GitHub release can already be public. Rerun failed jobs on the original run.
 
   The publisher verifies and skips npm versions with the same bytes. It publishes missing versions. Candidate cleanup and next-version preparation wait for both packages. Never replace an existing mismatched version.

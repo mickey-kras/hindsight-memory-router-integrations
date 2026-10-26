@@ -77,7 +77,8 @@ async function publishPackages({
     ]);
     // npm can accept a publication several minutes before serving its metadata.
     // Registry errors count as not yet visible; one slow request may overrun the window.
-    const deadline = now() + 300_000;
+    const deadline = now() + 1_200_000;
+    let delay = 10_000;
     let lastError;
     const poll = async () => {
       try {
@@ -96,7 +97,8 @@ async function publishPackages({
           `npm publication not visible: ${pkg.name}@${pkg.version}${cause}; rerun failed jobs once npm serves it`,
         );
       }
-      await wait(Math.min(10_000, remaining));
+      await wait(Math.min(delay, remaining));
+      delay = Math.min(delay * 2, 60_000);
       published = await poll();
     }
     verifyPublished(pkg, published, integrity);
