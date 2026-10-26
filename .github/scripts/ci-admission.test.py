@@ -151,6 +151,7 @@ class AdmissionTests(unittest.TestCase):
         changed['packages']['']['dependencies']['evil'] = '*'
         self.guard.failures.clear()
         self.assertTrue(self.lock_errors(changed))
+        changed = copy.deepcopy(self.lock)
         changed['packages']['node_modules/..'] = changed['packages'].pop('node_modules/ip-address')
         self.guard.failures.clear()
         self.assertTrue(self.lock_errors(changed))
