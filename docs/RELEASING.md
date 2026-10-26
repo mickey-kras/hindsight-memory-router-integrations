@@ -207,7 +207,7 @@ For OpenClaw, use
 
   Cancellation does not delete the candidate or open failure issues.
 - **Missing preparation response:** rerun the original run. It finds the candidate by its manifest and resumes without reserving another version or refreshing pins.
-- **Repeated dispatch from the same main snapshot:** automation requests a native retry of the original failed run or links to an active or successful run. It does not create a second publisher.
+- **Repeated dispatch, including after main advances:** automation checks the retained candidate and its original run. It requests a native retry or links to an active or successful run. The original run keeps its source snapshot and package artifacts. The new dispatch does not publish the candidate.
 - **Candidate branch already removed:** a retry verifies the immutable annotated tag and release. It then resumes follow-up at the same commit.
 - **Code, pins, package bytes, or automation need changes:** merge the fix to main and prepare a new repository version.
 
@@ -230,3 +230,4 @@ Sonar restores coverage by the artifact ID returned by successful quality checks
 
 
 CI dependency and policy changes follow [CI policy and independent review](CI_POLICY.md). Lockfiles use semantic validation. Do not bootstrap dependency updates with more hash admissions.
+
