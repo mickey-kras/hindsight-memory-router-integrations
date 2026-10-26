@@ -380,6 +380,26 @@ async function prepare({ github, context, core, inspect }) {
       requireValue(file.type === "file" && file.encoding === "base64", `Cannot read prepared ${path}`);
       return Buffer.from(file.content, "base64").toString("utf8");
     };
+    const retained = JSON.parse(await read("release.json"));
+    if (retained.base !== context.sha) {
+      requireValue(
+        retained.schema === 2 &&
+          retained.version === version &&
+          commitSha.test(retained.base) &&
+          Number.isSafeInteger(retained.publication_run) &&
+          retained.publication_run > 0 &&
+          retained.publication_run === retained.preparation_run &&
+          retained.publication_run !== context.runId,
+        "Invalid retained release recovery identity",
+      );
+      core.setOutput("resume_run", retained.publication_run);
+      core.setOutput("resume_sha", head.object.sha);
+      core.setOutput("version", version);
+      await core.summary
+        .addRaw(`Retained candidate: ${branch} at ${head.object.sha}. Verify and resume its original release run.\n`)
+        .write();
+      return;
+    }
     const manifest = await validate({
       github,
       core,
@@ -615,14 +635,46 @@ async function resumePreparedRelease({ github, context, core, version, sha, runI
       Number.isSafeInteger(runId) && runId > 0 && runId !== context.runId,
       "Invalid originating release run",
     );
+    const { data: file } = await github.rest.repos.getContent({ ...context.repo, path: "release.json", ref: sha });
+    requireValue(file.type === "file" && file.encoding === "base64", "Recovery manifest is missing");
+    const manifest = JSON.parse(Buffer.from(file.content, "base64").toString("utf8"));
+    requireValue(
+      manifest.schema === 2 &&
+        manifest.version === version &&
+        commitSha.test(manifest.base) &&
+        manifest.preparation_run === runId &&
+        manifest.publication_run === runId,
+      "Recovery manifest does not identify the original release run",
+    );
     ({ data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId }));
     requireValue(
       run.id === runId &&
         run.path === ".github/workflows/release.yml" &&
         run.event === "workflow_dispatch" &&
         run.head_branch === "main" &&
-        run.head_sha === context.sha,
+        run.head_sha === manifest.base,
       "Originating release run does not match its selected source snapshot",
+    );
+    const { data: ancestry } = await github.rest.repos.compareCommitsWithBasehead({
+      ...context.repo,
+      basehead: `${manifest.base}...${context.sha}`,
+    });
+    requireValue(["ahead", "identical"].includes(ancestry.status), "Recovery base is not an ancestor of this dispatch");
+    const { data: candidate } = await github.rest.repos.compareCommitsWithBasehead({
+      ...context.repo,
+      basehead: `${manifest.base}...${sha}`,
+    });
+    requireValue(
+      candidate.status === "ahead" &&
+        candidate.total_commits === 1 &&
+        candidate.commits.length === 1 &&
+        candidate.commits[0].sha === sha &&
+        candidate.files &&
+        candidate.files.length < 300 &&
+        !candidate.files.some((file) =>
+          [file.filename, file.previous_filename || ""].some((path) => path.startsWith(".github/")),
+        ),
+      "Recovery candidate changed after preparation",
     );
   } else {
     const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
