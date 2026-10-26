@@ -17,7 +17,7 @@ permissions:
   security-events: write
 jobs:
   checks:
-    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-ci.yml@0ca3c6f3eb4de34ac739fbc018610586a9f2ad45
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-ci.yml@533e79de3119fadf50c7f299305d01eebb933abf
     with:
       revision_sha: ${{ inputs.candidate_sha }}
       revision_ref: ${{ inputs.candidate_ref }}

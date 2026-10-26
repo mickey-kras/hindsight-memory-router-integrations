@@ -930,8 +930,8 @@ jobs:
               '.github/workflows/trusted-codeql.yml': ('230f65f68125d5a4ae977e1e48b2ded28d8da8141422ef9188b56f38354e6365',),
               '.github/workflows/trusted-ci.yml': ('5cb1b4d5cf6320d48a69247884edf214791a54ab22af3a7f385a64ea0b300ed5',),
               '.github/workflows/trusted-aislop.yml': ('943fdcd4e062b54cfa904ca3812774ca4798a8eed92c35cb9c097e992af748b4',),
-              '.github/workflows/ci.yml': ('68b180a3d03b7e7c246e9154f4b46776ba0ffc8a5d97aafdfd380640c144d771',),
-              '.github/workflows/main.yml': ('242b688ae7f8fa6e52f1ae52be0ad99dd3fb96844488a6a13d4644ac6bde53c4',),
+              '.github/workflows/ci.yml': ('a52b891014777ea290a5637bc0496c04e21cd27b3ec9ceccb40ae99e81c36948',),
+              '.github/workflows/main.yml': ('9a70fca6bcc3001a46441e990b402a14cc12ccdae3d4cfc3713579f45a307cfa',),
               '.github/workflows/release.yml': ('60a6c456de88aa5cf1e498440ef3af44a2f2bfa06f06404913d0451c95c8a064',),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
           POLICY_SOURCE
@@ -945,10 +945,10 @@ jobs:
               '.github/workflows/dependabot-auto-merge.yml': ('dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f',),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9',),
               '.github/workflows/pr-branch-updater.yml': ('380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
-              '.github/workflows/pr-validation.yml': '49667571a2b83f9abd464fe4405d8b9fa2fed7640db0acd1574e80adeb62364d',
+              '.github/workflows/pr-validation.yml': '6f9502c946d1727eea35a0d3f44dc0aa77a75920184edfcb2088a560e9546c89',
               '.github/workflows/branch-policy.yml': ('ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
           }
-          SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': ('cfe792bb08eb9006273d786fbb939fd6ba91a9292e030687bccdef3f2506b4b9','d40b1aae998d17a674818c8acc1a1929745d0132c1489740984b84e2a6aa292e'), '.github/workflows/codeql.yml': '84f29bf0578ccdbba6b0c623763b590c9678ca3711716121988722534cd94ff1'}
+          SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': 'b173e748fe9845d4ad97f8b356edb78531a6a263e49b66166ddcf39f58360fa8', '.github/workflows/codeql.yml': 'ae5d4f4c3382739f9b74ae8422b7279926a6bd6e8b70407a56584ce1c76a5730'}
 
           def approved_scanner_wrapper(path, content):
               if path not in SCANNER_WRAPPER_SHAPES:
@@ -1197,7 +1197,7 @@ jobs:
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '44f39a8e5be7c00cef424ac3dfa703f9dacbb501c4bee9c5b8f90cb144e2bef2',
-              '.github/scripts/trusted-ci-activation.json': '6d348a212316c7862b90e79fd09f1f6af0f479a3c97a3127b90112b88a6c6962',
+              '.github/scripts/trusted-ci-activation.json': '259f40686f91bce84384ffb8bbe46a0cab6a3ae717f4bc8fb626a75c86c31e7f',
               '.github/trusted-ci/.aislop/config.yml': '798f947468c6b556b14b802f650a3c4dda6a9302ed1238e13aa078e2380472eb',
               '.github/trusted-ci/findings.cjs': '8062166755f5eb47298efe5588ca2a91e0b8de06ef7d50fc05b311f640b11602',
               '.github/trusted-ci/npm-audit.cjs': 'f28a085b4a5b4b391dcc1e0e266cb756e107cf2e40f7f8af33c66ab22f6b6d4c',
@@ -1209,7 +1209,7 @@ jobs:
               '.github/trusted-ci/codeql.yml': '4e07dcbba42d7a11491b926197791a96b943af70a20dbc0f2debd7fa2d3b00f0',
               '.github/trusted-ci/.semgrep.yml': 'd762890c82bb50694f8762c5abcd374d6f8671785a137d29db501f864675ff35',
               '.github/trusted-ci/safe-path.cjs': '8c15c73a8ab6af7d378d6f22be15b3f33e5f6dc120b81caabb61adbe4136b464',
-              '.github/trusted-ci/identity.test.cjs': 'e567c728d0d49e24f315ce09c484b55528c96767a59371692c9ca6a69e8a7b74',
+              '.github/trusted-ci/identity.test.cjs': 'a16090207937e99083b13f8f06f478f8a15db9dcd8e3f6673c4ff3fe1f647d13',
               '.github/trusted-ci/package.json': '5db62573f0f82ee1e6774ffb51be79db2bd0aa995ace952313ac0ea47526e50e',
               '.github/trusted-ci/biome-config.json': '6f98e6f6827ef4af012c5cb5b6a4e276623d9c4183c5b614b897348aedbc8364',
               '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
@@ -1218,7 +1218,7 @@ jobs:
               '.github/trusted-ci/scan-tree.cjs': '815aec01051ecee9ba0a2d7d592f8aeebf93a82ea89a986556f773dc2f8c81e3',
               '.github/trusted-ci/aislop.test.cjs': '17bcdfe2e89570b7c8ea51b707c0400db06f3345d70101c4d7eb668774772084',
               '.github/trusted-ci/gitleaks.toml': '27630a96d6c55755cc37620f3933d5cab94b1eb78a726a32e11212972525d76e',
-              '.github/trusted-ci/identity.cjs': 'f456693577a70cfa91888a20de9d1e0cc28429583a9f03fd8b49ad2924e00f12',
+              '.github/trusted-ci/identity.cjs': 'c9b49664a9c2dfb6462f2a0907efc238b2d9fb421dd17941aaa1e15c908f87d2',
               '.github/scripts/coverage-artifact.cjs': '9b37bf2b0e3bcd836011e4da2611b133fb750c0be43ad0d1e525bd33dc93aed0',
               '.github/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
               '.github/scripts/combination-identity.cjs': '28da02fbdd428f83a87973b3cccb963fb7bd2236ca7457957f792c98b31e0c12',
