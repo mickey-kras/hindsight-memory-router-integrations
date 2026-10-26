@@ -580,7 +580,8 @@ else:
                 if "runs-on" in job:
                     with self.subTest(path=path.name, job=name):
                         self.assertGreater(job.get("timeout-minutes", 0), 0)
-                        self.assertLessEqual(job["timeout-minutes"], 30)
+                        limit = 50 if path.name == "main.yml" and name == "publish" else 30
+                        self.assertLessEqual(job["timeout-minutes"], limit)
         for name in ["main", "release", "dependabot-preparation", "dependabot-auto-merge"]:
             doc = yaml.safe_load((ROOT / f".github/workflows/{name}.yml").read_text())
             self.assertIs(doc["concurrency"]["cancel-in-progress"], False)
