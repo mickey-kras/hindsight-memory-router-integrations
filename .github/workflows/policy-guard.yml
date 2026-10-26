@@ -1230,7 +1230,7 @@ jobs:
               '.github/scripts/release.cjs': '4a1c564c1b9083a196f7df3df196b627dca4f562c3f831a6df3eb06430cbdfbe',
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': 'b2254d4f10bf90cc5659798ff93304cefb48734bdea6ee58f748166baec81e0d',
-              '.github/scripts/release-policy.test.py': '695a487c3947efac005181df79d43ecb96df08c4bd7d6de88cb3583389b63993',
+              '.github/scripts/release-policy.test.py': 'e1fd7796702b021e937c68bed072a293d8fcecd98a1bcc64b5c36fcfa3616add',
               '.github/scripts/release-cleanup.cjs': 'bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8',
               '.github/scripts/release-cleanup.test.cjs': '1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956',
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
