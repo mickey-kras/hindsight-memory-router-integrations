@@ -1,0 +1,45 @@
+{
+  "schema": 2,
+  "version": "0.2.9",
+  "base": "3125eaad07a7b3e799d9e87b44e120310aa93ba9",
+  "preparation_run": 40370739910,
+  "hindsight": {
+    "version": "1.1.0",
+    "sha": "a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5",
+    "image": "ghcr.io/vectorize-io/hindsight:1.1.0@sha256:50311d02b4d5d2b7c5242bd336edf8735df8374eaad496a92f49c83b37d2aa06"
+  },
+  "packages": [
+    {
+      "name": "@mickey-kras/hindsight-memory-router-openclaw",
+      "path": "packages/mickey-kras-hindsight-memory-router-openclaw-0.14.7.tgz",
+      "version": "0.14.7",
+      "sha256": "694ca82d6a994a358ba36b8ad10f349ccacdcfc29dcd0800b2c2d4dd51573529"
+    },
+    {
+      "name": "@mickey-kras/hindsight-memory-router-coding-agents",
+      "path": "packages/mickey-kras-hindsight-memory-router-coding-agents-0.8.9.tgz",
+      "version": "0.8.9",
+      "sha256": "740461f27575d528f17b45f197d5c44ef8836e56799263171ab8f2726ce3e94c"
+    }
+  ],
+  "publication_run": 40370739910,
+  "router": {
+    "version": "0.1.14",
+    "sha": "87f4f423cacee7bc82b91592ee7bfc706ffc2196",
+    "image": "ghcr.io/mickey-kras/hindsight-memory-router@sha256:c674ac3b66cec9233261b25164d3b9fdaa83d18b253d1f1ac73045e89ce71ba2",
+    "dockerhub_image": "docker.io/mickeykrasilnikov/hindsight-memory-router@sha256:c674ac3b66cec9233261b25164d3b9fdaa83d18b253d1f1ac73045e89ce71ba2"
+  },
+  "integration_upstreams": {
+    "openclaw": {
+      "version": "1.0.0",
+      "sha": "a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5",
+      "path": "hindsight-integrations/openclaw"
+    },
+    "coding_agents": {
+      "version": "0.8.2",
+      "sha": "a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5",
+      "path": "hindsight-integrations/coding-agents"
+    }
+  },
+  "nix_openclaw": "4e5f44465d367839780be6f6111a1ab7ff6e315b"
+}
