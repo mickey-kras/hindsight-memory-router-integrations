@@ -39,6 +39,100 @@ test("PR scans retain merge identity for fork, Dependabot and same-repository in
     assert.deepEqual(await identify(f), { sha, ref: "refs/pull/7/merge", upload: !fork });
   }
 });
+function regenerated(fork = false) {
+  const f = fixture("pull_request", fork);
+  const replacement = "d".repeat(40);
+  const tree = "e".repeat(40);
+  const commits = Object.fromEntries(
+    [sha, replacement].map((id) => [
+      id,
+      {
+        parents: [{ sha: base }, { sha: head }],
+        tree: { sha: tree },
+      },
+    ]),
+  );
+  f.refs["pull/7/merge"] = replacement;
+  f.github.rest.git.getCommit = async ({ commit_sha }) => ({ data: commits[commit_sha] });
+  return { ...f, commits, replacement };
+}
+test("regenerated PR merges retain the scanned event SHA and upload policy", async () => {
+  for (const fork of [true, false]) {
+    const f = regenerated(fork);
+    assert.deepEqual(await identify(f), { sha, ref: "refs/pull/7/merge", upload: !fork });
+    // A second equivalent regeneration during scanning is safe at publication.
+    const next = "f".repeat(40);
+    f.commits[next] = structuredClone(f.commits[f.replacement]);
+    f.refs["pull/7/merge"] = next;
+    assert.deepEqual(await identify(f), { sha, ref: "refs/pull/7/merge", upload: !fork });
+  }
+});
+test("regeneration requires both complete trees and exactly the expected ordered parents", async () => {
+  for (const target of [sha, "d".repeat(40)]) {
+    for (const mutate of [
+      (commit) => {
+        commit.tree.sha = "f".repeat(40);
+      },
+      (commit) => {
+        commit.tree.sha = "invalid";
+      },
+      (commit) => {
+        delete commit.tree;
+      },
+      (commit) => {
+        commit.parents.reverse();
+      },
+      (commit) => {
+        commit.parents[0].sha = sha;
+      },
+      (commit) => {
+        commit.parents[1].sha = sha;
+      },
+      (commit) => {
+        commit.parents.pop();
+      },
+      (commit) => {
+        commit.parents.push({ sha });
+      },
+    ]) {
+      const f = regenerated();
+      mutate(f.commits[target]);
+      await assert.rejects(identify(f));
+    }
+  }
+});
+test("equivalent trees never admit a changed PR or unavailable commit evidence", async () => {
+  for (const mutate of [
+    (f) => {
+      f.pr.head.sha = base;
+    },
+    (f) => {
+      f.pr.base.sha = head;
+    },
+    (f) => {
+      f.pr.head.repo.full_name = "attacker/repo";
+    },
+    (f) => {
+      f.pr.state = "closed";
+    },
+    (f) => {
+      f.ref = "refs/heads/main";
+      f.sha = sha;
+    },
+    (f) => {
+      f.github.rest.git.getCommit = async () => {
+        throw new Error("API unavailable");
+      };
+    },
+    (f) => {
+      f.refs["pull/7/merge"] = "invalid";
+    },
+  ]) {
+    const f = regenerated();
+    mutate(f);
+    await assert.rejects(identify(f));
+  }
+});
 test("reject partial, substituted, stale and foreign candidate identities", async () => {
   for (const mutate of [
     (f) => {
@@ -106,11 +200,17 @@ test("prepared Dependabot dispatch is bound to current PR head and separately re
 test("main push/schedule/dispatch bind the current ref; unsupported events fail", async () => {
   for (const eventName of ["push", "schedule", "workflow_dispatch"]) {
     const f = fixture(eventName);
+    let commitLookups = 0;
+    f.github.rest.git.getCommit = async () => {
+      commitLookups += 1;
+      return { data: { parents: [{ sha: base }, { sha: head }], tree: { sha } } };
+    };
     f.context.sha = base;
     f.context.ref = "refs/heads/main";
     assert.deepEqual(await identify(f), { sha: base, ref: "refs/heads/main", upload: true });
     f.refs["heads/main"] = head;
     await assert.rejects(identify(f));
+    assert.equal(commitLookups, 0, "Non-PR events must never use merge equivalence");
   }
   await assert.rejects(identify(fixture("pull_request_target")));
 });

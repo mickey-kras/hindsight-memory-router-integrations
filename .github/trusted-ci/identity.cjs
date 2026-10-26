@@ -52,7 +52,29 @@ async function identify({ github, context, sha = "", ref = "" }) {
     assert.ok(["push", "schedule", "workflow_dispatch"].includes(context.eventName));
     assert.equal(context.ref, "refs/heads/main");
   }
-  assert.equal(await getRef(selected.ref), selected.sha, "Candidate ref changed");
+  const currentSha = await getRef(selected.ref);
+  if (context.eventName === "pull_request" && currentSha !== selected.sha) {
+    // GitHub can regenerate synthetic merge metadata. Retain the event identity
+    // only when the complete tree and ordered PR parents prove equivalent content.
+    assert.match(currentSha, SHA);
+    const expected = context.payload.pull_request;
+    const commits = await Promise.all(
+      [selected.sha, currentSha].map(
+        async (commit_sha) => (await github.rest.git.getCommit({ ...context.repo, commit_sha })).data,
+      ),
+    );
+    for (const commit of commits) {
+      assert.deepEqual(
+        commit.parents.map((parent) => parent.sha),
+        [expected.base.sha, expected.head.sha],
+        "Candidate merge parents changed",
+      );
+      assert.match(commit.tree.sha, SHA);
+    }
+    assert.equal(commits[0].tree.sha, commits[1].tree.sha, "Candidate merge tree changed");
+  } else {
+    assert.equal(currentSha, selected.sha, "Candidate ref changed");
+  }
   return { ...selected, upload };
 }
 
