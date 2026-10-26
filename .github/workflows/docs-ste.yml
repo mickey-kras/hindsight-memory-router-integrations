@@ -64,7 +64,7 @@ jobs:
         run: python3 .github/scripts/docs-ste.test.py
 
       # The action checks the release archive against checksums.txt before it runs. Config: .ste.yml.
-      - uses: TudorAndrei/ste-cli@8e73821bba6ef980930553fb24ca1ade2895aabf # v0.10.1
+      - uses: TudorAndrei/ste-cli@018d38251dd9bd1f3a73c294409053d762f902e2 # v0.10.1
         with:
           version: 0.10.1
           format: text
