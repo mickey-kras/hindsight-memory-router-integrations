@@ -1209,7 +1209,7 @@ jobs:
               '.github/trusted-ci/codeql.yml': '4e07dcbba42d7a11491b926197791a96b943af70a20dbc0f2debd7fa2d3b00f0',
               '.github/trusted-ci/.semgrep.yml': 'd762890c82bb50694f8762c5abcd374d6f8671785a137d29db501f864675ff35',
               '.github/trusted-ci/safe-path.cjs': '8c15c73a8ab6af7d378d6f22be15b3f33e5f6dc120b81caabb61adbe4136b464',
-              '.github/trusted-ci/identity.test.cjs': 'a16090207937e99083b13f8f06f478f8a15db9dcd8e3f6673c4ff3fe1f647d13',
+              '.github/trusted-ci/identity.test.cjs': 'd5b743c3fd6581ba3595d533f220ec492e909f21d8415fe7bf835c9c7b682c4f',
               '.github/trusted-ci/package.json': '5db62573f0f82ee1e6774ffb51be79db2bd0aa995ace952313ac0ea47526e50e',
               '.github/trusted-ci/biome-config.json': '6f98e6f6827ef4af012c5cb5b6a4e276623d9c4183c5b614b897348aedbc8364',
               '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',

@@ -68,6 +68,11 @@ test("regenerated PR merges retain the scanned event SHA and upload policy", asy
   }
 });
 test("regeneration requires both complete trees and exactly the expected ordered parents", async () => {
+  for (const invalidTree of ["invalid", "", undefined]) {
+    const f = regenerated();
+    for (const commit of Object.values(f.commits)) commit.tree.sha = invalidTree;
+    await assert.rejects(identify(f));
+  }
   for (const target of [sha, "d".repeat(40)]) {
     for (const mutate of [
       (commit) => {
