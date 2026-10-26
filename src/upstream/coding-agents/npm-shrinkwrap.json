@@ -1,12 +1,12 @@
 {
   "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-  "version": "0.8.8",
+  "version": "0.8.9",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-      "version": "0.8.8",
+      "version": "0.8.9",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.32.1",
         "@napi-rs/keyring": "2.1.1",
