@@ -141,12 +141,12 @@ test("waits several minutes for each accepted publication without publishing twi
   };
   options.lookup = (name, version) => {
     const accepted = acceptedAt.get(name);
-    return version !== "latest" && accepted !== undefined && elapsed() - accepted >= 180_000
+    return version !== "latest" && accepted !== undefined && elapsed() - accepted >= 480_000
       ? published.get(name)
       : null;
   };
   await publishPackages(options);
-  assert.equal(elapsed(), 360_000);
+  assert.equal(elapsed(), 980_000);
   assert.equal(calls.length, 2);
 });
 
@@ -157,15 +157,16 @@ test("starts the visibility window after a slow publication", async () => {
     advance(60_000);
   };
   await assert.rejects(publishPackages(options), /publication not visible/);
-  assert.equal(elapsed(), 360_000);
+  assert.equal(elapsed(), 1_260_000);
 });
 
 test("checks metadata that becomes visible during the final wait", async () => {
   const { options, calls, published, elapsed } = scenario([packages[1]]);
   const lookup = options.lookup;
-  options.lookup = (name, version) => (name === packages[0].name && elapsed() < 295_000 ? null : lookup(name, version));
+  options.lookup = (name, version) =>
+    name === packages[0].name && elapsed() < 1_195_000 ? null : lookup(name, version);
   await publishPackages(options);
-  assert.equal(elapsed(), 300_000);
+  assert.equal(elapsed(), 1_200_000);
   assert.equal(calls.length, 1);
   assert.ok(published.has(packages[0].name));
 });
@@ -180,8 +181,9 @@ test("fails after the bounded visibility window without publishing another packa
   };
   options.publish = (args) => calls.push(args);
   await assert.rejects(publishPackages(options), /publication not visible: .*rerun failed jobs/);
-  assert.equal(elapsed(), 300_000);
-  assert.ok(waits.every((delay) => delay <= 10_000));
+  assert.equal(elapsed(), 1_200_000);
+  assert.deepEqual(waits.slice(0, 4), [10_000, 20_000, 40_000, 60_000]);
+  assert.ok(waits.every((delay) => delay > 0 && delay <= 60_000));
   assert.equal(calls.length, 1);
 });
 
@@ -199,8 +201,10 @@ test("counts slow metadata requests against the visibility deadline", async () =
     return null;
   };
   await assert.rejects(publishPackages(options), /publication not visible/);
-  assert.equal(waits.at(-1), 300_000 - 17_000 * (waits.length - 1) - 7_000);
-  assert.ok(elapsed() <= 307_000);
+  assert.equal(waits.reduce((sum, delay) => sum + delay, 0) + 7_000 * (waits.length + 1), elapsed());
+  assert.ok(waits.at(-1) < 60_000);
+  assert.ok(elapsed() >= 1_200_000);
+  assert.ok(elapsed() <= 1_207_000);
   assert.equal(calls.length, 1);
 });
 
@@ -254,4 +258,17 @@ test("rejects wrong package inventories and paths", async () => {
   for (const invalid of [[], [packages[0], packages[0]], [{ ...packages[0], path: "other.tgz" }, packages[1]]]) {
     await assert.rejects(publishPackages({ ...scenario().options, packages: invalid }), /Invalid npm/);
   }
+});
+
+test("resumes after a visibility timeout without republishing the accepted package", async () => {
+  const { options, calls, published } = scenario();
+  const lookup = options.lookup;
+  options.lookup = (name, version) => (calls.length ? null : lookup(name, version));
+  await assert.rejects(publishPackages(options), /publication not visible/);
+  assert.equal(calls.length, 1);
+  options.lookup = lookup;
+  await publishPackages(options);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1][1].endsWith(packages[1].path));
+  assert.equal(published.size, 2);
 });

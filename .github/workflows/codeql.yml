@@ -16,7 +16,7 @@ permissions:
   security-events: write
 jobs:
   analyze:
-    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-codeql.yml@e09f70355dfd69bbb31b77f590621e6b376c2f1e
+    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-codeql.yml@533e79de3119fadf50c7f299305d01eebb933abf
     with:
       revision_sha: ${{ inputs.candidate_sha }}
       revision_ref: ${{ inputs.candidate_ref }}
