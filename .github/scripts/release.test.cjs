@@ -7,6 +7,7 @@ const { createHash } = require("node:crypto");
 const release = require("./release.cjs");
 const followUp = require("./release-follow-up.cjs");
 const { rulesets } = require("./release-settings.cjs");
+const { identify } = require("../trusted-ci/identity.cjs");
 
 const base = "a".repeat(40);
 const sha = "b".repeat(40);
@@ -805,7 +806,29 @@ test("missing candidate recovery rejects drafts and foreign immutable tag target
   }));
 
 function recoveryApi(m, conclusion = "failure") {
+  m.state.recoveryJobs = [
+    "require main",
+    "validate main / quality / checks",
+    "validate main / aislop / aislop status",
+    "validate main / codeql / analyze",
+    "validate main / sonar",
+    "prepare candidate",
+    "validate and publish candidate / quality / checks",
+    "validate and publish candidate / aislop / aislop status",
+    "validate and publish candidate / codeql / analyze",
+  ].map((name) => ({ name, status: "completed", conclusion: "success" }));
+  m.state.recoveryJobs.push(
+    { name: "validate and publish candidate / sonar", status: "completed", conclusion: "skipped" },
+    { name: "retain failed preparation", status: "completed", conclusion: "skipped" },
+    { name: "validate and publish candidate / publish packages", status: "completed", conclusion: "failure" },
+  );
   m.github.rest.actions = {
+    listJobsForWorkflowRun: async (args) => {
+      assert.equal(args.run_id, 5);
+      assert.equal(args.filter, "latest");
+      assert.equal(args.per_page, 100);
+      return { data: m.state.recoveryJobs };
+    },
     getWorkflowRun: async () => ({
       data: {
         id: 5,
@@ -1068,6 +1091,97 @@ test("a later main dispatch resumes the original run without checking new packag
       runId: m.outputs.resume_run,
     });
     assert.deepEqual(m.state.calls, ["retry-failed"]);
+  }));
+
+for (const failure of [
+  "validate main / quality / checks",
+  "validate main / aislop / aislop status",
+  "validate main / codeql / analyze",
+  "validate main / sonar",
+  "prepare candidate",
+  "validate and publish candidate / quality / checks",
+  "validate and publish candidate / aislop / aislop status",
+  "validate and publish candidate / codeql / analyze",
+]) {
+  test(`a later main dispatch refuses recovery that would rerun ${failure}`, () =>
+    fixture(async () => {
+      const m = mock();
+      integrationPrepared(m);
+      recoveryApi(m);
+      m.context.sha = "d".repeat(40);
+      m.state.refs["heads/main"].object.sha = m.context.sha;
+      m.state.branches = [{ name: "release/0.1.0" }];
+      m.state.recoveryJobs.find((job) => job.name === failure).conclusion = "failure";
+      // The original event identity remains pinned to its old main, for both
+      // baseline and candidate scanners. Native reruns cannot repair that.
+      const original = {
+        ...m.context,
+        repo: { owner: "mickey-kras", repo: "hindsight-memory-router-integrations" },
+        sha: base,
+        workflow: "release",
+        payload: {},
+      };
+      await assert.rejects(identify({ github: m.github, context: original }), /Candidate ref changed/);
+      await assert.rejects(
+        identify({ github: m.github, context: original, sha, ref: m.target.ref }),
+        /Release base changed/,
+      );
+      await release.prepare(m);
+      await assert.rejects(
+        release.resumePreparedRelease({
+          ...m,
+          version: m.outputs.version,
+          sha: m.outputs.resume_sha,
+          runId: m.outputs.resume_run,
+        }),
+        /Main advanced.*release-version.json bump/,
+      );
+      assert.deepEqual(m.state.calls, []);
+    }));
+}
+
+for (const conclusion of ["cancelled", "timed_out", "startup_failure", "action_required"]) {
+  test(`a later main dispatch refuses the full retry required by ${conclusion}`, () =>
+    fixture(async () => {
+      const m = mock();
+      integrationPrepared(m);
+      recoveryApi(m, conclusion);
+      m.context.sha = "d".repeat(40);
+      m.state.refs["heads/main"].object.sha = m.context.sha;
+      m.state.branches = [{ name: "release/0.1.0" }];
+      await release.prepare(m);
+      await assert.rejects(
+        release.resumePreparedRelease({
+          ...m,
+          version: m.outputs.version,
+          sha: m.outputs.resume_sha,
+          runId: m.outputs.resume_run,
+        }),
+        /Main advanced.*release-version.json bump/,
+      );
+      assert.deepEqual(m.state.calls, []);
+    }));
+}
+
+test("recovery checks live main and fails closed on missing, unknown, or incomplete retry jobs", () =>
+  fixture(async () => {
+    for (const jobs of [
+      [],
+      [{ name: "unknown job", status: "completed", conclusion: "failure" }],
+      [{ name: "validate and publish candidate / publish packages", status: "in_progress", conclusion: null }],
+    ]) {
+      const m = mock();
+      integrationPrepared(m);
+      recoveryApi(m);
+      m.state.recoveryJobs = jobs;
+      // Main may advance after dispatch without changing context.sha.
+      m.state.refs["heads/main"].object.sha = "d".repeat(40);
+      await assert.rejects(
+        release.resumePreparedRelease({ ...m, version: "0.1.0", sha, runId: 5 }),
+        /Main advanced.*release-version.json bump/,
+      );
+      assert.deepEqual(m.state.calls, []);
+    }
   }));
 
 for (const defect of ["run", "version", "base", "commits", "workflow", "renamed workflow", "ancestry"]) {

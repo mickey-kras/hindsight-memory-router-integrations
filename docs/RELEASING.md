@@ -199,16 +199,16 @@ For OpenClaw, use
 
 ## Recovery
 
-- **Checks, upload, attestation, or follow-up failed:** use **Re-run failed jobs** on the original release run. The run keeps the frozen candidate and tested tarballs for 30 days. Existing tags and release assets must match the original bytes.
+- **Checks, upload, attestation, or follow-up failed:** use **Re-run failed jobs** on the original release run. If main has advanced, only a publication job failure can use this retry. Trusted scanner jobs reject the original main snapshot after main changes. If validation or preparation must rerun, merge a `release-version.json` bump on main and dispatch a new release. The run keeps the frozen candidate and tested tarballs for 30 days. Existing tags and release assets must match the original bytes.
 - **npm visibility delay:** after npm accepts each package, the publisher checks its metadata for up to 20 minutes. Checks start 10 seconds apart and increase to a maximum of 60 seconds. Temporary registry failures do not stop these checks. Integrity or provenance mismatches stop publication.
 - **npm publication failed:** the GitHub release can already be public. Rerun failed jobs on the original run.
 
   The publisher verifies and skips npm versions with the same bytes. It publishes missing versions. Candidate cleanup and next-version preparation wait for both packages. Never replace an existing mismatched version.
-- **Canceled:** use **Re-run all jobs** on that run.
+- **Canceled:** use **Re-run all jobs** on that run while its main snapshot is current. After main advances, merge a `release-version.json` bump on main and dispatch a new release.
 
   Cancellation does not delete the candidate or open failure issues.
-- **Missing preparation response:** rerun the original run. It finds the candidate by its manifest and resumes without reserving another version or refreshing pins.
-- **Repeated dispatch, including after main advances:** automation checks the retained candidate and its original run. It requests a native retry or links to an active or successful run. The original run keeps its source snapshot and package artifacts. The new dispatch does not publish the candidate.
+- **Missing preparation response:** rerun the original run while its main snapshot is current. It finds the candidate by its manifest and resumes without reserving another version or refreshing pins. After main advances, use a new repository version.
+- **Repeated dispatch, including after main advances:** automation checks the retained candidate and its original run. It requests a supported native retry or links to an active or successful run. After main advances, automation rejects retries that would rerun validation or preparation, and all full-run retries. A failed publication job can still retry with successful checks retained. The original run keeps its source snapshot and package artifacts. The new dispatch does not publish the candidate.
 - **Candidate branch already removed:** a retry verifies the immutable annotated tag and release. It then resumes follow-up at the same commit.
 - **Code, pins, package bytes, or automation need changes:** merge the fix to main and prepare a new repository version.
 
@@ -218,7 +218,7 @@ For OpenClaw, use
 
   Required PR checks still apply. Only after this succeeds does it delete the completed candidate and prune older immutable releases' matching branches. A failed follow-up fails the run and remains retryable.
 
-If a run fails before any job starts, fix the startup cause. Then rerun it.
+If a run fails before any job starts, fix the startup cause. Then rerun it while its main snapshot is current.
 Failed candidates, draft releases and content-addressed attestations are resumable state.
 The release automation does not delete them on failure or cancellation.
 

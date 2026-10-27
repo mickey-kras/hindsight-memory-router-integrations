@@ -709,6 +709,35 @@ async function resumePreparedRelease({ github, context, core, version, sha, runI
     ["failure", "cancelled", "timed_out", "startup_failure", "action_required"].includes(run.conclusion),
     `Release workflow cannot be resumed from ${run.conclusion}`,
   );
+  if (runId !== undefined) {
+    const { data: main } = await github.rest.git.getRef({ ...context.repo, ref: "heads/main" });
+    if (run.head_sha !== main.object.sha) {
+      const unavailable =
+        "Main advanced since this release run; trusted validation cannot rerun its old snapshot. " +
+        "Merge a release-version.json bump on main and dispatch a new release. " +
+        "Keep existing tags and published assets unchanged.";
+      requireValue(run.conclusion === "failure", unavailable);
+      const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+        ...context.repo,
+        run_id: run.id,
+        filter: "latest",
+        per_page: 100,
+      });
+      // A failed publisher has already passed its validation dependencies.
+      // Retain successful jobs; rerunning a scanner would reject the old main.
+      const pending = jobs.filter((job) => job.conclusion !== "success" && job.conclusion !== "skipped");
+      requireValue(
+        pending.length > 0 &&
+          pending.every(
+            (job) =>
+              job.name === "validate and publish candidate / publish packages" &&
+              job.status === "completed" &&
+              job.conclusion === "failure",
+          ),
+        unavailable,
+      );
+    }
+  }
   const { data: head } = await github.rest.git.getRef({ ...context.repo, ref: `heads/${branch}` });
   requireValue(head.object.sha === sha, "Prepared branch advanced before retry; refusing to rerun a stale candidate");
   const rerun =
