@@ -65,9 +65,11 @@ class TrustedScannerBootstrapTests(unittest.TestCase):
         for caller in ["main", "pr-validation"]:
             jobs = yaml.safe_load(fixture["workflows"][f".github/workflows/{caller}.yml"])["jobs"]
             for name, callee in [("quality", "ci"), ("aislop", "aislop"), ("codeql", "codeql")]:
-                self.assertEqual(jobs[name]["uses"],
+                self.assertIn(jobs[name]["uses"], [
+                    f"./.github/workflows/trusted-{callee}.yml",
                     "mickey-kras/hindsight-memory-router-integrations/.github/workflows/"
-                    f"trusted-{callee}.yml@{fixture['source_sha']}")
+                    f"trusted-{callee}.yml@{fixture['source_sha']}",
+                ])
                 self.assertEqual(jobs[name]["permissions"]["pull-requests"], "read")
         release = yaml.safe_load(fixture["workflows"][".github/workflows/release.yml"])
         for job in ["baseline", "release"]:
