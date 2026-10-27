@@ -627,10 +627,12 @@ jobs:
               'exit(' + '0)',
           )
 
-          def normalize_harden_runner_pins(content):
+          # Version comments do not change execution; keep the full action SHA
+          # in the comparison so executable updates still need owner approval.
+          def normalize_harden_runner_comments(content):
               return re.sub(
-                  r'(?m)^(\s*-\s*uses:\s*step-security/harden-runner@)[0-9a-f]{40}(?:\s+#[^\r\n]*)?(?=\r?$)',
-                  r'\1PINNED',
+                  r'(?m)^([ \t]*-[ \t]*uses:[ \t]*step-security/harden-runner@[0-9a-f]{40})(?:[ \t]+#[^\r\n]*)?(?=\r?$)',
+                  r'\1',
                   content,
               )
 
@@ -639,7 +641,7 @@ jobs:
               if (
                   content != baseline
                   and not review_admitted
-                  and normalize_harden_runner_pins(content) != normalize_harden_runner_pins(baseline)
+                  and normalize_harden_runner_comments(content) != normalize_harden_runner_comments(baseline)
               ):
                   fail(f'{path}: policy changes require independent exact-head owner approval')
               doc = parse_yaml_file(path, content, 'workflow')

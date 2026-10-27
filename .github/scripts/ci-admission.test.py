@@ -214,17 +214,17 @@ class AdmissionTests(unittest.TestCase):
         self.guard.pr_context['user'] = {'type': 'User', 'login': 'mickey-kras', 'id': 24433677}
         self.assertFalse(self.approved())
 
-    def test_policy_guard_admits_only_harden_runner_pin_and_comment_changes(self):
+    def test_policy_guard_admits_only_harden_runner_comment_changes_without_review(self):
         path = '.github/workflows/policy-guard.yml'
         before = (ROOT / path).read_text()
         action = next(line for line in before.splitlines() if line.strip().startswith(
             '- uses: step-security/harden-runner@'
         ))
-        prefix = action.split('@')[0] + '@'
+        pinned = action.split('#')[0].rstrip()
         for changed in (
-            before.replace(action, prefix + 'f' * 40),
-            before.replace(action, prefix + 'f' * 40 + ' # v2.22.2'),
-            before.replace(action, action.split('#')[0].rstrip() + ' # v2.22.2'),
+            before,
+            before.replace(action, pinned),
+            before.replace(action, pinned + ' # v99.0.0'),
         ):
             self.guard.failures.clear()
             with self.subTest(change='harden-runner'), patch.object(self.guard, 'base_file', return_value=before):
@@ -240,6 +240,44 @@ class AdmissionTests(unittest.TestCase):
             with self.subTest(change=mutation), patch.object(self.guard, 'base_file', return_value=before):
                 self.guard.gate_policy_guard(path, changed)
                 self.assertIn('require independent exact-head owner approval', '\n'.join(self.guard.failures))
+
+    def test_policy_guard_pin_changes_require_independent_exact_head_owner_approval(self):
+        path = '.github/workflows/policy-guard.yml'
+        before = (ROOT / path).read_text()
+        action = next(line for line in before.splitlines() if line.strip().startswith(
+            '- uses: step-security/harden-runner@'
+        ))
+        original_context = copy.deepcopy(self.guard.pr_context)
+        for association in ('OWNER', 'MEMBER', 'COLLABORATOR'):
+            for review in ('missing', 'stale', 'dismissed', 'self', 'approved'):
+                self.guard.pr_context = copy.deepcopy(original_context)
+                self.reviews = [] if review == 'missing' else [{
+                    'id': 1, 'user': {'id': 24433677, 'login': 'mickey-kras', 'type': 'User'},
+                    'state': 'DISMISSED' if review == 'dismissed' else 'APPROVED',
+                    'commit_id': ('c' if review == 'stale' else 'a') * 40,
+                }]
+                if review == 'self':
+                    self.guard.pr_context['user'] = self.reviews[0]['user']
+                admitted = self.approved()
+                self.assertEqual(admitted, review == 'approved')
+                for comment in ('', ' # v99.0.0'):
+                    self.guard.failures.clear()
+                    changed = before.replace(action, action.split('@')[0] + '@' + 'f' * 40 + comment)
+                    with self.subTest(association=association, review=review, comment=comment), patch.dict(
+                        'os.environ', {'GUARD_FIXTURE_DIR': 'test'}
+                    ), patch.object(self.guard, 'base_file', return_value=before), patch.object(
+                        self.guard, 'resolve_pr_context', return_value=('a' * 40, association, 'contributor')
+                    ), patch.object(self.guard, 'owner_approved', return_value=admitted), patch.object(
+                        self.guard, 'load_files', return_value=[{'filename': path, 'status': 'modified'}]
+                    ), patch.object(self.guard, 'fetch_file', return_value=changed), patch('builtins.print'):
+                        if admitted:
+                            self.guard.main()
+                            self.assertEqual(self.guard.failures, [])
+                        else:
+                            with self.assertRaises(SystemExit):
+                                self.guard.main()
+                            self.assertIn('require independent exact-head owner approval',
+                                          '\n'.join(self.guard.failures))
 
     def test_review_does_not_waive_workflow_invariants(self):
         path = '.github/workflows/trusted-ci.yml'
