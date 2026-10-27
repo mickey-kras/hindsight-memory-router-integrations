@@ -629,9 +629,10 @@ jobs:
 
           # Version comments do not change execution; keep the full action SHA
           # in the comparison so executable updates still need owner approval.
+          # YAML Unicode line breaks also end comments and must stay visible.
           def normalize_harden_runner_comments(content):
               return re.sub(
-                  r'(?m)^([ \t]*-[ \t]*uses:[ \t]*step-security/harden-runner@[0-9a-f]{40})(?:[ \t]+#[^\r\n]*)?(?=\r?$)',
+                  r'(?m)^([ \t]*-[ \t]*uses:[ \t]*step-security/harden-runner@[0-9a-f]{40})(?:[ \t]+#[^\r\n\x85\u2028\u2029]*)?(?=\r?$)',
                   r'\1',
                   content,
               )

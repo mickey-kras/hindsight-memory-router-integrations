@@ -241,6 +241,26 @@ class AdmissionTests(unittest.TestCase):
                 self.guard.gate_policy_guard(path, changed)
                 self.assertIn('require independent exact-head owner approval', '\n'.join(self.guard.failures))
 
+    def test_policy_guard_comment_normalization_preserves_yaml_unicode_line_breaks(self):
+        path = '.github/workflows/policy-guard.yml'
+        before = (ROOT / path).read_text()
+        action = next(line for line in before.splitlines() if line.strip().startswith(
+            '- uses: step-security/harden-runner@'
+        ))
+        pinned = action.split('#')[0].rstrip()
+        for separator in ('\x85', '\u2028', '\u2029'):
+            self.guard.failures.clear()
+            changed = before.replace(action, pinned + ' # version annotation' + separator
+                                     + '        env:' + separator
+                                     + '          REVIEW_TEST_VALUE: added')
+            parsed = self.guard.load_yaml(changed)
+            self.assertEqual(parsed['jobs']['guard']['steps'][0]['env'], {'review_test_value': 'added'})
+            with self.subTest(separator=repr(separator)), patch.object(
+                self.guard, 'base_file', return_value=before
+            ):
+                self.guard.gate_policy_guard(path, changed)
+                self.assertIn('require independent exact-head owner approval', '\n'.join(self.guard.failures))
+
     def test_policy_guard_pin_changes_require_independent_exact_head_owner_approval(self):
         path = '.github/workflows/policy-guard.yml'
         before = (ROOT / path).read_text()
