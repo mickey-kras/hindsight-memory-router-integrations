@@ -4,7 +4,10 @@ The guard runs from the protected base through `pull_request_target`.
 It reads candidate files as data through GitHub's API. It never creates a checkout of candidate policy code or executes that code.
 Before it lists files, it resolves the live PR. It rejects a head or base change during evaluation.
 
-The guard continues to enforce required CI checks, dependency audits, immutable trusted scanner callers and release provenance.
+The guard continues to enforce required CI checks, dependency audits, trusted scanner source pins and release provenance.
+
+Relative workflow calls use the caller revision. Scanner jobs check out their helpers and configuration from a fixed repository and commit.
+The candidate revision and workflow inputs cannot select this source. Change the scanner source pin only after review.
 
 ## Dependency updates
 

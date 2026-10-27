@@ -927,11 +927,11 @@ jobs:
                       fail(f'{path}: missing source safety contract: {contract}')
           AUTOMATION_SHAPES = {
               '.github/workflows/docs-ste.yml': ('28c93b5213df65323768e136417909b78626406b480bb5dfca7d0fe4a1785f00',),
-              '.github/workflows/trusted-codeql.yml': ('230f65f68125d5a4ae977e1e48b2ded28d8da8141422ef9188b56f38354e6365',),
-              '.github/workflows/trusted-ci.yml': ('5cb1b4d5cf6320d48a69247884edf214791a54ab22af3a7f385a64ea0b300ed5',),
-              '.github/workflows/trusted-aislop.yml': ('943fdcd4e062b54cfa904ca3812774ca4798a8eed92c35cb9c097e992af748b4',),
+              '.github/workflows/trusted-codeql.yml': ('084261c988c2a28b09ff082b72688b3bc3dbaac43a71042ce51a53309121d70d',),
+              '.github/workflows/trusted-ci.yml': ('6aa9207bab0e5cbc625ed7e8030036a0a3e600467ef0a80f15049f8512d8cd14',),
+              '.github/workflows/trusted-aislop.yml': ('36f09be4c4d668d275a7f75e8fd10bf9ad0cf79b7aebea92c854b17cb613da75',),
               '.github/workflows/ci.yml': ('2bf0caf72e362f235237c0ae3a7eac4902d0aa663ac4abe441578ea01123f9cf',),
-              '.github/workflows/main.yml': ('3cde3fc6f9d86923a32df12865bc0a95956e3c1d318eedb724cde5cce9048ab7',),
+              '.github/workflows/main.yml': ('63e54db0d7bf979983391b7e520b87c81fb8fd24d3e5f4fc9b85c20b06cda2fb',),
               '.github/workflows/release.yml': ('60a6c456de88aa5cf1e498440ef3af44a2f2bfa06f06404913d0451c95c8a064',),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
           POLICY_SOURCE
@@ -945,7 +945,7 @@ jobs:
               '.github/workflows/dependabot-auto-merge.yml': ('dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f',),
               '.github/workflows/dependabot-auto-merge-refresh.yml': ('c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9',),
               '.github/workflows/pr-branch-updater.yml': ('380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
-              '.github/workflows/pr-validation.yml': ('507350a764dba488579578e61dcd1284311899f7dc443e37cc87742efc0858b4',),
+              '.github/workflows/pr-validation.yml': ('d2125e706614bfcbd1e2b806a722ab77d914940070f911cde99056efbefb5702',),
               '.github/workflows/branch-policy.yml': ('ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
           }
           SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': 'b173e748fe9845d4ad97f8b356edb78531a6a263e49b66166ddcf39f58360fa8', '.github/workflows/codeql.yml': 'ae5d4f4c3382739f9b74ae8422b7279926a6bd6e8b70407a56584ce1c76a5730'}
@@ -1213,7 +1213,7 @@ jobs:
               '.github/trusted-ci/package.json': '5db62573f0f82ee1e6774ffb51be79db2bd0aa995ace952313ac0ea47526e50e',
               '.github/trusted-ci/biome-config.json': '6f98e6f6827ef4af012c5cb5b6a4e276623d9c4183c5b614b897348aedbc8364',
               '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
-              '.github/trusted-ci/workflows.test.cjs': 'f4a4ed456ac26cac3ca4a86c7a36ea05d1c92aacd253e0ad6a5258b355741eca',
+              '.github/trusted-ci/workflows.test.cjs': '44bef956087547e19802dcb7e7a85383effbc5f4261b5f74dfe6cb1b99a81efd',
               '.github/trusted-ci/trivyignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
               '.github/trusted-ci/scan-tree.cjs': '815aec01051ecee9ba0a2d7d592f8aeebf93a82ea89a986556f773dc2f8c81e3',
               '.github/trusted-ci/aislop.test.cjs': '17bcdfe2e89570b7c8ea51b707c0400db06f3345d70101c4d7eb668774772084',

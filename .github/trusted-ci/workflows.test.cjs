@@ -34,7 +34,7 @@ test("candidate execution has read-only permissions and fresh independent requir
   assert.equal(ci.jobs.checks.outputs.coverage_artifact, "${{ needs.build.outputs.coverage_artifact }}");
   assert.equal(ci.jobs.combination.name, "release combination");
 });
-test("privileged scanners use immutable helper checkout, no candidate install/cache or artifact input", () => {
+test("scanner helpers use a fixed source independent of caller and candidate revisions", () => {
   for (const [file, jobName] of [
     ["trusted-ci", "security"],
     ["trusted-aislop", "status"],
@@ -44,8 +44,8 @@ test("privileged scanners use immutable helper checkout, no candidate install/ca
     const steps = job.steps;
     const checkouts = steps.filter((s) => s.uses?.startsWith("actions/checkout@"));
     assert.equal(checkouts.length, 2);
-    assert.equal(checkouts[0].with.ref, "${{ job.workflow_sha }}");
-    assert.equal(checkouts[0].with.repository, "${{ job.workflow_repository }}");
+    assert.equal(checkouts[0].with.ref, "533e79de3119fadf50c7f299305d01eebb933abf");
+    assert.equal(checkouts[0].with.repository, "mickey-kras/hindsight-memory-router-integrations");
     assert.equal(checkouts[0].with.path, "trusted");
     assert.equal(checkouts[1].with.path, "candidate");
     assert.equal(checkouts[1].with.ref, "${{ steps.identity.outputs.sha }}");
