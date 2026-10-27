@@ -627,13 +627,10 @@ jobs:
               'exit(' + '0)',
           )
 
-          # Version comments do not change execution; keep the full action SHA
-          # in the comparison so executable updates still need owner approval.
-          # YAML Unicode line breaks also end comments and must stay visible.
-          def normalize_harden_runner_comments(content):
+          def normalize_harden_runner_pins(content):
               return re.sub(
-                  r'(?m)^([ \t]*-[ \t]*uses:[ \t]*step-security/harden-runner@[0-9a-f]{40})(?:[ \t]+#[^\r\n\x85\u2028\u2029]*)?(?=\r?$)',
-                  r'\1',
+                  r'(?m)^([ \t]*-[ \t]*uses:[ \t]*step-security/harden-runner@)[0-9a-f]{40}(?:[ \t]+#[^\r\n\x85\u2028\u2029]*)?(?=\r?$)',
+                  r'\1PINNED',
                   content,
               )
 
@@ -642,7 +639,7 @@ jobs:
               if (
                   content != baseline
                   and not review_admitted
-                  and normalize_harden_runner_comments(content) != normalize_harden_runner_comments(baseline)
+                  and normalize_harden_runner_pins(content) != normalize_harden_runner_pins(baseline)
               ):
                   fail(f'{path}: policy changes require independent exact-head owner approval')
               doc = parse_yaml_file(path, content, 'workflow')
