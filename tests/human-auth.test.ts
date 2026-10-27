@@ -99,8 +99,9 @@ afterEach(() => {
 
 describe("OS credential isolation", () => {
   it("pins Linux Secret Service and separates router path and credential references", () => {
-    secureEntry(router, "person").setPassword(JSON.stringify(session()));
-    expect(readHumanSession(router, "person")).toEqual(session());
+    const storedSession: ReturnType<typeof session> = session();
+    secureEntry(router, "person").setPassword(JSON.stringify(storedSession));
+    expect(readHumanSession(router, "person")).toEqual(storedSession);
     expect(keychain.constructed[0].options).toEqual({ linux: { store: "secret-service" } });
     expect(() => readHumanSession("https://router.example.test/another", "person")).toThrow(
       "human session unavailable",
