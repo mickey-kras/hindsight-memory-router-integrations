@@ -6,7 +6,7 @@ Before it lists files, it resolves the live PR. It rejects a head or base change
 
 The guard continues to enforce required CI checks, dependency audits, trusted scanner source pins and release provenance.
 
-Relative workflow calls use the caller revision. Scanner jobs check out their helpers and configuration from a fixed repository and commit.
+Relative workflow calls use the caller revision. Scanner jobs load their helpers and configuration from a fixed repository and commit.
 The candidate revision and workflow inputs cannot select this source. Change the scanner source pin only after review.
 
 ## Dependency updates
