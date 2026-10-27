@@ -68,19 +68,19 @@ jobs:
             const run = context.eventName === 'pull_request' ? runPullRequestPolicy : runDispatchedPolicy;
             await run(github, context, core, mainSha);
   quality:
-    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-ci.yml@533e79de3119fadf50c7f299305d01eebb933abf
+    uses: ./.github/workflows/trusted-ci.yml
     permissions:
       contents: read
       pull-requests: read
       security-events: write
   aislop:
-    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-aislop.yml@533e79de3119fadf50c7f299305d01eebb933abf
+    uses: ./.github/workflows/trusted-aislop.yml
     permissions:
       contents: read
       pull-requests: read
       security-events: write
   codeql:
-    uses: mickey-kras/hindsight-memory-router-integrations/.github/workflows/trusted-codeql.yml@533e79de3119fadf50c7f299305d01eebb933abf
+    uses: ./.github/workflows/trusted-codeql.yml
     permissions:
       contents: read
       pull-requests: read

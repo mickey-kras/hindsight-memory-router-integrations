@@ -17,7 +17,9 @@ ROOT = Path.cwd()
 GUARD = ROOT / ".github/workflows/policy-guard.yml"
 ROUTER = (ROOT / ".github/workflows/publish.yml").exists()
 MAIN = ".github/workflows/publish.yml" if ROUTER else ".github/workflows/main.yml"
-ACTIVE = "trusted-ci.yml@" in (ROOT / MAIN).read_text()
+# Accept both absolute SHA-pinned and relative same-repo trusted-ci references.
+_main_text = (ROOT / MAIN).read_text()
+ACTIVE = "trusted-ci.yml@" in _main_text or "./.github/workflows/trusted-ci.yml" in _main_text
 CI = ".github/workflows/trusted-ci.yml" if ACTIVE else ".github/workflows/ci.yml"
 BUILD = "build" if ACTIVE else "checks"
 SECURITY = "security" if ACTIVE else "checks"

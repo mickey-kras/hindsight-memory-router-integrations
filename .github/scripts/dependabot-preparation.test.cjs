@@ -1557,8 +1557,9 @@ test("every packaging job selects and verifies the same npm before install, test
       { cwd: resolve(__dirname, "../.."), encoding: "utf8" },
     ),
   );
+  const qualityWorkflow = workflows["main.yml"].jobs.quality.uses;
   const expectedJobs = new Set([
-    ...(workflows["main.yml"].jobs.quality.uses.includes("trusted-ci.yml@")
+    ...(qualityWorkflow.includes("trusted-ci.yml@") || qualityWorkflow === "./.github/workflows/trusted-ci.yml"
       ? []
       : ["ci.yml/checks", "ci.yml/combination"]),
     "trusted-ci.yml/build",
