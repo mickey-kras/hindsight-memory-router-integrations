@@ -143,6 +143,17 @@ new AsyncFunction('github', 'context', 'core', 'require', input.script)(github, 
 
 
 class ReleasePolicyTests(unittest.TestCase):
+    def test_trivy_upload_requires_successful_report_and_validated_identity(self):
+        steps = yaml.safe_load((ROOT / CI).read_text())["jobs"][SECURITY]["steps"]
+        report = next(step for step in steps if step.get("name") == "Trivy dependency report")
+        upload = next(step for step in steps if step.get("name") == "Upload Trivy SARIF")
+        self.assertEqual(report["id"], "trivy-report")
+        self.assertEqual(upload["if"],
+                         "${{ !cancelled() && steps.trivy-report.outcome == 'success' && "
+                         "steps.revalidated.outputs.upload == 'true' }}")
+        self.assertLess(steps.index(report), steps.index(upload))
+        self.assertEqual(report["with"]["output"], upload["with"]["sarif_file"])
+
     def test_release_dispatch_rejects_non_main_before_preparation(self):
         release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
         self.assertEqual(release.get("on", release.get(True)), {"workflow_dispatch": None})

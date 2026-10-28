@@ -928,7 +928,7 @@ jobs:
           AUTOMATION_SHAPES = {
               '.github/workflows/docs-ste.yml': ('28c93b5213df65323768e136417909b78626406b480bb5dfca7d0fe4a1785f00',),
               '.github/workflows/trusted-codeql.yml': ('084261c988c2a28b09ff082b72688b3bc3dbaac43a71042ce51a53309121d70d',),
-              '.github/workflows/trusted-ci.yml': ('6aa9207bab0e5cbc625ed7e8030036a0a3e600467ef0a80f15049f8512d8cd14',),
+              '.github/workflows/trusted-ci.yml': ('6aa9207bab0e5cbc625ed7e8030036a0a3e600467ef0a80f15049f8512d8cd14', 'bb02ac6d11c98fd5a2fd156a4ede1c0b3b79873b6fa22b15e7f93e7023b09e7c',),
               '.github/workflows/trusted-aislop.yml': ('36f09be4c4d668d275a7f75e8fd10bf9ad0cf79b7aebea92c854b17cb613da75',),
               '.github/workflows/ci.yml': ('2bf0caf72e362f235237c0ae3a7eac4902d0aa663ac4abe441578ea01123f9cf',),
               '.github/workflows/main.yml': ('63e54db0d7bf979983391b7e520b87c81fb8fd24d3e5f4fc9b85c20b06cda2fb',),
@@ -1230,7 +1230,7 @@ jobs:
               '.github/scripts/release.cjs': '4a1c564c1b9083a196f7df3df196b627dca4f562c3f831a6df3eb06430cbdfbe',
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
               '.github/scripts/release.test.cjs': 'b2254d4f10bf90cc5659798ff93304cefb48734bdea6ee58f748166baec81e0d',
-              '.github/scripts/release-policy.test.py': '109230ffb349e3324931e19dde80527393f1d8d8e2fda87b386cc6759ea8e2c2',
+              '.github/scripts/release-policy.test.py': 'f211640d5aaf4c0182d12be5aa1a08a4785d1d19c59f2a06a2886fc8d970df68',
               '.github/scripts/release-cleanup.cjs': 'bac1e783fd2ad97044ce41e8273ecd1914ef0b7da07c742722adeca10e7518d8',
               '.github/scripts/release-cleanup.test.cjs': '1d041e8282e23d4030c0ea9713edad70bca388a6d3535326b2cdef7165149956',
               '.github/rulesets/protect-release-branches.json': 'dff977ce6212bbe38e0b9401e9321f625b0f9009d8830320ba87c2b31eb50db1',
