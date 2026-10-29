@@ -138,67 +138,72 @@ describe("RetainCoordinator", () => {
     rmSync(queueDir, { recursive: true, force: true });
   });
 
-  it.each([503, 403, 400])("preserves outcome headroom when a legacy identity batch fits: HTTP %i", async (status) => {
-    const filePath = join(queueDir, "hindsight-retain-queue.main.jsonl");
-    const rows: QueuedRetain[] = Array.from({ length: 50 }, (_, index) => ({
-      id: `legacy-${index}`,
-      bankId: "main",
-      content: `queued-${index}`,
-      metadata: {},
-      createdAt: new Date().toISOString(),
-    }));
-    const serialized = `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
-    writeFileSync(filePath, serialized, { mode: 0o600 });
-    // Exactly enough for all UUIDs and the former sending-only reservation.
-    const queueMaxBytes =
-      Buffer.byteLength(serialized) +
-      50 * Buffer.byteLength(`,"operationId":"${"x".repeat(36)}"`) +
-      Buffer.byteLength(',"replayState":{"sending":true}');
-    const attempts: FakeClient["retains"] = [];
-    const failing = makeStack({
-      queueDir,
-      queueMaxBytes,
-      attempts,
-      behavior: () => {
-        throw httpError(status);
-      },
-    });
-    await failing.retain.flushQueues();
-    const queue = new RetainQueue({ filePath, maxReadBytes: queueMaxBytes });
-    const pending = queue.snapshot();
-    expect(attempts.length).toBeGreaterThan(0);
-    expect(pending).toHaveLength(50);
-    expect(pending.some((row) => row.replayState?.sending)).toBe(false);
-    expect(statSync(filePath).size).toBeLessThanOrEqual(queueMaxBytes);
-    const operationId = pending[0].operationId;
-    if (status === 503) {
-      expect(pending[0].replayAttempts).toBe(1);
-      expect(pending[0].replayState).toBeUndefined();
-    }
-    if (status === 403) {
-      expect(pending[0].replayState).toEqual({
-        gate: "probe",
-        protected: true,
+  // Fifty locked queue rewrites can exceed the 5s default beside the parallel packaging suites.
+  it.each([503, 403, 400])(
+    "preserves outcome headroom when a legacy identity batch fits: HTTP %i",
+    async (status) => {
+      const filePath = join(queueDir, "hindsight-retain-queue.main.jsonl");
+      const rows: QueuedRetain[] = Array.from({ length: 50 }, (_, index) => ({
+        id: `legacy-${index}`,
+        bankId: "main",
+        content: `queued-${index}`,
+        metadata: {},
+        createdAt: new Date().toISOString(),
+      }));
+      const serialized = `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
+      writeFileSync(filePath, serialized, { mode: 0o600 });
+      // Exactly enough for all UUIDs and the former sending-only reservation.
+      const queueMaxBytes =
+        Buffer.byteLength(serialized) +
+        50 * Buffer.byteLength(`,"operationId":"${"x".repeat(36)}"`) +
+        Buffer.byteLength(',"replayState":{"sending":true}');
+      const attempts: FakeClient["retains"] = [];
+      const failing = makeStack({
+        queueDir,
+        queueMaxBytes,
+        attempts,
+        behavior: () => {
+          throw httpError(status);
+        },
       });
-      expect(pending.every((row) => row.replayState?.protected)).toBe(true);
-    }
-    if (status === 400) expect(pending[0].replayState).toEqual({ quarantine: "permanent" });
-    const resumed: FakeClient["retains"] = [];
-    await makeStack({
-      queueDir,
-      queueMaxBytes,
-      attempts: resumed,
-    }).retain.flushQueues();
-    if (status !== 400) {
-      expect(resumed[0].options?.operationId).toBe(operationId);
-      expect(queue.snapshot()).toEqual([]);
-    } else {
-      expect(resumed.every((attempt) => attempt.content !== rows[0].content)).toBe(true);
-      expect(queue.snapshot()[0].replayState).toEqual({
-        quarantine: "permanent",
-      });
-    }
-  });
+      await failing.retain.flushQueues();
+      const queue = new RetainQueue({ filePath, maxReadBytes: queueMaxBytes });
+      const pending = queue.snapshot();
+      expect(attempts.length).toBeGreaterThan(0);
+      expect(pending).toHaveLength(50);
+      expect(pending.some((row) => row.replayState?.sending)).toBe(false);
+      expect(statSync(filePath).size).toBeLessThanOrEqual(queueMaxBytes);
+      const operationId = pending[0].operationId;
+      if (status === 503) {
+        expect(pending[0].replayAttempts).toBe(1);
+        expect(pending[0].replayState).toBeUndefined();
+      }
+      if (status === 403) {
+        expect(pending[0].replayState).toEqual({
+          gate: "probe",
+          protected: true,
+        });
+        expect(pending.every((row) => row.replayState?.protected)).toBe(true);
+      }
+      if (status === 400) expect(pending[0].replayState).toEqual({ quarantine: "permanent" });
+      const resumed: FakeClient["retains"] = [];
+      await makeStack({
+        queueDir,
+        queueMaxBytes,
+        attempts: resumed,
+      }).retain.flushQueues();
+      if (status !== 400) {
+        expect(resumed[0].options?.operationId).toBe(operationId);
+        expect(queue.snapshot()).toEqual([]);
+      } else {
+        expect(resumed.every((attempt) => attempt.content !== rows[0].content)).toBe(true);
+        expect(queue.snapshot()[0].replayState).toEqual({
+          quarantine: "permanent",
+        });
+      }
+    },
+    20_000,
+  );
 
   it("pauses before HTTP when one row cannot reserve its outcome metadata", async () => {
     const filePath = join(queueDir, "hindsight-retain-queue.main.jsonl");
