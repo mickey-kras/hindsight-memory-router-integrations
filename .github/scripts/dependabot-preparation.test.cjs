@@ -150,6 +150,16 @@ test("coding dependency patch refresh is exact, deterministic and preserves unre
     codingDependencyPatch(baseline, codingFixture.upstream, { ...before, packageJson: "unrelated bytes" }, after),
   );
 });
+test("committed router.patch matches the committed coding dependency files", () => {
+  // Dependabot preparation reverse-applies these sections; a hand edit to the
+  // coding dependencies without regenerating router.patch blocks every npm update.
+  const { readFileSync } = require("node:fs");
+  const root = resolve(__dirname, "../..");
+  const read = (path) => readFileSync(join(root, path), "utf8");
+  const patch = read(PATCH);
+  const current = { packageJson: read(`${CODING}/package.json`), shrinkwrap: read(`${CODING}/npm-shrinkwrap.json`) };
+  assert.equal(codingDependencyPatch(patch, JSON.parse(read(UPSTREAM)), current, current), patch);
+});
 const provenance = { "package.json": "old", "npm-shrinkwrap.json": "old", "src/index.ts": "preserved" };
 const commit = { sha: head, author: bot, commit: { verification: { verified: true } } };
 const context = { repo: { owner: "owner", repo: "repo" }, ref: "refs/heads/main", sha: base };
