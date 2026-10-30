@@ -52,7 +52,7 @@
     "fs-native-extensions": "^1.5.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.2",
     "@types/node": "22.20.5",
     "@vitest/coverage-v8": "5.0.5",
     "aislop": "0.18.1",
