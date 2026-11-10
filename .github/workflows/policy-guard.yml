@@ -1222,7 +1222,7 @@ jobs:
               '.github/scripts/coverage-artifact.cjs': '9b37bf2b0e3bcd836011e4da2611b133fb750c0be43ad0d1e525bd33dc93aed0',
               '.github/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
               '.github/scripts/combination-identity.cjs': '28da02fbdd428f83a87973b3cccb963fb7bd2236ca7457957f792c98b31e0c12',
-              '.github/scripts/package.json': 'db0324a5389e1d9005519058dff2b4f17b2b8632c8392e87d2a0b0d1a5be3470',
+              '.github/scripts/package.json': '7b4f9c2498a1110d7c8eae8e09558d921499485902b46c90672b8660dd277800',
               '.github/scripts/combination.cjs': '7866bdaf091681673f643b9e70221ff3d828e2198dfb5a41bd5bb3da6ee94850',
               '.github/scripts/combination-smoke.sh': '6fe4bc2445f0ae10c4443556757bdb0a83e00b0861f4ab72b4d6c484ad575cbb',
               '.github/scripts/combination-smoke.mjs': '858c23df82e6fd4b2c69713aa7c0fd0243d8bb27ad3152017d76847d55c4fdb6',
