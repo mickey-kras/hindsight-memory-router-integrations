@@ -515,12 +515,6 @@ jobs:
               for name in AISLOP_REQUIRED_STEPS:
                   step = step_named(status, name)
                   if step is not None:
-          POLICY_SOURCE
-
-      - name: Policy source 2
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                       check_gate_step(path, 'status', step, allow_if=name in AISLOP_CONDITIONED_STEPS)
               # Exact-if contracts: conditioned steps must match their pinned
               # expressions byte-for-byte after whitespace normalization, so a
@@ -531,6 +525,12 @@ jobs:
                   ('Upload Aislop SARIF', AISLOP_UPLOAD_IF),
               ):
                   step = step_named(status, name)
+          POLICY_SOURCE
+
+      - name: Policy source 2
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
                   if step is not None and normalize_condition(step.get('if', '')) not in (expected, expected.replace('always()', '!cancelled()')):
                       fail(f'aislop.yml: {name} if condition must stay exactly: {expected}')
               for name, needles in AISLOP_RUN_SIGNATURES.items():
@@ -934,16 +934,16 @@ jobs:
               '.github/workflows/main.yml': ('63e54db0d7bf979983391b7e520b87c81fb8fd24d3e5f4fc9b85c20b06cda2fb',),
               '.github/workflows/release.yml': ('60a6c456de88aa5cf1e498440ef3af44a2f2bfa06f06404913d0451c95c8a064',),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
+              '.github/workflows/dependabot-preparation.yml': ('e189cc59c7ea9caed559805e7eba3422a2179efd199deb3b931f4519c22265c8',),
+              '.github/workflows/dependabot-policy-tests.yml': ('ef110c6898d32976da870e69ac82de8e6b9239123395f99c41d1daa2ebd3e4c5',),
+              '.github/workflows/dependabot-auto-merge.yml': ('dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f',),
+              '.github/workflows/dependabot-auto-merge-refresh.yml': ('c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9',),
           POLICY_SOURCE
 
       - name: Policy source 3
         run: |
           set -euo pipefail
           cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
-              '.github/workflows/dependabot-preparation.yml': ('e189cc59c7ea9caed559805e7eba3422a2179efd199deb3b931f4519c22265c8',),
-              '.github/workflows/dependabot-policy-tests.yml': ('ef110c6898d32976da870e69ac82de8e6b9239123395f99c41d1daa2ebd3e4c5',),
-              '.github/workflows/dependabot-auto-merge.yml': ('dab2b4a1e64af667ada0c385490b9bf26c1a2a605bb1a58f5b1eeaefed1da23f',),
-              '.github/workflows/dependabot-auto-merge-refresh.yml': ('c68ac1983c2cb01a6abd40104c4516a5311346bf7160da6caa166bee9d4dfae9',),
               '.github/workflows/pr-branch-updater.yml': ('380812ed077035df244c3250a4a0805cd3a9b53027ca5faac1e8455c97a101e1',),
               '.github/workflows/pr-validation.yml': ('d2125e706614bfcbd1e2b806a722ab77d914940070f911cde99056efbefb5702',),
               '.github/workflows/branch-policy.yml': ('ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
@@ -1236,6 +1236,12 @@ jobs:
               '.github/scripts/coverage-artifact.cjs': '9b37bf2b0e3bcd836011e4da2611b133fb750c0be43ad0d1e525bd33dc93aed0',
               '.github/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
               '.github/scripts/combination-identity.cjs': '28da02fbdd428f83a87973b3cccb963fb7bd2236ca7457957f792c98b31e0c12',
+          POLICY_SOURCE
+
+      - name: Policy source 4
+        run: |
+          set -euo pipefail
+          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
               '.github/scripts/package.json': '7b4f9c2498a1110d7c8eae8e09558d921499485902b46c90672b8660dd277800',
               '.github/scripts/combination.cjs': '7866bdaf091681673f643b9e70221ff3d828e2198dfb5a41bd5bb3da6ee94850',
               '.github/scripts/combination-smoke.sh': '6fe4bc2445f0ae10c4443556757bdb0a83e00b0861f4ab72b4d6c484ad575cbb',
@@ -1266,12 +1272,6 @@ jobs:
               '.github/workflows/codeql.yml': gate_codeql,
               '.github/workflows/policy-guard.yml': gate_policy_guard,
               '.aislop/config.yml': gate_aislop_config,
-          POLICY_SOURCE
-
-      - name: Policy source 4
-        run: |
-          set -euo pipefail
-          cat <<'POLICY_SOURCE' >> "$RUNNER_TEMP/policy_guard.py"
               '.github/scripts/npm-audit.cjs': gate_npm_audit_script,
               '.github/scripts/sync-sonar-findings.py': gate_sonar_reporter,
               '.github/scripts/publish-npm.cjs': gate_review_controls,
