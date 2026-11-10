@@ -130,6 +130,20 @@ describe("unattended runtime update", () => {
     expect(readdirSync(ctx.home)).toEqual([".hindsight"]);
   });
 
+  it("rejects installation when only another harness has a human session", () => {
+    provision(["codex", "claude-code"], { tokenEnv: undefined, human: { credentialRef: "synthetic" } });
+    const read = vi.spyOn(humanSession, "readHumanSession").mockImplementation((_router, _reference, harness) => {
+      if (harness !== "claude-code") throw new humanSession.HumanLoginRequiredError();
+      return { token: "mrh_" + "a".repeat(32) + "_" + "b".repeat(64),
+        principal_id: "synthetic", expires_at: Math.floor(Date.now() / 1000) + 3500,
+        routerUrl: "https://router.example" };
+    });
+    const before = snapshot(ctx.home);
+    expect(run(["install", "codex"], ctx)).toBe(1);
+    expect(read).toHaveBeenCalledWith("https://router.example", "synthetic", "codex");
+    expect(snapshot(ctx.home)).toEqual(before);
+  });
+
   it("restores runtime and metadata when staging fails", () => {
     const staged = join(ctx.home, ".hindsight/coding-agents");
     put(join(staged, "dist/installer.js"), "previous runtime");
