@@ -53,6 +53,7 @@ class AdmissionTests(unittest.TestCase):
             'dismiss_stale_reviews_on_push': True,
             'require_last_push_approval': True,
         }}]
+        self.comments = []
         self.reviews = [{'id': 1, 'user': {'id': 24433677, 'login': 'mickey-kras', 'type': 'User'},
                          'state': 'APPROVED', 'commit_id': 'a' * 40}]
         self.source = {'id': 42, 'source_type': 'Repository', 'source': 'mickey-kras/test',
@@ -68,6 +69,8 @@ class AdmissionTests(unittest.TestCase):
 
     def approved(self, settings_review=''):
         def api(path, paginate=False):
+            if path.startswith('issues/'):
+                return self.comments
             if path.startswith('rulesets/'):
                 self.assertEqual(path, 'rulesets/42')
                 return self.source
@@ -155,6 +158,34 @@ class AdmissionTests(unittest.TestCase):
         changed['packages']['node_modules/..'] = changed['packages'].pop('node_modules/ip-address')
         self.guard.failures.clear()
         self.assertTrue(self.lock_errors(changed))
+
+    def test_owner_comment_approves_own_pr_and_expires_on_new_commit(self):
+        owner = {'type': 'User', 'login': 'mickey-kras', 'id': 24433677}
+        self.guard.pr_context['user'] = owner
+        self.comments = [{'id': 1, 'user': owner, 'body': '/approve-ci ' + 'a' * 40}]
+        self.assertTrue(self.approved())
+        self.guard.pr_context['head']['sha'] = 'c' * 40
+        self.assertFalse(self.approved())
+
+    def test_comment_requires_exact_owner_and_command(self):
+        owner = {'type': 'User', 'login': 'mickey-kras', 'id': 24433677}
+        self.guard.pr_context['user'] = owner
+        for user in [{**owner, 'id': 123}, {**owner, 'login': 'other'}, {**owner, 'type': 'Bot'}]:
+            self.comments = [{'id': 1, 'user': user, 'body': '/approve-ci ' + 'a' * 40}]
+            self.assertFalse(self.approved())
+        for body in ['/approve-ci aaaaaaa', 'Quoted /approve-ci ' + 'a' * 40, '/approve-ci ' + 'a' * 40 + '\nextra']:
+            self.comments = [{'id': 1, 'user': owner, 'body': body}]
+            self.assertFalse(self.approved())
+
+    def test_owner_can_revoke_comment_approval(self):
+        owner = {'type': 'User', 'login': 'mickey-kras', 'id': 24433677}
+        self.comments = [{'id': 1, 'user': owner, 'body': '/approve-ci ' + 'a' * 40},
+                         {'id': 2, 'user': owner, 'body': '/revoke-ci ' + 'a' * 40}]
+        self.assertFalse(self.approved())
+        self.comments.append({'id': 3, 'user': owner, 'body': '/approve-ci ' + 'a' * 40})
+        self.assertTrue(self.approved())
+        self.guard.pr_context['base']['repo']['full_name'] = 'other/test'
+        self.assertFalse(self.approved())
 
     def test_exact_owner_approval_with_native_controls(self):
         self.assertTrue(self.approved())
@@ -332,7 +363,7 @@ class AdmissionTests(unittest.TestCase):
                     self.assertIn('changed during evaluation', '\n'.join(self.guard.failures))
 
     def test_api_failure_is_not_an_approval(self):
-        with patch.dict('os.environ', {'OWNER': 'mickey-kras', 'REPO': 'test'}), patch.object(
+        with patch.dict('os.environ', {'OWNER': 'mickey-kras', 'REPO': 'test', 'PR_NUMBER': '1'}), patch.object(
             self.guard, 'base_file', return_value='/.github/ @mickey-kras\n'
         ), patch.object(self.guard, 'api_json', side_effect=RuntimeError('API unavailable')):
             with self.assertRaises(RuntimeError):
@@ -359,6 +390,7 @@ print(value if isinstance(value, str) else json.dumps(value))
                 prefix + 'rules/branches/main': [self.rules],
                 prefix + 'rulesets/42': self.source,
                 prefix + 'pulls/1/reviews?per_page=100': [self.reviews],
+                prefix + 'issues/1/comments?per_page=100': [[]],
                 prefix + 'contents/.github/CODEOWNERS?ref=' + 'b' * 40: '/.github/ @mickey-kras\n',
                 prefix + 'contents/.github/scripts/release-settings.cjs?ref=' + 'a' * 40: '// independently reviewed update\n',
             }

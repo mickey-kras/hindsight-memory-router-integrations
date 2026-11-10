@@ -8,6 +8,8 @@
   "overrides": {
     "@sigstore/sign": {
       "@sigstore/core": "3.2.1"
-    }
+    },
+    "glob": "14.0.4",
+    "minimatch": "11.0.5"
   }
 }
