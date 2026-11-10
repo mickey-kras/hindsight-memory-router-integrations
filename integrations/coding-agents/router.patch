@@ -1,9 +1,9 @@
 diff --git a/DEVIATIONS.md b/DEVIATIONS.md
 new file mode 100644
-index 0000000..14bef01
+index 0000000..0cd365b
 --- /dev/null
 +++ b/DEVIATIONS.md
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,167 @@
 +# Router deviations
 +
 +- Managed harness identity, HTTPS endpoint, token environment references, and explicit path mappings replace upstream configuration for endpoints, tokens and dynamic banks.
@@ -54,8 +54,9 @@ index 0000000..14bef01
 +| Dependency | Range |
 +| --- | --- |
 +| `@opencode/plugin > @opentelemetry/core` | `>=2.8.0 <3.0.0` |
++| `@opencode-ai/plugin > zod` | `>=4.6.6 <5.0.0` |
 +| `esbuild` | `>=0.25.0 <1.0.0` |
-+| `fast-uri` | `>=3.1.6 <4.0.0` |
++| `fast-uri` | `>=3.1.9 <4.0.0` |
 +| `hono` | `>=4.13.11 <5.0.0` |
 +| `http-cache-semantics` | `4.3.0` |
 +| `ip-address` | `>=10.5.1 <11.0.0` |
@@ -16855,6 +16856,56 @@ index d363b45..3d0f33a 100644
  export const runHarnessRetain = (harness: HookHarnessName): Promise<void> =>
 -  runRetainHook(HOOK_HARNESSES[harness].retain);
 +  runHookEntrypoint(() => runRetainHook(HOOK_HARNESSES[harness].retain));
+diff --git a/src/harness/names.ts b/src/harness/names.ts
+new file mode 100644
+index 0000000..9e0accf
+--- /dev/null
++++ b/src/harness/names.ts
+@@ -0,0 +1,44 @@
++export const HARNESS_NAMES = [
++  "opencode",
++  // opencode v2 (binary `opencode2`) — a ground-up rewrite of the plugin API, loaded from the
++  // package's root index.js (src/opencode2.ts). Like opencode it has NO hook binary.
++  "opencode2",
++  // Kilo CLI is an opencode fork loaded as a persistent plugin (src/kilo.ts), so like opencode it
++  // has NO hook binary — deliberately absent from HOOK_BINS below.
++  "kilo",
++  // Cline CLI loads dist/cline.js through its native plugin manager; file hooks cannot inject.
++  "cline-cli",
++  // DeepSeek Harness loads dist/dsh.js as a native Cordis plugin (src/dsh.ts). Its Claude Code /
++  // Codex hook bridges are optional packages, so there is no hook binary to install either.
++  "dsh",
++  // pi loads dist/pi.js as an extension (src/pi.ts), and Prime Agent — a fork of pi — loads
++  // dist/prime-agent.js the same way (src/prime-agent.ts). Neither has a hook binary.
++  "pi",
++  "prime-agent",
++  "claude-code",
++  "cursor-cli",
++  "codex",
++  "dcode",
++  "antigravity-cli",
++  "devin-cli",
++  "copilot-cli",
++  "grok-build",
++  "qwen-code",
++  // Factory Droid is a per-prompt HOOK host: the installer wires ~/.factory/hooks.json and the
++  // stdio MCP registration in ~/.factory/mcp.json (see src/installer.ts).
++  "factory-droid",
++  // ZCode is a per-prompt HOOK host too, registered in its own CLI config
++  // (~/.zcode/cli/config.json) under `hooks.events` — never the user's real Claude Code settings.
++  "zcode",
++  // TraeCode is a per-prompt HOOK host registered in ~/.trae-cn/hooks.json (see src/installer.ts).
++  "traecode",
++  "kimi-code",
++  // WorkBuddy is a per-prompt HOOK host too: the installer wires ~/.workbuddy/settings.json and
++  // the stdio MCP registration in ~/.workbuddy/mcp.json (see src/installer.ts).
++  "workbuddy",
++  // CodeBuddy Code is the SAME @genie/agent-cli HOOK host, one product config apart (WorkBuddy only
++  // renames the home folder): the installer wires ~/.codebuddy/settings.json and the stdio MCP
++  // registration in CodeBuddy's priority-chained MCP file (see src/installer.ts). The CLI
++  // writes WorkBuddy's transcript format; the CodeBuddy IDE has a reader of its own.
++  "codebuddy",
++];
 diff --git a/src/harness/opencode.ts b/src/harness/opencode.ts
 index 1556b0e..15a9d9f 100644
 --- a/src/harness/opencode.ts
@@ -17100,6 +17151,59 @@ index 90f45ce..d10dd98 100644
 -              log.debug(harness, "toast failed", { error: String(e).slice(0, 120) })
 +              log.debug(harness, "toast failed", { error: e })
              );
+diff --git a/src/harness/registry.ts b/src/harness/registry.ts
+index e304009..165eae4 100644
+--- a/src/harness/registry.ts
++++ b/src/harness/registry.ts
+@@ -40,46 +40,4 @@ const noRuntimeAdapter = (name: string, hint: string): HarnessAdapter => ({
+ 
+-export const HARNESS_NAMES = [
+-  "opencode",
+-  // opencode v2 (binary `opencode2`) — a ground-up rewrite of the plugin API, loaded from the
+-  // package's root index.js (src/opencode2.ts). Like opencode it has NO hook binary.
+-  "opencode2",
+-  // Kilo CLI is an opencode fork loaded as a persistent plugin (src/kilo.ts), so like opencode it
+-  // has NO hook binary — deliberately absent from HOOK_BINS below.
+-  "kilo",
+-  // Cline CLI loads dist/cline.js through its native plugin manager; file hooks cannot inject.
+-  "cline-cli",
+-  // DeepSeek Harness loads dist/dsh.js as a native Cordis plugin (src/dsh.ts). Its Claude Code /
+-  // Codex hook bridges are optional packages, so there is no hook binary to install either.
+-  "dsh",
+-  // pi loads dist/pi.js as an extension (src/pi.ts), and Prime Agent — a fork of pi — loads
+-  // dist/prime-agent.js the same way (src/prime-agent.ts). Neither has a hook binary.
+-  "pi",
+-  "prime-agent",
+-  "claude-code",
+-  "cursor-cli",
+-  "codex",
+-  "dcode",
+-  "antigravity-cli",
+-  "devin-cli",
+-  "copilot-cli",
+-  "grok-build",
+-  "qwen-code",
+-  // Factory Droid is a per-prompt HOOK host: the installer wires ~/.factory/hooks.json and the
+-  // stdio MCP registration in ~/.factory/mcp.json (see src/installer.ts).
+-  "factory-droid",
+-  // ZCode is a per-prompt HOOK host too, registered in its own CLI config
+-  // (~/.zcode/cli/config.json) under `hooks.events` — never the user's real Claude Code settings.
+-  "zcode",
+-  // TraeCode is a per-prompt HOOK host registered in ~/.trae-cn/hooks.json (see src/installer.ts).
+-  "traecode",
+-  "kimi-code",
+-  // WorkBuddy is a per-prompt HOOK host too: the installer wires ~/.workbuddy/settings.json and
+-  // the stdio MCP registration in ~/.workbuddy/mcp.json (see src/installer.ts).
+-  "workbuddy",
+-  // CodeBuddy Code is the SAME @genie/agent-cli HOOK host, one product config apart (WorkBuddy only
+-  // renames the home folder): the installer wires ~/.codebuddy/settings.json and the stdio MCP
+-  // registration in CodeBuddy's priority-chained MCP file (see src/installer.ts). The CLI
+-  // writes WorkBuddy's transcript format; the CodeBuddy IDE has a reader of its own.
+-  "codebuddy",
+-];
++import { HARNESS_NAMES } from "./names";
++export { HARNESS_NAMES } from "./names";
+ 
 diff --git a/src/hindsight-seed.ts b/src/hindsight-seed.ts
 index d3e9f9c..b47a37b 100644
 --- a/src/hindsight-seed.ts
@@ -17510,10 +17614,10 @@ index 0000000..3a8ff9c
 +});
 diff --git a/src/installer-managed.test.ts b/src/installer-managed.test.ts
 new file mode 100644
-index 0000000..30f6984
+index 0000000..b2542a1
 --- /dev/null
 +++ b/src/installer-managed.test.ts
-@@ -0,0 +1,660 @@
+@@ -0,0 +1,674 @@
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 +import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 +import { tmpdir } from "node:os";
@@ -17644,6 +17748,20 @@ index 0000000..30f6984
 +    expect(run(["update"], ctx)).toBe(0);
 +    expect(read).not.toHaveBeenCalled();
 +    expect(readdirSync(ctx.home)).toEqual([".hindsight"]);
++  });
++
++  it("rejects installation when only another harness has a human session", () => {
++    provision(["codex", "claude-code"], { tokenEnv: undefined, human: { credentialRef: "synthetic" } });
++    const read = vi.spyOn(humanSession, "readHumanSession").mockImplementation((_router, _reference, harness) => {
++      if (harness !== "claude-code") throw new humanSession.HumanLoginRequiredError();
++      return { token: "mrh_" + "a".repeat(32) + "_" + "b".repeat(64),
++        principal_id: "synthetic", expires_at: Math.floor(Date.now() / 1000) + 3500,
++        routerUrl: "https://router.example" };
++    });
++    const before = snapshot(ctx.home);
++    expect(run(["install", "codex"], ctx)).toBe(1);
++    expect(read).toHaveBeenCalledWith("https://router.example", "synthetic", "codex");
++    expect(snapshot(ctx.home)).toEqual(before);
 +  });
 +
 +  it("restores runtime and metadata when staging fails", () => {

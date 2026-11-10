@@ -11,12 +11,12 @@ export function harnessTransport(harness: string | undefined): RouterTransport {
 
 function transportForConfig(
   harness: string | undefined,
-  { config, principal }: ReturnType<typeof loadManagedConfig>,
+  { config, principal, principalId }: ReturnType<typeof loadManagedConfig>,
 ): RouterTransport {
   if (principal.human) {
     const routerUrl = humanRouterUrl(config.routerUrl);
     const reference = principal.human.credentialRef;
-    let session = readHumanSession(routerUrl, reference);
+    let session = readHumanSession(routerUrl, reference, principalId);
     return new RouterTransport({
       routerUrl,
       access: principal,
@@ -24,7 +24,7 @@ function transportForConfig(
       tokenPattern: HUMAN_TOKEN_PATTERN,
       unauthorizedError: () => new HumanLoginRequiredError(),
       token: () => {
-        session = readHumanSession(routerUrl, reference);
+        session = readHumanSession(routerUrl, reference, principalId);
         return session.token;
       },
     });

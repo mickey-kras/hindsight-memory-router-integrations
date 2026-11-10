@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,20 +61,23 @@ const realFetch = globalThis.fetch;
 let directory: string;
 let configPath: string;
 
-function provision(extra: Record<string, unknown> = {}): void {
+function provision(extra: Record<string, unknown> = {}, harnesses = ["codex"]): void {
   writeFileSync(
     configPath,
     JSON.stringify({
       routerUrl: router,
-      principals: {
-        codex: {
-          human: { credentialRef: "person" },
-          writeBank: "private",
-          additionalReadBanks: [],
-          mapPathToBank: { [directory]: "private" },
-          ...extra,
-        },
-      },
+      principals: Object.fromEntries(
+        harnesses.map((harness) => [
+          harness,
+          {
+            human: { credentialRef: "person" },
+            writeBank: "private",
+            additionalReadBanks: [],
+            mapPathToBank: { [directory]: "private" },
+            ...extra,
+          },
+        ]),
+      ),
     }),
   );
 }
@@ -100,25 +104,25 @@ afterEach(() => {
 describe("OS credential isolation", () => {
   it("pins Linux Secret Service and separates router path and credential references", () => {
     const storedSession: ReturnType<typeof session> = session();
-    secureEntry(router, "person").setPassword(JSON.stringify(storedSession));
-    expect(readHumanSession(router, "person")).toEqual(storedSession);
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify(storedSession));
+    expect(readHumanSession(router, "person", "codex")).toEqual(storedSession);
     expect(keychain.constructed[0].options).toEqual({ linux: { store: "secret-service" } });
-    expect(() => readHumanSession("https://router.example.test/another", "person")).toThrow(
+    expect(() => readHumanSession("https://router.example.test/another", "person", "codex")).toThrow(
       "human session unavailable",
     );
-    expect(() => readHumanSession(router, "another")).toThrow("human session unavailable");
+    expect(() => readHumanSession(router, "another", "codex")).toThrow("human session unavailable");
     expect(keychain.constructed[0].service).not.toContain("human-example");
   });
 
   it.each([undefined, "{}", "invalid", "x".repeat(4097)])("rejects missing or malformed storage %s", (value) => {
-    if (value) secureEntry(router, "person").setPassword(value);
-    expect(() => readHumanSession(router, "person")).toThrow("human session unavailable");
+    if (value) secureEntry(router, "person", "codex").setPassword(value);
+    expect(() => readHumanSession(router, "person", "codex")).toThrow("human session unavailable");
   });
 
   it("redacts locked-store failures and never consults an app environment token", () => {
     vi.stubEnv("APP_TOKEN", `mr_app_${"c".repeat(64)}`);
     keychain.locked = true;
-    expect(() => readHumanSession(router, "person")).toThrow("human session unavailable");
+    expect(() => readHumanSession(router, "person", "codex")).toThrow("human session unavailable");
     expect(() => harnessTransport("codex")).toThrow("human session unavailable");
   });
 
@@ -166,7 +170,7 @@ describe("OS credential isolation", () => {
     );
     expect(humanRouterUrl("https://[::1]:8443/prefix")).toBe("https://[::1]:8443/prefix");
     expect(humanRouterUrl(" \thttps://ROUTER.example.test:443/prefix/\r\n ")).toBe(router);
-    expect(() => secureEntry(router, "bad/ref")).toThrow("human session unavailable");
+    expect(() => secureEntry(router, "bad/ref", "codex")).toThrow("human session unavailable");
   });
 
   it.each(["/prefix//", "/a/../b", "/a/./b", "/a%2Fb", "/a%2e%2e/b"])(
@@ -199,7 +203,7 @@ describe("OS credential isolation", () => {
   });
 
   it("re-reads expiry/sign-out/re-login in existing transports with server-bound principal", async () => {
-    secureEntry(router, "person").setPassword(JSON.stringify(session()));
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify(session()));
     const send = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response("{}"));
     vi.stubGlobal("fetch", send);
     const transport = harnessTransport("codex");
@@ -208,12 +212,12 @@ describe("OS credential isolation", () => {
       redirect: "error",
       headers: { Authorization: `Bearer ${token}`, "x-memory-router-agent": "human-example" },
     });
-    secureEntry(router, "person").deleteCredential();
+    secureEntry(router, "person", "codex").deleteCredential();
     await expect(transport.request(transport.bankUrl("private"))).rejects.toThrow("human session unavailable");
-    secureEntry(router, "person").setPassword(JSON.stringify({ ...session(), principal_id: "human-second" }));
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify({ ...session(), principal_id: "human-second" }));
     await transport.request(transport.bankUrl("private"));
     expect(send.mock.calls[1]?.[1]).toMatchObject({ headers: { "x-memory-router-agent": "human-second" } });
-    secureEntry(router, "person").setPassword(JSON.stringify({ ...session(), expires_at: 1 }));
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify({ ...session(), expires_at: 1 }));
     expect(transport.hasCredentials()).toBe(false);
     expect(send).toHaveBeenCalledTimes(2);
   });
@@ -246,7 +250,7 @@ function mockRouter(options: RouterMockOptions = {}) {
     }
     if (url.endsWith("/exchange"))
       return Response.json(
-        options.exchange ?? {
+        (typeof options.exchange === "function" ? options.exchange() : options.exchange) ?? {
           ...session(),
           token_type: "Bearer",
           grants: [{ bank: "private", scopes: ["memory.recall", "memory.retain"] }],
@@ -271,13 +275,13 @@ async function authorize(url: string, mutate?: (callback: URL) => void): Promise
 describe("interactive code flow", () => {
   it("exchanges loopback code+PKCE once and stores only bound credential metadata", async () => {
     const requests = mockRouter();
-    await loginHuman(router, "person", authorize);
+    await loginHuman(router, "person", "codex", authorize);
     expect(requests.map((item) => item.url)).toEqual([`${router}/auth/human/start`, `${router}/auth/human/exchange`]);
     expect(requests[0].body.state).toMatch(/^[\w-]{43}$/);
     expect(requests[1].body.code_verifier).toMatch(/^[\w-]{43}$/);
     expect(requests[1].body.code_verifier).not.toBe(requests[0].body.code_challenge);
     expect(requests.every((item) => item.init.redirect === "error")).toBe(true);
-    expect(readHumanSession(router, "person")).toEqual(session());
+    expect(readHumanSession(router, "person", "codex")).toEqual(session());
     expect([...keychain.records.values()][0]).not.toContain("synthetic-auth-code");
     expect([...keychain.records.values()][0]).not.toContain("grants");
   });
@@ -290,7 +294,7 @@ describe("interactive code flow", () => {
     (url: URL) => url.searchParams.delete("code"),
   ])("rejects callback tampering without exchange %#", async (mutate) => {
     const requests = mockRouter();
-    await expect(loginHuman(router, "person", (url) => authorize(url, mutate))).rejects.toThrow(
+    await expect(loginHuman(router, "person", "codex", (url) => authorize(url, mutate))).rejects.toThrow(
       "human session unavailable",
     );
     expect(requests).toHaveLength(1);
@@ -299,7 +303,7 @@ describe("interactive code flow", () => {
 
   it("rejects callback replay and applies no-store browser headers", async () => {
     mockRouter();
-    await loginHuman(router, "person", async (url) => {
+    await loginHuman(router, "person", "codex", async (url) => {
       const auth = new URL(url);
       const callback = new URL(String(auth.searchParams.get("redirect_uri")));
       callback.searchParams.set("code", "synthetic-code");
@@ -319,14 +323,14 @@ describe("interactive code flow", () => {
     { expires_at: 0 },
   ])("rejects malformed/elevated exchange response %#", async (change) => {
     mockRouter({ exchange: { ...session(), token_type: "Bearer", grants: [], ...change } });
-    await expect(loginHuman(router, "person", authorize)).rejects.toThrow("human session unavailable");
+    await expect(loginHuman(router, "person", "codex", authorize)).rejects.toThrow("human session unavailable");
     expect(keychain.records.size).toBe(0);
   });
 
   it("revokes a newly issued credential if secure persistence fails", async () => {
     const requests = mockRouter();
     keychain.writeFails = true;
-    await expect(loginHuman(router, "person", authorize)).rejects.toThrow("human session unavailable");
+    await expect(loginHuman(router, "person", "codex", authorize)).rejects.toThrow("human session unavailable");
     expect(requests.at(-1)?.url).toBe(`${router}/auth/human/sign-out`);
     expect(keychain.records.size).toBe(0);
   });
@@ -334,21 +338,21 @@ describe("interactive code flow", () => {
   it("rejects a server redirect target before opening browser", async () => {
     mockRouter({ start: () => ({ transaction_id: "t".repeat(32), authorization_url: "http://attacker.test" }) });
     const open = vi.fn();
-    await expect(loginHuman(router, "person", open)).rejects.toThrow("human session unavailable");
+    await expect(loginHuman(router, "person", "codex", open)).rejects.toThrow("human session unavailable");
     expect(open).not.toHaveBeenCalled();
   });
 
   it("does not start login with inaccessible secure storage", async () => {
     const requests = mockRouter();
     keychain.locked = true;
-    await expect(loginHuman(router, "person", authorize)).rejects.toThrow();
+    await expect(loginHuman(router, "person", "codex", authorize)).rejects.toThrow();
     expect(requests).toHaveLength(0);
   });
 });
 
 describe("explicit lifecycle", () => {
   it.each([401, 403])("keeps human status %s actionable without retry or token fallback", async (status) => {
-    secureEntry(router, "person").setPassword(JSON.stringify(session()));
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify(session()));
     vi.stubEnv("APP_TOKEN", `mr_app_${"c".repeat(64)}`);
     const send = vi.fn(async () => new Response(null, { status }));
     vi.stubGlobal("fetch", send);
@@ -357,7 +361,7 @@ describe("explicit lifecycle", () => {
     await expect(transport.request(transport.bankUrl("private"))).rejects.toThrow(message);
     await expect(transport.request(transport.bankUrl("private"))).rejects.toThrow(message);
     expect(send).toHaveBeenCalledTimes(1);
-    secureEntry(router, "person").setPassword(
+    secureEntry(router, "person", "codex").setPassword(
       JSON.stringify({ ...session(), token: `mrh_${"d".repeat(32)}_${"e".repeat(64)}` }),
     );
     send.mockResolvedValue(new Response("{}"));
@@ -409,24 +413,24 @@ describe("explicit lifecycle", () => {
 
   it.each([false, true])("removes local credential when remote revocation fails=%s", async (revokeFails) => {
     const requests = mockRouter({ revokeFails });
-    secureEntry(router, "person").setPassword(JSON.stringify(session()));
-    expect(await signOutHuman(router, "person")).toBe(!revokeFails);
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify(session()));
+    expect(await signOutHuman(router, "person", "codex")).toBe(!revokeFails);
     expect(keychain.records.size).toBe(0);
     expect(requests[0].init.headers).toMatchObject({ Authorization: `Bearer ${token}` });
   });
 
   it("signs out absent/expired credentials and never claims failed keychain deletion succeeded", async () => {
     mockRouter();
-    expect(await signOutHuman(router, "person")).toBe(true);
-    secureEntry(router, "person").setPassword(JSON.stringify({ ...session(), expires_at: 1 }));
+    expect(await signOutHuman(router, "person", "codex")).toBe(true);
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify({ ...session(), expires_at: 1 }));
     keychain.deleteFails = true;
-    await expect(signOutHuman(router, "person")).rejects.toThrow();
+    await expect(signOutHuman(router, "person", "codex")).rejects.toThrow();
     expect(keychain.records.size).toBe(1);
   });
 
   it("CLI reports unconfirmed revocation without exposing credential/identity", async () => {
     mockRouter({ revokeFails: true });
-    secureEntry(router, "person").setPassword(JSON.stringify(session()));
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify(session()));
     const messages: string[] = [];
     expect(await runHumanAuth(["sign-out", "codex"], (value) => messages.push(value), false)).toBe(1);
     expect(messages.join()).toContain("server revocation could not be confirmed");
@@ -438,7 +442,7 @@ describe("explicit lifecycle", () => {
     "CLI reports local removal when stored session is malformed %# without making a bearer request",
     async (stored) => {
       const requests = mockRouter();
-      secureEntry(router, "person").setPassword(stored);
+      secureEntry(router, "person", "codex").setPassword(stored);
       const messages: string[] = [];
       expect(await runHumanAuth(["sign-out", "codex"], (value) => messages.push(value), false)).toBe(1);
       expect(messages.join()).toContain("Local credential removed; server revocation could not be confirmed");
@@ -453,7 +457,7 @@ describe("explicit lifecycle", () => {
     "CLI never claims local removal when secure storage %s",
     async (failure) => {
       mockRouter();
-      secureEntry(router, "person").setPassword(JSON.stringify(session()));
+      secureEntry(router, "person", "codex").setPassword(JSON.stringify(session()));
       keychain[failure] = true;
       const messages: string[] = [];
       expect(await runHumanAuth(["sign-out", "codex"], (value) => messages.push(value), false)).toBe(1);
@@ -476,16 +480,140 @@ describe("explicit lifecycle", () => {
 });
 
 it("reads a single fresh credential per send and still blocks sign-out on an existing transport", async () => {
-  secureEntry(router, "person").setPassword(JSON.stringify(session()));
+  secureEntry(router, "person", "codex").setPassword(JSON.stringify(session()));
   const send = vi.fn(async () => new Response("{}"));
   vi.stubGlobal("fetch", send);
   const transport = harnessTransport("codex");
   keychain.constructed.length = 0;
   await transport.request(transport.bankUrl("private"));
   expect(keychain.constructed).toHaveLength(1);
-  secureEntry(router, "person").deleteCredential();
+  secureEntry(router, "person", "codex").deleteCredential();
   keychain.constructed.length = 0;
   await expect(transport.request(transport.bankUrl("private"))).rejects.toThrow("human session unavailable");
   expect(keychain.constructed).toHaveLength(1);
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+describe("harness-owned human sessions", () => {
+  const harnesses = ["codex", "claude-code"];
+  const secondToken = `mrh_${"d".repeat(32)}_${"e".repeat(64)}`;
+
+  beforeEach(() => provision({}, harnesses));
+
+  it("logs in independently as one principal and sends both sessions to the same bank", async () => {
+    let nextToken = token;
+    const requests = mockRouter({
+      exchange: () => ({ ...session(), token: nextToken, token_type: "Bearer", grants: [] }),
+    });
+    await loginHuman(router, "person", "codex", authorize);
+    nextToken = secondToken;
+    await loginHuman(router, "person", "claude-code", authorize);
+    expect(readHumanSession(router, "person", "codex").token).toBe(token);
+    expect(readHumanSession(router, "person", "claude-code").token).toBe(secondToken);
+    expect(requests.filter((request) => request.url.endsWith("/exchange"))).toHaveLength(2);
+    const send = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response("{}"));
+    vi.stubGlobal("fetch", send);
+    for (const harness of harnesses) {
+      const transport = harnessTransport(harness);
+      await transport.request(transport.bankUrl("private", "/memories/recall"), {
+        method: "POST",
+        body: '{"query":"example"}',
+      });
+      await transport.request(transport.bankUrl("private", "/memories"), {
+        method: "POST",
+        body: '{"items":[{"content":"example"}]}',
+      });
+    }
+    expect(send.mock.calls.map(([url]) => String(url))).toEqual([
+      `${router}/v1/default/banks/private/memories/recall`,
+      `${router}/v1/default/banks/private/memories`,
+      `${router}/v1/default/banks/private/memories/recall`,
+      `${router}/v1/default/banks/private/memories`,
+    ]);
+    expect(send.mock.calls.map(([, init]) => init?.headers)).toEqual([
+      expect.objectContaining({ Authorization: `Bearer ${token}`, "x-memory-router-agent": "human-example" }),
+      expect.objectContaining({ Authorization: `Bearer ${token}`, "x-memory-router-agent": "human-example" }),
+      expect.objectContaining({ Authorization: `Bearer ${secondToken}`, "x-memory-router-agent": "human-example" }),
+      expect.objectContaining({ Authorization: `Bearer ${secondToken}`, "x-memory-router-agent": "human-example" }),
+    ]);
+    mockRouter({
+      exchange: { ...session(), token: `mrh_${"f".repeat(32)}_${"1".repeat(64)}`, token_type: "Bearer", grants: [] },
+    });
+    await loginHuman(router, "person", "codex", authorize);
+    expect(readHumanSession(router, "person", "claude-code").token).toBe(secondToken);
+  });
+
+  it.each(harnesses.flatMap((selected) => [false, true].map((revokeFails) => ({ selected, revokeFails }))))(
+    "signs out only $selected with revocation failure=$revokeFails",
+    async ({ selected, revokeFails }) => {
+      for (const harness of harnesses)
+        secureEntry(router, "person", harness).setPassword(
+          JSON.stringify({ ...session(), token: harness === "codex" ? token : secondToken }),
+        );
+      const requests = mockRouter({ revokeFails });
+      const messages: string[] = [];
+      expect(await runHumanAuth(["sign-out", selected], (message) => messages.push(message), false)).toBe(
+        revokeFails ? 1 : 0,
+      );
+      expect(messages.join()).toContain(
+        revokeFails ? "Local credential removed; server revocation could not be confirmed" : "Signed out.",
+      );
+      expect(requests[0].init.headers).toMatchObject({
+        Authorization: `Bearer ${selected === "codex" ? token : secondToken}`,
+      });
+      expect(() => harnessTransport(selected)).toThrow("human session unavailable");
+      const other = selected === "codex" ? "claude-code" : "codex";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response("{}")),
+      );
+      const transport = harnessTransport(other);
+      await expect(transport.request(transport.bankUrl("private"))).resolves.toBeInstanceOf(Response);
+    },
+  );
+
+  it.each(["expired", "revoked"])("blocks only the harness with an %s session", async (state) => {
+    secureEntry(router, "person", "codex").setPassword(JSON.stringify(session()));
+    secureEntry(router, "person", "claude-code").setPassword(JSON.stringify({ ...session(), token: secondToken }));
+    const codex = harnessTransport("codex");
+    const claude = harnessTransport("claude-code");
+    if (state === "expired")
+      secureEntry(router, "person", "codex").setPassword(JSON.stringify({ ...session(), expires_at: 1 }));
+    const send = vi.fn(
+      async (_input: string | URL | Request, init?: RequestInit) =>
+        new Response("{}", {
+          status: new Headers(init?.headers).get("Authorization") === `Bearer ${token}` ? 401 : 200,
+        }),
+    );
+    vi.stubGlobal("fetch", send);
+    vi.stubEnv("APP_TOKEN", `mr_app_${"f".repeat(64)}`);
+    await expect(codex.request(codex.bankUrl("private"))).rejects.toThrow("human session unavailable");
+    await expect(claude.request(claude.bankUrl("private"))).resolves.toBeInstanceOf(Response);
+    expect(send.mock.calls).toHaveLength(state === "expired" ? 1 : 2);
+  });
+
+  it("requires fresh login for legacy shared entries without copying or revoking them", async () => {
+    const legacyKey = `hindsight-memory-router:${createHash("sha256").update(router).digest("hex")}:person`;
+    const legacySession = JSON.stringify(session());
+    keychain.records.set(legacyKey, legacySession);
+    for (const harness of harnesses) expect(() => harnessTransport(harness)).toThrow("human session unavailable");
+    const requests = mockRouter({ exchange: { ...session(), token: secondToken, token_type: "Bearer", grants: [] } });
+    await loginHuman(router, "person", "codex", authorize);
+    expect(keychain.records.get(legacyKey)).toBe(legacySession);
+    expect(readHumanSession(router, "person", "codex").token).toBe(secondToken);
+    expect(() => harnessTransport("claude-code")).toThrow("human session unavailable");
+    expect(requests.some((request) => request.url.endsWith("/sign-out"))).toBe(false);
+  });
+
+  it("rejects an arbitrary configured identity before secure-storage or network access", async () => {
+    provision({}, ["custom-client"]);
+    const messages: string[] = [];
+    const send = vi.fn();
+    vi.stubGlobal("fetch", send);
+    expect(() => harnessTransport("custom-client")).toThrow("human session unavailable");
+    expect(await runHumanAuth(["login", "custom-client"], (message) => messages.push(message), true)).toBe(1);
+    expect(await runHumanAuth(["sign-out", "custom-client"], (message) => messages.push(message), false)).toBe(1);
+    expect(keychain.constructed).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
+  });
 });

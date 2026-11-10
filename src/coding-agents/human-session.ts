@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { AccessDeniedError } from "../shared/bank-access.js";
 import { PRINCIPAL_ID_PATTERN } from "../shared/patterns.js";
 import { validateRouterUrl } from "../shared/router-url.js";
+import { HARNESS_NAMES } from "../upstream/coding-agents/src/harness/names.js";
 
 export const HUMAN_TOKEN_PATTERN = /^mrh_[0-9a-f]{32}_[0-9a-f]{64}$/;
 export interface SecureEntry {
@@ -46,16 +47,20 @@ export function humanRouterUrl(value: string): string {
   return canonical;
 }
 
-export function secureEntry(routerUrl: string, credentialRef: string): SecureEntry {
+export function secureEntry(routerUrl: string, credentialRef: string, harness: string): SecureEntry {
   try {
-    if (!["darwin", "win32", "linux"].includes(process.platform) || !/^[A-Za-z0-9._-]{1,64}$/.test(credentialRef)) {
+    if (
+      !["darwin", "win32", "linux"].includes(process.platform) ||
+      !/^[A-Za-z0-9._-]{1,64}$/.test(credentialRef) ||
+      !HARNESS_NAMES.includes(harness)
+    ) {
       throw new HumanLoginRequiredError();
     }
     const { Entry: NativeEntry } = createRequire(import.meta.url)("@napi-rs/keyring") as {
       Entry: new (service: string, account: string, options: { linux: { store: "secret-service" } }) => SecureEntry;
     };
-    const service = `hindsight-memory-router:${createHash("sha256").update(humanRouterUrl(routerUrl)).digest("hex")}`;
-    return new NativeEntry(service, credentialRef, { linux: { store: "secret-service" } });
+    const service = `hindsight-memory-router:human-v2:${createHash("sha256").update(humanRouterUrl(routerUrl)).digest("hex")}`;
+    return new NativeEntry(service, `${harness}:${credentialRef}`, { linux: { store: "secret-service" } });
   } catch {
     throw new HumanLoginRequiredError();
   }
@@ -85,9 +90,9 @@ export function validateHumanSession(value: unknown, routerUrl: string, allowExp
   };
 }
 
-export function readHumanSession(routerUrl: string, credentialRef: string): HumanSession {
+export function readHumanSession(routerUrl: string, credentialRef: string, harness: string): HumanSession {
   try {
-    const password = secureEntry(routerUrl, credentialRef).getPassword();
+    const password = secureEntry(routerUrl, credentialRef, harness).getPassword();
     if (!password || password.length > 4096) throw new HumanLoginRequiredError();
     return validateHumanSession(JSON.parse(password), routerUrl);
   } catch {
