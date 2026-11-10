@@ -1105,9 +1105,6 @@ jobs:
               return isinstance(reviewed, dict) and reviewed.get('repository') == repository and type(reviewed.get('ruleset_id')) is int and reviewed['ruleset_id'] == rule_id and reviewed.get('updated_at') == revision and type(reviewed.get('bypass_actors')) is list and reviewed['bypass_actors'] == []
 
           def owner_approved():
-              user = pr_context.get('user', {})
-              if user.get('type') != 'Bot' or user.get('id') == OWNER_ID or user.get('login') == OWNER_LOGIN:
-                  return False
               base = pr_context.get('base', {})
               if base.get('repo', {}).get('full_name') != f'{os.environ["OWNER"]}/{os.environ["REPO"]}':
                   return False
@@ -1115,6 +1112,19 @@ jobs:
                   return False
               owners = [line.strip() for line in base_file('.github/CODEOWNERS').splitlines() if line.strip() and not line.lstrip().startswith('#')]
               if owners != [f'/.github/ @{OWNER_LOGIN}']:
+                  return False
+              comments = api_json(f'issues/{os.environ["PR_NUMBER"]}/comments?per_page=100', paginate=True)
+              commands = {f'/approve-ci {pr_context["head"]["sha"]}', f'/revoke-ci {pr_context["head"]["sha"]}'}
+              decisions = [comment for comment in comments
+                           if comment.get('user', {}).get('id') == OWNER_ID
+                           and comment.get('user', {}).get('login') == OWNER_LOGIN
+                           and comment.get('user', {}).get('type') == 'User'
+                           and comment.get('body', '').strip() in commands]
+              if decisions:
+                  latest = max(decisions, key=lambda comment: comment['id'])
+                  return latest['body'].strip() == f'/approve-ci {pr_context["head"]["sha"]}'
+              user = pr_context.get('user', {})
+              if user.get('type') != 'Bot' or user.get('id') == OWNER_ID or user.get('login') == OWNER_LOGIN:
                   return False
               rules = api_json('rules/branches/' + quote(base['ref'], safe=''), paginate=True)
               if not isinstance(rules, list) or not any(review_required(rule) and review_source_active(rule) for rule in rules):
@@ -1193,7 +1203,7 @@ jobs:
               '.ste.yml': '15f7ba5edd8c302b63642715020d62898623c098833d2fa4f200cbf7758f668c',
               '.vale.ini': 'a065a9c5134a7c47c9b3a35f76a4945c7fc203358a1f4e211e530e11859703d0',
               '.vale/styles/config/vocabularies/Project/accept.txt': '3b3aca4e207bf30940fa2e078dcacc4d8dca32ee0b31240360925653655c8768',
-              '.github/scripts/ci-admission.test.py': 'b1a037e757a4f9ced189b7d46d33f8fe407f6a4bcb7917504ef89415749a10a5',
+              '.github/scripts/ci-admission.test.py': 'e7e63235c0cd53d9196d2a3c43234512bd46280c13ac484769740b191653a9ca',
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '977628dd9e7a5b48f94a54f3eef8583e786cbb7557f77af27f0e242bc7a72520',
