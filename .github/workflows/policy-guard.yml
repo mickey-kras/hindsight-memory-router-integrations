@@ -928,7 +928,7 @@ jobs:
           AUTOMATION_SHAPES = {
               '.github/workflows/docs-ste.yml': ('28c93b5213df65323768e136417909b78626406b480bb5dfca7d0fe4a1785f00',),
               '.github/workflows/trusted-codeql.yml': ('084261c988c2a28b09ff082b72688b3bc3dbaac43a71042ce51a53309121d70d',),
-              '.github/workflows/trusted-ci.yml': ('f9e2dc671ed594696977aa0bf8b5efd35a58098940d03a98f32e47b765b84e09',),
+              '.github/workflows/trusted-ci.yml': ('5210d2ef4de5538e0beb45c36cb73c7f1ce6b40d9958d153f948210a9fe3b513',),
               '.github/workflows/trusted-aislop.yml': ('36f09be4c4d668d275a7f75e8fd10bf9ad0cf79b7aebea92c854b17cb613da75',),
               '.github/workflows/ci.yml': ('2bf0caf72e362f235237c0ae3a7eac4902d0aa663ac4abe441578ea01123f9cf',),
               '.github/workflows/main.yml': ('63e54db0d7bf979983391b7e520b87c81fb8fd24d3e5f4fc9b85c20b06cda2fb',),

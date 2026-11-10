@@ -38,6 +38,7 @@ jobs:
             npm-shrinkwrap.json
             src/upstream/coding-agents/npm-shrinkwrap.json
             .github/scripts/package-lock.json
+            .github/trusted-ci/package-lock.json
       - name: Install npm packaging and audit client
         run: |
           npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
