@@ -1105,6 +1105,10 @@ jobs:
               return isinstance(reviewed, dict) and reviewed.get('repository') == repository and type(reviewed.get('ruleset_id')) is int and reviewed['ruleset_id'] == rule_id and reviewed.get('updated_at') == revision and type(reviewed.get('bypass_actors')) is list and reviewed['bypass_actors'] == []
 
           def owner_approved():
+              user = pr_context.get('user', {})
+              is_owner = user.get('type') == 'User' and user.get('id') == OWNER_ID and user.get('login') == OWNER_LOGIN
+              if user.get('type') != 'Bot' and not is_owner:
+                  return False
               base = pr_context.get('base', {})
               if base.get('repo', {}).get('full_name') != f'{os.environ["OWNER"]}/{os.environ["REPO"]}':
                   return False
