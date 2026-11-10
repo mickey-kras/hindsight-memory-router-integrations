@@ -219,7 +219,8 @@ Both sessions can use the same banks when the router grants access to their comm
 Harness names do not grant access.
 
 After upgrading from shared human sessions, log in again for each harness.
-Existing configuration references remain valid, but the old shared entry is not read, copied or revoked.
+Existing configuration references remain valid.
+The integration never reads, copies or revokes the old shared entry.
 
 Remove that old entry through the OS secure-store UI when no older installation needs it.
 Its remote session remains bounded by its original expiry.
