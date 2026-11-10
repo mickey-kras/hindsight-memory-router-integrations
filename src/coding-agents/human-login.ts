@@ -141,10 +141,11 @@ export async function openLoginBrowser(url: string): Promise<void> {
 export async function loginHuman(
   routerUrl: string,
   credentialRef: string,
+  harness: string,
   openBrowser = openLoginBrowser,
 ): Promise<void> {
   const base = humanRouterUrl(routerUrl);
-  const entry = secureEntry(base, credentialRef);
+  const entry = secureEntry(base, credentialRef, harness);
   entry.getPassword(); // Fail before launching a browser if secure storage cannot be read.
   const state = randomBytes(32).toString("base64url");
   const verifier = randomBytes(32).toString("base64url");
@@ -247,9 +248,9 @@ export async function loginHuman(
   }
 }
 
-export async function signOutHuman(routerUrl: string, credentialRef: string): Promise<boolean> {
+export async function signOutHuman(routerUrl: string, credentialRef: string, harness: string): Promise<boolean> {
   const base = humanRouterUrl(routerUrl);
-  const entry = secureEntry(base, credentialRef);
+  const entry = secureEntry(base, credentialRef, harness);
   let revoked = false;
   try {
     const stored = entry.getPassword();
@@ -278,17 +279,20 @@ export async function runHumanAuth(
     if (!["login", "sign-out"].includes(command) || args.length > 1 || args.some((arg) => arg.startsWith("--"))) {
       throw new HumanLoginRequiredError();
     }
-    const { config, principal } = loadManagedConfig(process.env, args[0] ?? process.env.HINDSIGHT_MCP_HARNESS);
+    const { config, principal, principalId } = loadManagedConfig(
+      process.env,
+      args[0] ?? process.env.HINDSIGHT_MCP_HARNESS,
+    );
     if (!principal.human) throw new HumanLoginRequiredError();
     if (command === "login") {
       if (!interactive) throw new HumanLoginRequiredError();
-      await loginHuman(config.routerUrl, principal.human.credentialRef);
+      await loginHuman(config.routerUrl, principal.human.credentialRef, principalId);
       log(
         "Signed in. Run install for the configured coding agent. Sessions expire within one hour; login again when required.",
       );
       return 0;
     }
-    const revoked = await signOutHuman(config.routerUrl, principal.human.credentialRef);
+    const revoked = await signOutHuman(config.routerUrl, principal.human.credentialRef, principalId);
     log(
       revoked
         ? "Signed out."

@@ -210,6 +210,21 @@ The router binds its credential to its exact base URL for HTTPS, including any p
 
 It also binds the credential to the server-selected principal. Harness identity still selects its fixed local project mapping.
 
+Each registered harness has a separate session in the current OS user's secure store.
+The entry includes the harness name, router base URL and `credentialRef`.
+Even when two harnesses use the same `credentialRef`, they never share a secure-storage entry.
+
+Run `login claude-code` separately from `login codex`.
+Both sessions can use the same banks when the router grants access to their common human principal.
+Harness names do not grant access.
+
+After upgrading from shared human sessions, log in again for each harness.
+Existing configuration references remain valid.
+The integration never reads, copies or revokes the old shared entry.
+
+Remove that old entry through the OS secure-store UI when no older installation needs it.
+Its remote session remains bounded by its original expiry.
+
 Supported secure stores are macOS Keychain, Windows Credential Manager and Linux Secret Service.
 Linux requires an unlocked session keyring. Headless systems without it cannot use human login.
 There is no plaintext file, environment token or Linux kernel-keyring fallback.
@@ -226,7 +241,8 @@ The installer does not download dependencies or replace secure storage with a fi
 
 Missing human credentials or native support stops installation before host changes.
 
-Sessions last at most one hour. Expired, revoked, missing or locked credentials stop requests.
+Sessions last at most one hour. Expired, revoked or missing credentials stop only that harness's requests.
+A locked secure store stops requests for each harness that cannot read its own credential.
 
 Run `login` again explicitly. There is no automatic refresh or fallback to `mr_*` application credentials. Do not combine `human` and `tokenEnv`. Restart a harness if it disabled its client after an authorization failure.
 
@@ -249,6 +265,7 @@ hindsight-coding-agents sign-out codex
 Sign-out deletes the local credential, including when it cannot confirm router revocation. It reports that limitation.
 Such a session remains valid until expiry or operator revocation. Router sign-out does not sign out of the identity provider.
 
-Harnesses configured with the same router and credential reference share a session. Sign-out affects all of them.
+Sign-out revokes and removes only the selected harness's session. Other harnesses remain signed in.
+There is no shared-session mode.
 
 

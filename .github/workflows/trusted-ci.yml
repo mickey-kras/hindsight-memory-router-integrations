@@ -71,6 +71,8 @@ jobs:
       - name: Release automation tests
         run: node --test .github/scripts/release.test.cjs .github/scripts/combination.test.cjs .github/scripts/release-cleanup.test.cjs
           .github/scripts/coverage-artifact.test.cjs
+      - name: Install pinned scanner test dependencies
+        run: npm ci --prefix .github/trusted-ci --ignore-scripts --no-audit --no-fund
       - name: Trusted scanner boundary tests
         run: node --test .github/trusted-ci/*.test.cjs
       - name: Release policy tests
