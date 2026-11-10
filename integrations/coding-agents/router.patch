@@ -1784,7 +1784,7 @@ diff --git a/package-lock.json b/npm-shrinkwrap.json
 similarity index 76%
 rename from package-lock.json
 rename to npm-shrinkwrap.json
-index db7c1f9..a5679ad 100644
+index db7c1f9..897776b 100644
 --- a/package-lock.json
 +++ b/npm-shrinkwrap.json
 @@ -1,4 +1,4 @@
@@ -1792,14 +1792,14 @@ index db7c1f9..a5679ad 100644
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.8.2",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.11",
++  "version": "0.8.12",
    "lockfileVersion": 3,
 @@ -7,4 +7,11 @@
      "": {
 -      "name": "@vectorize-io/hindsight-coding-agents",
 -      "version": "0.8.2",
 +      "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+      "version": "0.8.11",
++      "version": "0.8.12",
 +      "dependencies": {
 +        "@modelcontextprotocol/sdk": "^1.32.1",
 +        "@napi-rs/keyring": "2.1.2",
@@ -2772,14 +2772,14 @@ index db7c1f9..a5679ad 100644
 -      "version": "1.18.9",
 -      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.18.9.tgz",
 -      "integrity": "sha512-0kFX9Usj+3N+WupIe9VnEdDNzMNbW4/C5GeIzdj02/t5kQoXsNrFpW3Br9aABebazcaYsQEWdlaLV0zQISy3OA==",
-+      "version": "1.19.4",
-+      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.19.4.tgz",
-+      "integrity": "sha512-VN71q/OmfggxIhiDbuzYDYmZcQMsNyVSw1o91e7LD6WUn/9jx4usI9ZpoPbC5p/Prpo/Umzpd+38+EuLoKRr+A==",
++      "version": "1.19.5",
++      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.19.5.tgz",
++      "integrity": "sha512-79PY+pxcJajHReWv2OP2SYTdlx1f7zOmq2hIaReOJnovsxNaSvxVyQHx+6Yq22T5UcS4z3Qgws4KB4lQOaIbdQ==",
        "dev": true,
 @@ -1795,3 +1801,3 @@
          "@ai-sdk/provider": "3.0.8",
 -        "@opencode-ai/sdk": "1.18.9",
-+        "@opencode-ai/sdk": "1.19.4",
++        "@opencode-ai/sdk": "1.19.5",
          "effect": "4.0.0-beta.83",
 @@ -1816,16 +1822,6 @@
      },
@@ -2797,9 +2797,9 @@ index db7c1f9..a5679ad 100644
 -      "version": "1.18.9",
 -      "resolved": "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.18.9.tgz",
 -      "integrity": "sha512-oDJSmsmiGW+3lNLmZYj3EpUkpiT3ITZBKffH3mrmu2KMJXlkxQ/Nvv7jqPffSM7o8lCdBZS/aCE+2GkA3/92gQ==",
-+      "version": "1.19.4",
-+      "resolved": "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.19.4.tgz",
-+      "integrity": "sha512-3Wuc4t8gEuWKHbX1Na9oDK6PgOveid70l4Ks5RCjRIo2RcP8FQN3NS6Mg3XWc2+WiUfpfrmvBWlh5u1zeQfDQw==",
++      "version": "1.19.5",
++      "resolved": "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.19.5.tgz",
++      "integrity": "sha512-+bqu8gHiwmq96T9q5G34uLNHWCInIMsrE3hytCNHj1cVaxjY0AGJyNCT1rkeeZwgPU7A5TMTNwN+0XxCO2vqDg==",
        "dev": true,
 @@ -1837,5 +1833,5 @@
      "node_modules/@opencode/ai": {
@@ -3677,15 +3677,15 @@ index db7c1f9..a5679ad 100644
 -      "version": "4.1.11",
 -      "resolved": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.11.tgz",
 -      "integrity": "sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==",
-+      "version": "5.0.5",
-+      "resolved": "https://registry.npmjs.org/@vitest/mocker/-/mocker-5.0.5.tgz",
-+      "integrity": "sha512-xLL3lkDegJZw+MGoGaCCsFayDZthGgpAtr3Vziyfc4p7xH89K7KRPcRBBh/kEYm0Aqkt5DtTmkYpBtRV/FrHZg==",
++      "version": "5.1.0",
++      "resolved": "https://registry.npmjs.org/@vitest/mocker/-/mocker-5.1.0.tgz",
++      "integrity": "sha512-5umB9/jlWcqVS6fsrFmv5Gdnpu6wAUio/lEOwAmvB7v+lFo/IW2B9FhAD0p19GCULTgMzLCdUmuCDCnAzWgppQ==",
        "dev": true,
 @@ -3311,5 +3049,6 @@
        "dependencies": {
 -        "@vitest/spy": "4.1.11",
 +        "@jridgewell/trace-mapping": "0.3.31",
-+        "@vitest/spy": "5.0.5",
++        "@vitest/spy": "5.1.0",
          "estree-walker": "^3.0.3",
 -        "magic-string": "^0.30.21"
 +        "magic-string": "^1.4.3"
@@ -3729,9 +3729,9 @@ index db7c1f9..a5679ad 100644
 -      "resolved": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.11.tgz",
 -      "integrity": "sha512-pN7ikn1ON7h8ee4gIAp4AzyK+zBtJPzVbqOgu5LCEh4VaJVbPQcgYQYJIMGQPXVeJJq1fnfazis7a5pFNPahog==",
 +    "node_modules/@vitest/mocker/node_modules/magic-string": {
-+      "version": "1.4.3",
-+      "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-1.4.3.tgz",
-+      "integrity": "sha512-z12OxmaPGE0F4xlpGdjuAUckipLpQlTAuAmyGhNoD7ODpYUzvDfvtxUbjM/jwznyP178oju/KDdyi220wNJ0RQ==",
++      "version": "1.4.5",
++      "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-1.4.5.tgz",
++      "integrity": "sha512-oLLC2+YvQUfAa+vxoufE/yc1icb87M9iXIRqAoR/2EhE/8cb3SF/+Gi0c2By1B+5Vz2e2vQtUvHiu1+63Znh+w==",
        "dev": true,
 @@ -3365,9 +3077,3 @@
        "dependencies": {
@@ -3759,9 +3759,9 @@ index db7c1f9..a5679ad 100644
 -      "version": "4.1.11",
 -      "resolved": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.11.tgz",
 -      "integrity": "sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==",
-+      "version": "5.0.5",
-+      "resolved": "https://registry.npmjs.org/@vitest/spy/-/spy-5.0.5.tgz",
-+      "integrity": "sha512-lwJRExuH417257Q5wv9QYugN9IMJkoxcrKrYxGPQkBzl7wlNpTUxD/5yNX4ESKVUIShKPgkGchYPFMWOOk0wzw==",
++      "version": "5.1.0",
++      "resolved": "https://registry.npmjs.org/@vitest/spy/-/spy-5.1.0.tgz",
++      "integrity": "sha512-2DPO5OMHWKrBngC+fCmTQqemNF0gidRhp3lxbBmRhW+M1XJrfgPpqNqWVevXtn2f2ufD5ZaR1B6B641aAlcX5A==",
        "dev": true,
        "license": "MIT",
 -      "dependencies": {
@@ -4415,7 +4415,7 @@ index db7c1f9..a5679ad 100644
        "integrity": "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==",
 -      "dev": true,
        "license": "MIT",
-@@ -5022,10 +4501,48 @@
+@@ -5022,42 +4501,78 @@
      },
 -    "node_modules/is-fullwidth-code-point": {
 +    "node_modules/is-docker": {
@@ -4435,18 +4435,43 @@ index db7c1f9..a5679ad 100644
 +      },
 +      "funding": {
 +        "url": "https://github.com/sponsors/sindresorhus"
-+      }
-+    },
+       }
+     },
+-    "node_modules/is-promise": {
+-      "version": "4.0.0",
+-      "resolved": "https://registry.npmjs.org/is-promise/-/is-promise-4.0.0.tgz",
+-      "integrity": "sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==",
+-      "dev": true,
+-      "license": "MIT"
+-    },
+-    "node_modules/isexe": {
+-      "version": "2.0.0",
+-      "resolved": "https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz",
+-      "integrity": "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==",
+-      "dev": true,
+-      "license": "ISC"
+-    },
+-    "node_modules/jackspeak": {
+-      "version": "3.4.3",
+-      "resolved": "https://registry.npmjs.org/jackspeak/-/jackspeak-3.4.3.tgz",
+-      "integrity": "sha512-OGlZQpz2yfahA/Rd1Y8Cd9SIEsqvXkLVoSw/cgwhnhFMDbsQFeZYoJJ7bIZBS9BcamUW96asq/npPWugM+RQBw==",
 +    "node_modules/is-in-ssh": {
 +      "version": "1.0.0",
 +      "resolved": "https://registry.npmjs.org/is-in-ssh/-/is-in-ssh-1.0.0.tgz",
 +      "integrity": "sha512-jYa6Q9rH90kR1vKB6NM7qqd1mge3Fx4Dhw5TVlK1MUBqhEOuCagrEHMevNuCcbECmXZ0ThXkRm+Ymr51HwEPAw==",
-+      "dev": true,
+       "dev": true,
+-      "license": "BlueOak-1.0.0",
+-      "dependencies": {
+-        "@isaacs/cliui": "^8.0.2"
 +      "license": "MIT",
 +      "engines": {
 +        "node": ">=20"
-+      },
-+      "funding": {
+       },
+       "funding": {
+-        "url": "https://github.com/sponsors/isaacs"
+-      },
+-      "optionalDependencies": {
+-        "@pkgjs/parseargs": "^0.11.0"
 +        "url": "https://github.com/sponsors/sindresorhus"
 +      }
 +    },
@@ -4467,41 +4492,26 @@ index db7c1f9..a5679ad 100644
 +      },
 +      "funding": {
 +        "url": "https://github.com/sponsors/sindresorhus"
-       }
-@@ -5036,28 +4553,26 @@
-       "integrity": "sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==",
--      "dev": true,
-       "license": "MIT"
-     },
--    "node_modules/isexe": {
--      "version": "2.0.0",
--      "resolved": "https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz",
--      "integrity": "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==",
--      "dev": true,
--      "license": "ISC"
--    },
--    "node_modules/jackspeak": {
--      "version": "3.4.3",
--      "resolved": "https://registry.npmjs.org/jackspeak/-/jackspeak-3.4.3.tgz",
--      "integrity": "sha512-OGlZQpz2yfahA/Rd1Y8Cd9SIEsqvXkLVoSw/cgwhnhFMDbsQFeZYoJJ7bIZBS9BcamUW96asq/npPWugM+RQBw==",
++      }
++    },
++    "node_modules/is-promise": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/is-promise/-/is-promise-4.0.0.tgz",
++      "integrity": "sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==",
++      "license": "MIT"
++    },
 +    "node_modules/is-wsl": {
 +      "version": "3.1.1",
 +      "resolved": "https://registry.npmjs.org/is-wsl/-/is-wsl-3.1.1.tgz",
 +      "integrity": "sha512-e6rvdUCiQCAuumZslxRJWR/Doq4VpPR82kqclvcS0efgt430SlGIk05vdCN58+VrzgtIcfNODjozVielycD4Sw==",
-       "dev": true,
--      "license": "BlueOak-1.0.0",
++      "dev": true,
 +      "license": "MIT",
-       "dependencies": {
--        "@isaacs/cliui": "^8.0.2"
++      "dependencies": {
 +        "is-inside-container": "^1.0.0"
-       },
--      "funding": {
--        "url": "https://github.com/sponsors/isaacs"
++      },
 +      "engines": {
 +        "node": ">=16"
-       },
--      "optionalDependencies": {
--        "@pkgjs/parseargs": "^0.11.0"
++      },
 +      "funding": {
 +        "url": "https://github.com/sponsors/sindresorhus"
        }
@@ -5185,12 +5195,8 @@ index db7c1f9..a5679ad 100644
 -        "node": ">=18"
 +        "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
        },
-@@ -7116,10 +6460,445 @@
+@@ -7116,2 +6460,437 @@
      },
--    "node_modules/tuf-js": {
--      "version": "4.1.0",
--      "resolved": "https://registry.npmjs.org/tuf-js/-/tuf-js-4.1.0.tgz",
--      "integrity": "sha512-50QV99kCKH5P/Vs4E2Gzp7BopNV+KzTXqWeaxrfu5IQJBOULRsTIS9seSsOVT8ZnGXzCyx55nYWAi4qJzpZKEQ==",
 +    "node_modules/tsup/node_modules/@rollup/rollup-android-arm-eabi": {
 +      "version": "4.64.7",
 +      "resolved": "https://registry.npmjs.org/@rollup/rollup-android-arm-eabi/-/rollup-android-arm-eabi-4.64.7.tgz",
@@ -5198,10 +5204,8 @@ index db7c1f9..a5679ad 100644
 +      "cpu": [
 +        "arm"
 +      ],
-       "dev": true,
-       "license": "MIT",
--      "dependencies": {
--        "@tufjs/models": "4.1.0",
++      "dev": true,
++      "license": "MIT",
 +      "optional": true,
 +      "os": [
 +        "android"
@@ -5628,15 +5632,7 @@ index db7c1f9..a5679ad 100644
 +        "fsevents": "~2.3.2"
 +      }
 +    },
-+    "node_modules/tuf-js": {
-+      "version": "4.1.0",
-+      "resolved": "https://registry.npmjs.org/tuf-js/-/tuf-js-4.1.0.tgz",
-+      "integrity": "sha512-50QV99kCKH5P/Vs4E2Gzp7BopNV+KzTXqWeaxrfu5IQJBOULRsTIS9seSsOVT8ZnGXzCyx55nYWAi4qJzpZKEQ==",
-+      "dev": true,
-+      "license": "MIT",
-+      "dependencies": {
-+        "@tufjs/models": "4.1.0",
-         "debug": "^4.4.3",
+     "node_modules/tuf-js": {
 @@ -7135,3 +6914,2 @@
        "integrity": "sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==",
 -      "dev": true,
@@ -5711,14 +5707,14 @@ index db7c1f9..a5679ad 100644
 -        "tinyrainbow": "^3.1.0",
 -        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
 -        "why-is-node-running": "^2.3.0"
-+      "version": "5.0.5",
-+      "resolved": "https://registry.npmjs.org/vitest/-/vitest-5.0.5.tgz",
-+      "integrity": "sha512-cPODOMF8YnkiiYtDdHo6n4wWmBrOBBbOIYH2d33M4l3CdNn72h+qMmO6uXffUN6A5AZFXNND/d+krS9mgkXRfg==",
++      "version": "5.1.0",
++      "resolved": "https://registry.npmjs.org/vitest/-/vitest-5.1.0.tgz",
++      "integrity": "sha512-MzmNFnrwa8v8lF1bLxw3UJ4EREwVOVb75VqJZmUDRjJ6EluK/x9th7qTbaeDk41WxE1GxWqmTXcdsfobfH5sOA==",
 +      "dev": true,
 +      "license": "MIT",
 +      "dependencies": {
 +        "@types/chai": "^5.2.2",
-+        "@vitest/mocker": "5.0.5",
++        "@vitest/mocker": "5.1.0",
 +        "chai": "^6.3.0",
 +        "es-module-lexer": "^2.3.2",
 +        "expect-type": "^1.4.0",
@@ -5746,12 +5742,12 @@ index db7c1f9..a5679ad 100644
 -        "@vitest/coverage-v8": "4.1.11",
 -        "@vitest/ui": "4.1.11",
 +        "@types/node": "^22.0.0 || >=24.0.0",
-+        "@vitest/browser-playwright": "5.0.5",
-+        "@vitest/browser-preview": "5.0.5",
++        "@vitest/browser-playwright": "5.1.0",
++        "@vitest/browser-preview": "5.1.0",
 +        "@vitest/browser-webdriverio": "^5.0.0-beta.5 || >=5.0.0",
-+        "@vitest/coverage-istanbul": "5.0.5",
-+        "@vitest/coverage-v8": "5.0.5",
-+        "@vitest/ui": "5.0.5",
++        "@vitest/coverage-istanbul": "5.1.0",
++        "@vitest/coverage-v8": "5.1.0",
++        "@vitest/ui": "5.1.0",
          "happy-dom": "*",
          "jsdom": "*",
 -        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
@@ -5944,7 +5940,7 @@ index db7c1f9..a5679ad 100644
 -      "dev": true,
        "license": "ISC",
 diff --git a/package.json b/package.json
-index 93436a9..9601044 100644
+index 93436a9..71ce1c9 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,8 +1,8 @@
@@ -5952,7 +5948,7 @@ index 93436a9..9601044 100644
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.8.2",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.11",
++  "version": "0.8.12",
    "repository": {
      "type": "git",
 -    "url": "https://github.com/vectorize-io/hindsight.git",
