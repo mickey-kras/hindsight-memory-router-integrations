@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@vectorize-io/hindsight-agent-sdk": "0.1.1",
-    "@vectorize-io/hindsight-client": "1.1.0",
+    "@vectorize-io/hindsight-client": "1.2.0",
     "fs-native-extensions": "^1.5.1"
   },
   "devDependencies": {
