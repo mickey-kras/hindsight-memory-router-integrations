@@ -224,7 +224,7 @@ describe("bank isolation", () => {
     const { client } = transport(vi.fn<typeof fetch>().mockResolvedValue(Response.json({ banks: "invalid" })));
     await expect(client.request(`${url}/v1/default/banks`)).rejects.toThrow("memory request failed (502)");
   });
-  it.each(["/config", "/reflect", "/memories/recall", "/knowledge-base/tree", ""])(
+  it.each(["/config", "/reflect", "/memories/recall", "/pages/tree", ""])(
     "unassigned bank stays invisible for %s",
     async (suffix) => {
       const { client, send } = transport();
@@ -238,24 +238,21 @@ describe("bank isolation", () => {
       expect(send).not.toHaveBeenCalled();
     },
   );
-  it.each(["/memories", "/config", "/knowledge-base/pages", "/import", ""])(
-    "only writeBank can mutate %s",
-    async (suffix) => {
-      const { client, send } = transport();
-      await client.request(client.bankUrl("A", suffix), {
+  it.each(["/memories", "/config", "/pages", "/import", ""])("only writeBank can mutate %s", async (suffix) => {
+    const { client, send } = transport();
+    await client.request(client.bankUrl("A", suffix), {
+      method: "POST",
+      body: "{}",
+    });
+    await expect(
+      client.request(client.bankUrl("B", suffix), {
         method: "POST",
         body: "{}",
-      });
-      await expect(
-        client.request(client.bankUrl("B", suffix), {
-          method: "POST",
-          body: "{}",
-        }),
-      ).rejects.toThrow(AccessDeniedError);
-      expect(send).toHaveBeenCalledTimes(1);
-    },
-  );
-  it.each(["/config", "/knowledge-base/tree", "/documents", "/operations/id", ""])(
+      }),
+    ).rejects.toThrow(AccessDeniedError);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it.each(["/config", "/pages/tree", "/documents", "/operations/id", ""])(
     "permits assigned non-mutating operation %s",
     async (suffix) => {
       const { client } = transport();

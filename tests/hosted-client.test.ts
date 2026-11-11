@@ -72,37 +72,37 @@ const operations = [
   },
   {
     method: "GET",
-    suffix: "/knowledge-base/tree?tags=tag",
+    suffix: "/pages/tree?tags=tag",
     write: false,
     run: (c: HostedRouterClient, b: string) => c.listKnowledgePages(b, { tags: ["tag"] }),
   },
   {
     method: "GET",
-    suffix: "/knowledge-base/search?q=hello+world&limit=2",
+    suffix: "/pages/search?q=hello+world&limit=2",
     write: false,
     run: (c: HostedRouterClient, b: string) => c.searchKnowledgePages(b, { q: "hello world", limit: 2 }),
   },
   {
     method: "POST",
-    suffix: "/knowledge-base/pages",
+    suffix: "/pages",
     write: true,
     run: (c: HostedRouterClient, b: string) => c.createKnowledgePage(b, { title: "page", content: "fact" }),
   },
   {
     method: "GET",
-    suffix: "/knowledge-base/pages/page",
+    suffix: "/pages/page",
     write: false,
     run: (c: HostedRouterClient, b: string) => c.getKnowledgePage(b, "page"),
   },
   {
     method: "PATCH",
-    suffix: "/knowledge-base/nodes/node",
+    suffix: "/pages/nodes/node",
     write: true,
     run: (c: HostedRouterClient, b: string) => c.updateKnowledgePage(b, "node", { title: "updated" }),
   },
   {
     method: "DELETE",
-    suffix: "/knowledge-base/nodes/node",
+    suffix: "/pages/nodes/node",
     write: true,
     run: (c: HostedRouterClient, b: string) => c.deleteKnowledgePage(b, "node"),
   },
@@ -202,7 +202,7 @@ describe("hosted router facade contract", () => {
       await new HostedRouterClient(config).searchKnowledgePages("read", { q });
       expect(fetcher).toHaveBeenCalledOnce();
       const url = new URL(fetcher.mock.calls[0][0]);
-      expect(url.pathname).toBe("/router/v1/default/banks/read/knowledge-base/search");
+      expect(url.pathname).toBe("/router/v1/default/banks/read/pages/search");
       expect(url.searchParams.get("q")).toBe(q);
     },
   );

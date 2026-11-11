@@ -218,7 +218,7 @@ it("lets page tools address assigned read banks while denying hidden banks and m
   const read = tools.find((tool) => tool.name === "hindsight_read_knowledge_page")!;
   const result = await read.handler({ bankId: "B", page_id: "page" });
   expect(result.isError).not.toBe(true);
-  expect(fetch.mock.calls[0][0]).toContain("/banks/B/knowledge-base/pages/page");
+  expect(fetch.mock.calls[0][0]).toContain("/banks/B/pages/page");
   expect((await read.handler({ bankId: "hidden", page_id: "page" })).isError).toBe(true);
   const write = tools.find((tool) => tool.name === "hindsight_ingest_document")!;
   expect((await write.handler({ bankId: "B", title: "doc", content: "text" })).isError).toBe(true);
@@ -376,7 +376,7 @@ it("runs the packaged Codex hook with harness-bound credentials and fails closed
   expect(requests.map((request) => request.url)).toEqual([
     "https://router.test/v1/default/banks/A/reflect",
     "https://router.test/v1/default/banks/B/reflect",
-    "https://router.test/v1/default/banks/A/knowledge-base/tree",
+    "https://router.test/v1/default/banks/A/pages/tree",
   ]);
   expect(requests.every((request) => request.authorization === `Bearer ${token}`)).toBe(true);
   const denied = spawnSync(process.execPath, args, {
@@ -740,9 +740,9 @@ it("preserves page-search and recall options in explicitly scoped clients", asyn
   expect(recalls).toHaveLength(6);
   for (const [, init] of recalls) expect(JSON.parse(String(init?.body)).types).toEqual(["world"]);
   expect(searches.map(([url]) => String(url))).toEqual([
-    "https://router.test/v1/default/banks/A/knowledge-base/search?q=query&limit=2",
-    "https://router.test/v1/default/banks/A/knowledge-base/search?q=query&limit=2",
-    "https://router.test/v1/default/banks/B/knowledge-base/search?q=query&limit=2",
+    "https://router.test/v1/default/banks/A/pages/search?q=query&limit=2",
+    "https://router.test/v1/default/banks/A/pages/search?q=query&limit=2",
+    "https://router.test/v1/default/banks/B/pages/search?q=query&limit=2",
   ]);
 });
 

@@ -32,3 +32,4 @@ The Agent SDK remains 0.1.1. The repository overrides its client dependency to 1
 OpenClaw's new native memory-provider registration stays outside the router-owned entrypoint. The explicit managed tools stay registered.
 The plugin imports its ended-transcript context type. The hook retains only the supplied message payload.
 
+The hosted client and coding-agent page tools use the `/pages` routes exposed by Memory Router and Hindsight 1.2.1.

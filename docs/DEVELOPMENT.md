@@ -121,6 +121,7 @@ See [upstream upgrades](UPGRADING.md), [deviations](DEVIATIONS.md), [dependency 
 OpenClaw declares `@vectorize-io/hindsight-client@1.2.0` as a direct production dependency. Its exported TypeScript declarations import client types. The repository also overrides the SDK's transitive client to `1.1.0`. Coding-agent overrides cover these dependencies:
 
 - `@opencode/plugin > @opentelemetry/core`
+- `@opencode-ai/plugin > effect` (4.0.0-beta.103)
 - `@opencode-ai/plugin > zod`
 - `esbuild`
 - `fast-uri`
