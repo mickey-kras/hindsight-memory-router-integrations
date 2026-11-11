@@ -118,7 +118,7 @@ See [upstream upgrades](UPGRADING.md), [deviations](DEVIATIONS.md), [dependency 
 | OpenClaw | `@vectorize-io/hindsight-agent-sdk`, `@vectorize-io/hindsight-client`, `fs-native-extensions` | `@biomejs/biome`, `@types/node`, `@vitest/coverage-v8`, `aislop`, `typescript`, `vitest` |
 | Coding agents | `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml`, `zod` | `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript`, `vitest` |
 
-OpenClaw declares `@vectorize-io/hindsight-client@1.1.0` as a direct production dependency. Its exported TypeScript declarations import client types. The repository also overrides the SDK's transitive client to `1.1.0`. Coding-agent overrides cover these dependencies:
+OpenClaw declares `@vectorize-io/hindsight-client@1.2.0` as a direct production dependency. Its exported TypeScript declarations import client types. The repository also overrides the SDK's transitive client to `1.1.0`. Coding-agent overrides cover these dependencies:
 
 - `@opencode/plugin > @opentelemetry/core`
 - `@opencode-ai/plugin > effect` (4.0.0-beta.103)

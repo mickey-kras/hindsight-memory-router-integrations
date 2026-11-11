@@ -30,7 +30,7 @@ import type { RetainStamp } from "./retain-stamp";
 /** Sent on every request so the server can tell which integration is calling. */
 export const USER_AGENT = `hindsight-coding-agents/${PKG_VERSION}`;
 
-/** One node of GET /knowledge-base/tree. Only the fields this client reads. */
+/** One node of GET /pages/tree. Only the fields this client reads. */
 export interface KnowledgeNode {
   id: string;
   kind: "folder" | "page";
@@ -770,7 +770,7 @@ export class HindsightClient {
    */
   async tree(): Promise<KnowledgeNode[]> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
-    const r = await this.req("GET", this.bankUrl("/knowledge-base/tree"));
+    const r = await this.req("GET", this.bankUrl("/pages/tree"));
     if (await this.pagesUnsupported(r)) throw new KnowledgePagesUnavailableError();
     // Bank not created yet: it genuinely has no pages, and the capability stays UNKNOWN so the
     // next call (after the first retain mints the bank) asks again instead of short-circuiting.
@@ -822,7 +822,7 @@ export class HindsightClient {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
     const r = await this.req(
       "GET",
-      this.bankUrl(`/knowledge-base/pages/${encodeURIComponent(pageId)}`)
+      this.bankUrl(`/pages/${encodeURIComponent(pageId)}`)
     );
     if (r.status === 404) throw new Error(`knowledge page not found: ${pageId}`);
     return shapePage(await r.json());
@@ -841,7 +841,7 @@ export class HindsightClient {
     const q = `?q=${encodeURIComponent(query)}&limit=${opts.limit ?? this.pageSearchLimit}`;
     const r = await this.req(
       "GET",
-      this.bankUrl(`/knowledge-base/search${q}`),
+      this.bankUrl(`/pages/search${q}`),
       undefined,
       [],
       opts.timeoutMs
@@ -872,7 +872,7 @@ export class HindsightClient {
   /**
    * Seed the fixed page taxonomy as knowledge-base pages at the tree root, idempotently.
    *
-   * Matched by NAME, not id: `/knowledge-base/pages` mints its own `kp-…` id, so a stable
+   * Matched by NAME, not id: `/pages` mints its own `kp-…` id, so a stable
    * client-chosen id isn't available to match on (unlike the old mental-model path, which keyed
    * off a slug). Names are unique per folder server-side, which makes them a sound key.
    *
@@ -919,7 +919,7 @@ export class HindsightClient {
       if (!hit) {
         // 409 = another deepen run seeded this name between our tree read and this POST. That is
         // the outcome we wanted anyway, so tolerate it rather than failing the whole run.
-        const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), body, [409]);
+        const r = await this.req("POST", this.bankUrl("/pages"), body, [409]);
         if (await this.pagesUnsupported(r)) {
           this.log(
             `[bank] knowledge pages unavailable on ${this.apiUrl}; continuing without pages`
@@ -962,7 +962,7 @@ export class HindsightClient {
         if (triggerDrift) patch.trigger = pageTriggerPatch(body.trigger);
         const r = await this.req(
           "PATCH",
-          this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(hit.id)}`),
+          this.bankUrl(`/pages/nodes/${encodeURIComponent(hit.id)}`),
           patch
         );
         if (await this.pagesUnsupported(r)) {
@@ -1027,7 +1027,7 @@ export class HindsightClient {
       if (!patch.trigger && !patch.source_query) continue;
       const r = await this.req(
         "PATCH",
-        this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(page.id)}`),
+        this.bankUrl(`/pages/nodes/${encodeURIComponent(page.id)}`),
         patch
       );
       // 404 only: `req` throws on every other non-ok status it was not told to tolerate, so the
@@ -1076,7 +1076,7 @@ export class HindsightClient {
      *  carry its own hardcoded copy of this trigger. */
     pageTrigger?: PageTrigger;
   }): Promise<{ page_id: string }> {
-    // `/knowledge-base/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
+    // `/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
     // we create the page first and adopt the server-assigned id — that id is what the return value
     // and the marker must use, or `read_knowledge_page(id)` 404s and the `[[page:<id>]]` link
     // points at nothing.
@@ -1088,7 +1088,7 @@ export class HindsightClient {
       // "the project's memory" alone never said WHICH project (#3476). `max_tokens` is stated for
       // the same reason `seedPages` states it — leaving it implicit pins these pages to whatever
       // the server's page default happens to be, which is only coincidentally PAGE_MAX_TOKENS.
-      const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), {
+      const r = await this.req("POST", this.bankUrl("/pages"), {
         name: args.title,
         source_query:
           `Summarize the "${args.title}" initiative: what is being built or changed and why, ` +
@@ -1129,7 +1129,7 @@ export class HindsightClient {
   /** Find a root folder by name (case-insensitive) or create it; returns its id. Fail-open to undefined. */
   async ensureFolder(name: string): Promise<string | undefined> {
     try {
-      const tree = (await (await this.req("GET", this.bankUrl("/knowledge-base/tree"))).json()) as {
+      const tree = (await (await this.req("GET", this.bankUrl("/pages/tree"))).json()) as {
         roots?: { id?: string; kind?: string; name?: string }[];
       };
       const hit = (tree.roots || []).find(
@@ -1141,7 +1141,7 @@ export class HindsightClient {
       /* fall through to create */
     }
     try {
-      const r = await this.req("POST", this.bankUrl("/knowledge-base/folders"), { name });
+      const r = await this.req("POST", this.bankUrl("/pages/folders"), { name });
       return ((await r.json()) as { id?: string }).id;
     } catch (error) {
       if (error instanceof AccessDeniedError) throw error;

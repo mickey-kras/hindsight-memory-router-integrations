@@ -61,7 +61,7 @@ it("routes every document, page, seed and operation request through the configur
   await c.captureInitiative({ title: "Feature", summary: "Safe summary" });
   expect(send.mock.calls.some(([url]) => /\/(?:config|import)$/.test(String(url)))).toBe(false);
   expect(send.mock.calls.some(([url, init]) => String(url) === "https://router.test/v1/default/banks/A" && init?.method === "DELETE")).toBe(false);
-  expect(send.mock.calls.some(([url, init]) => String(url).endsWith("/knowledge-base/pages") && init?.method === "POST")).toBe(true);
+  expect(send.mock.calls.some(([url, init]) => String(url).endsWith("/pages") && init?.method === "POST")).toBe(true);
   for (const [url, init] of send.mock.calls) {
     expect(String(url)).toMatch(/^https:\/\/router\.test\/(?:(?:v1\/)?version|v1\/default\/banks\/[AB]\/)/);
     expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${credential}`);
@@ -75,7 +75,7 @@ it.each(["src/foo.ts", "coverage100%", "C:\\project"])("preserves coding-agent s
   await client().searchKnowledgePages(query);
   expect(send).toHaveBeenCalledOnce();
   const url = new URL(String(send.mock.calls[0][0]));
-  expect(url.pathname).toBe("/v1/default/banks/A/knowledge-base/search");
+  expect(url.pathname).toBe("/v1/default/banks/A/pages/search");
   expect(url.searchParams.get("q")).toBe(query);
 });
 it.each([undefined, "", "http://localhost:8888", "invalid", "https://api.hindsight.vectorize.io", "https://user:secret@router.test", "https://router.test?secret=1"])("rejects invalid managed endpoints %s before any request", (endpoint) => {
@@ -124,14 +124,14 @@ it.each([401, 403])("fails closed on %s in probes, drain and folder creation", a
 });
 it.each([401, 403])("fails closed when routed page seeding returns %s", async (status) => {
   const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
-    String(url).endsWith("/knowledge-base/tree")
+    String(url).endsWith("/pages/tree")
       ? Response.json({ roots: [] })
       : new Response(credential, { status })
   );
   const c = client();
   await expect(c.configureBank()).rejects.toThrow(AccessDeniedError);
   expect(send).toHaveBeenCalledTimes(2);
-  expect(send.mock.calls[1][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/pages");
+  expect(send.mock.calls[1][0]).toBe("https://router.test/v1/default/banks/A/pages");
   await expect(c.configureBank()).rejects.toThrow(AccessDeniedError);
   expect(send).toHaveBeenCalledTimes(2);
 });
@@ -142,15 +142,15 @@ it.each([{ reset: true }, { manage: true }])("rejects operator-owned provisionin
 });
 it.each([{}, { manage: false }])("seeds pages without reading or modifying bank configuration %j", async (opts) => {
   const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-    if (String(url).endsWith("/knowledge-base/tree")) return Response.json({ roots: [] });
-    if (String(url).endsWith("/knowledge-base/pages") && init?.method === "POST") return Response.json({ id: "page" });
+    if (String(url).endsWith("/pages/tree")) return Response.json({ roots: [] });
+    if (String(url).endsWith("/pages") && init?.method === "POST") return Response.json({ id: "page" });
     throw new Error("unexpected provisioning request");
   });
   await client().configureBank(opts);
-  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
+  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/pages/tree");
   expect(send.mock.calls.length).toBeGreaterThan(1);
   for (const [url, init] of send.mock.calls.slice(1)) {
-    expect(url).toBe("https://router.test/v1/default/banks/A/knowledge-base/pages");
+    expect(url).toBe("https://router.test/v1/default/banks/A/pages");
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toHaveProperty("source_query");
   }
@@ -159,7 +159,7 @@ it("keeps page capability unknown on redacted 404 without attempting bank provis
   const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
   await expect(client().configureBank()).resolves.toBeUndefined();
   expect(send).toHaveBeenCalledTimes(2);
-  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
+  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/pages/tree");
 });
 
 it("preserves read-only identity and refuses writes before fetch", async () => {
@@ -172,7 +172,7 @@ it("preserves read-only identity and refuses writes before fetch", async () => {
 });
 it("tolerates page-creation conflicts without leaking router response bodies", async () => {
   const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(credential, { status: 409 }));
-  const response = await client().req("POST", client().bankUrl("/knowledge-base/pages"), { name: "Page" }, [409]);
+  const response = await client().req("POST", client().bankUrl("/pages"), { name: "Page" }, [409]);
   expect(response.status).toBe(409);
   expect(await response.text()).toBe("");
   expect(send).toHaveBeenCalledTimes(1);
@@ -225,10 +225,10 @@ it.each([401, 403])("shares explicit-bank %s denial across root and sibling view
   await sibling.searchKnowledgePages("query");
   await root.forBank("B").searchKnowledgePages("query");
   expect(send.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
-    "/v1/default/banks/B/knowledge-base/search", "/v1/default/banks/A/knowledge-base/search",
-    "/v1/default/banks/B/knowledge-base/search",
-    "/v1/default/banks/A/knowledge-base/search", "/v1/default/banks/A/knowledge-base/search",
-    "/v1/default/banks/B/knowledge-base/search",
+    "/v1/default/banks/B/pages/search", "/v1/default/banks/A/pages/search",
+    "/v1/default/banks/B/pages/search",
+    "/v1/default/banks/A/pages/search", "/v1/default/banks/A/pages/search",
+    "/v1/default/banks/B/pages/search",
   ]);
   for (const [, init] of send.mock.calls.slice(2)) {
     expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${rotated}`);
@@ -315,7 +315,7 @@ it.each([false, true])("reapplies read-only managed policy after path tuning wit
   expect(startSeed).not.toHaveBeenCalled();
   expect(startSurvey).not.toHaveBeenCalled();
   expect(send).toHaveBeenCalledOnce();
-  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
+  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/pages/tree");
 });
 
 it("initializes a cold Node dispatcher on its first guarded request without replacing it", () => {
