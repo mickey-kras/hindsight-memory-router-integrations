@@ -1785,7 +1785,7 @@ diff --git a/package-lock.json b/npm-shrinkwrap.json
 similarity index 76%
 rename from package-lock.json
 rename to npm-shrinkwrap.json
-index db7c1f9..36011f9 100644
+index db7c1f9..8f7d183 100644
 --- a/package-lock.json
 +++ b/npm-shrinkwrap.json
 @@ -1,4 +1,4 @@
@@ -1793,14 +1793,14 @@ index db7c1f9..36011f9 100644
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.8.2",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.13",
++  "version": "0.8.14",
    "lockfileVersion": 3,
 @@ -7,4 +7,11 @@
      "": {
 -      "name": "@vectorize-io/hindsight-coding-agents",
 -      "version": "0.8.2",
 +      "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+      "version": "0.8.13",
++      "version": "0.8.14",
 +      "dependencies": {
 +        "@modelcontextprotocol/sdk": "^1.32.1",
 +        "@napi-rs/keyring": "2.1.2",
@@ -5937,7 +5937,7 @@ index db7c1f9..36011f9 100644
 -      "dev": true,
        "license": "ISC",
 diff --git a/package.json b/package.json
-index 93436a9..1becbc0 100644
+index 93436a9..ca2c8b2 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,10 +1,10 @@
@@ -5945,7 +5945,7 @@ index 93436a9..1becbc0 100644
 -  "name": "@vectorize-io/hindsight-coding-agents",
 -  "version": "0.8.2",
 +  "name": "@mickey-kras/hindsight-memory-router-coding-agents",
-+  "version": "0.8.13",
++  "version": "0.8.14",
    "repository": {
      "type": "git",
 -    "url": "https://github.com/vectorize-io/hindsight.git",
@@ -9988,16 +9988,335 @@ index 414168a..f9761b1 100644
 +  return ingestGitLog(client, repo, opts);
  }
 diff --git a/src/core/hindsight.pages.test.ts b/src/core/hindsight.pages.test.ts
-index 823d7d6..c061b5e 100644
+index 823d7d6..9563ebe 100644
 --- a/src/core/hindsight.pages.test.ts
 +++ b/src/core/hindsight.pages.test.ts
-@@ -504,3 +504,3 @@ describe("HindsightClient.seedPages", () => {
+@@ -230,3 +230,3 @@ describe("HindsightClient knowledge-page reads", () => {
+         // The tree is empty (bank missing), then the first create 404s for the same reason.
+-        return url.includes("/knowledge-base/")
++        return url.includes("/pages/")
+           ? { ok: false, status: 404, json: async () => ({ detail: "Bank 'repo-a' not found" }) }
+@@ -255,3 +255,3 @@ describe("HindsightClient knowledge-page reads", () => {
+       vi.fn(async (url: string, init: any) => {
+-        if (url.endsWith("/knowledge-base/tree"))
++        if (url.endsWith("/pages/tree"))
+           return { ok: true, status: 200, json: async () => ({ roots: drifted }) } as any;
+@@ -280,3 +280,3 @@ describe("HindsightClient knowledge-page reads", () => {
+     expect(calls[0].method).toBe("GET");
+-    expect(calls[0].url).toContain("/v1/default/banks/repo-a/knowledge-base/tree");
++    expect(calls[0].url).toContain("/v1/default/banks/repo-a/pages/tree");
+     expect(calls.some((k) => k.url.includes("/mental-models"))).toBe(false);
+@@ -328,3 +328,3 @@ describe("HindsightClient knowledge-page reads", () => {
+     expect(calls[0].method).toBe("GET");
+-    expect(calls[0].url).toContain("/knowledge-base/pages/kp-1");
++    expect(calls[0].url).toContain("/pages/kp-1");
+   });
+@@ -369,3 +369,3 @@ describe("HindsightClient knowledge-page reads", () => {
+       {
+-        match: (m, u) => m === "GET" && u.includes("/knowledge-base/search"),
++        match: (m, u) => m === "GET" && u.includes("/pages/search"),
+         json: { results: [] },
+@@ -382,3 +382,3 @@ describe("HindsightClient knowledge-page reads", () => {
+       {
+-        match: (m, u) => m === "GET" && u.includes("/knowledge-base/search"),
++        match: (m, u) => m === "GET" && u.includes("/pages/search"),
+         json: { results: [{ id: "kp-abc", name: "Component map", snippet: "…", score: 0.5 }] },
+@@ -386,3 +386,3 @@ describe("HindsightClient knowledge-page reads", () => {
+       {
+-        match: (m, u) => m === "GET" && u.includes("/knowledge-base/pages/"),
++        match: (m, u) => m === "GET" && u.includes("/pages/"),
+         json: { id: "kp-abc" },
+@@ -395,3 +395,3 @@ describe("HindsightClient knowledge-page reads", () => {
+     // /mental-models read 404'd on every kp-… id search produced.
+-    expect(calls[1].url).toContain("/knowledge-base/pages/kp-abc");
++    expect(calls[1].url).toContain("/pages/kp-abc");
+   });
+@@ -403,3 +403,3 @@ describe("HindsightClient knowledge-page reads", () => {
+     await c.getPage("p 1/x");
+-    expect(calls[0].url).toContain(`/knowledge-base/pages/${encodeURIComponent("p 1/x")}`);
++    expect(calls[0].url).toContain(`/pages/${encodeURIComponent("p 1/x")}`);
+   });
+@@ -422,3 +422,3 @@ describe("HindsightClient.seedPages", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -437,3 +437,3 @@ describe("HindsightClient.seedPages", () => {
+     const posts = calls.filter(
+-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
++      (k) => k.method === "POST" && k.url.endsWith("/pages")
+     );
+@@ -452,3 +452,3 @@ describe("HindsightClient.seedPages", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -461,3 +461,3 @@ describe("HindsightClient.seedPages", () => {
+     const posts = calls.filter(
+-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
++      (k) => k.method === "POST" && k.url.endsWith("/pages")
+     );
+@@ -480,3 +480,3 @@ describe("HindsightClient.seedPages", () => {
+         // without the knowledge-base API, as opposed to a 404 for a bank that does not exist yet.
+-        if (url.endsWith("/knowledge-base/tree"))
++        if (url.endsWith("/pages/tree"))
+           return { ok: false, status: 404, json: async () => ({ detail: "Not Found" }) } as any;
+@@ -489,9 +489,9 @@ describe("HindsightClient.seedPages", () => {
+     expect(calls.some((x) => x.url.endsWith("/import"))).toBe(true);
+-    expect(calls.some((x) => x.url.endsWith("/knowledge-base/pages"))).toBe(false);
++    expect(calls.some((x) => x.url.endsWith("/pages"))).toBe(false);
+   });
+ 
+-  it("creates every seeded page through /knowledge-base/pages on an empty bank", async () => {
++  it("creates every seeded page through /pages on an empty bank", async () => {
+     const calls: any[] = [];
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -501,6 +501,6 @@ describe("HindsightClient.seedPages", () => {
+     const posts = calls.filter(
+-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
++      (k) => k.method === "POST" && k.url.endsWith("/pages")
+     );
      expect(posts).toHaveLength(PAGES.length);
 -    expect(posts.map((p) => p.body.name).sort()).toEqual(PAGES.map((p) => p.name).sort());
 +    expect(posts.map((p) => p.body.name).sort((a, b) => a.localeCompare(b))).toEqual(PAGES.map((p) => p.name).sort((a, b) => a.localeCompare(b)));
      for (const post of posts) {
+@@ -528,3 +528,3 @@ describe("HindsightClient.seedPages", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -538,3 +538,3 @@ describe("HindsightClient.seedPages", () => {
+     const posts = calls.filter(
+-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
++      (k) => k.method === "POST" && k.url.endsWith("/pages")
+     );
+@@ -551,3 +551,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -577,3 +577,3 @@ describe("HindsightClient.seedPages", () => {
+         calls.push({ url, method: init?.method });
+-        const conflict = init?.method === "POST" && url.endsWith("/knowledge-base/pages");
++        const conflict = init?.method === "POST" && url.endsWith("/pages");
+         return {
+@@ -590,3 +590,3 @@ describe("HindsightClient.seedPages", () => {
+     expect(
+-      calls.filter((k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages"))
++      calls.filter((k) => k.method === "POST" && k.url.endsWith("/pages"))
+     ).toHaveLength(PAGES.length);
+@@ -599,3 +599,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -618,3 +618,3 @@ describe("HindsightClient.seedPages", () => {
+     expect(patches).toHaveLength(1);
+-    expect(patches[0].url).toContain("/knowledge-base/nodes/kp-0");
++    expect(patches[0].url).toContain("/pages/nodes/kp-0");
+     expect(patches[0].body).toEqual({
+@@ -632,3 +632,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -669,3 +669,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -703,3 +703,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -768,3 +768,3 @@ describe("HindsightClient.seedPages", () => {
+       vi.fn(async (url: string, init: any) => {
+-        if (url.endsWith("/knowledge-base/tree"))
++        if (url.endsWith("/pages/tree"))
+           return {
+@@ -812,3 +812,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -841,3 +841,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -864,3 +864,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -889,3 +889,3 @@ describe("HindsightClient.seedPages", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -899,3 +899,3 @@ describe("HindsightClient.seedPages", () => {
+     const posts = calls.filter(
+-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
++      (k) => k.method === "POST" && k.url.endsWith("/pages")
+     );
+@@ -921,3 +921,3 @@ describe("HindsightClient.seedPages", () => {
+       stubFetchRouted(calls, [
+-        { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++        { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+       ]);
+@@ -928,3 +928,3 @@ describe("HindsightClient.seedPages", () => {
+       return calls
+-        .filter((k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages"))
++        .filter((k) => k.method === "POST" && k.url.endsWith("/pages"))
+         .map((k) => k.body.trigger.refresh_cron as string);
+@@ -945,3 +945,3 @@ describe("HindsightClient.seedPages", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -961,3 +961,3 @@ describe("HindsightClient.seedPages", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -979,3 +979,3 @@ describe("HindsightClient.seedPages", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: {
+@@ -1086,3 +1086,3 @@ describe("HindsightClient.ensureFolder", () => {
+       {
+-        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+         json: { roots: [{ id: "existing-1", kind: "folder", name: "initiatives" }] },
+@@ -1094,3 +1094,3 @@ describe("HindsightClient.ensureFolder", () => {
+     expect(
+-      calls.some((k) => k.method === "POST" && k.url.endsWith("/knowledge-base/folders"))
++      calls.some((k) => k.method === "POST" && k.url.endsWith("/pages/folders"))
+     ).toBe(false);
+@@ -1101,5 +1101,5 @@ describe("HindsightClient.ensureFolder", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+       {
+-        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/folders"),
++        match: (m, u) => m === "POST" && u.endsWith("/pages/folders"),
+         json: { id: "new-folder" },
+@@ -1111,3 +1111,3 @@ describe("HindsightClient.ensureFolder", () => {
+     const post = calls.find(
+-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/folders")
++      (k) => k.method === "POST" && k.url.endsWith("/pages/folders")
+     );
+@@ -1123,5 +1123,5 @@ describe("HindsightClient.captureInitiative", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+       {
+-        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/folders"),
++        match: (m, u) => m === "POST" && u.endsWith("/pages/folders"),
+         json: { id: "folder-abc" },
+@@ -1129,3 +1129,3 @@ describe("HindsightClient.captureInitiative", () => {
+       {
+-        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/pages"),
++        match: (m, u) => m === "POST" && u.endsWith("/pages"),
+         json: { page_id: "pg" },
+@@ -1142,3 +1142,3 @@ describe("HindsightClient.captureInitiative", () => {
+     const pagePost = calls.find(
+-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
++      (k) => k.method === "POST" && k.url.endsWith("/pages")
+     );
+@@ -1150,5 +1150,5 @@ describe("HindsightClient.captureInitiative", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+       {
+-        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/folders"),
++        match: (m, u) => m === "POST" && u.endsWith("/pages/folders"),
+         json: { id: "folder-abc" },
+@@ -1156,3 +1156,3 @@ describe("HindsightClient.captureInitiative", () => {
+       {
+-        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/pages"),
++        match: (m, u) => m === "POST" && u.endsWith("/pages"),
+         json: { page_id: "pg" },
+@@ -1171,3 +1171,3 @@ describe("HindsightClient.captureInitiative", () => {
+     // The returned id is the SERVER-ASSIGNED page id ("pg" from the mock), NOT the derived slug —
+-    // the /knowledge-base/pages endpoint mints its own id.
++    // the /pages endpoint mints its own id.
+     expect(result).toEqual({ page_id: "pg" });
+@@ -1177,3 +1177,3 @@ describe("HindsightClient.captureInitiative", () => {
+     const pagePost = calls.find(
+-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
++      (k) => k.method === "POST" && k.url.endsWith("/pages")
+     );
+@@ -1219,5 +1219,5 @@ describe("HindsightClient.captureInitiative", () => {
+       stubFetchRouted(calls, [
+-        { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++        { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+         {
+-          match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/folders"),
++          match: (m, u) => m === "POST" && u.endsWith("/pages/folders"),
+           json: { id: "folder-abc" },
+@@ -1225,3 +1225,3 @@ describe("HindsightClient.captureInitiative", () => {
+         {
+-          match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/pages"),
++          match: (m, u) => m === "POST" && u.endsWith("/pages"),
+           json: { page_id: "pg" },
+@@ -1241,3 +1241,3 @@ describe("HindsightClient.captureInitiative", () => {
+       });
+-      return calls.find((k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages"))!.body
++      return calls.find((k) => k.method === "POST" && k.url.endsWith("/pages"))!.body
+         .trigger.refresh_cron as string;
+@@ -1269,3 +1269,3 @@ describe("HindsightClient.captureInitiative", () => {
+     // No new page created for enhancements.
+-    expect(calls.some((k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages"))).toBe(
++    expect(calls.some((k) => k.method === "POST" && k.url.endsWith("/pages"))).toBe(
+       false
+@@ -1273,3 +1273,3 @@ describe("HindsightClient.captureInitiative", () => {
+     // No folder lookup/creation either.
+-    expect(calls.some((k) => k.method === "GET" && k.url.endsWith("/knowledge-base/tree"))).toBe(
++    expect(calls.some((k) => k.method === "GET" && k.url.endsWith("/pages/tree"))).toBe(
+       false
+@@ -1336,3 +1336,3 @@ describe("HindsightClient.configureBank template import", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -1346,3 +1346,3 @@ describe("HindsightClient.configureBank template import", () => {
+     expect(calls.indexOf(importPosts[0])).toBeLessThan(
+-      calls.findIndex((k) => k.url.includes("/knowledge-base/"))
++      calls.findIndex((k) => k.url.includes("/pages/"))
+     );
+@@ -1367,3 +1367,3 @@ describe("HindsightClient.configureBank template import", () => {
+     expect(
+-      calls.filter((k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages"))
++      calls.filter((k) => k.method === "POST" && k.url.endsWith("/pages"))
+     ).toHaveLength(PAGES.length);
+@@ -1374,3 +1374,3 @@ describe("HindsightClient.configureBank template import", () => {
+     stubFetchRouted(calls, [
+-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
++      { match: (m, u) => m === "GET" && u.endsWith("/pages/tree"), json: { roots: [] } },
+     ]);
+@@ -1389,3 +1389,3 @@ describe("HindsightClient.configureBank — missions are seeded once (#2492)", (
+     {
+-      match: (m: string, u: string) => m === "GET" && u.endsWith("/knowledge-base/tree"),
++      match: (m: string, u: string) => m === "GET" && u.endsWith("/pages/tree"),
+       json: { roots: [] },
+@@ -1474,3 +1474,3 @@ describe("HindsightClient.configureBank — missions are seeded once (#2492)", (
+     // Pages are seeded either way — they are not bank configuration.
+-    expect(calls.some((k) => k.url.includes("/knowledge-base/"))).toBe(true);
++    expect(calls.some((k) => k.url.includes("/pages/"))).toBe(true);
+   });
+@@ -1492,3 +1492,3 @@ describe("HindsightClient.configureBank — missions are seeded once (#2492)", (
+     expect(calls.some((k) => k.url.endsWith("/config"))).toBe(false);
+-    expect(calls.some((k) => k.url.includes("/knowledge-base/"))).toBe(true);
++    expect(calls.some((k) => k.url.includes("/pages/"))).toBe(true);
+   });
 diff --git a/src/core/hindsight.ts b/src/core/hindsight.ts
-index f6ac73b..d46efcc 100644
+index f6ac73b..cfe60f8 100644
 --- a/src/core/hindsight.ts
 +++ b/src/core/hindsight.ts
 @@ -1 +1,5 @@
@@ -10012,6 +10331,11 @@ index f6ac73b..d46efcc 100644
    buildPageTrigger,
 -  codingBankManifest,
    type CustomPagesConfig,
+@@ -30,3 +32,3 @@ export const USER_AGENT = `hindsight-coding-agents/${PKG_VERSION}`;
+ 
+-/** One node of GET /knowledge-base/tree. Only the fields this client reads. */
++/** One node of GET /pages/tree. Only the fields this client reads. */
+ export interface KnowledgeNode {
 @@ -83,3 +85,3 @@ export function resolveRetainScopes(
    if (configured !== "per_source") return configured;
 -  const sources = [...new Set((tags ?? []).filter((t) => t.startsWith("source:")))].sort();
@@ -10367,6 +10691,41 @@ index f6ac73b..d46efcc 100644
 +    if (result.partial) this.log("partial memory read: assigned bank unavailable");
 +    return result.results.map(item => item.text ?? item.content ?? "").join("\n\n");
    }
+@@ -880,3 +772,3 @@ export class HindsightClient {
+     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
+-    const r = await this.req("GET", this.bankUrl("/knowledge-base/tree"));
++    const r = await this.req("GET", this.bankUrl("/pages/tree"));
+     if (await this.pagesUnsupported(r)) throw new KnowledgePagesUnavailableError();
+@@ -932,3 +824,3 @@ export class HindsightClient {
+       "GET",
+-      this.bankUrl(`/knowledge-base/pages/${encodeURIComponent(pageId)}`)
++      this.bankUrl(`/pages/${encodeURIComponent(pageId)}`)
+     );
+@@ -951,3 +843,3 @@ export class HindsightClient {
+       "GET",
+-      this.bankUrl(`/knowledge-base/search${q}`),
++      this.bankUrl(`/pages/search${q}`),
+       undefined,
+@@ -982,3 +874,3 @@ export class HindsightClient {
+    *
+-   * Matched by NAME, not id: `/knowledge-base/pages` mints its own `kp-…` id, so a stable
++   * Matched by NAME, not id: `/pages` mints its own `kp-…` id, so a stable
+    * client-chosen id isn't available to match on (unlike the old mental-model path, which keyed
+@@ -1029,3 +921,3 @@ export class HindsightClient {
+         // the outcome we wanted anyway, so tolerate it rather than failing the whole run.
+-        const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), body, [409]);
++        const r = await this.req("POST", this.bankUrl("/pages"), body, [409]);
+         if (await this.pagesUnsupported(r)) {
+@@ -1072,3 +964,3 @@ export class HindsightClient {
+           "PATCH",
+-          this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(hit.id)}`),
++          this.bankUrl(`/pages/nodes/${encodeURIComponent(hit.id)}`),
+           patch
+@@ -1137,3 +1029,3 @@ export class HindsightClient {
+         "PATCH",
+-        this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(page.id)}`),
++        this.bankUrl(`/pages/nodes/${encodeURIComponent(page.id)}`),
+         patch
 @@ -1158,4 +1050,4 @@ export class HindsightClient {
          .toLowerCase()
 -        .replace(/[^a-z0-9]+/g, "-")
@@ -10374,13 +10733,31 @@ index f6ac73b..d46efcc 100644
 +        .replaceAll(/[^a-z0-9]+/g, "-")
 +        .replaceAll(/(?:^-+)|(?:-+$)/g, "")
          .slice(0, 60) || "initiative"
+@@ -1186,3 +1078,3 @@ export class HindsightClient {
+   }): Promise<{ page_id: string }> {
+-    // `/knowledge-base/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
++    // `/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
+     // we create the page first and adopt the server-assigned id — that id is what the return value
+@@ -1198,3 +1090,3 @@ export class HindsightClient {
+       // the server's page default happens to be, which is only coincidentally PAGE_MAX_TOKENS.
+-      const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), {
++      const r = await this.req("POST", this.bankUrl("/pages"), {
+         name: args.title,
+@@ -1239,3 +1131,3 @@ export class HindsightClient {
+     try {
+-      const tree = (await (await this.req("GET", this.bankUrl("/knowledge-base/tree"))).json()) as {
++      const tree = (await (await this.req("GET", this.bankUrl("/pages/tree"))).json()) as {
+         roots?: { id?: string; kind?: string; name?: string }[];
 @@ -1246,3 +1138,4 @@ export class HindsightClient {
        if (hit?.id) return hit.id;
 -    } catch {
 +    } catch (error) {
 +      if (error instanceof AccessDeniedError) throw error;
        /* fall through to create */
-@@ -1252,3 +1145,4 @@ export class HindsightClient {
+@@ -1250,5 +1143,6 @@ export class HindsightClient {
+     try {
+-      const r = await this.req("POST", this.bankUrl("/knowledge-base/folders"), { name });
++      const r = await this.req("POST", this.bankUrl("/pages/folders"), { name });
        return ((await r.json()) as { id?: string }).id;
 -    } catch {
 +    } catch (error) {
@@ -12135,7 +12512,7 @@ index 0507e5e..b985ad1 100644
      stamp: buildRetainStamp(cfg, {
 diff --git a/src/core/router-client.test.ts b/src/core/router-client.test.ts
 new file mode 100644
-index 0000000..2b3463b
+index 0000000..1e222ca
 --- /dev/null
 +++ b/src/core/router-client.test.ts
 @@ -0,0 +1,542 @@
@@ -12202,7 +12579,7 @@ index 0000000..2b3463b
 +  await c.captureInitiative({ title: "Feature", summary: "Safe summary" });
 +  expect(send.mock.calls.some(([url]) => /\/(?:config|import)$/.test(String(url)))).toBe(false);
 +  expect(send.mock.calls.some(([url, init]) => String(url) === "https://router.test/v1/default/banks/A" && init?.method === "DELETE")).toBe(false);
-+  expect(send.mock.calls.some(([url, init]) => String(url).endsWith("/knowledge-base/pages") && init?.method === "POST")).toBe(true);
++  expect(send.mock.calls.some(([url, init]) => String(url).endsWith("/pages") && init?.method === "POST")).toBe(true);
 +  for (const [url, init] of send.mock.calls) {
 +    expect(String(url)).toMatch(/^https:\/\/router\.test\/(?:(?:v1\/)?version|v1\/default\/banks\/[AB]\/)/);
 +    expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${credential}`);
@@ -12216,7 +12593,7 @@ index 0000000..2b3463b
 +  await client().searchKnowledgePages(query);
 +  expect(send).toHaveBeenCalledOnce();
 +  const url = new URL(String(send.mock.calls[0][0]));
-+  expect(url.pathname).toBe("/v1/default/banks/A/knowledge-base/search");
++  expect(url.pathname).toBe("/v1/default/banks/A/pages/search");
 +  expect(url.searchParams.get("q")).toBe(query);
 +});
 +it.each([undefined, "", "http://localhost:8888", "invalid", "https://api.hindsight.vectorize.io", "https://user:secret@router.test", "https://router.test?secret=1"])("rejects invalid managed endpoints %s before any request", (endpoint) => {
@@ -12265,14 +12642,14 @@ index 0000000..2b3463b
 +});
 +it.each([401, 403])("fails closed when routed page seeding returns %s", async (status) => {
 +  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
-+    String(url).endsWith("/knowledge-base/tree")
++    String(url).endsWith("/pages/tree")
 +      ? Response.json({ roots: [] })
 +      : new Response(credential, { status })
 +  );
 +  const c = client();
 +  await expect(c.configureBank()).rejects.toThrow(AccessDeniedError);
 +  expect(send).toHaveBeenCalledTimes(2);
-+  expect(send.mock.calls[1][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/pages");
++  expect(send.mock.calls[1][0]).toBe("https://router.test/v1/default/banks/A/pages");
 +  await expect(c.configureBank()).rejects.toThrow(AccessDeniedError);
 +  expect(send).toHaveBeenCalledTimes(2);
 +});
@@ -12283,15 +12660,15 @@ index 0000000..2b3463b
 +});
 +it.each([{}, { manage: false }])("seeds pages without reading or modifying bank configuration %j", async (opts) => {
 +  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-+    if (String(url).endsWith("/knowledge-base/tree")) return Response.json({ roots: [] });
-+    if (String(url).endsWith("/knowledge-base/pages") && init?.method === "POST") return Response.json({ id: "page" });
++    if (String(url).endsWith("/pages/tree")) return Response.json({ roots: [] });
++    if (String(url).endsWith("/pages") && init?.method === "POST") return Response.json({ id: "page" });
 +    throw new Error("unexpected provisioning request");
 +  });
 +  await client().configureBank(opts);
-+  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
++  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/pages/tree");
 +  expect(send.mock.calls.length).toBeGreaterThan(1);
 +  for (const [url, init] of send.mock.calls.slice(1)) {
-+    expect(url).toBe("https://router.test/v1/default/banks/A/knowledge-base/pages");
++    expect(url).toBe("https://router.test/v1/default/banks/A/pages");
 +    expect(init?.method).toBe("POST");
 +    expect(JSON.parse(String(init?.body))).toHaveProperty("source_query");
 +  }
@@ -12300,7 +12677,7 @@ index 0000000..2b3463b
 +  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
 +  await expect(client().configureBank()).resolves.toBeUndefined();
 +  expect(send).toHaveBeenCalledTimes(2);
-+  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
++  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/pages/tree");
 +});
 +
 +it("preserves read-only identity and refuses writes before fetch", async () => {
@@ -12313,7 +12690,7 @@ index 0000000..2b3463b
 +});
 +it("tolerates page-creation conflicts without leaking router response bodies", async () => {
 +  const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(credential, { status: 409 }));
-+  const response = await client().req("POST", client().bankUrl("/knowledge-base/pages"), { name: "Page" }, [409]);
++  const response = await client().req("POST", client().bankUrl("/pages"), { name: "Page" }, [409]);
 +  expect(response.status).toBe(409);
 +  expect(await response.text()).toBe("");
 +  expect(send).toHaveBeenCalledTimes(1);
@@ -12366,10 +12743,10 @@ index 0000000..2b3463b
 +  await sibling.searchKnowledgePages("query");
 +  await root.forBank("B").searchKnowledgePages("query");
 +  expect(send.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
-+    "/v1/default/banks/B/knowledge-base/search", "/v1/default/banks/A/knowledge-base/search",
-+    "/v1/default/banks/B/knowledge-base/search",
-+    "/v1/default/banks/A/knowledge-base/search", "/v1/default/banks/A/knowledge-base/search",
-+    "/v1/default/banks/B/knowledge-base/search",
++    "/v1/default/banks/B/pages/search", "/v1/default/banks/A/pages/search",
++    "/v1/default/banks/B/pages/search",
++    "/v1/default/banks/A/pages/search", "/v1/default/banks/A/pages/search",
++    "/v1/default/banks/B/pages/search",
 +  ]);
 +  for (const [, init] of send.mock.calls.slice(2)) {
 +    expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${rotated}`);
@@ -12456,7 +12833,7 @@ index 0000000..2b3463b
 +  expect(startSeed).not.toHaveBeenCalled();
 +  expect(startSurvey).not.toHaveBeenCalled();
 +  expect(send).toHaveBeenCalledOnce();
-+  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/knowledge-base/tree");
++  expect(send.mock.calls[0][0]).toBe("https://router.test/v1/default/banks/A/pages/tree");
 +});
 +
 +it("initializes a cold Node dispatcher on its first guarded request without replacing it", () => {

@@ -32,15 +32,13 @@ export function classifyOperation(method: string, suffix: string): "read" | "wri
   if (method === "POST" && ["/memories/recall", "/reflect"].includes(suffix)) return "read";
   if (
     method === "GET" &&
-    /^\/(?:config|stats|tags|graph|documents|operations|memories|mental-models|knowledge-base)(?:\/[^/]+)*$/.test(
-      suffix,
-    )
+    /^\/(?:config|stats|tags|graph|documents|operations|memories|mental-models|pages)(?:\/[^/]+)*$/.test(suffix)
   )
     return "read";
   if (method === "GET" && suffix === "") return "read";
   if (
     ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
-    /^(?:\/(?:config|import|memories|documents|mental-models|knowledge-base|consolidate|consolidation)(?:\/[^/]+)*)?$/.test(
+    /^(?:\/(?:config|import|memories|documents|mental-models|pages|consolidate|consolidation)(?:\/[^/]+)*)?$/.test(
       suffix,
     )
   )

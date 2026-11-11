@@ -229,16 +229,16 @@ export class HostedRouterClient {
     return this.request(bank, `/documents/${segment(id)}/reprocess`, "POST", undefined, options);
   }
   listKnowledgePages(bank: string, query: KnowledgeQuery = {}, options?: RequestOptions): Promise<FacadeObject> {
-    return this.request(bank, `/knowledge-base/tree${queryString(query)}`, "GET", undefined, options);
+    return this.request(bank, `/pages/tree${queryString(query)}`, "GET", undefined, options);
   }
   searchKnowledgePages(bank: string, query: KnowledgeSearchQuery, options?: RequestOptions): Promise<FacadeObject> {
-    return this.request(bank, `/knowledge-base/search${queryString(query)}`, "GET", undefined, options);
+    return this.request(bank, `/pages/search${queryString(query)}`, "GET", undefined, options);
   }
   createKnowledgePage(bank: string, body: FacadeObject, options?: RequestOptions): Promise<FacadeObject> {
-    return this.request(bank, "/knowledge-base/pages", "POST", body, options);
+    return this.request(bank, "/pages", "POST", body, options);
   }
   getKnowledgePage(bank: string, pageId: string, options?: RequestOptions): Promise<FacadeObject> {
-    return this.request(bank, `/knowledge-base/pages/${segment(pageId)}`, "GET", undefined, options);
+    return this.request(bank, `/pages/${segment(pageId)}`, "GET", undefined, options);
   }
   updateKnowledgePage(
     bank: string,
@@ -246,9 +246,9 @@ export class HostedRouterClient {
     body: FacadeObject,
     options?: RequestOptions,
   ): Promise<FacadeObject> {
-    return this.request(bank, `/knowledge-base/nodes/${segment(nodeId)}`, "PATCH", body, options);
+    return this.request(bank, `/pages/nodes/${segment(nodeId)}`, "PATCH", body, options);
   }
   deleteKnowledgePage(bank: string, nodeId: string, options?: RequestOptions): Promise<FacadeObject> {
-    return this.request(bank, `/knowledge-base/nodes/${segment(nodeId)}`, "DELETE", undefined, options);
+    return this.request(bank, `/pages/nodes/${segment(nodeId)}`, "DELETE", undefined, options);
   }
 }

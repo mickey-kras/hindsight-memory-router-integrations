@@ -17,7 +17,7 @@ Base: `vectorize-io/hindsight` OpenClaw integration `v1.0.0`.
 
 Reused source: `src/upstream/src/{retain-queue,session-patterns,types}.ts`.
 
-OpenClaw direct production dependencies: `@vectorize-io/hindsight-agent-sdk@0.1.1`, `@vectorize-io/hindsight-client@1.1.0` and `fs-native-extensions@^1.5.1`. The client package gives types required by the exported TypeScript declarations, including `MinScores`.
+OpenClaw direct production dependencies: `@vectorize-io/hindsight-agent-sdk@0.1.1`, `@vectorize-io/hindsight-client@1.2.0` and `fs-native-extensions@^1.5.1`. The client package gives types required by the exported TypeScript declarations, including `MinScores`.
 
 Each package's `package.json` and `npm-shrinkwrap.json` define its dependencies and exact resolved versions. See the [dependency inventory](DEVELOPMENT.md#dependency-inventory).
 
@@ -32,3 +32,4 @@ The Agent SDK remains 0.1.1. The repository overrides its client dependency to 1
 OpenClaw's new native memory-provider registration stays outside the router-owned entrypoint. The explicit managed tools stay registered.
 The plugin imports its ended-transcript context type. The hook retains only the supplied message payload.
 
+The hosted client and coding-agent page tools use the `/pages` routes exposed by Memory Router and Hindsight 1.2.1.
