@@ -1038,8 +1038,8 @@ jobs:
                           step['uses'] = re.sub(r'@[0-9a-f]{40}$','@PINNED', uses)
               return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
           LOCKFILES = {'.github/scripts/package-lock.json', '.github/trusted-ci/package-lock.json'}
-          OWNER_LOGIN = 'mickey-kras'
-          OWNER_ID = 24433677
+          TRUSTED_REVIEWERS_PATH = '.github/trusted-reviewers.json'
+          REPO_OWNER_LOGIN = 'mickey-kras'
           pr_context = {}
           review_admitted = False
 
@@ -1104,39 +1104,65 @@ jobs:
                   return False
               return isinstance(reviewed, dict) and reviewed.get('repository') == repository and type(reviewed.get('ruleset_id')) is int and reviewed['ruleset_id'] == rule_id and reviewed.get('updated_at') == revision and type(reviewed.get('bypass_actors')) is list and reviewed['bypass_actors'] == []
 
-          def owner_approved():
+          def load_trusted_reviewers():
+              data = json.loads(base_file(TRUSTED_REVIEWERS_PATH))
+              if not isinstance(data, dict) or not isinstance(data.get('reviewers'), list) or not data['reviewers']:
+                  raise ValueError('trusted-reviewers.json: reviewers must be a non-empty list')
+              trusted_ids = set()
+              trusted_logins = set()
+              for entry in data['reviewers']:
+                  if not isinstance(entry, dict):
+                      raise ValueError('trusted-reviewers.json: reviewer entry must be an object')
+                  login = entry.get('login')
+                  user_id = entry.get('id')
+                  if not isinstance(login, str) or not login:
+                      raise ValueError('trusted-reviewers.json: reviewer login must be a non-empty string')
+                  if type(user_id) is not int or user_id <= 0:
+                      raise ValueError('trusted-reviewers.json: reviewer id must be a positive integer')
+                  trusted_logins.add(login)
+                  trusted_ids.add(user_id)
+              return trusted_ids, trusted_logins
+
+          def trusted_approved(user, trusted_ids, trusted_logins):
+              if not isinstance(user, dict) or user.get('type') != 'User':
+                  return False
+              user_id = user.get('id')
+              if type(user_id) is int and user_id in trusted_ids:
+                  return True
+              return user.get('login') in trusted_logins
+
+          def admission_approved():
+              trusted_ids, trusted_logins = load_trusted_reviewers()
               user = pr_context.get('user', {})
-              is_owner = user.get('type') == 'User' and user.get('id') == OWNER_ID and user.get('login') == OWNER_LOGIN
-              if user.get('type') != 'Bot' and not is_owner:
+              if user.get('type') != 'Bot' and not trusted_approved(user, trusted_ids, trusted_logins):
                   return False
               base = pr_context.get('base', {})
               if base.get('repo', {}).get('full_name') != f'{os.environ["OWNER"]}/{os.environ["REPO"]}':
                   return False
-              if os.environ['OWNER'] != OWNER_LOGIN:
+              if os.environ['OWNER'] != REPO_OWNER_LOGIN:
                   return False
               owners = [line.strip() for line in base_file('.github/CODEOWNERS').splitlines() if line.strip() and not line.lstrip().startswith('#')]
-              if owners != [f'/.github/ @{OWNER_LOGIN}']:
+              github_entries = [line.split() for line in owners if line.split() and line.split()[0] == '/.github/']
+              if len(github_entries) != 1:
+                  return False
+              if not any(part.lstrip('@') in trusted_logins for part in github_entries[0][1:]):
                   return False
               comments = api_json(f'issues/{os.environ["PR_NUMBER"]}/comments?per_page=100', paginate=True)
               commands = {f'/approve-ci {pr_context["head"]["sha"]}', f'/revoke-ci {pr_context["head"]["sha"]}'}
               decisions = [comment for comment in comments
-                           if comment.get('user', {}).get('id') == OWNER_ID
-                           and comment.get('user', {}).get('login') == OWNER_LOGIN
-                           and comment.get('user', {}).get('type') == 'User'
+                           if trusted_approved(comment.get('user', {}), trusted_ids, trusted_logins)
                            and comment.get('body', '').strip() in commands]
               if decisions:
                   latest = max(decisions, key=lambda comment: comment['id'])
                   return latest['body'].strip() == f'/approve-ci {pr_context["head"]["sha"]}'
               user = pr_context.get('user', {})
-              if user.get('type') != 'Bot' or user.get('id') == OWNER_ID or user.get('login') == OWNER_LOGIN:
+              if user.get('type') != 'Bot' or trusted_approved(user, trusted_ids, trusted_logins):
                   return False
               rules = api_json('rules/branches/' + quote(base['ref'], safe=''), paginate=True)
               if not isinstance(rules, list) or not any(review_required(rule) and review_source_active(rule) for rule in rules):
                   return False
               reviews = api_json(f'pulls/{os.environ["PR_NUMBER"]}/reviews?per_page=100', paginate=True)
-              decisions = [review for review in reviews if review.get('user', {}).get('id') == OWNER_ID
-                           and review.get('user', {}).get('login') == OWNER_LOGIN
-                           and review.get('user', {}).get('type') == 'User'
+              decisions = [review for review in reviews if trusted_approved(review.get('user', {}), trusted_ids, trusted_logins)
                            and review.get('state') in ('APPROVED', 'CHANGES_REQUESTED', 'DISMISSED')]
               latest = max(decisions, key=lambda review: review['id'], default={})
               return latest.get('state') == 'APPROVED' and latest.get('commit_id') == pr_context['head']['sha']
@@ -1207,7 +1233,7 @@ jobs:
               '.ste.yml': '15f7ba5edd8c302b63642715020d62898623c098833d2fa4f200cbf7758f668c',
               '.vale.ini': 'a065a9c5134a7c47c9b3a35f76a4945c7fc203358a1f4e211e530e11859703d0',
               '.vale/styles/config/vocabularies/Project/accept.txt': '3b3aca4e207bf30940fa2e078dcacc4d8dca32ee0b31240360925653655c8768',
-              '.github/scripts/ci-admission.test.py': 'e7e63235c0cd53d9196d2a3c43234512bd46280c13ac484769740b191653a9ca',
+              '.github/scripts/ci-admission.test.py': 'd4c07cbc430117b6ab4eeaadd3c03b891f69957bf87aab34b703ed0f05362c47',
               '.github/trusted-ci/security-permissions.test.cjs': '684264bd16888d0d9ffe7df823fe9eaf45f4165ad4bd2d7f369b71f876203768',
               '.github/trusted-ci/gitleaks.test.cjs': '77e8bce1d7ad42dfc6ab4d3fd5791b3a04c0e6c0566cae4e3d4cb6191fa68ff2',
               '.github/trusted-ci/policy.test.py': '977628dd9e7a5b48f94a54f3eef8583e786cbb7557f77af27f0e242bc7a72520',
@@ -1267,6 +1293,7 @@ jobs:
 
           GATES = {
               '.github/CODEOWNERS': gate_review_controls,
+              '.github/trusted-reviewers.json': gate_review_controls,
               '.github/rulesets/require-ci-owner-review.json': gate_review_controls,
               '.github/workflows/aislop.yml': gate_aislop,
               '.github/workflows/codeql.yml': gate_codeql,
@@ -1387,7 +1414,7 @@ jobs:
           def main():
               global review_admitted
               head_sha, author_association, author_login = resolve_pr_context()
-              review_admitted = owner_approved()
+              review_admitted = admission_approved()
               files = load_files() if os.environ.get('GUARD_FIXTURE_DIR') else api_json(f'pulls/{os.environ["PR_NUMBER"]}/files?per_page=100', paginate=True)
               if len(files) >= 3000:
                   fail(

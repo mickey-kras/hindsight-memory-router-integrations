@@ -67,6 +67,11 @@ class AdmissionTests(unittest.TestCase):
             self.guard.gate_lockfile(self.lock_path, lock if isinstance(lock, str) else json.dumps(lock))
         return list(self.guard.failures)
 
+    def base_file_content(self, path):
+        if path == '.github/trusted-reviewers.json':
+            return json.dumps({'reviewers': [{'login': 'mickey-kras', 'id': 24433677}]})
+        return '/.github/ @mickey-kras\n'
+
     def approved(self, settings_review=''):
         def api(path, paginate=False):
             if path.startswith('issues/'):
@@ -77,9 +82,9 @@ class AdmissionTests(unittest.TestCase):
             return self.rules if path.startswith('rules/') else self.reviews
         with patch.dict('os.environ', {'OWNER': 'mickey-kras', 'REPO': 'test', 'PR_NUMBER': '1',
                                       'CI_POLICY_SETTINGS_REVIEW': settings_review}), patch.object(
-            self.guard, 'base_file', return_value='/.github/ @mickey-kras\n'
+            self.guard, 'base_file', side_effect=self.base_file_content
         ), patch.object(self.guard, 'api_json', side_effect=api):
-            return self.guard.owner_approved()
+            return self.guard.admission_approved()
 
     def settings_review(self, **values):
         return json.dumps({'repository': 'mickey-kras/test', 'ruleset_id': 42,
@@ -167,10 +172,13 @@ class AdmissionTests(unittest.TestCase):
         self.guard.pr_context['head']['sha'] = 'c' * 40
         self.assertFalse(self.approved())
 
-    def test_comment_requires_exact_owner_and_command(self):
+    def test_comment_requires_trusted_reviewer_and_command(self):
         owner = {'type': 'User', 'login': 'mickey-kras', 'id': 24433677}
         self.guard.pr_context['user'] = owner
-        for user in [{**owner, 'id': 123}, {**owner, 'login': 'other'}, {**owner, 'type': 'Bot'}]:
+        for user in [{**owner, 'id': 123}, {**owner, 'login': 'other'}]:
+            self.comments = [{'id': 1, 'user': user, 'body': '/approve-ci ' + 'a' * 40}]
+            self.assertTrue(self.approved())
+        for user in [{**owner, 'type': 'Bot'}, {'type': 'User', 'login': 'other', 'id': 123}]:
             self.comments = [{'id': 1, 'user': user, 'body': '/approve-ci ' + 'a' * 40}]
             self.assertFalse(self.approved())
         for body in ['/approve-ci aaaaaaa', 'Quoted /approve-ci ' + 'a' * 40, '/approve-ci ' + 'a' * 40 + '\nextra']:
@@ -220,7 +228,7 @@ class AdmissionTests(unittest.TestCase):
                         self.guard, 'base_file', return_value=original
                     ), patch.object(
                         self.guard, 'resolve_pr_context', return_value=('a' * 40, 'OWNER', 'mickey-kras')
-                    ), patch.object(self.guard, 'owner_approved', return_value=admitted), patch.object(
+                    ), patch.object(self.guard, 'admission_approved', return_value=admitted), patch.object(
                         self.guard, 'load_files', return_value=[entry]
                     ), patch.object(self.guard, 'fetch_file', return_value=content), patch('builtins.print'):
                         if mutation in ('unchanged', 'approved'):
@@ -329,7 +337,7 @@ class AdmissionTests(unittest.TestCase):
             self.guard.failures.clear()
             with self.subTest(path=path), patch.dict('os.environ', {'GUARD_FIXTURE_DIR': 'test'}), patch.object(
                 self.guard, 'resolve_pr_context', return_value=('a' * 40, 'OWNER', 'mickey-kras')
-            ), patch.object(self.guard, 'owner_approved', return_value=True), patch.object(
+            ), patch.object(self.guard, 'admission_approved', return_value=True), patch.object(
                 self.guard, 'load_files', return_value=[{'filename': path, 'status': 'added'}]
             ), patch('builtins.print'):
                 with self.assertRaises(SystemExit):
@@ -351,7 +359,7 @@ class AdmissionTests(unittest.TestCase):
                 'OWNER': 'mickey-kras', 'REPO': 'test', 'PR_NUMBER': '1'
             }, clear=True), patch.object(self.guard, 'resolve_pr_context', return_value=(
                 'a' * 40, 'OWNER', 'mickey-kras'
-            )), patch.object(self.guard, 'owner_approved', return_value=True), patch.object(
+            )), patch.object(self.guard, 'admission_approved', return_value=True), patch.object(
                 self.guard, 'api_json', side_effect=api
             ), patch('builtins.print'):
                 if mutation == 'stable':
@@ -364,10 +372,10 @@ class AdmissionTests(unittest.TestCase):
 
     def test_api_failure_is_not_an_approval(self):
         with patch.dict('os.environ', {'OWNER': 'mickey-kras', 'REPO': 'test', 'PR_NUMBER': '1'}), patch.object(
-            self.guard, 'base_file', return_value='/.github/ @mickey-kras\n'
+            self.guard, 'base_file', side_effect=self.base_file_content
         ), patch.object(self.guard, 'api_json', side_effect=RuntimeError('API unavailable')):
             with self.assertRaises(RuntimeError):
-                self.guard.owner_approved()
+                self.guard.admission_approved()
 
     def test_real_pr_policy_entrypoint_reads_live_review_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -392,6 +400,7 @@ print(value if isinstance(value, str) else json.dumps(value))
                 prefix + 'pulls/1/reviews?per_page=100': [self.reviews],
                 prefix + 'issues/1/comments?per_page=100': [[]],
                 prefix + 'contents/.github/CODEOWNERS?ref=' + 'b' * 40: '/.github/ @mickey-kras\n',
+                prefix + 'contents/.github/trusted-reviewers.json?ref=' + 'b' * 40: json.dumps({'reviewers': [{'login': 'mickey-kras', 'id': 24433677}]}),
                 prefix + 'contents/.github/scripts/release-settings.cjs?ref=' + 'a' * 40: '// independently reviewed update\n',
             }
             command = ['node', '-e', "require('./.github/scripts/dependabot-validation.cjs').runPolicy({}, {owner:'mickey-kras',repo:'test'}, {number:1}, [], {live:true}).catch(error=>{console.error(error);process.exit(1)})"]
