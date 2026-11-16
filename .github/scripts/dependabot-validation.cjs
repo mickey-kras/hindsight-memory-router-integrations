@@ -127,6 +127,11 @@ async function runPolicy(github, repo, pull, files, { live = false } = {}) {
       "files.json": JSON.stringify(files),
     }))
       writeFileSync(join(fixture, name), value);
+    mkdirSync(join(fixture, "base", ".github"), { recursive: true });
+    writeFileSync(
+      join(fixture, "base", ".github", "trusted-reviewers.json"),
+      await readFile(github, repo, ".github/trusted-reviewers.json", pull.base.sha),
+    );
     for (const file of files.filter((file) => file.status !== "removed" && !file.filename.endsWith(".tgz"))) {
       const destination = join(fixture, file.filename);
       mkdirSync(dirname(destination), { recursive: true });
