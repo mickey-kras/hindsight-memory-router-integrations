@@ -1785,7 +1785,7 @@ diff --git a/package-lock.json b/npm-shrinkwrap.json
 similarity index 76%
 rename from package-lock.json
 rename to npm-shrinkwrap.json
-index db7c1f9..8f7d183 100644
+index db7c1f9..11b712f 100644
 --- a/package-lock.json
 +++ b/npm-shrinkwrap.json
 @@ -1,4 +1,4 @@
@@ -2172,9 +2172,9 @@ index db7c1f9..8f7d183 100644
 -      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.15.tgz",
 -      "integrity": "sha512-Za2ai6TLdKjUvnur+eenO6nuYYipVAEhyCAdaV8IRvmU9kK8crOZUSYvIXn72E4f8fJqyAbpcJuTsYYmZp9Deg==",
 -      "dev": true,
-+      "version": "2.1.5",
-+      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.5.tgz",
-+      "integrity": "sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==",
++      "version": "2.1.8",
++      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.8.tgz",
++      "integrity": "sha512-jdf7FHh6A1lzjpHHQUgxsg2GeER2vMetnAOfeActzcoli6jamlK+NAwL6Dsr5Fl3BS3tYUQzCdtZjU8Qxv7bEA==",
        "license": "MIT",
        "engines": {
 -        "node": ">=18.14.1"
@@ -4370,9 +4370,15 @@ index db7c1f9..8f7d183 100644
        "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
 -      "dev": true,
        "license": "MIT",
-@@ -4831,3 +4347,2 @@
-       "integrity": "sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==",
+@@ -4828,6 +4344,5 @@
+     "node_modules/hono": {
+-      "version": "4.13.13",
+-      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.13.tgz",
+-      "integrity": "sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==",
 -      "dev": true,
++      "version": "4.13.18",
++      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.18.tgz",
++      "integrity": "sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA==",
        "license": "MIT",
 @@ -4850,12 +4365,2 @@
      },
