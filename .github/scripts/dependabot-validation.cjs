@@ -107,14 +107,37 @@ async function readFile(github, repo, path, ref) {
   return decoded.toString("utf8");
 }
 
-async function runPolicy(github, repo, pull, files, { live = false } = {}) {
-  if (live) {
-    if (!process.env.GH_TOKEN) throw new Error("Live policy requires a read-only GitHub token");
-    execFileSync("python3", [join(__dirname, "verify-prepared-policy.py"), "--live"], {
-      env: { ...process.env, OWNER: repo.owner, REPO: repo.repo, PR_NUMBER: String(pull.number) },
+// execFileSync captures the child's output and drops it when the command
+// fails, so a failed policy run used to surface only a bare "Command
+// failed" traceback with the guard's actual findings lost. Print the
+// captured streams before rethrowing to keep failures debuggable.
+function runPolicyScript(args, env) {
+  try {
+    return execFileSync("python3", args, {
+      ...(env ? { env } : {}),
       encoding: "utf8",
       timeout: 60000,
       maxBuffer: 1024 * 1024,
+    });
+  } catch (error) {
+    for (const stream of ["stdout", "stderr"]) {
+      const text = error && error[stream];
+      if (typeof text === "string" && text.trim() !== "") {
+        process.stderr.write(`policy ${stream}:\n${text}\n`);
+      }
+    }
+    throw error;
+  }
+}
+
+async function runPolicy(github, repo, pull, files, { live = false } = {}) {
+  if (live) {
+    if (!process.env.GH_TOKEN) throw new Error("Live policy requires a read-only GitHub token");
+    runPolicyScript([join(__dirname, "verify-prepared-policy.py"), "--live"], {
+      ...process.env,
+      OWNER: repo.owner,
+      REPO: repo.repo,
+      PR_NUMBER: String(pull.number),
     });
     return;
   }
@@ -137,11 +160,7 @@ async function runPolicy(github, repo, pull, files, { live = false } = {}) {
       mkdirSync(dirname(destination), { recursive: true });
       writeFileSync(destination, await readFile(github, repo, file.filename, pull.head.sha));
     }
-    execFileSync("python3", [join(__dirname, "verify-prepared-policy.py"), fixture], {
-      encoding: "utf8",
-      timeout: 60000,
-      maxBuffer: 1024 * 1024,
-    });
+    runPolicyScript([join(__dirname, "verify-prepared-policy.py"), fixture]);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
