@@ -759,6 +759,8 @@ test("the PR guard checkout can execute its trusted policy without application c
     }
     const fixture = join(directory, "fixture");
     mkdirSync(fixture);
+    mkdirSync(join(fixture, "base", ".github"), { recursive: true });
+    cpSync(join(root, ".github/trusted-reviewers.json"), join(fixture, "base", ".github/trusted-reviewers.json"));
     for (const [name, value] of Object.entries({
       "files.json": "[]",
       head_sha: generated,
@@ -1435,6 +1437,8 @@ test("trusted policy enforces source contracts while allowing benign implementat
     }
     mkdirSync(join(directory, "base", ownerGated, ".."), { recursive: true });
     cpSync(join(root, ownerGated), join(directory, "base", ownerGated));
+    mkdirSync(join(directory, "base", ".github"), { recursive: true });
+    cpSync(join(root, ".github/trusted-reviewers.json"), join(directory, "base", ".github/trusted-reviewers.json"));
     for (const [name, value] of Object.entries({
       head_sha: head,
       author_association: "OWNER",
@@ -1612,12 +1616,21 @@ function policyFileHarness(text, large = false) {
   const sha = execFileSync("git", ["hash-object", "--stdin"], { input: bytes, encoding: "utf8" }).trim();
   const blob = { sha, size: bytes.length, encoding: "base64", content: bytes.toString("base64") };
   const metadata = { ...blob, type: "file", ...(large ? { encoding: "none", content: "" } : {}) };
+  const reviewersBytes = Buffer.from(JSON.stringify({ reviewers: [{ login: "mickey-kras", id: 24433677 }] }));
+  const reviewersMetadata = {
+    type: "file",
+    sha: execFileSync("git", ["hash-object", "--stdin"], { input: reviewersBytes, encoding: "utf8" }).trim(),
+    size: reviewersBytes.length,
+    encoding: "base64",
+    content: reviewersBytes.toString("base64"),
+  };
   const requests = [];
   const github = {
     rest: {
       repos: {
         getContent: async (request) => {
           requests.push({ operation: "contents", ...request });
+          if (request.path === ".github/trusted-reviewers.json") return { data: reviewersMetadata };
           return { data: metadata };
         },
       },
@@ -1641,13 +1654,17 @@ test("policy reads inline base64 at the exact PR head without a blob request", a
   const h = policyFileHarness(policyPackage);
   h.metadata.content = `${h.metadata.content.match(/.{1,60}/g).join("\n")}\n`;
   await h.run();
-  assert.deepEqual(h.requests, [{ operation: "contents", ...context.repo, path: "package.json", ref: head }]);
+  assert.deepEqual(h.requests, [
+    { operation: "contents", ...context.repo, path: ".github/trusted-reviewers.json", ref: base },
+    { operation: "contents", ...context.repo, path: "package.json", ref: head },
+  ]);
 });
 
 test("policy reads a large file by its immutable blob and evaluates its trailing contents", async () => {
   const h = policyFileHarness(`${" ".repeat(1024 * 1024)}${policyPackage}`, true);
   await h.run();
   assert.deepEqual(h.requests, [
+    { operation: "contents", ...context.repo, path: ".github/trusted-reviewers.json", ref: base },
     { operation: "contents", ...context.repo, path: "package.json", ref: head },
     { operation: "blob", ...context.repo, file_sha: h.metadata.sha },
   ]);
@@ -1674,7 +1691,7 @@ test("policy rejects non-files and malformed contents metadata before blob looku
     const h = policyFileHarness(policyPackage);
     h.github.rest.repos.getContent = async () => ({ data: metadata });
     await assert.rejects(h.run, /Not a regular file|Invalid file/);
-    assert.deepEqual(h.requests, []);
+    assert.deepEqual(h.requests.slice(1), []);
   }
 });
 
@@ -1705,7 +1722,7 @@ test("policy rejects malformed or mismatched blobs instead of accepting omitted 
     const h = policyFileHarness(policyPackage, true);
     mutate(h.blob);
     await assert.rejects(h.run, /Invalid (?:blob|file)/);
-    assert.equal(h.requests.length, 2);
+    assert.equal(h.requests.length, 3);
   }
   const h = policyFileHarness(policyPackage, true);
   h.github.rest.git.getBlob = async () => ({ data: null });
@@ -1720,7 +1737,7 @@ test("policy propagates content and blob retrieval failures without fallback or 
       throw failure;
     };
     await assert.rejects(h.run, (error) => error === failure);
-    assert.equal(h.requests.length, operation === "getContent" ? 0 : 1);
+    assert.equal(h.requests.length, operation === "getContent" ? 0 : 2);
   }
 });
 
