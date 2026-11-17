@@ -9,10 +9,6 @@ name: trusted ci
         type: string
         default: ''
     outputs:
-      biome_artifact:
-        value: ${{ jobs.checks.outputs.biome_artifact }}
-      biome_attempt:
-        value: ${{ jobs.checks.outputs.biome_attempt }}
       coverage_artifact:
         value: ${{ jobs.checks.outputs.coverage_artifact }}
 permissions:
@@ -22,8 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     outputs:
-      biome_artifact: ${{ steps.biome.outputs.artifact-id }}
-      biome_attempt: ${{ steps.biome-report.outputs.attempt }}
       coverage_artifact: ${{ steps.coverage.outputs.artifact-id }}
     env:
       NIXPKGS_REV: e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3
@@ -152,35 +146,6 @@ jobs:
           printf 'expected npm dependency hash: %s\nactual npm dependency hash:   %s\n' \
             "$expected_deps" "$actual_deps"
           test "$actual_deps" = "$expected_deps"
-      - name: Export Biome analysis report
-        id: biome-report
-        if: ${{ success() && inputs.revision_sha == '' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-        run: |
-          mkdir -p reports
-          npm exec -- biome lint . --max-diagnostics=none --reporter=sarif --reporter-file=reports/biome.sarif
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          node --input-type=module <<'NODE'
-          import { readFileSync, writeFileSync } from 'node:fs';
-          import { createHash } from 'node:crypto';
-          const { GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT } = process.env;
-          const digest = createHash('sha256').update(readFileSync('reports/biome.sarif')).digest('hex');
-          writeFileSync('reports/provenance.json', JSON.stringify({
-            repository: GITHUB_REPOSITORY, sha: GITHUB_SHA, run: GITHUB_RUN_ID,
-            attempt: GITHUB_RUN_ATTEMPT, workspace: process.cwd(), digest,
-          }));
-          NODE
-          printf 'attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
-      - name: Retain Biome analysis report
-        id: biome
-        if: ${{ success() && inputs.revision_sha == '' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: biome-analysis-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            reports/biome.sarif
-            reports/provenance.json
-          if-no-files-found: error
-          retention-days: 7
       - name: Record coverage provenance
         env:
           COVERAGE_SHA: ${{ inputs.revision_sha || github.sha }}
@@ -195,6 +160,36 @@ jobs:
             coverage/provenance.json
           if-no-files-found: error
           retention-days: 7
+      - name: Export Biome analysis report
+        if: ${{ success() && inputs.revision_sha == '' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        env:
+          COVERAGE_ARTIFACT_ID: ${{ steps.coverage.outputs.artifact-id }}
+        run: |
+          mkdir -p reports
+          npm exec -- biome lint . --max-diagnostics=none --reporter=sarif --reporter-file=reports/biome.sarif
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          const { GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID, COVERAGE_ARTIFACT_ID } = process.env;
+          assert.match(COVERAGE_ARTIFACT_ID ?? '', /^[1-9]\d*$/);
+          const digest = createHash('sha256').update(readFileSync('reports/biome.sarif')).digest('hex');
+          writeFileSync('reports/provenance.json', JSON.stringify({
+            repository: GITHUB_REPOSITORY, sha: GITHUB_SHA, run: GITHUB_RUN_ID,
+            coverageArtifact: COVERAGE_ARTIFACT_ID, workspace: process.cwd(), digest,
+          }));
+          NODE
+      - name: Retain Biome analysis report
+        if: ${{ success() && inputs.revision_sha == '' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: biome-analysis-${{ github.sha }}-${{ github.run_id }}-${{ steps.coverage.outputs.artifact-id }}
+          path: |
+            reports/biome.sarif
+            reports/provenance.json
+          if-no-files-found: error
+          retention-days: 7
     permissions:
       contents: read
   checks:
@@ -206,8 +201,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      biome_artifact: ${{ needs.build.outputs.biome_artifact }}
-      biome_attempt: ${{ needs.build.outputs.biome_attempt }}
       coverage_artifact: ${{ needs.build.outputs.coverage_artifact }}
     steps:
       - name: Require build and independent scans

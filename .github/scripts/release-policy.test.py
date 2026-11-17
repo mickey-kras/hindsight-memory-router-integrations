@@ -204,7 +204,8 @@ class ReleasePolicyTests(unittest.TestCase):
             self.assertEqual(ci["jobs"]["checks"]["needs"], ["build", "security"])
         retained = next(step for step in checks["steps"] if step.get("id") == "coverage")
         self.assertNotIn("if", retained)
-        self.assertEqual(checks["steps"][-1], retained)
+        biome_export = next(step for step in checks["steps"] if step.get("name") == "Export Biome analysis report")
+        self.assertLess(checks["steps"].index(retained), checks["steps"].index(biome_export))
         sonar = {step.get("name"): step for step in main["jobs"]["sonar"]["steps"]}
         self.assertEqual(sonar["Restore verified coverage"]["with"]["artifact-ids"],
                          "${{ needs.quality.outputs.coverage_artifact }}")
@@ -227,30 +228,23 @@ class ReleasePolicyTests(unittest.TestCase):
         for step in sonar_steps:
             self.assertNotRegex(step.get("run", ""), r"\bnpm\s+(?:run\s+)?(?:test|build)\b")
 
-    def test_biome_outputs_preserve_the_successful_producer_identity(self):
+    def test_biome_identity_uses_the_existing_coverage_output_contract(self):
         ci = yaml.safe_load((ROOT / CI).read_text())
-        outputs = ci["on"]["workflow_call"]["outputs"]
-        for name, expression in {
-            "biome_artifact": "${{ steps.biome.outputs.artifact-id }}",
-            "biome_attempt": "${{ steps.biome-report.outputs.attempt }}",
-        }.items():
-            self.assertEqual(ci["jobs"]["build"]["outputs"][name], expression)
-            self.assertEqual(ci["jobs"]["checks"]["outputs"][name],
-                             "${{ needs.build.outputs." + name + " }}")
-            self.assertEqual(outputs[name]["value"], "${{ jobs.checks.outputs." + name + " }}")
-        steps = {step.get("name"): step for step in ci["jobs"]["build"]["steps"]}
-        self.assertEqual(steps["Retain Biome analysis report"]["id"], "biome")
-        producer = steps["Export Biome analysis report"]
-        self.assertEqual(producer["id"], "biome-report")
-        self.assertIn('printf \'attempt=%s\\n\' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"', producer["run"])
+        self.assertEqual(set(ci["on"]["workflow_call"]["outputs"]), {"coverage_artifact"})
+        for job in ["build", "checks"]:
+            self.assertEqual(set(ci["jobs"][job]["outputs"]), {"coverage_artifact"})
+        producer = {step.get("name"): step for step in ci["jobs"]["build"]["steps"]}
         main = yaml.safe_load((ROOT / MAIN).read_text())
         sonar = {step.get("name"): step for step in main["jobs"]["sonar"]["steps"]}
-        download = sonar["Restore Biome analysis report"]["with"]
-        self.assertEqual(download["artifact-ids"], "${{ needs.quality.outputs.biome_artifact }}")
-        self.assertNotIn("name", download)
-        self.assertIs(download["merge-multiple"], True)
-        self.assertEqual(sonar["Verify Biome analysis report"]["env"]["BIOME_PRODUCER_ATTEMPT"],
-                         "${{ needs.quality.outputs.biome_attempt }}")
+        self.assertEqual(producer["Export Biome analysis report"]["env"]["COVERAGE_ARTIFACT_ID"],
+                         "${{ steps.coverage.outputs.artifact-id }}")
+        expected = "biome-analysis-${{ github.sha }}-${{ github.run_id }}-"
+        self.assertEqual(producer["Retain Biome analysis report"]["with"]["name"],
+                         expected + "${{ steps.coverage.outputs.artifact-id }}")
+        self.assertEqual(sonar["Restore Biome analysis report"]["with"]["name"],
+                         expected + "${{ needs.quality.outputs.coverage_artifact }}")
+        self.assertEqual(sonar["Verify Biome analysis report"]["env"]["COVERAGE_ARTIFACT_ID"],
+                         "${{ needs.quality.outputs.coverage_artifact }}")
 
     def test_biome_rerun_accepts_only_the_original_producer_provenance(self):
         main = yaml.safe_load((ROOT / MAIN).read_text())
@@ -265,11 +259,19 @@ class ReleasePolicyTests(unittest.TestCase):
                 {"tool": {"driver": {"name": "Biome"}}, "results": []}]}).encode()
             (reports / "biome.sarif").write_bytes(data)
             identity = {"repository": "owner/repo", "sha": "a" * 40, "run": "123",
-                        "attempt": "1", "workspace": temporary,
+                        "coverageArtifact": "456", "workspace": temporary,
                         "digest": hashlib.sha256(data).hexdigest()}
             env = {**os.environ, "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "a" * 40,
-                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "BIOME_PRODUCER_ATTEMPT": "1"}
-            for changes in [{}, {"attempt": "2"}, {"sha": "b" * 40}, {"run": "124"},
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "COVERAGE_ARTIFACT_ID": "456"}
+            ci = yaml.safe_load((ROOT / CI).read_text())
+            producer = next(step for step in ci["jobs"]["build"]["steps"]
+                            if step.get("name") == "Export Biome analysis report")
+            producer_script = producer["run"].split("<<'NODE'\n", 1)[1].rsplit("NODE", 1)[0]
+            subprocess.run(["node", "--input-type=module"], input=producer_script, text=True,
+                           capture_output=True, cwd=workspace,
+                           env={**env, "GITHUB_RUN_ATTEMPT": "1"}, check=True)
+            self.assertEqual(json.loads((reports / "provenance.json").read_text()), identity)
+            for changes in [{}, {"coverageArtifact": "457"}, {"sha": "b" * 40}, {"run": "124"},
                             {"repository": "other/repo"}, {"digest": "bad"}, {"workspace": "/other"}]:
                 with self.subTest(changes=changes):
                     (reports / "provenance.json").write_text(json.dumps({**identity, **changes}))
