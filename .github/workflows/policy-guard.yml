@@ -928,10 +928,10 @@ jobs:
           AUTOMATION_SHAPES = {
               '.github/workflows/docs-ste.yml': ('28c93b5213df65323768e136417909b78626406b480bb5dfca7d0fe4a1785f00',),
               '.github/workflows/trusted-codeql.yml': ('084261c988c2a28b09ff082b72688b3bc3dbaac43a71042ce51a53309121d70d',),
-              '.github/workflows/trusted-ci.yml': ('ec534d35f11919196c5dc4739301babe3dfdc41edda42e88b2bed22e80acae2d',),
+              '.github/workflows/trusted-ci.yml': ('ec534d35f11919196c5dc4739301babe3dfdc41edda42e88b2bed22e80acae2d', 'f202ca9ad00a1d2f46f4eeb68efc7b98af2ea3621c907cef83c9ffe34fa5eeeb',),
               '.github/workflows/trusted-aislop.yml': ('36f09be4c4d668d275a7f75e8fd10bf9ad0cf79b7aebea92c854b17cb613da75',),
               '.github/workflows/ci.yml': ('2bf0caf72e362f235237c0ae3a7eac4902d0aa663ac4abe441578ea01123f9cf',),
-              '.github/workflows/main.yml': ('c0cb060b82dd584142fb4f4a0a9e2495f1d028b9d1aa93af30d5770e3076320a',),
+              '.github/workflows/main.yml': ('c0cb060b82dd584142fb4f4a0a9e2495f1d028b9d1aa93af30d5770e3076320a', '3ff2fb33ff5d5e2139099351e218acd3e42e87652de7a7537deeaed59b2f2e0c',),
               '.github/workflows/release.yml': ('60a6c456de88aa5cf1e498440ef3af44a2f2bfa06f06404913d0451c95c8a064',),
               '.github/workflows/dependabot-guard.yml': ('92bedd5e96b87d2e6237e31da3845013d0789fb712652a1864990684e1057618',),
               '.github/workflows/dependabot-preparation.yml': ('e189cc59c7ea9caed559805e7eba3422a2179efd199deb3b931f4519c22265c8',),
