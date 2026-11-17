@@ -11,6 +11,10 @@ name: trusted ci
     outputs:
       coverage_artifact:
         value: ${{ jobs.checks.outputs.coverage_artifact }}
+      biome_report_artifact:
+        value: ${{ jobs.checks.outputs.biome_report_artifact }}
+      biome_report_attempt:
+        value: ${{ jobs.checks.outputs.biome_report_attempt }}
 permissions:
   contents: read
 jobs:
@@ -19,6 +23,8 @@ jobs:
     timeout-minutes: 25
     outputs:
       coverage_artifact: ${{ steps.coverage.outputs.artifact-id }}
+      biome_report_artifact: ${{ steps.biome-report.outputs.artifact-id }}
+      biome_report_attempt: ${{ github.run_attempt }}
     env:
       NIXPKGS_REV: e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3
     steps:
@@ -164,6 +170,7 @@ jobs:
           NODE
       - name: Retain Biome analysis report
         if: ${{ success() && inputs.revision_sha == '' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        id: biome-report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: biome-analysis-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -198,6 +205,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       coverage_artifact: ${{ needs.build.outputs.coverage_artifact }}
+      biome_report_artifact: ${{ needs.build.outputs.biome_report_artifact }}
+      biome_report_attempt: ${{ needs.build.outputs.biome_report_attempt }}
     steps:
       - name: Require build and independent scans
         env:
