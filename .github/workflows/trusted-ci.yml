@@ -160,6 +160,32 @@ jobs:
             coverage/provenance.json
           if-no-files-found: error
           retention-days: 7
+      - name: Export Biome analysis report
+        if: ${{ success() && inputs.revision_sha == '' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        run: |
+          mkdir -p reports
+          npm exec -- biome lint . --max-diagnostics=none --reporter=sarif --reporter-file=reports/biome.sarif
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          const { GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT } = process.env;
+          const digest = createHash('sha256').update(readFileSync('reports/biome.sarif')).digest('hex');
+          writeFileSync('reports/provenance.json', JSON.stringify({
+            repository: GITHUB_REPOSITORY, sha: GITHUB_SHA, run: GITHUB_RUN_ID,
+            attempt: GITHUB_RUN_ATTEMPT, workspace: process.cwd(), digest,
+          }));
+          NODE
+      - name: Retain Biome analysis report
+        if: ${{ success() && inputs.revision_sha == '' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: biome-analysis-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/biome.sarif
+            reports/provenance.json
+          if-no-files-found: error
+          retention-days: 7
     permissions:
       contents: read
   checks:

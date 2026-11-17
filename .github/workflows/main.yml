@@ -103,6 +103,45 @@ jobs:
         env:
           COVERAGE_SHA: ${{ github.sha }}
         run: node .github/scripts/coverage-artifact.cjs verify
+      - name: Restore Biome analysis report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: biome-analysis-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports
+          digest-mismatch: error
+      - name: Verify Biome analysis report
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { relative, isAbsolute } from 'node:path';
+          const data = readFileSync('reports/biome.sarif');
+          const { GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT } = process.env;
+          assert.deepEqual(JSON.parse(readFileSync('reports/provenance.json', 'utf8')), {
+            repository: GITHUB_REPOSITORY, sha: GITHUB_SHA, run: GITHUB_RUN_ID,
+            attempt: GITHUB_RUN_ATTEMPT, workspace: process.cwd(),
+            digest: createHash('sha256').update(data).digest('hex'),
+          });
+          const report = JSON.parse(data.toString('utf8'));
+          assert.equal(report.version, '2.1.0');
+          assert.ok(Array.isArray(report.runs) && report.runs.length > 0);
+          for (const run of report.runs) {
+            assert.equal(run.tool?.driver?.name, 'Biome');
+            assert.ok(Array.isArray(run.results));
+            for (const result of run.results) {
+              assert.ok(typeof result.ruleId === 'string' && result.ruleId.length > 0);
+              assert.ok(typeof result.message?.text === 'string');
+              for (const location of result.locations ?? []) {
+                const uri = location.physicalLocation?.artifactLocation?.uri;
+                assert.ok(typeof uri === 'string' && uri.length > 0);
+                const path = relative(process.cwd(), uri);
+                assert.ok(path !== '..' && !path.startsWith('../') && !isAbsolute(path));
+              }
+            }
+          }
+          NODE
       - name: Mask advertised SonarQube endpoint
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
