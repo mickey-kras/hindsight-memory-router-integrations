@@ -146,20 +146,6 @@ jobs:
           printf 'expected npm dependency hash: %s\nactual npm dependency hash:   %s\n' \
             "$expected_deps" "$actual_deps"
           test "$actual_deps" = "$expected_deps"
-      - name: Record coverage provenance
-        env:
-          COVERAGE_SHA: ${{ inputs.revision_sha || github.sha }}
-        run: node .github/scripts/coverage-artifact.cjs record
-      - name: Retain verified coverage
-        id: coverage
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: coverage-${{ inputs.revision_sha || github.sha }}-${{ github.run_attempt }}
-          path: |
-            coverage/lcov.info
-            coverage/provenance.json
-          if-no-files-found: error
-          retention-days: 7
       - name: Export Biome analysis report
         if: ${{ success() && inputs.revision_sha == '' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
         run: |
@@ -184,6 +170,20 @@ jobs:
           path: |
             reports/biome.sarif
             reports/provenance.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Record coverage provenance
+        env:
+          COVERAGE_SHA: ${{ inputs.revision_sha || github.sha }}
+        run: node .github/scripts/coverage-artifact.cjs record
+      - name: Retain verified coverage
+        id: coverage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: coverage-${{ inputs.revision_sha || github.sha }}-${{ github.run_attempt }}
+          path: |
+            coverage/lcov.info
+            coverage/provenance.json
           if-no-files-found: error
           retention-days: 7
     permissions:
