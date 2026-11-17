@@ -3,3 +3,5 @@ dist/
 *.tgz
 
 coverage/
+
+reports/

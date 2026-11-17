@@ -204,7 +204,8 @@ class ReleasePolicyTests(unittest.TestCase):
             self.assertEqual(ci["jobs"]["checks"]["needs"], ["build", "security"])
         retained = next(step for step in checks["steps"] if step.get("id") == "coverage")
         self.assertNotIn("if", retained)
-        self.assertEqual(checks["steps"][-1], retained)
+        biome_export = next(step for step in checks["steps"] if step.get("name") == "Export Biome analysis report")
+        self.assertLess(checks["steps"].index(retained), checks["steps"].index(biome_export))
         sonar = {step.get("name"): step for step in main["jobs"]["sonar"]["steps"]}
         self.assertEqual(sonar["Restore verified coverage"]["with"]["artifact-ids"],
                          "${{ needs.quality.outputs.coverage_artifact }}")
@@ -226,6 +227,57 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertLess(sonar_steps.index(install), sonar_steps.index(sonar["SonarQube analysis"]))
         for step in sonar_steps:
             self.assertNotRegex(step.get("run", ""), r"\bnpm\s+(?:run\s+)?(?:test|build)\b")
+
+    def test_biome_identity_uses_the_existing_coverage_output_contract(self):
+        ci = yaml.safe_load((ROOT / CI).read_text())
+        self.assertEqual(set(ci["on"]["workflow_call"]["outputs"]), {"coverage_artifact"})
+        for job in ["build", "checks"]:
+            self.assertEqual(set(ci["jobs"][job]["outputs"]), {"coverage_artifact"})
+        producer = {step.get("name"): step for step in ci["jobs"]["build"]["steps"]}
+        main = yaml.safe_load((ROOT / MAIN).read_text())
+        sonar = {step.get("name"): step for step in main["jobs"]["sonar"]["steps"]}
+        self.assertEqual(producer["Export Biome analysis report"]["env"]["COVERAGE_ARTIFACT_ID"],
+                         "${{ steps.coverage.outputs.artifact-id }}")
+        expected = "biome-analysis-${{ github.sha }}-${{ github.run_id }}-"
+        self.assertEqual(producer["Retain Biome analysis report"]["with"]["name"],
+                         expected + "${{ steps.coverage.outputs.artifact-id }}")
+        self.assertEqual(sonar["Restore Biome analysis report"]["with"]["name"],
+                         expected + "${{ needs.quality.outputs.coverage_artifact }}")
+        self.assertEqual(sonar["Verify Biome analysis report"]["env"]["COVERAGE_ARTIFACT_ID"],
+                         "${{ needs.quality.outputs.coverage_artifact }}")
+
+    def test_biome_rerun_accepts_only_the_original_producer_provenance(self):
+        main = yaml.safe_load((ROOT / MAIN).read_text())
+        step = next(step for step in main["jobs"]["sonar"]["steps"]
+                    if step.get("name") == "Verify Biome analysis report")
+        script = step["run"].split("<<'NODE'\n", 1)[1].rsplit("NODE", 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            reports = workspace / "reports"
+            reports.mkdir()
+            data = json.dumps({"version": "2.1.0", "runs": [
+                {"tool": {"driver": {"name": "Biome"}}, "results": []}]}).encode()
+            (reports / "biome.sarif").write_bytes(data)
+            identity = {"repository": "owner/repo", "sha": "a" * 40, "run": "123",
+                        "coverageArtifact": "456", "workspace": temporary,
+                        "digest": hashlib.sha256(data).hexdigest()}
+            env = {**os.environ, "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "a" * 40,
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "COVERAGE_ARTIFACT_ID": "456"}
+            ci = yaml.safe_load((ROOT / CI).read_text())
+            producer = next(step for step in ci["jobs"]["build"]["steps"]
+                            if step.get("name") == "Export Biome analysis report")
+            producer_script = producer["run"].split("<<'NODE'\n", 1)[1].rsplit("NODE", 1)[0]
+            subprocess.run(["node", "--input-type=module"], input=producer_script, text=True,
+                           capture_output=True, cwd=workspace,
+                           env={**env, "GITHUB_RUN_ATTEMPT": "1"}, check=True)
+            self.assertEqual(json.loads((reports / "provenance.json").read_text()), identity)
+            for changes in [{}, {"coverageArtifact": "457"}, {"sha": "b" * 40}, {"run": "124"},
+                            {"repository": "other/repo"}, {"digest": "bad"}, {"workspace": "/other"}]:
+                with self.subTest(changes=changes):
+                    (reports / "provenance.json").write_text(json.dumps({**identity, **changes}))
+                    result = subprocess.run(["node", "--input-type=module"], input=script,
+                                            text=True, capture_output=True, cwd=workspace, env=env)
+                    self.assertEqual(result.returncode == 0, not changes, result.stderr)
 
     def test_preparation_retains_packages_only_after_candidate_identity(self):
         release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
