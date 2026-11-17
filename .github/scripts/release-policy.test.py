@@ -227,6 +227,56 @@ class ReleasePolicyTests(unittest.TestCase):
         for step in sonar_steps:
             self.assertNotRegex(step.get("run", ""), r"\bnpm\s+(?:run\s+)?(?:test|build)\b")
 
+    def test_biome_outputs_preserve_the_successful_producer_identity(self):
+        ci = yaml.safe_load((ROOT / CI).read_text())
+        outputs = ci["on"]["workflow_call"]["outputs"]
+        for name, expression in {
+            "biome_artifact": "${{ steps.biome.outputs.artifact-id }}",
+            "biome_attempt": "${{ steps.biome-report.outputs.attempt }}",
+        }.items():
+            self.assertEqual(ci["jobs"]["build"]["outputs"][name], expression)
+            self.assertEqual(ci["jobs"]["checks"]["outputs"][name],
+                             "${{ needs.build.outputs." + name + " }}")
+            self.assertEqual(outputs[name]["value"], "${{ jobs.checks.outputs." + name + " }}")
+        steps = {step.get("name"): step for step in ci["jobs"]["build"]["steps"]}
+        self.assertEqual(steps["Retain Biome analysis report"]["id"], "biome")
+        producer = steps["Export Biome analysis report"]
+        self.assertEqual(producer["id"], "biome-report")
+        self.assertIn('printf \'attempt=%s\\n\' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"', producer["run"])
+        main = yaml.safe_load((ROOT / MAIN).read_text())
+        sonar = {step.get("name"): step for step in main["jobs"]["sonar"]["steps"]}
+        download = sonar["Restore Biome analysis report"]["with"]
+        self.assertEqual(download["artifact-ids"], "${{ needs.quality.outputs.biome_artifact }}")
+        self.assertNotIn("name", download)
+        self.assertIs(download["merge-multiple"], True)
+        self.assertEqual(sonar["Verify Biome analysis report"]["env"]["BIOME_PRODUCER_ATTEMPT"],
+                         "${{ needs.quality.outputs.biome_attempt }}")
+
+    def test_biome_rerun_accepts_only_the_original_producer_provenance(self):
+        main = yaml.safe_load((ROOT / MAIN).read_text())
+        step = next(step for step in main["jobs"]["sonar"]["steps"]
+                    if step.get("name") == "Verify Biome analysis report")
+        script = step["run"].split("<<'NODE'\n", 1)[1].rsplit("NODE", 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            reports = workspace / "reports"
+            reports.mkdir()
+            data = json.dumps({"version": "2.1.0", "runs": [
+                {"tool": {"driver": {"name": "Biome"}}, "results": []}]}).encode()
+            (reports / "biome.sarif").write_bytes(data)
+            identity = {"repository": "owner/repo", "sha": "a" * 40, "run": "123",
+                        "attempt": "1", "workspace": temporary,
+                        "digest": hashlib.sha256(data).hexdigest()}
+            env = {**os.environ, "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "a" * 40,
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "BIOME_PRODUCER_ATTEMPT": "1"}
+            for changes in [{}, {"attempt": "2"}, {"sha": "b" * 40}, {"run": "124"},
+                            {"repository": "other/repo"}, {"digest": "bad"}, {"workspace": "/other"}]:
+                with self.subTest(changes=changes):
+                    (reports / "provenance.json").write_text(json.dumps({**identity, **changes}))
+                    result = subprocess.run(["node", "--input-type=module"], input=script,
+                                            text=True, capture_output=True, cwd=workspace, env=env)
+                    self.assertEqual(result.returncode == 0, not changes, result.stderr)
+
     def test_preparation_retains_packages_only_after_candidate_identity(self):
         release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
         steps = release["jobs"]["prepare-release"]["steps"]

@@ -103,13 +103,23 @@ jobs:
         env:
           COVERAGE_SHA: ${{ github.sha }}
         run: node .github/scripts/coverage-artifact.cjs verify
+      - name: Require successful Biome artifact
+        env:
+          BIOME_ARTIFACT_ID: ${{ needs.quality.outputs.biome_artifact }}
+          BIOME_PRODUCER_ATTEMPT: ${{ needs.quality.outputs.biome_attempt }}
+        run: |
+          test -n "$BIOME_ARTIFACT_ID"
+          test -n "$BIOME_PRODUCER_ATTEMPT"
       - name: Restore Biome analysis report
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: biome-analysis-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          artifact-ids: ${{ needs.quality.outputs.biome_artifact }}
           path: reports
+          merge-multiple: true
           digest-mismatch: error
       - name: Verify Biome analysis report
+        env:
+          BIOME_PRODUCER_ATTEMPT: ${{ needs.quality.outputs.biome_attempt }}
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           node --input-type=module <<'NODE'
@@ -118,10 +128,11 @@ jobs:
           import { createHash } from 'node:crypto';
           import { relative, isAbsolute } from 'node:path';
           const data = readFileSync('reports/biome.sarif');
-          const { GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT } = process.env;
+          const { GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID, BIOME_PRODUCER_ATTEMPT } = process.env;
+          assert.match(BIOME_PRODUCER_ATTEMPT ?? '', /^[1-9]\d*$/);
           assert.deepEqual(JSON.parse(readFileSync('reports/provenance.json', 'utf8')), {
             repository: GITHUB_REPOSITORY, sha: GITHUB_SHA, run: GITHUB_RUN_ID,
-            attempt: GITHUB_RUN_ATTEMPT, workspace: process.cwd(),
+            attempt: BIOME_PRODUCER_ATTEMPT, workspace: process.cwd(),
             digest: createHash('sha256').update(data).digest('hex'),
           });
           const report = JSON.parse(data.toString('utf8'));
