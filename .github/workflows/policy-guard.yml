@@ -1253,7 +1253,7 @@ jobs:
               '.github/trusted-ci/package.json': '5db62573f0f82ee1e6774ffb51be79db2bd0aa995ace952313ac0ea47526e50e',
               '.github/trusted-ci/biome-config.json': '6f98e6f6827ef4af012c5cb5b6a4e276623d9c4183c5b614b897348aedbc8364',
               '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
-              '.github/trusted-ci/workflows.test.cjs': '44bef956087547e19802dcb7e7a85383effbc5f4261b5f74dfe6cb1b99a81efd',
+              '.github/trusted-ci/workflows.test.cjs': 'eccf1e94e47a208e41a393f90f58b96ace24e32e17fd0d9d832052316b78ccce',
               '.github/trusted-ci/trivyignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
               '.github/trusted-ci/scan-tree.cjs': '815aec01051ecee9ba0a2d7d592f8aeebf93a82ea89a986556f773dc2f8c81e3',
               '.github/trusted-ci/aislop.test.cjs': '17bcdfe2e89570b7c8ea51b707c0400db06f3345d70101c4d7eb668774772084',

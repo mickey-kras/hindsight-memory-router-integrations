@@ -671,9 +671,9 @@ test("preparation App token is limited to this repository's contents", () => {
     "repositories",
   ]);
   assert.equal(token.with["permission-contents"], "write");
-  assert.equal(token.with.repositories, "${{ github.event.repository.name }}");
+  assert.equal(token.with.repositories, "$" + "{{ github.event.repository.name }}");
   const publishStep = job.steps.find((step) => step.name === "Publish generated files");
-  assert.equal(publishStep.env.APP_TOKEN, "${{ steps.app.outputs.token }}");
+  assert.equal(publishStep.env.APP_TOKEN, "$" + "{{ steps.app.outputs.token }}");
   assert.match(publishStep.with.script, /getOctokit\(process\.env\.APP_TOKEN\)/);
 });
 

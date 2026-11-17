@@ -29,9 +29,9 @@ test("candidate execution has read-only permissions and fresh independent requir
   );
   assert.deepEqual(ci.jobs.checks.needs, ["build", "security"]);
   assert.deepEqual(ci.jobs.checks.permissions, {});
-  assert.equal(ci.jobs.checks.if, "${{ always() }}");
+  assert.equal(ci.jobs.checks.if, "$" + "{{ always() }}");
   assert.match(ci.jobs.checks.steps[0].run, /test "\$BUILD" = success\ntest "\$SECURITY" = success/);
-  assert.equal(ci.jobs.checks.outputs.coverage_artifact, "${{ needs.build.outputs.coverage_artifact }}");
+  assert.equal(ci.jobs.checks.outputs.coverage_artifact, "$" + "{{ needs.build.outputs.coverage_artifact }}");
   assert.equal(ci.jobs.combination.name, "release combination");
 });
 test("scanner helpers use a fixed source independent of caller and candidate revisions", () => {
@@ -48,7 +48,7 @@ test("scanner helpers use a fixed source independent of caller and candidate rev
     assert.equal(checkouts[0].with.repository, "mickey-kras/hindsight-memory-router-integrations");
     assert.equal(checkouts[0].with.path, "trusted");
     assert.equal(checkouts[1].with.path, "candidate");
-    assert.equal(checkouts[1].with.ref, "${{ steps.identity.outputs.sha }}");
+    assert.equal(checkouts[1].with.ref, "$" + "{{ steps.identity.outputs.sha }}");
     for (const step of steps) {
       assert.doesNotMatch(step.uses || "", /actions\/(cache|download-artifact)@/);
       assert.doesNotMatch(step.run || "", /npm (?:run|test)|(?:node|bash) candidate\//);
@@ -62,8 +62,8 @@ test("scanner helpers use a fixed source independent of caller and candidate rev
         assert.equal(step.with.checkout_path, "candidate");
       }
       if (step.uses?.startsWith("github/codeql-action/upload-sarif@")) {
-        assert.equal(step.with.ref, "${{ steps.revalidated.outputs.ref }}");
-        assert.equal(step.with.sha, "${{ steps.revalidated.outputs.sha }}");
+        assert.equal(step.with.ref, "$" + "{{ steps.revalidated.outputs.ref }}");
+        assert.equal(step.with.sha, "$" + "{{ steps.revalidated.outputs.sha }}");
         assert.match(step.if, /revalidated.outputs.upload == 'true'/);
       }
     }
