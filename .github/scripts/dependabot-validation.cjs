@@ -121,7 +121,7 @@ function runPolicyScript(args, env) {
     });
   } catch (error) {
     for (const stream of ["stdout", "stderr"]) {
-      const text = error && error[stream];
+      const text = error?.[stream];
       if (typeof text === "string" && text.trim() !== "") {
         process.stderr.write(`policy ${stream}:\n${text}\n`);
       }
