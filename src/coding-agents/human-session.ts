@@ -6,6 +6,7 @@ import { validateRouterUrl } from "../shared/router-url.js";
 import { HARNESS_NAMES } from "../upstream/coding-agents/src/harness/names.js";
 
 export const HUMAN_TOKEN_PATTERN = /^mrh_[0-9a-f]{32}_[0-9a-f]{64}$/;
+export const REFRESH_TOKEN_PATTERN = /^mrr_[0-9a-f]{32}_[0-9a-f]{64}$/;
 export interface SecureEntry {
   getPassword(): string | null;
   setPassword(value: string): void;
@@ -16,6 +17,8 @@ export interface HumanSession {
   principal_id: string;
   expires_at: number;
   routerUrl: string;
+  /** Absent for routers without session refresh and for entries stored by older installs. */
+  refresh_token?: string;
 }
 
 export class HumanLoginRequiredError extends AccessDeniedError {
@@ -79,7 +82,9 @@ export function validateHumanSession(value: unknown, routerUrl: string, allowExp
     !Number.isSafeInteger(session.expires_at) ||
     (!allowExpired && session.expires_at <= now) ||
     session.expires_at > now + 3660 ||
-    session.routerUrl !== humanRouterUrl(routerUrl)
+    session.routerUrl !== humanRouterUrl(routerUrl) ||
+    (session.refresh_token !== undefined &&
+      (typeof session.refresh_token !== "string" || !REFRESH_TOKEN_PATTERN.test(session.refresh_token)))
   )
     throw new HumanLoginRequiredError();
   return {
@@ -87,6 +92,7 @@ export function validateHumanSession(value: unknown, routerUrl: string, allowExp
     principal_id: session.principal_id,
     expires_at: session.expires_at,
     routerUrl: session.routerUrl,
+    ...(session.refresh_token ? { refresh_token: session.refresh_token } : {}),
   };
 }
 
@@ -94,7 +100,12 @@ export function readHumanSession(routerUrl: string, credentialRef: string, harne
   try {
     const password = secureEntry(routerUrl, credentialRef, harness).getPassword();
     if (!password || password.length > 4096) throw new HumanLoginRequiredError();
-    return validateHumanSession(JSON.parse(password), routerUrl);
+    const session = validateHumanSession(JSON.parse(password), routerUrl, true);
+    // An expired access token is still usable when a refresh token can renew it before the request.
+    if (!session.refresh_token && session.expires_at <= Math.floor(Date.now() / 1000)) {
+      throw new HumanLoginRequiredError();
+    }
+    return session;
   } catch {
     throw new HumanLoginRequiredError();
   }

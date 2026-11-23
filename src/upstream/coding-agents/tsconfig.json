@@ -23,6 +23,7 @@
     }
   },
   "include": [
-    "src"
+    "src",
+    "../../shared/fs-native-extensions.d.ts"
   ]
 }

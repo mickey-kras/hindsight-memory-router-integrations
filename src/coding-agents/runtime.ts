@@ -3,6 +3,7 @@ import { isAbsolute, resolve, sep } from "node:path";
 import { AccessDeniedError, requireBank, visibleBanks } from "../shared/bank-access.js";
 import { loadManagedConfig } from "../shared/managed-config.js";
 import { RouterTransport } from "../shared/router-transport.js";
+import { ensureFreshHumanSession } from "./human-refresh.js";
 import { HUMAN_TOKEN_PATTERN, HumanLoginRequiredError, humanRouterUrl, readHumanSession } from "./human-session.js";
 
 export function harnessTransport(harness: string | undefined): RouterTransport {
@@ -23,6 +24,10 @@ function transportForConfig(
       principalId: () => session.principal_id,
       tokenPattern: HUMAN_TOKEN_PATTERN,
       unauthorizedError: () => new HumanLoginRequiredError(),
+      prepare: async () => {
+        session = await ensureFreshHumanSession(routerUrl, reference, principalId);
+        return session.token;
+      },
       token: () => {
         session = readHumanSession(routerUrl, reference, principalId);
         return session.token;

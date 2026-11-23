@@ -5,9 +5,9 @@
   "UPSTREAM.json": "c251c984bb16e00bbfca94cb95d6fe76322a160092d49c3c5a033e3d6534fb47",
   "cordis.patch.yml": "9a32a0a6819c281fcb0f17c9c2e77ba6be8f78f7f369882edbe9170afd48cd25",
   "e2e/Dockerfile.base": "dadb8e743fa1d9f5d90d0d1ff834d66f6b7a18ff9289240e1e6fce97161dd84c",
-  "npm-shrinkwrap.json": "71ddeae06552d8d90588445cd9c67ef05ab1a5ba0f90250fee03602e7f952bb4",
+  "npm-shrinkwrap.json": "7ceb6f71e37eb75dcc8f655fb6115e92eb8ccb4cb4c5fd4acdda02ce5cbc64d6",
   "package-lock.json": null,
-  "package.json": "1921fd2cc339629a6bd824002e65f08913eee92bd1b5b907fd64596b284898a8",
+  "package.json": "2bd875c4a4095e61fe621db149e4eccd155ef170500664721f86c8e3b12cb8e1",
   "scripts/build-skill.mjs": "39f04d0f678cb75c73d9ac01df088ffce16d719dfc0f60483660c024a8b5308c",
   "skill-src/managed-router.md": "1cb25c58736c8314bdcb17d83dbd2f5222660a485d64b0b4e61c748a2780f5b2",
   "skill-src/preamble.md": "48659a0da6abf59281113a4709e344cba021e9981bfeb260953f60fa04d38a8f",
@@ -111,8 +111,8 @@
   "src/installer.ts": "8b5176aea1b701c38598ec094d05248a0e0cda011962fa73d2eed1026af1edc0",
   "src/mcp-server.test.ts": "e5e3807a5169660f7d409d072d55bfcf07d29862652db255714c8967ec0b505e",
   "src/mcp-server.ts": "b5dcdbcc840407857bfcc14973cb9a8fe8f73b7da89f784f57429a5c8f81584c",
-  "src/native-storage.ts": "79f7d5c85333fe05ca980d0b7df4625d26bcbdcf235b35e12cb4494471b81f68",
+  "src/native-storage.ts": "379e345a34a12b4696b8d7e072b1d0214d311193a054486c23d1b83eec5f2fd8",
   "src/status.ts": "e0a58022cc7de9dc9b05ec5e5b5a4bf69ac23cc3a767abc96a02b0192923d340",
-  "tsconfig.json": "802c9711dba558694282bad5145a71f0fc09fb3bd47e1141dffd00fb99416af9",
+  "tsconfig.json": "1a26dd9a24c6f4c25c37ebeaf7fa2ff3161ef48f4654816ce7db62477735895d",
   "vitest.config.ts": "be1c732d203c814218b1d27b538d22ca6437528c74e96a450dc19182d18390ca"
 }

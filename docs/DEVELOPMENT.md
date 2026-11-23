@@ -116,7 +116,7 @@ See [upstream upgrades](UPGRADING.md), [deviations](DEVIATIONS.md), [dependency 
 | Package | Direct runtime declarations | Development declarations |
 | --- | --- | --- |
 | OpenClaw | `@vectorize-io/hindsight-agent-sdk`, `@vectorize-io/hindsight-client`, `fs-native-extensions` | `@biomejs/biome`, `@types/node`, `@vitest/coverage-v8`, `aislop`, `typescript`, `vitest` |
-| Coding agents | `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `jsonc-parser`, `smol-toml`, `zod` | `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript`, `vitest` |
+| Coding agents | `@modelcontextprotocol/sdk`, `@napi-rs/keyring`, `fs-native-extensions`, `jsonc-parser`, `smol-toml`, `zod` | `@opencode-ai/plugin`, `@opencode-ai/sdk`, `@opencode/plugin`, `@types/node`, `tsup`, `typescript`, `vitest` |
 
 OpenClaw declares `@vectorize-io/hindsight-client@1.2.0` as a direct production dependency. Its exported TypeScript declarations import client types. The repository also overrides the SDK's transitive client to `1.1.0`. Coding-agent overrides cover these dependencies:
 

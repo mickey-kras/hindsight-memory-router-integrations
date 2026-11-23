@@ -939,6 +939,7 @@ it("bare updates stage native dependencies and preserve them when the next sourc
         `
     const requireNative = require("node:module").createRequire(${JSON.stringify(join(staged, "package.json"))});
     if (typeof requireNative("@napi-rs/keyring").Entry !== "function") process.exit(1);
+    if (typeof requireNative("fs-native-extensions").tryLock !== "function") process.exit(2);
     process.stdout.write("native-ready");
   `,
       ],
