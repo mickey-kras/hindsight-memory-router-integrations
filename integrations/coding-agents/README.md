@@ -253,7 +253,8 @@ MCP servers and hooks then renew the session automatically on the next request, 
   The client writes the new access and refresh tokens to secure storage before a request uses them.
 - Processes that share one harness entry, such as an MCP server and a hook, renew one at a time through a lock in `~/.hindsight/locks`.
   After it gets the lock, a process reads the entry again and uses a token that another process already renewed.
-  A lock older than 30 seconds belongs to a stopped process, and the next process removes it.
+  The lock records the process ID of its holder. The next process removes the lock only when that process no longer exists.
+  A suspended holder keeps its lock, so a sign-out cannot overtake its renewal.
 - Renewal keeps the server-selected principal. A response with a different principal does not replace the entry.
 - If the router rejects the refresh token (`400` or `401`), the client removes only that harness entry. Run `login` again.
 - If the router is busy (`429` or `503`), the client keeps the entry and reports a temporary failure. The next request tries again.

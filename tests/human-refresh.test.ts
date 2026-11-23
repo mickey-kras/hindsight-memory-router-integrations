@@ -226,15 +226,43 @@ describe("automatic renewal", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("breaks a stale lock left by a dead process", async () => {
+  it("breaks a lock whose holder process no longer exists", async () => {
     store("codex", stored());
     const calls = routerMock();
     const lock = lockPath("codex");
     mkdirSync(lock, { recursive: true });
-    utimesSync(lock, new Date(0), new Date(0));
+    // Above the Linux pid_max, so no process can have this ID.
+    writeFileSync(join(lock, "owner"), "999999999");
     await expect(ensureFreshHumanSession(router, "person", "codex")).resolves.toMatchObject({ token: access("b") });
     expect(calls.map((call) => call.route)).toEqual(["refresh"]);
     expect(existsSync(lock)).toBe(false);
+  });
+
+  it("never breaks an old lock while its holder is alive", async () => {
+    store("codex", stored());
+    const calls = routerMock();
+    const lock = lockPath("codex");
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(join(lock, "owner"), String(process.pid));
+    utimesSync(lock, new Date(0), new Date(0));
+    let settled = false;
+    const pending = ensureFreshHumanSession(router, "person", "codex").finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(settled).toBe(false);
+    expect(calls).toHaveLength(0);
+    rmSync(lock, { recursive: true });
+    await expect(pending).resolves.toMatchObject({ token: access("b") });
+  });
+
+  it("breaks an ownerless lock only after a crash could have left it", async () => {
+    store("codex", stored());
+    routerMock();
+    const lock = lockPath("codex");
+    mkdirSync(lock, { recursive: true });
+    utimesSync(lock, new Date(0), new Date(0));
+    await expect(ensureFreshHumanSession(router, "person", "codex")).resolves.toMatchObject({ token: access("b") });
   });
 
   it("keeps access-only entries until expiry, then requires one explicit login without refresh", async () => {

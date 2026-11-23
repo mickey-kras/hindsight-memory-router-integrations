@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, rmdirSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -20,7 +20,7 @@ const RESPONSE_LIMIT = 65_536;
 const HUMAN_SCOPES = new Set(["bank.list", "memory.recall", "memory.retain", "memory.reflect", "bank.config.read"]);
 // Refresh slightly early so a request never starts with an access token about to expire.
 const REFRESH_SKEW_SECONDS = 60;
-// A holder finishes within the 15-second refresh timeout; older locks belong to dead processes.
+// A lock directory without an owner file is still being created, unless a crash left it this old.
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 20_000;
 // Connection failures before any byte reaches the router cannot have consumed the refresh token.
@@ -125,18 +125,45 @@ function lockPath(routerUrl: string, credentialRef: string, harness: string): st
   return join(homedir(), ".hindsight", "locks", `human-${key}.lock`);
 }
 
+function holderAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists but belongs to another user.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Removes the lock only when its holder no longer exists. Elapsed time alone does not prove that:
+ * a suspended holder can resume and must not find its lock taken by a sign-out.
+ */
+function breakIfAbandoned(path: string): void {
+  let owner: string | undefined;
+  try {
+    owner = readFileSync(join(path, "owner"), "utf8");
+  } catch {
+    owner = undefined;
+  }
+  const pid = Number(owner);
+  const abandoned =
+    owner === undefined
+      ? Date.now() - (statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? Date.now()) > LOCK_STALE_MS
+      : !Number.isSafeInteger(pid) || pid <= 0 || !holderAlive(pid);
+  if (abandoned) rmSync(path, { recursive: true, force: true });
+}
+
 function acquire(path: string): boolean {
   try {
     mkdirSync(path, { mode: 0o700 });
-    return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    breakIfAbandoned(path);
+    return false;
   }
-  const modified = statSync(path, { throwIfNoEntry: false })?.mtimeMs;
-  if (modified !== undefined && Date.now() - modified > LOCK_STALE_MS) {
-    rmdirSync(path, { recursive: false });
-  }
-  return false;
+  writeFileSync(join(path, "owner"), String(process.pid), { mode: 0o600, flag: "wx" });
+  return true;
 }
 
 /**
@@ -166,11 +193,7 @@ export async function withSessionLock<T>(
   try {
     return await action(entry);
   } finally {
-    try {
-      rmdirSync(path);
-    } catch {
-      /* A stale-lock breaker already removed it; staleness bounds the overlap. */
-    }
+    rmSync(path, { recursive: true, force: true });
   }
 }
 
