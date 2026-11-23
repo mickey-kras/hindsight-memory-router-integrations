@@ -246,7 +246,7 @@ A locked secure store stops requests for each harness that cannot read its own c
 
 ### Session renewal
 
-When the router turns on [session refresh](https://github.com/mickey-kras/hindsight-memory-router/blob/main/docs/security/authentication.md#session-refresh), login also stores a router refresh token in the same secure-storage entry.
+When the router enables [session refresh](https://github.com/mickey-kras/hindsight-memory-router/blob/main/docs/security/authentication.md#session-refresh), login also stores a router refresh token in the same secure-storage entry.
 MCP servers and hooks then renew the session automatically on the next request, for example after a computer sits idle overnight. Renewal never opens a browser.
 
 - Renewal starts when the access token expires in less than 60 seconds.
@@ -256,10 +256,11 @@ MCP servers and hooks then renew the session automatically on the next request, 
   A lock older than 30 seconds belongs to a stopped process, and the next process removes it.
 - Renewal keeps the server-selected principal. A response with a different principal does not replace the entry.
 - If the router rejects the refresh token (`400` or `401`), the client removes only that harness entry. Run `login` again.
-- If the router is busy (`429` or `503`) or cannot be reached before the request is sent, the client keeps the entry and reports a temporary failure. The next request tries again.
+- If the router is busy (`429` or `503`), the client keeps the entry and reports a temporary failure. The next request tries again.
+  The same applies when the client cannot connect to the router before it sends the request.
 - If the client cannot confirm the renewal result, it never sends the same refresh token again.
   This applies to a lost response, a gateway error, an invalid response or a failed secure-storage write.
-  The router can have consumed the token, and a second use revokes the session.
+  The router possibly consumed the token, and a second use revokes the session.
   The client instead revokes the session with sign-out, removes the entry and reports that login is necessary.
 - Entries from older installations have no refresh token. They stay usable until their access token expires. Then one explicit login stores a refresh token.
 - Routers without session refresh return no refresh token, so sessions last one hour as before.
