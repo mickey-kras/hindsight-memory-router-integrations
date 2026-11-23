@@ -3,6 +3,7 @@ import { AuthenticatedClientFactory } from "../src/shared/authenticated-client-f
 import { routedKnowledgeTools } from "../src/shared/knowledge-tools.js";
 import { PrincipalCredentialResolver } from "../src/shared/principal-credential-resolver.js";
 import { RouterTransport } from "../src/shared/router-transport.js";
+import { required } from "./helpers/required.js";
 
 const token = `mr_test_${"a".repeat(64)}`;
 const access = { writeBank: "A", additionalReadBanks: ["B"] };
@@ -45,7 +46,10 @@ it("routes knowledge reads and mutations through the same bank guard", async () 
   const recall = tools.find((tool) => tool.name === "agent_knowledge_recall");
   expect(recall?.parameters.properties).not.toHaveProperty("bankId");
   for (const action of ["list_pages", "get_page", "create_page", "update_page", "delete_page", "ingest"]) {
-    const tool = tools.find((t) => t.name === `agent_knowledge_${action}`)!;
+    const tool = required(
+      tools.find((t) => t.name === `agent_knowledge_${action}`),
+      `agent_knowledge_${action}`,
+    );
     const read = ["list_pages", "get_page"].includes(action);
     await tool.execute({
       bankId: read ? "B" : "A",

@@ -15,6 +15,7 @@ import { buildSessionStartContext } from "../src/upstream/coding-agents/src/core
 import { run as install, parseJsonc } from "../src/upstream/coding-agents/src/installer";
 import { selectTools } from "../src/upstream/coding-agents/src/mcp-server";
 import { stageNativeKeychain } from "../src/upstream/coding-agents/src/native-storage";
+import { required } from "./helpers/required.js";
 
 const dirs: string[] = [];
 const token = `mr_codex_${"b".repeat(64)}`;
@@ -215,12 +216,18 @@ it("lets page tools address assigned read banks while denying hidden banks and m
     bank: "A",
   });
   const tools = buildKnowledgeTools(client, "A", { harness: "codex" });
-  const read = tools.find((tool) => tool.name === "hindsight_read_knowledge_page")!;
+  const read = required(
+    tools.find((tool) => tool.name === "hindsight_read_knowledge_page"),
+    "hindsight_read_knowledge_page",
+  );
   const result = await read.handler({ bankId: "B", page_id: "page" });
   expect(result.isError).not.toBe(true);
   expect(fetch.mock.calls[0][0]).toContain("/banks/B/pages/page");
   expect((await read.handler({ bankId: "hidden", page_id: "page" })).isError).toBe(true);
-  const write = tools.find((tool) => tool.name === "hindsight_ingest_document")!;
+  const write = required(
+    tools.find((tool) => tool.name === "hindsight_ingest_document"),
+    "hindsight_ingest_document",
+  );
   expect((await write.handler({ bankId: "B", title: "doc", content: "text" })).isError).toBe(true);
   expect(fetch).toHaveBeenCalledTimes(1);
 });
@@ -534,7 +541,9 @@ it("rejects conflicting Codex launch config and preserves overrides after explic
   mkdirSync(join(dir, ".codex"));
   const path = join(dir, ".codex", "config.toml");
   const override = join(dir, "override.json");
-  const config = JSON.parse(readFileSync(process.env.HINDSIGHT_ROUTER_CONFIG!, "utf8"));
+  const config = JSON.parse(
+    readFileSync(required(process.env.HINDSIGHT_ROUTER_CONFIG, "HINDSIGHT_ROUTER_CONFIG"), "utf8"),
+  );
   config.principals.codex.tokenEnv = "CUSTOM_CODEX_TOKEN";
   writeFileSync(override, JSON.stringify(config));
   vi.stubEnv("CUSTOM_CODEX_TOKEN", token);
@@ -656,8 +665,10 @@ it.each(["missing", "invalid", "unknown-principal"])(
   (kind) => {
     const dir = setup();
     if (kind === "missing") vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", "");
-    if (kind === "invalid") writeFileSync(process.env.HINDSIGHT_ROUTER_CONFIG!, "{invalid");
-    if (kind === "unknown-principal") writeFileSync(process.env.HINDSIGHT_ROUTER_CONFIG!, '{"principals":{}}');
+    if (kind === "invalid")
+      writeFileSync(required(process.env.HINDSIGHT_ROUTER_CONFIG, "HINDSIGHT_ROUTER_CONFIG"), "{invalid");
+    if (kind === "unknown-principal")
+      writeFileSync(required(process.env.HINDSIGHT_ROUTER_CONFIG, "HINDSIGHT_ROUTER_CONFIG"), '{"principals":{}}');
     const installed = installPackagedCodex(dir);
     expect(installed.status).toBe(1);
     expect(installed.stderr).toContain(
