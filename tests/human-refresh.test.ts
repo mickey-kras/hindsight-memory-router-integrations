@@ -179,6 +179,40 @@ describe("automatic renewal", () => {
     ]);
   });
 
+  it("honors caller cancellation during renewal and still persists the rotation", async () => {
+    store("codex", stored());
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = routerMock({
+      refresh: async () => {
+        await paused;
+        return Response.json(issued("b"));
+      },
+    });
+    const transport = harnessTransport("codex");
+    const controller = new AbortController();
+    const pending = transport.request(transport.bankUrl("private"), { signal: controller.signal });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    controller.abort(new DOMException("caller deadline", "TimeoutError"));
+    await expect(pending).rejects.toThrow("caller deadline");
+    release();
+    await vi.waitFor(() => expect(readHumanSession(router, "person", "codex").token).toBe(access("b")));
+    expect(calls.map((call) => call.route)).toEqual(["refresh"]);
+  });
+
+  it("rejects an already aborted request before renewal resolves", async () => {
+    store("codex", stored());
+    routerMock();
+    const transport = harnessTransport("codex");
+    const controller = new AbortController();
+    controller.abort(new DOMException("aborted", "AbortError"));
+    await expect(transport.request(transport.bankUrl("private"), { signal: controller.signal })).rejects.toThrow(
+      "aborted",
+    );
+  });
+
   it("reuses a session another process refreshed while this one waited for the lock", async () => {
     store("codex", stored());
     const calls = routerMock();

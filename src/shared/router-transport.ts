@@ -72,6 +72,23 @@ function assertSafeRequest(url: string, body: RequestInit["body"]): URL {
   return parsed;
 }
 
+/**
+ * Waits for work, but rejects as soon as the caller aborts. The work keeps running, so a token
+ * rotation that already started still persists its result for later requests.
+ */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal | null | undefined): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) {
+    work.catch(() => undefined);
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const abort = (): void => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
 const GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
 
 // Preserve the host's proxy dispatcher while letting AbortSignal own deadlines beyond 300s.
@@ -168,7 +185,7 @@ export class RouterTransport {
 
   async request(url: string, init: RequestInit = {}): Promise<Response> {
     // Only human sessions renew; application requests keep their synchronous start.
-    const token = this.credential(this.#prepare ? await this.#prepare() : undefined);
+    const token = this.credential(this.#prepare ? await untilAborted(this.#prepare(), init.signal) : undefined);
     const method = init.method ?? "GET";
     // Validate before URL normalization can erase dot segments or backslashes.
     assertSafeRequest(url, init.body);
