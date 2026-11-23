@@ -113,6 +113,6 @@
   "src/mcp-server.ts": "b5dcdbcc840407857bfcc14973cb9a8fe8f73b7da89f784f57429a5c8f81584c",
   "src/native-storage.ts": "379e345a34a12b4696b8d7e072b1d0214d311193a054486c23d1b83eec5f2fd8",
   "src/status.ts": "e0a58022cc7de9dc9b05ec5e5b5a4bf69ac23cc3a767abc96a02b0192923d340",
-  "tsconfig.json": "802c9711dba558694282bad5145a71f0fc09fb3bd47e1141dffd00fb99416af9",
+  "tsconfig.json": "1a26dd9a24c6f4c25c37ebeaf7fa2ff3161ef48f4654816ce7db62477735895d",
   "vitest.config.ts": "be1c732d203c814218b1d27b538d22ca6437528c74e96a450dc19182d18390ca"
 }

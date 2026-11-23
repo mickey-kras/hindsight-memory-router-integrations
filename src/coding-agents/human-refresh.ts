@@ -1,4 +1,3 @@
-/// <reference path="../shared/fs-native-extensions.d.ts" />
 import { createHash } from "node:crypto";
 import { closeSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
