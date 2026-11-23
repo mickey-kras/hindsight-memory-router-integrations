@@ -183,14 +183,8 @@ async function abandon(entry: SecureEntry, routerUrl: string, refreshToken: stri
   throw new HumanRenewalUnconfirmedError(`${remote}, ${local}`);
 }
 
-async function rotate(
-  entry: SecureEntry,
-  current: HumanSession,
-  routerUrl: string,
-  pending: string,
-): Promise<HumanSession> {
-  const refreshToken = current.refresh_token as string;
-  // Persist intent before sending. A crash or ambiguous reply requires explicit login.
+/** Persists intent before sending. A crash or ambiguous reply then requires explicit login. */
+function claimPending(pending: string): void {
   try {
     writeFileSync(pending, "", { flag: "wx", mode: 0o600, flush: true });
   } catch (error) {
@@ -198,50 +192,57 @@ async function rotate(
       throw new HumanRenewalUnconfirmedError("explicit login required");
     throw error;
   }
-  let value: unknown;
-  try {
-    value = await authRequest(routerUrl, "refresh", { refresh_token: refreshToken });
-  } catch (error) {
-    if (error instanceof HumanAuthResponseError) {
-      if (error.status === 400 || error.status === 401) {
-        // Definitive rejection: clear only this harness entry and require login.
-        try {
-          entry.deleteCredential();
-        } catch {
-          /* The router rejects the stored token regardless. */
-        }
-        throw new HumanLoginRequiredError();
-      }
-      const usable = current.expires_at > Math.floor(Date.now() / 1000);
-      if (error.status === 404) {
-        rmSync(pending);
-        if (usable) return current;
-        throw new HumanRefreshUnsupportedError();
-      }
-      // The router rolls back before answering 429 or 503, so the token is unused.
-      if (error.status === 429 || error.status === 503) {
-        rmSync(pending);
-        if (usable) return current;
-        throw new RouterRequestError(error.status);
-      }
-    } else if (notSent(error)) {
-      rmSync(pending);
-      if (current.expires_at > Math.floor(Date.now() / 1000)) return current;
-      throw new RouterRequestError(503);
+}
+
+function usable(session: HumanSession): boolean {
+  return session.expires_at > Math.floor(Date.now() / 1000);
+}
+
+/** Handles a failed refresh request. Only outcomes that cannot have consumed the token keep it. */
+async function refreshFailed(
+  error: unknown,
+  entry: SecureEntry,
+  current: HumanSession,
+  routerUrl: string,
+  pending: string,
+): Promise<HumanSession> {
+  const status = error instanceof HumanAuthResponseError ? error.status : undefined;
+  if (status === 400 || status === 401) {
+    // Definitive rejection: clear only this harness entry and require login.
+    try {
+      entry.deleteCredential();
+    } catch {
+      /* The router rejects the stored token regardless. */
     }
-    return abandon(entry, routerUrl, refreshToken);
+    throw new HumanLoginRequiredError();
   }
+  // 404 means no refresh support. The router rolls back before answering 429 or 503, and a
+  // connection that never opened sent nothing, so the token is unused in all these cases.
+  if (status === 404 || status === 429 || status === 503 || (status === undefined && notSent(error))) {
+    rmSync(pending);
+    if (usable(current)) return current;
+    if (status === 404) throw new HumanRefreshUnsupportedError();
+    throw new RouterRequestError(status ?? 503);
+  }
+  return abandon(entry, routerUrl, current.refresh_token as string);
+}
+
+/** Validates and stores a refresh response; anything it cannot keep revokes the session. */
+async function refreshSucceeded(
+  value: unknown,
+  entry: SecureEntry,
+  current: HumanSession,
+  routerUrl: string,
+  pending: string,
+): Promise<HumanSession> {
   let next: HumanSession;
   try {
     next = issuedSession(value, routerUrl);
     if (!next.refresh_token || next.principal_id !== current.principal_id) throw new HumanLoginRequiredError();
   } catch {
     const returned = (value as { refresh_token?: unknown } | null)?.refresh_token;
-    return abandon(
-      entry,
-      routerUrl,
-      typeof returned === "string" && REFRESH_TOKEN_PATTERN.test(returned) ? returned : refreshToken,
-    );
+    const revoke = typeof returned === "string" && REFRESH_TOKEN_PATTERN.test(returned) ? returned : undefined;
+    return abandon(entry, routerUrl, revoke ?? (current.refresh_token as string));
   }
   try {
     entry.setPassword(JSON.stringify(next));
@@ -250,6 +251,22 @@ async function rotate(
   }
   rmSync(pending);
   return next;
+}
+
+async function rotate(
+  entry: SecureEntry,
+  current: HumanSession,
+  routerUrl: string,
+  pending: string,
+): Promise<HumanSession> {
+  claimPending(pending);
+  let value: unknown;
+  try {
+    value = await authRequest(routerUrl, "refresh", { refresh_token: current.refresh_token as string });
+  } catch (error) {
+    return refreshFailed(error, entry, current, routerUrl, pending);
+  }
+  return refreshSucceeded(value, entry, current, routerUrl, pending);
 }
 
 /** Renews an expiring refreshable session before a request reads its access token. */
