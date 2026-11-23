@@ -97,6 +97,7 @@ export class RouterTransport {
   readonly #principalId?: string | (() => string);
   readonly #tokenPattern: RegExp;
   readonly #unauthorizedError: () => AccessDeniedError;
+  readonly #prepare?: () => Promise<string>;
   #deniedToken: string | undefined;
   #deniedError: AccessDeniedError | undefined;
 
@@ -107,6 +108,8 @@ export class RouterTransport {
     principalId?: string | (() => string);
     tokenPattern?: RegExp;
     unauthorizedError?: () => AccessDeniedError;
+    /** Supplies the request token instead of `token`, for example after renewing an expiring session. */
+    prepare?: () => Promise<string>;
     fetch?: typeof fetch;
   }) {
     this.baseUrl = validateRouterUrl(options.routerUrl);
@@ -121,6 +124,7 @@ export class RouterTransport {
     this.#tokenPattern = options.tokenPattern ?? TOKEN_FORMAT_PATTERN;
     this.#unauthorizedError = options.unauthorizedError ?? (() => new AccessDeniedError());
     this.#token = options.token;
+    this.#prepare = options.prepare;
     this.#send = options.fetch ?? ((input, init) => fetch(input, init));
     this.credential();
   }
@@ -146,8 +150,8 @@ export class RouterTransport {
     return createHash("sha256").update(principal).digest("hex");
   }
 
-  private credential(): string {
-    const token = this.#token();
+  private credential(prepared?: string): string {
+    const token = prepared ?? this.#token();
     if (!token || !this.#tokenPattern.test(token)) throw new AccessDeniedError();
     if (this.#deniedToken === token) throw this.#deniedError ?? new AccessDeniedError();
     if (this.#deniedToken !== undefined) {
@@ -163,7 +167,8 @@ export class RouterTransport {
   }
 
   async request(url: string, init: RequestInit = {}): Promise<Response> {
-    const token = this.credential();
+    // Only human sessions renew; application requests keep their synchronous start.
+    const token = this.credential(this.#prepare ? await this.#prepare() : undefined);
     const method = init.method ?? "GET";
     // Validate before URL normalization can erase dot segments or backslashes.
     assertSafeRequest(url, init.body);

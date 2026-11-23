@@ -241,10 +241,31 @@ The installer does not download dependencies or replace secure storage with a fi
 
 Missing human credentials or native support stops installation before host changes.
 
-Sessions last at most one hour. Expired, revoked or missing credentials stop only that harness's requests.
+Access tokens last at most one hour. Expired, revoked or missing credentials stop only that harness's requests.
 A locked secure store stops requests for each harness that cannot read its own credential.
 
-Run `login` again explicitly. There is no automatic refresh or fallback to `mr_*` application credentials. Do not combine `human` and `tokenEnv`. Restart a harness if it disabled its client after an authorization failure.
+### Session renewal
+
+When the router turns on [session refresh](https://github.com/mickey-kras/hindsight-memory-router/blob/main/docs/security/authentication.md#session-refresh), login also stores a router refresh token in the same secure-storage entry.
+MCP servers and hooks then renew the session automatically on the next request, for example after a computer sits idle overnight. Renewal never opens a browser.
+
+- Renewal starts when the access token expires in less than 60 seconds.
+  The client writes the new access and refresh tokens to secure storage before a request uses them.
+- Processes that share one harness entry, such as an MCP server and a hook, renew one at a time through a lock in `~/.hindsight/locks`.
+  After it gets the lock, a process reads the entry again and uses a token that another process already renewed.
+  A lock older than 30 seconds belongs to a stopped process, and the next process removes it.
+- Renewal keeps the server-selected principal. A response with a different principal does not replace the entry.
+- If the router rejects the refresh token (`400` or `401`), the client removes only that harness entry. Run `login` again.
+- If the router is busy (`429` or `503`) or cannot be reached before the request is sent, the client keeps the entry and reports a temporary failure. The next request tries again.
+- If the client cannot confirm the renewal result, it never sends the same refresh token again.
+  This applies to a lost response, a gateway error, an invalid response or a failed secure-storage write.
+  The router can have consumed the token, and a second use revokes the session.
+  The client instead revokes the session with sign-out, removes the entry and reports that login is necessary.
+- Entries from older installations have no refresh token. They stay usable until their access token expires. Then one explicit login stores a refresh token.
+- Routers without session refresh return no refresh token, so sessions last one hour as before.
+  If a router stops refresh support after login, the client reports a compatibility error. Run `login` again or upgrade the router.
+
+Run `login` again explicitly when a session ends. There is no fallback to `mr_*` application credentials. Do not combine `human` and `tokenEnv`. Restart a harness if it disabled its client after an authorization failure.
 
 New Codex registrations record their authentication mode and managed token variable name as ownership metadata. This metadata contains no secrets.
 A change from a marked application registration to human mode removes that exact token allowlist entry and any matching literal override.
@@ -264,6 +285,9 @@ hindsight-coding-agents sign-out codex
 
 Sign-out deletes the local credential, including when it cannot confirm router revocation. It reports that limitation.
 Such a session remains valid until expiry or operator revocation. Router sign-out does not sign out of the identity provider.
+
+A renewable session signs out with its refresh token, so sign-out works after the access token expires.
+Sign-out waits for a renewal in progress and then revokes its result. A late renewal cannot restore a signed-out entry.
 
 Sign-out revokes and removes only the selected harness's session. Other harnesses remain signed in.
 There is no shared-session mode.

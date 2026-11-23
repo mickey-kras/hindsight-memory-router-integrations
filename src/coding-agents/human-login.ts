@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { loadManagedConfig } from "../shared/managed-config.js";
-import { BANK_ID_PATTERN } from "../shared/patterns.js";
+import { authRequest, issuedSession, withSessionLock } from "./human-refresh.js";
 import {
   HumanLoginRequiredError,
   type HumanSession,
@@ -13,41 +13,6 @@ import {
 } from "./human-session.js";
 
 const LOGIN_TIMEOUT_MS = 300_000;
-const RESPONSE_LIMIT = 65_536;
-const HUMAN_SCOPES = new Set(["bank.list", "memory.recall", "memory.retain", "memory.reflect", "bank.config.read"]);
-
-async function authRequest(
-  routerUrl: string,
-  route: string,
-  body: Record<string, string> | undefined,
-  token?: string,
-): Promise<unknown> {
-  const response = await fetch(`${routerUrl}/auth/human/${route}`, {
-    method: "POST",
-    redirect: "error",
-    signal: AbortSignal.timeout(15_000),
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!response.ok) throw new HumanLoginRequiredError();
-  if (response.status === 204) return undefined;
-  const reader = response.body?.getReader();
-  if (!reader) throw new HumanLoginRequiredError();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.length;
-      if (size > RESPONSE_LIMIT) throw new HumanLoginRequiredError();
-      chunks.push(value);
-    }
-  } finally {
-    await reader.cancel();
-  }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
-}
 
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new HumanLoginRequiredError();
@@ -82,25 +47,6 @@ function authorizationUrl(
       throw new HumanLoginRequiredError();
   }
   return { url: url.href, transaction: response.transaction_id };
-}
-
-function exchangeSession(value: unknown, routerUrl: string): HumanSession {
-  const response = record(value);
-  if (response.token_type !== "Bearer" || !Array.isArray(response.grants) || response.grants.length > 1024) {
-    throw new HumanLoginRequiredError();
-  }
-  for (const grant of response.grants) {
-    const entry = record(grant);
-    if (
-      typeof entry.bank !== "string" ||
-      !BANK_ID_PATTERN.test(entry.bank) ||
-      !Array.isArray(entry.scopes) ||
-      entry.scopes.some((scope: unknown) => typeof scope !== "string" || !HUMAN_SCOPES.has(scope))
-    ) {
-      throw new HumanLoginRequiredError();
-    }
-  }
-  return validateHumanSession({ ...response, routerUrl }, routerUrl);
 }
 
 export async function openLoginBrowser(url: string): Promise<void> {
@@ -222,7 +168,7 @@ export async function loginHuman(
     await openBrowser(started.url);
     const { code } = await outcome;
     if (!code) throw new HumanLoginRequiredError();
-    issued = exchangeSession(
+    issued = issuedSession(
       await authRequest(base, "exchange", {
         transaction_id: started.transaction,
         code,
@@ -231,11 +177,15 @@ export async function loginHuman(
       }),
       base,
     );
-    entry.setPassword(JSON.stringify(issued));
+    const persisted = issued;
+    // A concurrent refresh must not overwrite the new login with the previous session.
+    await withSessionLock(base, credentialRef, harness, async (locked) =>
+      locked.setPassword(JSON.stringify(persisted)),
+    );
   } catch {
     if (issued) {
       try {
-        await authRequest(base, "sign-out", undefined, issued.token);
+        await revoke(base, issued);
       } catch {
         /* Credential was never persisted; expiry still bounds it. */
       }
@@ -248,25 +198,32 @@ export async function loginHuman(
   }
 }
 
+async function revoke(routerUrl: string, session: HumanSession): Promise<void> {
+  // A refresh token revokes the whole session, even after its access token expires.
+  if (session.refresh_token) await authRequest(routerUrl, "sign-out", { refresh_token: session.refresh_token });
+  else await authRequest(routerUrl, "sign-out", undefined, session.token);
+}
+
 export async function signOutHuman(routerUrl: string, credentialRef: string, harness: string): Promise<boolean> {
   const base = humanRouterUrl(routerUrl);
-  const entry = secureEntry(base, credentialRef, harness);
-  let revoked = false;
-  try {
-    const stored = entry.getPassword();
-    if (!stored) return true;
+  // The lock orders sign-out after any in-flight refresh, which cannot then restore this entry.
+  return withSessionLock(base, credentialRef, harness, async (entry) => {
+    let revoked = false;
     try {
-      if (stored.length > 4096) throw new HumanLoginRequiredError();
-      const session = validateHumanSession(JSON.parse(stored), base, true);
-      await authRequest(base, "sign-out", undefined, session.token);
-      revoked = true;
-    } catch {
-      revoked = false;
+      const stored = entry.getPassword();
+      if (!stored) return true;
+      try {
+        if (stored.length > 4096) throw new HumanLoginRequiredError();
+        await revoke(base, validateHumanSession(JSON.parse(stored), base, true));
+        revoked = true;
+      } catch {
+        revoked = false;
+      }
+    } finally {
+      entry.deleteCredential();
     }
-  } finally {
-    entry.deleteCredential();
-  }
-  return revoked;
+    return revoked;
+  });
 }
 
 export async function runHumanAuth(
@@ -288,7 +245,7 @@ export async function runHumanAuth(
       if (!interactive) throw new HumanLoginRequiredError();
       await loginHuman(config.routerUrl, principal.human.credentialRef, principalId);
       log(
-        "Signed in. Run install for the configured coding agent. Sessions expire within one hour; login again when required.",
+        "Signed in. Run install for the configured coding agent. Sessions renew automatically while the router allows; login again when required.",
       );
       return 0;
     }
