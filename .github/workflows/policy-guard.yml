@@ -927,9 +927,9 @@ jobs:
                       fail(f'{path}: missing source safety contract: {contract}')
           AUTOMATION_SHAPES = {
               '.github/workflows/docs-ste.yml': ('28c93b5213df65323768e136417909b78626406b480bb5dfca7d0fe4a1785f00',),
-              '.github/workflows/trusted-codeql.yml': ('084261c988c2a28b09ff082b72688b3bc3dbaac43a71042ce51a53309121d70d',),
-              '.github/workflows/trusted-ci.yml': ('b9a7f6a1c36dd3d2fb52b2b166b3fd769bd03a17f2ff9335f10e444a91636000',),
-              '.github/workflows/trusted-aislop.yml': ('36f09be4c4d668d275a7f75e8fd10bf9ad0cf79b7aebea92c854b17cb613da75',),
+              '.github/workflows/trusted-codeql.yml': ('4b70a0d8692e14ca40beb20522297c7951d89f63f73ad401c9839778e44d996d',),
+              '.github/workflows/trusted-ci.yml': ('60c7ee8414e05e76819b49ca72ccdfeb8f16ec8e613687a2f1e72af9eb5658bd',),
+              '.github/workflows/trusted-aislop.yml': ('15b95984973ccb8f10d8281ea8cd4946b785c7a5686054fb41c1eeb418c388c3',),
               '.github/workflows/ci.yml': ('2bf0caf72e362f235237c0ae3a7eac4902d0aa663ac4abe441578ea01123f9cf',),
               '.github/workflows/main.yml': ('701904bb94178968b8e8e6b7324a0bc4eae0a7e57d3f8bf92fcf5775a895ba23',),
               '.github/workflows/release.yml': ('60a6c456de88aa5cf1e498440ef3af44a2f2bfa06f06404913d0451c95c8a064',),
@@ -1253,7 +1253,7 @@ jobs:
               '.github/trusted-ci/package.json': '5db62573f0f82ee1e6774ffb51be79db2bd0aa995ace952313ac0ea47526e50e',
               '.github/trusted-ci/biome-config.json': '6f98e6f6827ef4af012c5cb5b6a4e276623d9c4183c5b614b897348aedbc8364',
               '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
-              '.github/trusted-ci/workflows.test.cjs': '9f187c41868705585f75850d52353130503626eec71e7caf1a55554c2ae10300',
+              '.github/trusted-ci/workflows.test.cjs': '9f80261d01d89e0866280c76126de6c51f00589a183ecb6c7b61b513d028db8b',
               '.github/trusted-ci/trivyignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
               '.github/trusted-ci/scan-tree.cjs': '815aec01051ecee9ba0a2d7d592f8aeebf93a82ea89a986556f773dc2f8c81e3',
               '.github/trusted-ci/aislop.test.cjs': '17bcdfe2e89570b7c8ea51b707c0400db06f3345d70101c4d7eb668774772084',

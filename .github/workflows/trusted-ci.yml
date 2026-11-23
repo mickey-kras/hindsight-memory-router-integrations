@@ -225,7 +225,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: mickey-kras/hindsight-memory-router-integrations
-          ref: 533e79de3119fadf50c7f299305d01eebb933abf
+          ref: b74423307a1b6847c2ba59c953a6d1f5dec7c777
           path: trusted
           persist-credentials: false
       - name: Validate candidate identity
@@ -270,6 +270,10 @@ jobs:
           node trusted/.github/trusted-ci/npm-audit.cjs "$RUNNER_TEMP/scan"
           node trusted/.github/trusted-ci/npm-audit.cjs "$RUNNER_TEMP/scan/src/upstream/coding-agents"
           node trusted/.github/trusted-ci/npm-audit.cjs "$RUNNER_TEMP/scan/.github/scripts"
+      - name: Audit scanner dependencies
+        run: |
+          node trusted/.github/trusted-ci/npm-audit.cjs trusted/.github/trusted-ci
+          node trusted/.github/trusted-ci/npm-audit.cjs "$RUNNER_TEMP/scan/.github/trusted-ci"
       - name: Gitleaks
         run: |
           curl --fail --location --silent --show-error https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz -o "$RUNNER_TEMP/gitleaks.tar.gz"
