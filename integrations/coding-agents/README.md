@@ -252,9 +252,8 @@ MCP servers and hooks then renew the session automatically on the next request, 
 - Renewal starts when the access token expires in less than 60 seconds.
   The client writes the new access and refresh tokens to secure storage before a request uses them.
 - Processes that share one harness entry, such as an MCP server and a hook, renew one at a time through a lock in `~/.hindsight/locks`.
+  A paused process keeps its lock. The operating system releases the lock when the process exits.
   After it gets the lock, a process reads the entry again and uses a token that another process already renewed.
-  The lock records the process ID of its holder. The next process removes the lock only when that process no longer exists.
-  A suspended holder keeps its lock, so a sign-out cannot overtake its renewal.
 - Renewal keeps the server-selected principal. A response with a different principal does not replace the entry.
 - If the router rejects the refresh token (`400` or `401`), the client removes only that harness entry. Run `login` again.
 - If the router is busy (`429` or `503`), the client keeps the entry and reports a temporary failure. The next request tries again.
@@ -262,7 +261,7 @@ MCP servers and hooks then renew the session automatically on the next request, 
 - If the client cannot confirm the renewal result, it never sends the same refresh token again.
   This applies to a lost response, a gateway error, an invalid response or a failed secure-storage write.
   The router possibly consumed the token, and a second use revokes the session.
-  The client instead revokes the session with sign-out, removes the entry and reports that login is necessary.
+  The client attempts sign-out and local removal and reports the result. A pending renewal marker blocks further rotation until explicit login.
 - Entries from older installations have no refresh token. They stay usable until their access token expires. Then one explicit login stores a refresh token.
 - Routers without session refresh return no refresh token, so sessions last one hour as before.
   If a router stops refresh support after login, the client reports a compatibility error. Run `login` again or upgrade the router.

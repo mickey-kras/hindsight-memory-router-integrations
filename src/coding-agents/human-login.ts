@@ -1,3 +1,4 @@
+import { rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
@@ -179,9 +180,10 @@ export async function loginHuman(
     );
     const persisted = issued;
     // A concurrent refresh must not overwrite the new login with the previous session.
-    await withSessionLock(base, credentialRef, harness, async (locked) =>
-      locked.setPassword(JSON.stringify(persisted)),
-    );
+    await withSessionLock(base, credentialRef, harness, async (locked, pending) => {
+      locked.setPassword(JSON.stringify(persisted));
+      rmSync(pending, { force: true });
+    });
   } catch {
     if (issued) {
       try {

@@ -29,10 +29,27 @@ export function stageNativeKeychain(sourceRoot: string, targetRoot: string, requ
     if (!required) return false;
     throw new Error("native keychain unavailable");
   }
+  // The staged installer runs after the npm cache can have been removed. Copy the
+  // lockfile-pinned native lock and its runtime dependencies alongside the keyring.
+  for (const name of ["fs-native-extensions", "require-addon", "which-runtime", "bare-addon-resolve",
+    "bare-host-parser", "bare-module-resolve", "bare-semver"]) {
+    const root = require.resolve.paths(name)?.map(base => join(base, name))
+      .find(path => existsSync(join(path, "package.json")));
+    if (!root) throw new Error("native session lock unavailable");
+    assertUnlinkedTree(root);
+    packages.set(name, root);
+  }
   const scope = join(targetRoot, "node_modules", "@napi-rs");
   if (existsSync(scope)) assertUnlinkedTree(scope);
   rmSync(scope, { recursive: true, force: true });
   mkdirSync(scope, { recursive: true });
-  for (const [name, path] of packages) cpSync(path, join(targetRoot, "node_modules", name), { recursive: true });
+  for (const [name, path] of packages) {
+    const destination = join(targetRoot, "node_modules", name);
+    if (existsSync(destination)) {
+      assertUnlinkedTree(destination);
+      rmSync(destination, { recursive: true });
+    }
+    cpSync(path, destination, { recursive: true });
+  }
   return true;
 }

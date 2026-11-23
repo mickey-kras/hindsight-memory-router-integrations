@@ -1,5 +1,6 @@
+/// <reference path="../shared/fs-native-extensions.d.ts" />
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -20,8 +21,7 @@ const RESPONSE_LIMIT = 65_536;
 const HUMAN_SCOPES = new Set(["bank.list", "memory.recall", "memory.retain", "memory.reflect", "bank.config.read"]);
 // Refresh slightly early so a request never starts with an access token about to expire.
 const REFRESH_SKEW_SECONDS = 60;
-// A lock directory without an owner file is still being created, unless a crash left it this old.
-const LOCK_STALE_MS = 30_000;
+
 const LOCK_WAIT_MS = 20_000;
 // Connection failures before any byte reaches the router cannot have consumed the refresh token.
 const NOT_SENT_CODES = new Set([
@@ -49,10 +49,9 @@ export class HumanRefreshUnsupportedError extends HumanLoginRequiredError {
 }
 
 export class HumanRenewalUnconfirmedError extends HumanLoginRequiredError {
-  constructor() {
+  constructor(detail: string) {
     super();
-    this.message =
-      "human session renewal could not be confirmed; the local credential was removed. Run hindsight-coding-agents login";
+    this.message = `human session renewal could not be confirmed; ${detail}. Run hindsight-coding-agents login`;
     this.name = "HumanRenewalUnconfirmedError";
   }
 }
@@ -125,47 +124,6 @@ function lockPath(routerUrl: string, credentialRef: string, harness: string): st
   return join(homedir(), ".hindsight", "locks", `human-${key}.lock`);
 }
 
-function holderAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM: the process exists but belongs to another user.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-/**
- * Removes the lock only when its holder no longer exists. Elapsed time alone does not prove that:
- * a suspended holder can resume and must not find its lock taken by a sign-out.
- */
-function breakIfAbandoned(path: string): void {
-  let owner: string | undefined;
-  try {
-    owner = readFileSync(join(path, "owner"), "utf8");
-  } catch {
-    owner = undefined;
-  }
-  const pid = Number(owner);
-  const abandoned =
-    owner === undefined
-      ? Date.now() - (statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? Date.now()) > LOCK_STALE_MS
-      : !Number.isSafeInteger(pid) || pid <= 0 || !holderAlive(pid);
-  if (abandoned) rmSync(path, { recursive: true, force: true });
-}
-
-function acquire(path: string): boolean {
-  try {
-    mkdirSync(path, { mode: 0o700 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    breakIfAbandoned(path);
-    return false;
-  }
-  writeFileSync(join(path, "owner"), String(process.pid), { mode: 0o600, flag: "wx" });
-  return true;
-}
-
 /**
  * Serializes refresh, login persistence, and sign-out for one stored session across processes.
  * The action receives the keyring entry and must reread it: another holder may have changed it.
@@ -174,26 +132,23 @@ export async function withSessionLock<T>(
   routerUrl: string,
   credentialRef: string,
   harness: string,
-  action: (entry: SecureEntry) => Promise<T>,
+  action: (entry: SecureEntry, pending: string) => Promise<T>,
 ): Promise<T> {
   const entry = secureEntry(routerUrl, credentialRef, harness);
   const path = lockPath(routerUrl, credentialRef, harness);
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = performance.now() + LOCK_WAIT_MS;
+  let fd: number | undefined;
   try {
     mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
-    while (!acquire(path)) {
-      // Busy is transient: keep the credential and let the caller retry.
-      if (Date.now() > deadline) throw new RouterRequestError(503);
+    const { tryLock } = await import("fs-native-extensions");
+    fd = openSync(`${path}.fd`, "a+", 0o600);
+    while (!tryLock(fd)) {
+      if (performance.now() >= deadline) throw new RouterRequestError(503);
       await sleep(50);
     }
-  } catch (error) {
-    if (error instanceof RouterRequestError) throw error;
-    throw new HumanLoginRequiredError();
-  }
-  try {
-    return await action(entry);
+    return await action(entry, `${path}.pending`);
   } finally {
-    rmSync(path, { recursive: true, force: true });
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -213,30 +168,37 @@ function notSent(error: unknown): boolean {
   return typeof code === "string" && NOT_SENT_CODES.has(code);
 }
 
-async function revokeQuietly(routerUrl: string, refreshToken: string): Promise<void> {
+async function abandon(entry: SecureEntry, routerUrl: string, refreshToken: string): Promise<never> {
+  let remote = "server revocation confirmed";
   try {
     await authRequest(routerUrl, "sign-out", { refresh_token: refreshToken });
   } catch {
-    /* Server revocation is best effort; idle expiry still bounds the session. */
+    remote = "server revocation unconfirmed";
   }
-}
-
-/**
- * The router may have committed a rotation whose result this client cannot keep. Never resubmit the
- * consumed token: revoke the session, which also ends any lost successor, then require login.
- */
-async function abandon(entry: SecureEntry, routerUrl: string, refreshToken: string): Promise<never> {
-  await revokeQuietly(routerUrl, refreshToken);
+  let local = "local credential removed";
   try {
-    entry.deleteCredential();
+    if (!entry.deleteCredential()) local = "local removal unconfirmed";
   } catch {
-    /* The stored refresh token is consumed or revoked; the router rejects it. */
+    local = "local removal unconfirmed";
   }
-  throw new HumanRenewalUnconfirmedError();
+  throw new HumanRenewalUnconfirmedError(`${remote}, ${local}`);
 }
 
-async function rotate(entry: SecureEntry, current: HumanSession, routerUrl: string): Promise<HumanSession> {
+async function rotate(
+  entry: SecureEntry,
+  current: HumanSession,
+  routerUrl: string,
+  pending: string,
+): Promise<HumanSession> {
   const refreshToken = current.refresh_token as string;
+  // Persist intent before sending. A crash or ambiguous reply requires explicit login.
+  try {
+    writeFileSync(pending, "", { flag: "wx", mode: 0o600, flush: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST")
+      throw new HumanRenewalUnconfirmedError("explicit login required");
+    throw error;
+  }
   let value: unknown;
   try {
     value = await authRequest(routerUrl, "refresh", { refresh_token: refreshToken });
@@ -253,15 +215,18 @@ async function rotate(entry: SecureEntry, current: HumanSession, routerUrl: stri
       }
       const usable = current.expires_at > Math.floor(Date.now() / 1000);
       if (error.status === 404) {
+        rmSync(pending);
         if (usable) return current;
         throw new HumanRefreshUnsupportedError();
       }
       // The router rolls back before answering 429 or 503, so the token is unused.
       if (error.status === 429 || error.status === 503) {
+        rmSync(pending);
         if (usable) return current;
         throw new RouterRequestError(error.status);
       }
     } else if (notSent(error)) {
+      rmSync(pending);
       if (current.expires_at > Math.floor(Date.now() / 1000)) return current;
       throw new RouterRequestError(503);
     }
@@ -284,6 +249,7 @@ async function rotate(entry: SecureEntry, current: HumanSession, routerUrl: stri
   } catch {
     return abandon(entry, routerUrl, next.refresh_token);
   }
+  rmSync(pending);
   return next;
 }
 
@@ -297,7 +263,7 @@ export async function ensureFreshHumanSession(
   const seen = readHumanSession(routerUrl, credentialRef, harness);
   if (!seen.refresh_token || !due(seen)) return seen;
   const base = humanRouterUrl(routerUrl);
-  return withSessionLock(base, credentialRef, harness, async (entry) => {
+  return withSessionLock(base, credentialRef, harness, async (entry, pending) => {
     let current: HumanSession | undefined;
     try {
       current = stored(entry, base);
@@ -309,6 +275,6 @@ export async function ensureFreshHumanSession(
       throw new HumanLoginRequiredError();
     }
     if (!current.refresh_token || !due(current)) return current;
-    return rotate(entry, current, base);
+    return rotate(entry, current, base, pending);
   });
 }

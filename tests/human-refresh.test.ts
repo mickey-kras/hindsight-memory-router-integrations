@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +11,7 @@ import { readHumanSession, secureEntry } from "../src/coding-agents/human-sessio
 import { harnessTransport } from "../src/coding-agents/runtime.js";
 import { RouterRequestError } from "../src/shared/router-transport.js";
 
-const keychain = vi.hoisted(() => ({ records: new Map<string, string>(), writeFails: false }));
+const keychain = vi.hoisted(() => ({ records: new Map<string, string>(), writeFails: false, deleteFails: false }));
 vi.mock("node:module", () => ({
   createRequire:
     () =>
@@ -29,6 +31,7 @@ vi.mock("node:module", () => ({
             keychain.records.set(this.key, value);
           }
           deleteCredential(): boolean {
+            if (keychain.deleteFails) throw new Error("SENSITIVE deletion failed");
             return keychain.records.delete(this.key);
           }
         },
@@ -121,6 +124,7 @@ beforeEach(() => {
   vi.stubEnv("HINDSIGHT_ROUTER_CONFIG", join(directory, "router.json"));
   keychain.records.clear();
   keychain.writeFails = false;
+  keychain.deleteFails = false;
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -213,56 +217,33 @@ describe("automatic renewal", () => {
     );
   });
 
-  it("reuses a session another process refreshed while this one waited for the lock", async () => {
+  it("preserves a paused process's lock and recovers when the process exits", async () => {
     store("codex", stored());
     const calls = routerMock();
-    const lock = lockPath("codex");
-    mkdirSync(lock, { recursive: true });
-    const pending = ensureFreshHumanSession(router, "person", "codex");
-    // The other process holds the lock, writes its refreshed entry, then releases the lock.
-    store("codex", stored({ token: access("c"), refresh_token: refresh("c"), expires_at: now() + 3600 }));
-    rmSync(lock, { recursive: true });
-    await expect(pending).resolves.toMatchObject({ token: access("c") });
-    expect(calls).toHaveLength(0);
-  });
-
-  it("breaks a lock whose holder process no longer exists", async () => {
-    store("codex", stored());
-    const calls = routerMock();
-    const lock = lockPath("codex");
-    mkdirSync(lock, { recursive: true });
-    // Above the Linux pid_max, so no process can have this ID.
-    writeFileSync(join(lock, "owner"), "999999999");
-    await expect(ensureFreshHumanSession(router, "person", "codex")).resolves.toMatchObject({ token: access("b") });
-    expect(calls.map((call) => call.route)).toEqual(["refresh"]);
-    expect(existsSync(lock)).toBe(false);
-  });
-
-  it("never breaks an old lock while its holder is alive", async () => {
-    store("codex", stored());
-    const calls = routerMock();
-    const lock = lockPath("codex");
-    mkdirSync(lock, { recursive: true });
-    writeFileSync(join(lock, "owner"), String(process.pid));
-    utimesSync(lock, new Date(0), new Date(0));
-    let settled = false;
-    const pending = ensureFreshHumanSession(router, "person", "codex").finally(() => {
-      settled = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(settled).toBe(false);
-    expect(calls).toHaveLength(0);
-    rmSync(lock, { recursive: true });
-    await expect(pending).resolves.toMatchObject({ token: access("b") });
-  });
-
-  it("breaks an ownerless lock only after a crash could have left it", async () => {
-    store("codex", stored());
-    routerMock();
-    const lock = lockPath("codex");
-    mkdirSync(lock, { recursive: true });
-    utimesSync(lock, new Date(0), new Date(0));
-    await expect(ensureFreshHumanSession(router, "person", "codex")).resolves.toMatchObject({ token: access("b") });
+    mkdirSync(join(directory, ".hindsight", "locks"), { recursive: true });
+    const lock = `${lockPath("codex")}.fd`;
+    const holder = spawn(
+      process.execPath,
+      [
+        "-e",
+        'const fd = require("node:fs").openSync(process.argv[1], "a+"); if (!require("fs-native-extensions").tryLock(fd)) process.exit(1); process.stdout.write("ready"); setInterval(() => {}, 1000);',
+        lock,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    try {
+      await once(holder.stdout, "data");
+      utimesSync(lock, new Date(0), new Date(0));
+      const pending = ensureFreshHumanSession(router, "person", "codex");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(calls).toHaveLength(0);
+      store("codex", stored({ token: access("c"), refresh_token: refresh("c"), expires_at: now() + 3600 }));
+      holder.kill();
+      await expect(pending).resolves.toMatchObject({ token: access("c") });
+      expect(calls).toHaveLength(0);
+    } finally {
+      holder.kill();
+    }
   });
 
   it("keeps access-only entries until expiry, then requires one explicit login without refresh", async () => {
@@ -329,6 +310,20 @@ describe("refresh failures", () => {
     expect(signOut?.authorization).toBeNull();
     expect([refresh("1"), refresh("b")]).toContain(signOut?.body.refresh_token);
     expect(keychain.records.size).toBe(0);
+  });
+
+  it("blocks reuse after both remote revocation and local removal fail", async () => {
+    store("codex", stored());
+    keychain.deleteFails = true;
+    const calls = routerMock({
+      refresh: () => new Response(null, { status: 502 }),
+      "sign-out": () => new Response(null, { status: 503 }),
+    });
+    await expect(ensureFreshHumanSession(router, "person", "codex")).rejects.toThrow(
+      "server revocation unconfirmed, local removal unconfirmed",
+    );
+    await expect(ensureFreshHumanSession(router, "person", "codex")).rejects.toThrow("explicit login required");
+    expect(calls.map((call) => call.route)).toEqual(["refresh", "sign-out"]);
   });
 
   it("revokes the rotated session when the keyring write fails", async () => {
