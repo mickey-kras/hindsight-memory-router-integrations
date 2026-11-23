@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: mickey-kras/hindsight-memory-router-integrations
-          ref: 533e79de3119fadf50c7f299305d01eebb933abf
+          ref: b74423307a1b6847c2ba59c953a6d1f5dec7c777
           path: trusted
           persist-credentials: false
       - name: Validate candidate identity
