@@ -34,6 +34,24 @@ test("candidate execution has read-only permissions and fresh independent requir
   assert.equal(ci.jobs.checks.outputs.coverage_artifact, "${{ needs.build.outputs.coverage_artifact }}");
   assert.equal(ci.jobs.combination.name, "release combination");
 });
+test("scanner wrappers use the same reviewed workflow revision as main and PR validation", () => {
+  for (const [name, jobName] of [
+    ["aislop", "status"],
+    ["codeql", "analyze"],
+  ]) {
+    const expected = `./.github/workflows/trusted-${name}.yml`;
+    const wrapper = workflow(name);
+    assert.equal(wrapper.jobs[jobName].uses, expected);
+    assert.equal(workflow("main").jobs[name].uses, expected);
+    assert.equal(workflow("pr-validation").jobs[name].uses, expected);
+    assert.ok(workflow(`trusted-${name}`).on.workflow_call);
+    assert.deepEqual(wrapper.jobs[jobName].with, {
+      revision_sha: "${{ inputs.candidate_sha }}",
+      revision_ref: "${{ inputs.candidate_ref }}",
+    });
+  }
+  assert.deepEqual(workflow("codeql").on.schedule, [{ cron: "31 3 * * 1" }]);
+});
 test("scanner helpers use a fixed source independent of caller and candidate revisions", () => {
   for (const [file, jobName] of [
     ["trusted-ci", "security"],
@@ -44,7 +62,7 @@ test("scanner helpers use a fixed source independent of caller and candidate rev
     const steps = job.steps;
     const checkouts = steps.filter((s) => s.uses?.startsWith("actions/checkout@"));
     assert.equal(checkouts.length, 2);
-    assert.equal(checkouts[0].with.ref, "533e79de3119fadf50c7f299305d01eebb933abf");
+    assert.equal(checkouts[0].with.ref, "b74423307a1b6847c2ba59c953a6d1f5dec7c777");
     assert.equal(checkouts[0].with.repository, "mickey-kras/hindsight-memory-router-integrations");
     assert.equal(checkouts[0].with.path, "trusted");
     assert.equal(checkouts[1].with.path, "candidate");
@@ -71,6 +89,14 @@ test("scanner helpers use a fixed source independent of caller and candidate rev
 });
 test("scanner configuration and commands disable candidate tool execution and suppression", () => {
   const security = workflow("trusted-ci").jobs.security.steps;
+  const scannerAudit = security.find((s) => s.name === "Audit scanner dependencies");
+  assert.equal(scannerAudit.if, undefined);
+  assert.equal(scannerAudit["continue-on-error"], undefined);
+  assert.equal(
+    scannerAudit.run.trim(),
+    "node trusted/.github/trusted-ci/npm-audit.cjs trusted/.github/trusted-ci\n" +
+      'node trusted/.github/trusted-ci/npm-audit.cjs "$RUNNER_TEMP/scan/.github/trusted-ci"',
+  );
   const gitleaks = security.find((s) => s.name === "Gitleaks").run;
   assert.match(gitleaks, /9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c/);
   assert.match(gitleaks, /--ignore-gitleaks-allow/);
