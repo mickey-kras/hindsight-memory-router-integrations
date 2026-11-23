@@ -34,6 +34,24 @@ test("candidate execution has read-only permissions and fresh independent requir
   assert.equal(ci.jobs.checks.outputs.coverage_artifact, "${{ needs.build.outputs.coverage_artifact }}");
   assert.equal(ci.jobs.combination.name, "release combination");
 });
+test("scanner wrappers use the same reviewed workflow revision as main and PR validation", () => {
+  for (const [name, jobName] of [
+    ["aislop", "status"],
+    ["codeql", "analyze"],
+  ]) {
+    const expected = `./.github/workflows/trusted-${name}.yml`;
+    const wrapper = workflow(name);
+    assert.equal(wrapper.jobs[jobName].uses, expected);
+    assert.equal(workflow("main").jobs[name].uses, expected);
+    assert.equal(workflow("pr-validation").jobs[name].uses, expected);
+    assert.ok(workflow(`trusted-${name}`).on.workflow_call);
+    assert.deepEqual(wrapper.jobs[jobName].with, {
+      revision_sha: "${{ inputs.candidate_sha }}",
+      revision_ref: "${{ inputs.candidate_ref }}",
+    });
+  }
+  assert.deepEqual(workflow("codeql").on.schedule, [{ cron: "31 3 * * 1" }]);
+});
 test("scanner helpers use a fixed source independent of caller and candidate revisions", () => {
   for (const [file, jobName] of [
     ["trusted-ci", "security"],

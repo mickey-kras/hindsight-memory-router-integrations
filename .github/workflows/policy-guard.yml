@@ -948,7 +948,7 @@ jobs:
               '.github/workflows/pr-validation.yml': ('d2125e706614bfcbd1e2b806a722ab77d914940070f911cde99056efbefb5702',),
               '.github/workflows/branch-policy.yml': ('ba7b587c030f6f6736bf9a865207f5f14868b9a7bdb1fc8ee961bef309af5257',),
           }
-          SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': 'b173e748fe9845d4ad97f8b356edb78531a6a263e49b66166ddcf39f58360fa8', '.github/workflows/codeql.yml': 'ae5d4f4c3382739f9b74ae8422b7279926a6bd6e8b70407a56584ce1c76a5730'}
+          SCANNER_WRAPPER_SHAPES = {'.github/workflows/aislop.yml': '935eb82e3eb140504389a6b30fb39c11cbf78cba72d73833f8ad356fc2a347c7', '.github/workflows/codeql.yml': 'c3b2c270a0364b1811ba9f2db47bbf4912b5d288fadf5617b63df9e0757a754d'}
 
           def approved_scanner_wrapper(path, content):
               if path not in SCANNER_WRAPPER_SHAPES:
@@ -1253,7 +1253,7 @@ jobs:
               '.github/trusted-ci/package.json': '5db62573f0f82ee1e6774ffb51be79db2bd0aa995ace952313ac0ea47526e50e',
               '.github/trusted-ci/biome-config.json': '6f98e6f6827ef4af012c5cb5b6a4e276623d9c4183c5b614b897348aedbc8364',
               '.github/trusted-ci/dependency-review-config.yml': 'f92f128addcb10acd3d874579771b0d44675a3db4809d5c274211c4f0bb9374f',
-              '.github/trusted-ci/workflows.test.cjs': '44bef956087547e19802dcb7e7a85383effbc5f4261b5f74dfe6cb1b99a81efd',
+              '.github/trusted-ci/workflows.test.cjs': '9f187c41868705585f75850d52353130503626eec71e7caf1a55554c2ae10300',
               '.github/trusted-ci/trivyignore': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
               '.github/trusted-ci/scan-tree.cjs': '815aec01051ecee9ba0a2d7d592f8aeebf93a82ea89a986556f773dc2f8c81e3',
               '.github/trusted-ci/aislop.test.cjs': '17bcdfe2e89570b7c8ea51b707c0400db06f3345d70101c4d7eb668774772084',
