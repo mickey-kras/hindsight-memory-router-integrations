@@ -1,13 +1,13 @@
-import { stripVTControlCharacters } from "node:util";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
 import { loadManagedConfig } from "../src/shared/managed-config.js";
 import { renderToolText } from "../src/shared/tool-prefix.js";
 import { loadConfig } from "../src/upstream/coding-agents/src/core/config";
-import { buildHookOutput } from "../src/upstream/coding-agents/src/core/hook";
 import { HindsightClient } from "../src/upstream/coding-agents/src/core/hindsight";
+import { buildHookOutput } from "../src/upstream/coding-agents/src/core/hook";
 import { buildSystemInjection, formatPageFallback } from "../src/upstream/coding-agents/src/core/inject";
 import { buildKnowledgePreamble, buildRosterRefresh } from "../src/upstream/coding-agents/src/core/knowledge-injection";
 import { buildKnowledgeTools } from "../src/upstream/coding-agents/src/core/knowledge-tools";
@@ -16,6 +16,7 @@ import { readPackagedSkill, syncCompanionSkill } from "../src/upstream/coding-ag
 import { opencodeAdapter } from "../src/upstream/coding-agents/src/harness/opencode";
 import { createPluginEntry } from "../src/upstream/coding-agents/src/harness/plugin-entry";
 import { selectTools } from "../src/upstream/coding-agents/src/mcp-server";
+import { required } from "./helpers/required.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -77,7 +78,7 @@ it.each([undefined, "team_", "memory_router_", "agent_knowledge_"])(
               : "search_knowledge_pages"),
       );
     }
-    const skill = readPackagedSkill(undefined, "opencode2")!;
+    const skill = required(readPackagedSkill(undefined, "opencode2"), "opencode2 skill");
     expect(skill.content).toContain(`${prefix}search_knowledge_pages`);
   },
 );
@@ -98,9 +99,12 @@ it("preserves explicit read-bank authorization under a custom prefix", async () 
     routerHarness: "codex",
   });
   const list = vi.spyOn(HindsightClient.prototype, "listPages").mockResolvedValue({ items: [] });
-  const tool = buildKnowledgeTools(client, "private", { toolPrefix: "team_" }).find(
-    (tool) => tool.name === "team_list_knowledge_pages",
-  )!;
+  const tool = required(
+    buildKnowledgeTools(client, "private", { toolPrefix: "team_" }).find(
+      (tool) => tool.name === "team_list_knowledge_pages",
+    ),
+    "team_list_knowledge_pages",
+  );
   expect((await tool.handler({ bankId: "shared" })).isError).toBeUndefined();
   expect(list).toHaveBeenCalledOnce();
   expect((await tool.handler({ bankId: "unassigned" })).isError).toBe(true);

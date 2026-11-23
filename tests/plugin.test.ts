@@ -21,6 +21,7 @@ import type {
   PluginHookEvent,
   PluginToolContext,
 } from "../src/upstream/src/types.js";
+import { required } from "./helpers/required.js";
 
 vi.mock("node:fs", async (importOriginal) => ({ ...(await importOriginal<typeof import("node:fs")>()) }));
 vi.mock("node:os", async (importOriginal) => ({ ...(await importOriginal<typeof import("node:os")>()) }));
@@ -65,6 +66,7 @@ interface FakeApi extends MoltbotPluginAPI {
     opts?: { names?: string[] };
   }>;
   on(event: string, handler: (event: PluginHookEvent, ctx?: PluginHookAgentContext) => unknown): void;
+  hook(event: string): (event: PluginHookEvent, ctx?: PluginHookAgentContext) => unknown;
   registerService(service: { id: string; start(): Promise<void>; stop(): Promise<void> }): void;
   registerTool(factory: (ctx: PluginToolContext) => unknown, opts?: { names?: string[] }): void;
 }
@@ -80,6 +82,9 @@ function makeApi(queueDir: string): FakeApi {
     toolFactories: [],
     on(event, handler) {
       this.handlers.set(event, handler);
+    },
+    hook(event) {
+      return required(this.handlers.get(event), `${event} handler`);
     },
     registerService(service) {
       this.services.push(service);
@@ -297,7 +302,7 @@ describe("plugin wiring", () => {
     };
     registerWithStack(api, instrumentedStack(queueDir, sink));
 
-    const result = (await api.handlers.get("before_prompt_build")!(
+    const result = (await api.hook("before_prompt_build")(
       { prompt: "what do you remember?" },
       { agentId: "main" },
     )) as { prependContext?: string };
@@ -330,13 +335,13 @@ describe("plugin wiring", () => {
     };
     registerWithStack(api, instrumentedStack(queueDir, sink));
 
-    const result = (await api.handlers.get("before_prompt_build")!(
+    const result = (await api.hook("before_prompt_build")(
       { prompt: "what do you remember?" },
       { agentId: "main" },
     )) as { prependContext?: string };
     expect(result.prependContext).toContain("main memory");
 
-    await api.handlers.get("agent_end")!(
+    await api.hook("agent_end")(
       { messages: [{ role: "user", content: "remember this" }] },
       { agentId: "main", sessionKey: "agent:main:main" },
     );
@@ -352,7 +357,7 @@ describe("plugin wiring", () => {
     };
     registerWithStack(api, instrumentedStack(queueDir, sink));
 
-    await api.handlers.get("agent_end")!(
+    await api.hook("agent_end")(
       {
         context: {
           sessionEntry: {
@@ -384,15 +389,15 @@ describe("plugin wiring", () => {
       ],
     };
     const ctx = { agentId: "main", sessionKey: "agent:main:main" };
-    await api.handlers.get("agent_end")!(event, ctx);
-    await api.handlers.get("session_end")!(event, ctx);
+    await api.hook("agent_end")(event, ctx);
+    await api.hook("session_end")(event, ctx);
     expect(sink.retains).toHaveLength(1);
     expect(sink.retains[0].content).not.toContain("[object Object]");
     expect(JSON.parse(sink.retains[0].content)).toEqual([
       { role: "user", content: "remember this" },
       { role: "assistant", content: "saved" },
     ]);
-    await api.handlers.get("agent_end")!(event, ctx);
+    await api.hook("agent_end")(event, ctx);
     expect(sink.retains).toHaveLength(2);
   });
 
@@ -642,10 +647,7 @@ describe("plugin wiring", () => {
       retains: [] as Array<{ bank: string; content: string }>,
     };
     registerWithStack(api, instrumentedStack(queueDir, sink));
-    const result = await api.handlers.get("before_prompt_build")!(
-      { prompt: "hello there" },
-      { agentId: "unknown-agent" },
-    );
+    const result = await api.hook("before_prompt_build")({ prompt: "hello there" }, { agentId: "unknown-agent" });
     expect(result).toBeUndefined();
     expect(sink.constructed).toHaveLength(0);
     expect(sink.recalls).toHaveLength(0);
@@ -667,8 +669,8 @@ describe("plugin wiring", () => {
       retains: [] as Array<{ bank: string; content: string }>,
     };
     registerWithStack(api, instrumentedStack(queueDir, sink));
-    expect(await api.handlers.get("before_prompt_build")!({ prompt: "hello there" }, undefined)).toBeUndefined();
-    expect(await api.handlers.get("before_prompt_build")!({ prompt: "hello there" }, {})).toBeUndefined();
+    expect(await api.hook("before_prompt_build")({ prompt: "hello there" }, undefined)).toBeUndefined();
+    expect(await api.hook("before_prompt_build")({ prompt: "hello there" }, {})).toBeUndefined();
     expect(sink.constructed).toHaveLength(0);
   });
 
@@ -680,7 +682,7 @@ describe("plugin wiring", () => {
       retains: [] as Array<{ bank: string; content: string }>,
     };
     registerWithStack(api, instrumentedStack(queueDir, sink));
-    await api.handlers.get("agent_end")!(
+    await api.hook("agent_end")(
       {
         context: {
           sessionEntry: { messages: [{ role: "user", content: "hi there" }] },
@@ -781,7 +783,10 @@ describe("plugin wiring", () => {
         params: Record<string, unknown>,
       ): Promise<{ content: Array<{ text: string }>; details: object }>;
     }>;
-    const recallTool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    const recallTool = required(
+      tools.find((t) => t.name === "agent_knowledge_recall"),
+      "agent_knowledge_recall",
+    );
     const response = await recallTool.execute("call-1", { query: "testing" });
     expect(sink.constructed).toEqual([{ apiKey: TOKEN_BACKEND, agentHeader: "backend" }]);
     expect(sink.recalls.map((r) => r.bank)).toEqual(["dev", "dev-best-practices"]);
@@ -885,8 +890,8 @@ describe("plugin wiring", () => {
       retains: [] as Array<{ bank: string; content: string }>,
     };
     registerWithStack(api, instrumentedStack(queueDir, sink));
-    await api.handlers.get("before_prompt_build")!({ prompt: "hello there" }, { agentId: "main" });
-    await api.handlers.get("agent_end")!(
+    await api.hook("before_prompt_build")({ prompt: "hello there" }, { agentId: "main" });
+    await api.hook("agent_end")(
       {
         context: {
           sessionEntry: { messages: [{ role: "user", content: "hi" }] },
@@ -916,7 +921,7 @@ describe("plugin wiring", () => {
     stack.config.recallInjectionPosition = "append";
     registerWithStack(api, stack);
 
-    const append = (await api.handlers.get("before_prompt_build")!(
+    const append = (await api.hook("before_prompt_build")(
       {
         messages: [
           { role: "assistant", content: "not the query" },
@@ -931,7 +936,7 @@ describe("plugin wiring", () => {
     expect(append.appendSystemContext).toContain("structured memory [fact]");
 
     stack.config.recallInjectionPosition = "prepend";
-    const prepend = (await api.handlers.get("before_prompt_build")!(
+    const prepend = (await api.hook("before_prompt_build")(
       { messages: ["plain string query"] },
       { agentId: "main" },
     )) as { prependSystemContext?: string };
@@ -950,7 +955,7 @@ describe("plugin wiring", () => {
     disabledStack.config.autoRecall = false;
     registerWithStack(disabledApi, disabledStack);
     expect(
-      await disabledApi.handlers.get("before_prompt_build")!({ prompt: "ignored prompt" }, { agentId: "main" }),
+      await disabledApi.hook("before_prompt_build")({ prompt: "ignored prompt" }, { agentId: "main" }),
     ).toBeUndefined();
 
     const api = makeApi(queueDir);
@@ -961,15 +966,13 @@ describe("plugin wiring", () => {
       principals: stack.config.agents,
     });
     registerWithStack(api, stack);
-    expect(
-      await api.handlers.get("before_prompt_build")!({ prompt: "valid prompt" }, { agentId: "writer" }),
-    ).toBeUndefined();
+    expect(await api.hook("before_prompt_build")({ prompt: "valid prompt" }, { agentId: "writer" })).toBeUndefined();
 
     const noPromptApi = makeApi(queueDir);
     const noPromptStack = instrumentedStack(queueDir, sink);
     registerWithStack(noPromptApi, noPromptStack);
     expect(
-      await noPromptApi.handlers.get("before_prompt_build")!(
+      await noPromptApi.hook("before_prompt_build")(
         { messages: [{ role: "assistant", content: "no user prompt" }] },
         { agentId: "main" },
       ),
@@ -994,7 +997,7 @@ describe("plugin wiring", () => {
       .mockRejectedValueOnce(new RecallAuthorizationError("main"))
       .mockRejectedValueOnce(new Error("network down"));
     registerWithStack(api, stack);
-    const handler = api.handlers.get("before_prompt_build")!;
+    const handler = api.hook("before_prompt_build");
 
     expect(await handler({ prompt: "first query" }, { agentId: "main" })).toBeDefined();
     expect(api.logger.warn).toHaveBeenCalledWith("partial recall: banks unavailable: dev");
@@ -1028,7 +1031,7 @@ describe("plugin wiring", () => {
     stack.retain.retain = retainMock;
     const flush = vi.spyOn(stack.retain, "flushQueues").mockResolvedValue();
     registerWithStack(api, stack);
-    const handler = api.handlers.get("agent_end")!;
+    const handler = api.hook("agent_end");
     const event = { messages: [{ role: "user", content: "remember this" }] };
 
     await handler(event, { agentId: "main", sessionKey: "ignore:one" });
@@ -1075,7 +1078,7 @@ describe("plugin wiring", () => {
     stack.config.autoRetain = false;
     const retainSpy = vi.spyOn(stack.retain, "retain");
     registerWithStack(api, stack);
-    await api.handlers.get("agent_end")!(
+    await api.hook("agent_end")(
       {
         context: {
           sessionEntry: {
@@ -1106,7 +1109,7 @@ describe("plugin wiring", () => {
     });
     const retainSpy = vi.spyOn(stack.retain, "retain");
     registerWithStack(api, stack);
-    await api.handlers.get("agent_end")!(
+    await api.hook("agent_end")(
       {
         context: {
           sessionEntry: {
@@ -1135,7 +1138,10 @@ describe("plugin wiring", () => {
         params: Record<string, unknown>,
       ): Promise<{ content: Array<{ text: string }>; details: object }>;
     }>;
-    const createPage = tools.find((t) => t.name === "agent_knowledge_create_page")!;
+    const createPage = required(
+      tools.find((t) => t.name === "agent_knowledge_create_page"),
+      "agent_knowledge_create_page",
+    );
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ id: "preferences", name: "Preferences" }), {
         status: 200,
@@ -1181,7 +1187,10 @@ describe("plugin wiring", () => {
         params: Record<string, unknown>,
       ): Promise<{ content: Array<{ text: string }>; details: object }>;
     }>;
-    const listPages = tools.find((t) => t.name === "agent_knowledge_list_pages")!;
+    const listPages = required(
+      tools.find((t) => t.name === "agent_knowledge_list_pages"),
+      "agent_knowledge_list_pages",
+    );
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
     try {
       await expect(listPages.execute("call-1", {})).rejects.toThrow("memory request failed (500)");
