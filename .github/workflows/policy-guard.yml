@@ -1271,7 +1271,7 @@ jobs:
               '.github/scripts/package.json': '7b4f9c2498a1110d7c8eae8e09558d921499485902b46c90672b8660dd277800',
               '.github/scripts/combination.cjs': '7866bdaf091681673f643b9e70221ff3d828e2198dfb5a41bd5bb3da6ee94850',
               '.github/scripts/combination-smoke.sh': '6fe4bc2445f0ae10c4443556757bdb0a83e00b0861f4ab72b4d6c484ad575cbb',
-              '.github/scripts/combination-smoke.mjs': '858c23df82e6fd4b2c69713aa7c0fd0243d8bb27ad3152017d76847d55c4fdb6',
+              '.github/scripts/combination-smoke.mjs': '246a2a97f2190cf2548733c4836ec1029b0d38e0021a59c8053178fd325081c1',
               '.github/scripts/combination.test.cjs': '3d2d763b4213340109fe6c909e7e693142a1e926a839a2d3053dfa307af191d7',
               '.github/scripts/release.cjs': '4a1c564c1b9083a196f7df3df196b627dca4f562c3f831a6df3eb06430cbdfbe',
               '.github/scripts/release-settings.cjs': '48a9e701dba56bc8d77f4c073f8f3e457a0e077695551e3d7f6faa9d3f2dddd8',
