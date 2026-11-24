@@ -44,18 +44,19 @@ Client routing does not grant access. The router controls access through its gra
 
 From an operator-provisioned project, ask your coding agent:
 
-> Install Memory Router for this harness using the pinned coding-agent release below. Use my existing HINDSIGHT_ROUTER_CONFIG and provisioned environment credentials. Do not ask me for JSON, tokens, or a server command.
+> Install Memory Router for this harness using the pinned coding-agent version below. Use my existing HINDSIGHT_ROUTER_CONFIG and provisioned environment credentials. Do not ask me for JSON, tokens, or a server command.
 
-Replace the release and package version placeholders with values from the same published release.
-Run the pinned GitHub release artifact through npm:
+Run an exact published version through npm:
 
 ```sh
-npm exec --yes --package=https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v<release>/mickey-kras-hindsight-memory-router-coding-agents-<package-version>.tgz -- hindsight-coding-agents install
+npm exec --yes --package=@mickey-kras/hindsight-memory-router-coding-agents@0.8.17 -- hindsight-coding-agents install
 ```
 
-Use the release tarballs from GitHub until the operator verifies [npm activation](../../docs/RELEASING.md#one-time-npm-setup).
+This version belongs to release [v0.2.12](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/tag/v0.2.12). For a different release, use the version in its release notes.
+To verify the package, see [Verify a package](../../README.md#verify-a-package).
 
-For a local download, check the coding-agent tarball against the release's `PACKAGE_SHA256`.
+For an installation without npm registry access, download the coding-agent tarball from the same release.
+Check it against the release's `PACKAGE_SHA256`.
 Then run this command:
 
 ```sh

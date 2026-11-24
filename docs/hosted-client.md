@@ -1,8 +1,19 @@
 # Hosted application client
 
-Download the OpenClaw `.tgz` from the [selected GitHub release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases).
-Check it against that release's `PACKAGE_SHA256`.
-Install the verified archive:
+You need Node.js 22.12.0 or later and an HTTPS endpoint for Memory Router.
+You also need server-side grants for the principal, banks and scopes.
+
+Install an exact published version:
+
+```sh
+npm install --save-exact @mickey-kras/hindsight-memory-router-openclaw@0.14.14
+```
+
+This version belongs to release [v0.2.12](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/tag/v0.2.12). For a different release, use the version in its release notes.
+To verify the package, run `npm audit signatures` or see [Verify a package](../README.md#verify-a-package).
+
+For an installation without npm registry access, download the OpenClaw `.tgz` from the [selected GitHub release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases).
+Check it against that release's `PACKAGE_SHA256`. Then install the verified archive:
 
 ```sh
 npm install --save-exact /absolute/path/verified-openclaw.tgz
