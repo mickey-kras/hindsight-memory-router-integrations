@@ -92,6 +92,26 @@ These need prepared artifacts or services in addition to installed dependencies:
 | Minimum supported runtime and consumer types | `node scripts/verify-runtime-contract.mjs` | Run with exactly Node.js 22.12.0 and a freshly packed OpenClaw tarball. Installs into an isolated consumer and checks CommonJS and ESM exports, hosted entry point and production declaration dependencies. Requires npm registry access. |
 | Packaged clients with router and Hindsight | `bash .github/scripts/combination-smoke.sh` | The `release combination` job in [trusted-ci.yml](../.github/workflows/trusted-ci.yml) prepares pinned packages. It creates a checkout of the matching router harness in `.router`. It sets the resolved image, version and runner environment. Requires Docker Compose, OpenSSL and image and registry access. See [release verification](RELEASING.md). This is the live service boundary, separate from synthetic client tests and `combination.test.cjs`. |
 
+### Router route permissions
+
+`compat/router-routes.json` lists each bank route of the router.
+Each entry gives the router scope and the client classification: `read`, `write` or `excluded`.
+The client denies an `excluded` route. These exclusions are intentional.
+
+The router scope decides the classification. The HTTP method and the facade read flag do not.
+
+- `POST /mental-models/{mental_model_id}/dry-run-refresh` needs `memory.recall`. It is a read.
+- `POST /memories/dry-run-extract` needs `memory.retain`. It is a write.
+- `GET /operations/{operation_id}` needs `bank.config.read`. With `include_payload`, it needs `memory.recall`.
+  The client sends the two requests. The router enforces the scope.
+
+`tests/route-permissions.test.ts` compares the client with the table.
+A failure shows the method, the route and the expected classification.
+The `release combination` job compares the table and the packaged client with the resolved router.
+It fails when a scope changes, when the router adds a route or when the router removes a route.
+It also sends these requests through the packaged client to the live router.
+When the router changes a route, update the table and the client in the same PR.
+
 CI verifies provenance with `node scripts/verify-coding-upstream.mjs` and `node scripts/verify-openclaw-overlay.mjs`.
 It checks package inventory with `node .github/scripts/verify-package-inventory.cjs`.
 It also compares the bytes of repeat packs and checks SHA-256 and Nix pins. 

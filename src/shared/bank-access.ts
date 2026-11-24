@@ -28,8 +28,10 @@ export function requireBank(access: BankAccess, bank: string, operation: "read" 
 }
 
 // Unknown operations are denied; POST does not by itself imply mutation.
+// compat/router-routes.json records the router scope behind each classification.
 export function classifyOperation(method: string, suffix: string): "read" | "write" {
   if (method === "POST" && ["/memories/recall", "/reflect"].includes(suffix)) return "read";
+  if (method === "POST" && /^\/mental-models\/[^/]+\/dry-run-refresh$/.test(suffix)) return "read";
   if (
     method === "GET" &&
     /^\/(?:config|stats|tags|graph|documents|operations|memories|mental-models|pages)(?:\/[^/]+)*$/.test(suffix)

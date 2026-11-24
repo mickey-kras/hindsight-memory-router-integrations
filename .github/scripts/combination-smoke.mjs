@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { constants, createDecipheriv, createHash, privateDecrypt, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
@@ -13,6 +13,8 @@ const state = process.env.COMBINATION_STATE;
 assert.ok(state);
 const put = (name, value) => writeFileSync(join(state, name), `${JSON.stringify(value, null, 2)}\n`);
 const bank = "release-smoke";
+const readBank = "release-smoke-read";
+const configBank = "release-smoke-config";
 const routerUrl = "https://localhost:9443";
 
 if (process.argv[2] === "prepare") {
@@ -27,6 +29,23 @@ if (process.argv[2] === "prepare") {
       grants: [{ bank, scopes: ["bank.list", "memory.retain", "memory.recall", "memory.reflect"] }],
     };
   }
+  // This principal proves which bank routes the client sends and which scopes the router enforces.
+  const routeSecret = randomBytes(32).toString("hex");
+  credentials.routes = `mr_routes_${routeSecret}`;
+  principals.routes = {
+    keys: [
+      {
+        id: "routes",
+        sha256: createHash("sha256").update(routeSecret).digest("hex"),
+        created_at: new Date().toISOString(),
+      },
+    ],
+    grants: [
+      { bank, scopes: ["memory.retain", "memory.recall"] },
+      { bank: readBank, scopes: ["memory.recall"] },
+      { bank: configBank, scopes: ["bank.config.read"] },
+    ],
+  };
   put("credentials.json", credentials);
   put("principals.json", { principals });
   put("override.json", {
@@ -44,6 +63,26 @@ if (process.argv[2] === "prepare") {
   });
 } else {
   const credentials = JSON.parse(readFileSync(join(state, "credentials.json"), "utf8"));
+  const bankAccess = await import(pathToFileURL(join(state, "openclaw/package/dist/shared/bank-access.js")));
+  const { compareRoutes } = createRequire(import.meta.url)("./combination-routes.cjs");
+  const routeErrors = compareRoutes(
+    JSON.parse(readFileSync("compat/router-routes.json", "utf8")),
+    JSON.parse(
+      execFileSync("docker", ["run", "--rm", "-i", "--network", "none", "hindsight-memory-router:ci", "python", "-"], {
+        input: readFileSync(".github/scripts/combination-routes.py"),
+        encoding: "utf8",
+      }),
+    ),
+    (method, suffix) => {
+      try {
+        return bankAccess.classifyOperation(method, suffix);
+      } catch (error) {
+        if (error instanceof bankAccess.AccessDeniedError) return "excluded";
+        throw error;
+      }
+    },
+  );
+  assert.deepEqual(routeErrors, [], "Client route permissions must match the resolved router");
   const traces = [];
   const ADMIN_READ_TOKEN = "test-admin-read-token-012345678901";
   const adminGet = (path) =>
@@ -188,6 +227,49 @@ if (process.argv[2] === "prepare") {
     const recalled = await client.recall(bank, "What languages does the project use?");
     assert.ok(Array.isArray(recalled.results));
     await assert.rejects(client.recall("unassigned", "private memory"));
+
+    const routeTraces = traces.length;
+    const routes = new AuthenticatedClientFactory({ routerUrl, userAgent: "release-smoke" }).transportFor({
+      principalId: "routes",
+      token: credentials.routes,
+      access: { writeBank: bank, additionalReadBanks: [readBank, configBank] },
+    });
+    const send = async (target, suffix, method, body) => {
+      const before = traces.length;
+      const error = await routes.request(routes.bankUrl(target, suffix), { method, body }).then(
+        () => undefined,
+        (failure) => failure,
+      );
+      return { denied: error?.name === "AccessDeniedError", status: traces[before]?.status };
+    };
+    const assertLocalDenial = async (target, suffix, method) => {
+      const result = await send(target, suffix, method);
+      assert.deepEqual(
+        result,
+        { denied: true, status: undefined },
+        `${method} ${suffix} on ${target} must be denied before it reaches the router`,
+      );
+    };
+    const assertRouted = async (target, suffix, method, body) => {
+      const result = await send(target, suffix, method, body);
+      assert.ok(
+        !result.denied && result.status !== undefined && ![401, 403].includes(result.status),
+        `${method} ${suffix} on ${target} must reach the router with sufficient scope: ${JSON.stringify(result)}`,
+      );
+    };
+    await assertRouted(readBank, "/mental-models/missing/dry-run-refresh", "POST");
+    await assertLocalDenial(readBank, "/mental-models/missing/refresh", "POST");
+    await assertLocalDenial(readBank, "/memories/dry-run-extract", "POST");
+    await assertRouted(bank, "/memories/dry-run-extract", "POST", JSON.stringify({ items: [{ content: "Smoke." }] }));
+    await assertLocalDenial(bank, "/unknown", "POST");
+    await assertRouted(configBank, "/operations/missing", "GET");
+    // Payload access needs memory.recall. The client sends the request and the router denies it.
+    assert.deepEqual(
+      await send(configBank, "/operations/missing?include_payload=true", "GET"),
+      { denied: true, status: 403 },
+      "The router must enforce memory.recall for operation payloads",
+    );
+    traces.splice(routeTraces);
 
     put("managed.json", {
       routerUrl,
