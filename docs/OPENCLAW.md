@@ -12,10 +12,10 @@ openclaw plugins install npm:@mickey-kras/hindsight-memory-router-openclaw@0.14.
 ```
 
 This version belongs to release [v0.2.12](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/tag/v0.2.12). For a different release, use the version in its release notes.
-To verify the package, see [Verify a package](../README.md#verify-a-package).
+To check the package, see [Check a package](../README.md#check-a-package).
 
 For an installation without npm registry access, download the OpenClaw `.tgz` from the [selected release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases).
-Check its hash against that release's `PACKAGE_SHA256`. Then install the verified archive:
+Compare the hash of the file with the `PACKAGE_SHA256` entry of that release. Then install the verified archive:
 
 ```sh
 openclaw plugins install /absolute/path/downloaded-openclaw.tgz

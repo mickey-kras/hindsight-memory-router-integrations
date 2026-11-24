@@ -53,7 +53,7 @@ npm exec --yes --package=@mickey-kras/hindsight-memory-router-coding-agents@0.8.
 ```
 
 This version belongs to release [v0.2.12](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/tag/v0.2.12). For a different release, use the version in its release notes.
-To verify the package, see [Verify a package](../../README.md#verify-a-package).
+To check the package, see [Check a package](../../README.md#check-a-package).
 
 For an installation without npm registry access, download the coding-agent tarball from the same release.
 Check it against the release's `PACKAGE_SHA256`.
