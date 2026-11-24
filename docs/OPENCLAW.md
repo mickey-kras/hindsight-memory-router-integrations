@@ -3,16 +3,25 @@
 [Documentation](README.md) | [Repository](../README.md)
 
 You need Node.js 22.12.0 or later and an HTTPS endpoint for Memory Router.
-Download the OpenClaw `.tgz` from the [selected release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases).
-Before you install it, check its hash against that release's `PACKAGE_SHA256`.
+You also need server-side grants for the principal, banks and scopes.
 
-Install the downloaded archive using the [OpenClaw plugin CLI](https://docs.openclaw.ai/cli/plugins/install):
+Install an exact published version with the [OpenClaw plugin CLI](https://docs.openclaw.ai/cli/plugins/install):
+
+```sh
+openclaw plugins install npm:@mickey-kras/hindsight-memory-router-openclaw@0.14.14 --pin
+```
+
+This version belongs to release [v0.2.12](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/tag/v0.2.12). For a different release, use the version in its release notes.
+To check the package, see [Check a package](../README.md#check-a-package).
+
+For an installation without npm registry access, download the OpenClaw `.tgz` from the [selected release](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases).
+Compare the hash of the file with the `PACKAGE_SHA256` entry of that release. Then install the verified archive:
 
 ```sh
 openclaw plugins install /absolute/path/downloaded-openclaw.tgz
 ```
 
-Replace the path with the verified release artifact. OpenClaw can need a newer Node.js version than this package's minimum. At the root entrypoint, the package supports ESM imports and CommonJS `require()` on Node.js 22.12.0 or later. Use `./hosted` for ESM imports.
+OpenClaw can need a newer Node.js version than this package's minimum. At the root entrypoint, the package supports ESM imports and CommonJS `require()` on Node.js 22.12.0 or later. Use `./hosted` for ESM imports.
 
 The OpenClaw retain queue does not support Windows. Native lock ownership and crash recovery have verification on Linux. The process-lock tests need POSIX signals. Use a local filesystem with OS file-lock support.
 

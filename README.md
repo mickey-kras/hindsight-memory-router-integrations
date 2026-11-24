@@ -29,13 +29,50 @@ The two release packages are OpenClaw and coding agents. The coding-agents packa
 
 You need Node.js 22.12.0 or later and an HTTPS endpoint for Memory Router. You also need server-side grants for the principal, banks and scopes.
 
-Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases). Check the SHA-256 against `PACKAGE_SHA256` from the same release source. CI builds the packages. This repository does not store tarballs.
+Install an exact published version from npm. These commands use the versions of release [v0.2.12](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/tag/v0.2.12). For a different release, use the versions in its release notes.
 
-| Client | Procedure |
-| --- | --- |
-| Hosted agents and apps | Use the [typed router HTTP client](docs/hosted-client.md). |
-| OpenClaw | Install the OpenClaw release artifact, then configure the [`hindsight-memory-router` plugin](docs/OPENCLAW.md). |
-| Codex, Claude Code, OpenCode and other coding agents | Install the coding-agents artifact and follow [coding-agent setup](integrations/coding-agents/README.md). |
+OpenClaw:
+
+```sh
+openclaw plugins install npm:@mickey-kras/hindsight-memory-router-openclaw@0.14.14 --pin
+```
+
+Then configure the [`hindsight-memory-router` plugin](docs/OPENCLAW.md).
+
+Codex, Claude Code, OpenCode and other coding agents:
+
+```sh
+npm exec --yes --package=@mickey-kras/hindsight-memory-router-coding-agents@0.8.17 -- hindsight-coding-agents install
+```
+
+Then follow the [coding-agent setup](integrations/coding-agents/README.md).
+
+Hosted agents and apps:
+
+```sh
+npm install --save-exact @mickey-kras/hindsight-memory-router-openclaw@0.14.14
+```
+
+Then use the [typed router HTTP client](docs/hosted-client.md).
+
+### Check a package
+
+CI builds each package and publishes the same bytes to npm and to the GitHub release. Each release has a `release.json` manifest and a `PACKAGE_SHA256` file.
+
+Download the npm package and calculate its SHA-256.
+
+```sh
+npm pack @mickey-kras/hindsight-memory-router-coding-agents@0.8.17
+sha256sum mickey-kras-hindsight-memory-router-coding-agents-0.8.17.tgz
+```
+
+The result must be the same as the entry in [`PACKAGE_SHA256`](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases/download/v0.2.12/PACKAGE_SHA256) of that release.
+
+In a project that has the package as a dependency, run `npm audit signatures`. It checks the registry signature and the npm provenance attestation. For the trust basis, see the [release guide](docs/RELEASING.md).
+
+### Installation without the npm registry
+
+Download the integration's `.tgz` and `PACKAGE_SHA256` from [Releases](https://github.com/mickey-kras/hindsight-memory-router-integrations/releases). Check the SHA-256 of the `.tgz` against `PACKAGE_SHA256` from the same release. Then use the absolute path of the verified `.tgz` in the command, as the client guide shows. This repository does not store tarballs.
 
 ## Quick start: coding agents
 
@@ -51,10 +88,10 @@ Download the integration's `.tgz` from [Releases](https://github.com/mickey-kras
 
 ```sh
 export HINDSIGHT_ROUTER_CONFIG=/absolute/path/router.json
-npm exec --yes --package=/absolute/path/verified-coding-agents.tgz -- hindsight-coding-agents install
+npm exec --yes --package=@mickey-kras/hindsight-memory-router-coding-agents@0.8.17 -- hindsight-coding-agents install
 ```
 
-Keep the same managed environment when launching the harness. [Coding-agent setup](integrations/coding-agents/README.md) includes the pinned release URL command and agent prompt.
+Keep the same managed environment when launching the harness. [Coding-agent setup](integrations/coding-agents/README.md) includes the agent prompt and the offline command.
 
 Coding agents support optional [browser login](integrations/coding-agents/README.md#human-login). This stores a short-lived credential in OS secure storage. Hosted applications can continue to use persistent principals.
 
