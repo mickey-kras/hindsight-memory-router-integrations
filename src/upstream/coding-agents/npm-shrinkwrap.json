@@ -1775,14 +1775,14 @@
       }
     },
     "node_modules/@opencode-ai/plugin": {
-      "version": "1.19.5",
-      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.19.5.tgz",
-      "integrity": "sha512-79PY+pxcJajHReWv2OP2SYTdlx1f7zOmq2hIaReOJnovsxNaSvxVyQHx+6Yq22T5UcS4z3Qgws4KB4lQOaIbdQ==",
+      "version": "1.19.6",
+      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.19.6.tgz",
+      "integrity": "sha512-eq1+T75FdIwPTiB8WQLV3Kii0TDAqHsC0baQtbpPS5bzgSc2UhGouy10FxedwKXbC/Prm2FgDhoARwwKDd3yhw==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
         "@ai-sdk/provider": "3.0.8",
-        "@opencode-ai/sdk": "1.19.5",
+        "@opencode-ai/sdk": "1.19.6",
         "effect": "4.0.0-beta.83",
         "zod": "4.1.8"
       },
@@ -1804,9 +1804,9 @@
       }
     },
     "node_modules/@opencode-ai/sdk": {
-      "version": "1.19.5",
-      "resolved": "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.19.5.tgz",
-      "integrity": "sha512-+bqu8gHiwmq96T9q5G34uLNHWCInIMsrE3hytCNHj1cVaxjY0AGJyNCT1rkeeZwgPU7A5TMTNwN+0XxCO2vqDg==",
+      "version": "1.19.6",
+      "resolved": "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.19.6.tgz",
+      "integrity": "sha512-jYV7s+Tlc5jDILOyWFIgISkPlfk7z3ByqeC8/T9aESZBgSZosQR784U2UoM3ZrJ8S0LJ2cB+IA9xZN7Jj8tnhQ==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
@@ -1814,14 +1814,14 @@
       }
     },
     "node_modules/@opencode/ai": {
-      "version": "2.3.0",
-      "resolved": "https://registry.npmjs.org/@opencode/ai/-/ai-2.3.0.tgz",
-      "integrity": "sha512-CsaY18G5cXtNvOgvONaxguFeaWf+gENSYKzDnYIIREpoSLjLm9oF2v+adaE4nUozM1qIMR4+s23VOViaRypFLw==",
+      "version": "2.3.1",
+      "resolved": "https://registry.npmjs.org/@opencode/ai/-/ai-2.3.1.tgz",
+      "integrity": "sha512-mpSElGo5rNsZ8vtug8acXFhZn4BFUCvwqKlhdsumCJDNfYY0NIMhvaDy03Yo5A4rWhWrGWFdFsv4z9iUsuMufg==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
         "@aws-sdk/credential-providers": "3.1057.0",
-        "@opencode/schema": "2.3.0",
+        "@opencode/schema": "2.3.1",
         "@smithy/eventstream-codec": "4.2.14",
         "@smithy/util-utf8": "4.2.2",
         "aws4fetch": "1.0.20",
@@ -1837,22 +1837,22 @@
       "license": "MIT"
     },
     "node_modules/@opencode/plugin": {
-      "version": "2.3.0",
-      "resolved": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.3.0.tgz",
-      "integrity": "sha512-wfBz8UKpy1jb8EAuFqvqbmVG6+6X6B5B+54UAGmofuT7vZ6F6cC3OQwlw1ObEi4NTKG66y0x6Z6zz4AG0H2N9Q==",
+      "version": "2.3.1",
+      "resolved": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.3.1.tgz",
+      "integrity": "sha512-qe4xAeAhfsqN3uKE2l2FkbdN7svm7oYQlZUMGjHpxUe49dePIg13xJUktmf3XS5yI+ABGAHrHw3esjMH3KsfyQ==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
         "@ai-sdk/provider": "3.0.8",
-        "@opencode/ai": "2.3.0",
-        "@opencode/client": "2.3.0",
-        "@opencode/protocol": "2.3.0",
-        "@opencode/schema": "2.3.0",
-        "@opencode/util": "2.3.0",
+        "@opencode/ai": "2.3.1",
+        "@opencode/client": "2.3.1",
+        "@opencode/protocol": "2.3.1",
+        "@opencode/schema": "2.3.1",
+        "@opencode/util": "2.3.1",
         "effect": "4.1.0"
       },
       "peerDependencies": {
-        "@opencode/theme": "2.3.0",
+        "@opencode/theme": "2.3.1",
         "@opentui/core": ">=0.8.4",
         "@opentui/solid": ">=0.8.4",
         "electron": "*",
@@ -1885,14 +1885,14 @@
       }
     },
     "node_modules/@opencode/plugin/node_modules/@opencode/client": {
-      "version": "2.3.0",
-      "resolved": "https://registry.npmjs.org/@opencode/client/-/client-2.3.0.tgz",
-      "integrity": "sha512-xu74XGiYIqLZ2FzIrtjaR5UNWWXY3fRln0WLgZoQTR/wWMgG+T9XGQQGCl8ry8jnCFsJVokiHemBqft9oMzC1A==",
+      "version": "2.3.1",
+      "resolved": "https://registry.npmjs.org/@opencode/client/-/client-2.3.1.tgz",
+      "integrity": "sha512-PlS+JU7p1CHTpvGFzsYFUag1mUPver1Ijto/5bYs9uAq8qLZ0aV0hqyrxoHJBXKMbZLN2m9E8+qVMpDCrqfgwA==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
-        "@opencode/protocol": "2.3.0",
-        "@opencode/schema": "2.3.0"
+        "@opencode/protocol": "2.3.1",
+        "@opencode/schema": "2.3.1"
       },
       "peerDependencies": {
         "effect": "4.1.0",
@@ -1915,13 +1915,13 @@
       "license": "MIT"
     },
     "node_modules/@opencode/protocol": {
-      "version": "2.3.0",
-      "resolved": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.3.0.tgz",
-      "integrity": "sha512-V37zTGXVa1j9aXUvUY01YN1EtfMMSWoT5pSCc6M0UsGdTUZX6QL/vMgGVGzPvbt7+Z8Vo40/0DFRPyqT4sdvnw==",
+      "version": "2.3.1",
+      "resolved": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.3.1.tgz",
+      "integrity": "sha512-JoMe0y6GHGX3BJDg8CthwjHYCDaiqBP+LG40XKnbcrFo1LaqqVqMXIyzjScV2xwWUxwPw+JdFBhCzNOfW9uMFA==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
-        "@opencode/schema": "2.3.0",
+        "@opencode/schema": "2.3.1",
         "effect": "4.1.0"
       }
     },
@@ -1933,9 +1933,9 @@
       "license": "MIT"
     },
     "node_modules/@opencode/schema": {
-      "version": "2.3.0",
-      "resolved": "https://registry.npmjs.org/@opencode/schema/-/schema-2.3.0.tgz",
-      "integrity": "sha512-9CPS4+BXWUs3ELIWo68AA2q4XEPMkRYwpGYdqd/wNz3jRTOB8swef+2/z+igkCel+UtlX+dAlGTmSnid/JcoKw==",
+      "version": "2.3.1",
+      "resolved": "https://registry.npmjs.org/@opencode/schema/-/schema-2.3.1.tgz",
+      "integrity": "sha512-z5sudnzRuiV2I6O7mxcpDuiK8L9gT+Co5+9sW9hWeIR28yawWHyiWB/YxybA/eDwGzn0P5rHv00dlVRpkd7u2w==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
@@ -1951,9 +1951,9 @@
       "license": "MIT"
     },
     "node_modules/@opencode/util": {
-      "version": "2.3.0",
-      "resolved": "https://registry.npmjs.org/@opencode/util/-/util-2.3.0.tgz",
-      "integrity": "sha512-0OIjkq9EQ/p50Wft57yr2NIyuzz1zqaBydwu/5rzEy1+Bu5hJkr5oUqAvt1ye6zZdBW3K8kiFGXFQsChX4cNPg==",
+      "version": "2.3.1",
+      "resolved": "https://registry.npmjs.org/@opencode/util/-/util-2.3.1.tgz",
+      "integrity": "sha512-znNZfBKJOmYu595zIiMGzQP+32s5GR1CXjFM1mcE12Z5w8jqVaGHJOCpkNtoN8ZaO5N7M0BwpHmaDxTPM5JX4w==",
       "dev": true,
       "license": "MIT",
       "dependencies": {
@@ -2802,9 +2802,9 @@
       }
     },
     "node_modules/@smithy/core": {
-      "version": "3.40.0",
-      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.40.0.tgz",
-      "integrity": "sha512-DssGno52pzZ5m6RlDtyKuBIpZNPg9pqgs0CnNDKz9IatxCsmvNmJNn5Zn6rf77MthZo9wf89OvZFhTY/RwxhxQ==",
+      "version": "3.41.0",
+      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.41.0.tgz",
+      "integrity": "sha512-fuZ34H1uizS3WgcX9VXG7Uy8od5A5/kCc+CR3NkHLNm2H/BE9AUHG02VIdu8ZB7FYhLqsr/RZbqAoXuOCg/Oxg==",
       "dev": true,
       "license": "Apache-2.0",
       "dependencies": {
