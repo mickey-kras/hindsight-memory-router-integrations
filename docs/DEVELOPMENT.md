@@ -82,6 +82,24 @@ The finding-sync suite checks finding-body rendering for all three finding kinds
 Each keeps diagnostic fields and public commit and workflow links, without Sonar links. Tests cover configured and absent servers. The privacy suite separately checks final redaction on creation and editing of configured and advertised endpoints.
 It also checks authenticated redirect rejection, mask escaping, endpoint discovery failures and workflow masking order.
 
+### SonarQube masking helper
+
+The router repository owns `.github/scripts/mask-sonar-context.py`. This repository keeps an exact copy.
+Do not edit the copy here. Change the helper and its tests in the router repository.
+
+`compat/router-ci.json` records the router commit and the SHA-256 of the copy.
+A commit SHA does not change. Thus, a change in the router reaches this repository only through a reviewed PR here.
+
+To get a router change:
+
+1. Merge the change in the router repository. Record the full SHA of the merge commit.
+2. Run `python3 scripts/sync-router-ci.py <commit SHA>`. The script replaces the copy and updates `compat/router-ci.json`.
+3. Run `python3 -m unittest discover -s tests -p test_sonar_privacy.py`. Open a PR with the two changed files.
+
+The privacy suite fails when the copy does not agree with `compat/router-ci.json`.
+In CI, the suite also compares the copy with the file at the recorded router commit.
+`python3 scripts/sync-router-ci.py --check --upstream` does the same comparison on your computer.
+
 ### Packed artifacts and service integration
 
 These need prepared artifacts or services in addition to installed dependencies:

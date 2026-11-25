@@ -1,0 +1,7 @@
+{
+  "repository": "mickey-kras/hindsight-memory-router",
+  "commit": "ab11dae3b3bb603b45ae50f6714ceb5956c0c805",
+  "files": {
+    ".github/scripts/mask-sonar-context.py": "3753721aea3aa62d68a592340adbd441622fda48db4d40e9a66b3c76cda69dee"
+  }
+}
