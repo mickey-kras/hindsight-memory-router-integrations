@@ -6,11 +6,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from email.message import Message
 from http.client import HTTPResponse
 from pathlib import Path
+
+
+class ContextError(ValueError):
+    """Failure whose message is a fixed reason without endpoint or credential data."""
 
 
 def mask(value: str) -> None:
@@ -20,7 +25,7 @@ def mask(value: str) -> None:
 
 def endpoint(value: str) -> tuple[str, str]:
     if not value or any(char.isspace() for char in value):
-        raise ValueError("invalid endpoint")
+        raise ContextError("invalid endpoint")
     parsed = urllib.parse.urlsplit(value)
     if (
         parsed.scheme not in {"http", "https"}
@@ -30,7 +35,7 @@ def endpoint(value: str) -> tuple[str, str]:
         or parsed.query
         or parsed.fragment
     ):
-        raise ValueError("invalid endpoint")
+        raise ContextError("invalid endpoint")
     _ = parsed.port
     return value.rstrip("/"), parsed.hostname
 
@@ -56,12 +61,12 @@ class RejectRedirects(urllib.request.HTTPRedirectHandler):
     ) -> urllib.request.Request | None:
         if fp is not None:
             fp.close()
-        raise ValueError("redirects are not permitted")
+        raise ContextError("redirects are not permitted")
 
 
 def advertised_endpoint(base: str, token: str) -> str:
     if not token:
-        raise ValueError("missing authentication")
+        raise ContextError("missing authentication")
     request = urllib.request.Request(  # noqa: S310 - validated HTTP(S) base URL
         f"{base}/api/settings/values?keys=sonar.core.serverBaseURL",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
@@ -69,30 +74,40 @@ def advertised_endpoint(base: str, token: str) -> str:
     with urllib.request.build_opener(RejectRedirects()).open(request, timeout=30) as response:
         payload = json.load(response)
     if not isinstance(payload, dict) or not isinstance(payload.get("settings"), list):
-        raise ValueError("invalid settings")
+        raise ContextError("invalid settings")
     values = [
         setting.get("value")
         for setting in payload["settings"]
         if isinstance(setting, dict) and setting.get("key") == "sonar.core.serverBaseURL"
     ]
     if len(values) != 1 or not isinstance(values[0], str):
-        raise ValueError("missing advertised endpoint")
+        raise ContextError("missing advertised endpoint")
     endpoint(values[0])
     return values[0]
+
+
+def failure_reason(exc: Exception) -> str:
+    # Only fixed strings, status codes and class names: messages can carry endpoints.
+    if isinstance(exc, ContextError):
+        return str(exc)
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP status {exc.code}"
+    return type(exc).__name__
 
 
 def main() -> int:
     try:
         if len(sys.argv) != 2 or sys.argv[1] not in {"configured", "advertised"}:
-            raise ValueError("invalid mode")
+            raise ContextError("invalid mode")
         base = mask_endpoint(os.environ.get("SONAR_HOST_URL", ""))
         if sys.argv[1] == "advertised":
             advertised = advertised_endpoint(base, os.environ.get("SONAR_TOKEN", ""))
             mask_endpoint(advertised)
             with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as environment:
                 environment.write(f"SONAR_ADVERTISED_HOST_URL={advertised}\n")
-    except Exception:  # endpoint-bearing exceptions must never reach public logs
+    except Exception as exc:  # endpoint-bearing exceptions must never reach public logs
         print("Unable to establish masked SonarQube server context.", file=sys.stderr)
+        print(f"Reason: {failure_reason(exc)}", file=sys.stderr)
         return 1
     return 0
 
