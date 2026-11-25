@@ -256,7 +256,7 @@ jobs:
       - name: Dependency review
         if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.number
           != '')
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec
         with:
           config-file: ./trusted/.github/trusted-ci/dependency-review-config.yml
           base-ref: ${{ github.event.pull_request.base.sha || 'main' }}
