@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { RouterClient } from "../src/shared/authenticated-client-factory.js";
 import { RecallAuthorizationError, RecallCoordinator, type RecallItem } from "../src/shared/recall-coordinator.js";
 import { recallItemText } from "../src/shared/recall-item.js";
+import { BankScopeDeniedError } from "../src/shared/router-transport.js";
 
 it("uses one item-text precedence for display, dedupe, and budgeting", () => {
   expect(recallItemText({ text: "text", content: "content" })).toBe("text");
@@ -202,6 +203,24 @@ describe("RecallCoordinator", () => {
         timeoutMs: 1000,
       }),
     ).rejects.toThrow(RecallAuthorizationError);
+  });
+
+  it("skips banks with a bank-scoped denial and names the operation when all are denied", async () => {
+    const coordinator = new RecallCoordinator();
+    const partial = await coordinator.recall(
+      fakeClient({ main: { results: [{ text: "ok", score: 1 }] }, dev: { error: new BankScopeDeniedError() } }),
+      { query: "q", banks: ["main", "dev"], timeoutMs: 1000, operation: "reflect" },
+    );
+    expect(partial).toEqual({ results: [{ text: "ok", score: 1 }], partial: true, failedBanks: ["dev"] });
+    const denied = coordinator.recall(
+      fakeClient({ main: { error: new BankScopeDeniedError() }, dev: { error: new BankScopeDeniedError() } }),
+      { query: "q", banks: ["main", "dev"], timeoutMs: 1000, operation: "reflect" },
+    );
+    await expect(denied).rejects.toMatchObject({
+      name: "RecallAuthorizationError",
+      operation: "reflect",
+      message: "reflect authorization denied for bank main",
+    });
   });
 
   it("enforces the shared timeout across banks", async () => {

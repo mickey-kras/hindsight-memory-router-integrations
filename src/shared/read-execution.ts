@@ -10,20 +10,27 @@ export async function readAcrossBanks(
 ) {
   const suffix = operation === "recall" ? "/memories/recall" : "/reflect";
   const query = typeof body.query === "string" ? body.query : "";
+  // Additional read banks need memory.recall but not memory.reflect, so reflect skips a read bank
+  // that denies it. The write bank must allow both.
+  const writeBank = transport.access.writeBank;
   return new RecallCoordinator().recall(
     {
       retain: async () => {
         throw new Error("read-only execution");
       },
       async recall(bank, _query, request) {
-        const response = await transport.request(transport.bankUrl(bank, suffix), {
-          method: "POST",
-          signal:
-            options.signal && request?.signal
-              ? AbortSignal.any([options.signal, request.signal])
-              : (options.signal ?? request?.signal),
-          body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
-        });
+        const response = await transport.request(
+          transport.bankUrl(bank, suffix),
+          {
+            method: "POST",
+            signal:
+              options.signal && request?.signal
+                ? AbortSignal.any([options.signal, request.signal])
+                : (options.signal ?? request?.signal),
+            body: JSON.stringify({ ...body, max_tokens: request?.maxTokens }),
+          },
+          { bankScopedForbidden: operation === "reflect" && bank !== writeBank },
+        );
         const data = (await response.json()) as {
           text?: string;
           results?: RecallItem[];
@@ -39,6 +46,7 @@ export async function readAcrossBanks(
       query,
       timeoutMs: options.timeoutMs,
       maxTokens: options.maxTokens,
+      operation,
     },
   );
 }

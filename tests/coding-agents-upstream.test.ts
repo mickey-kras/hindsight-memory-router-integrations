@@ -150,8 +150,8 @@ it("upstream client requires a known harness and discards all reads on authoriza
   setup();
   expect(() => new HindsightClient({ apiUrl: "https://router.test", bank: "A" })).toThrow("memory access denied");
   vi.spyOn(globalThis, "fetch")
-    .mockResolvedValueOnce(Response.json({ text: "must disappear" }))
-    .mockResolvedValueOnce(new Response("forbidden", { status: 403 }));
+    .mockResolvedValueOnce(new Response("forbidden", { status: 403 }))
+    .mockResolvedValueOnce(Response.json({ text: "must disappear" }));
   const client = new HindsightClient({
     routerHarness: "codex",
     apiUrl: "https://router.test",
@@ -776,6 +776,54 @@ it("falls back to healthy page search when every reflection bank fails", async (
   expect(result.context).toContain("recovered fact");
   expect(send.mock.calls.filter(([url]) => String(url).includes("/search?"))).toHaveLength(1);
   expect(JSON.stringify(result)).not.toContain("private failure body");
+});
+
+it("reflects from the write bank when a read bank grants recall but not reflect", async () => {
+  const dir = setup();
+  const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+    const target = String(url);
+    if (target.endsWith("/banks/B/reflect")) return new Response("authorization_denied", { status: 403 });
+    if (target.endsWith("/reflect")) return Response.json({ text: "write bank memory" });
+    if (target.endsWith("/memories/recall")) return Response.json({ results: [{ text: "recalled", score: 1 }] });
+    return Response.json({ roots: [] });
+  });
+  const client = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A" });
+  const result = await buildHookOutput({
+    harness: "codex",
+    prompt: "query",
+    cfg: resolveConfig({ autoReflect: true }),
+    client,
+    cacheFile: join(dir, "cache.json"),
+  });
+  expect(result.context).toContain("write bank memory");
+  expect(() => client.assertAuthorized()).not.toThrow();
+  const reflect = required(
+    buildKnowledgeTools(client, "A", { harness: "codex" }).find((tool) => tool.name === "hindsight_reflect"),
+    "hindsight_reflect",
+  );
+  const answer = await reflect.handler({ query: "why" });
+  expect(answer.isError).not.toBe(true);
+  expect(JSON.stringify(answer)).toContain("write bank memory");
+  expect(await client.recallObservations("query", { timeoutMs: 100 })).toEqual(["recalled"]);
+  expect(send.mock.calls.some(([url]) => String(url).endsWith("/banks/B/memories/recall"))).toBe(true);
+});
+
+it("fails reflect as a permanent 403 naming reflect when the write bank denies it", async () => {
+  setup();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+    String(url).endsWith("/banks/A/reflect")
+      ? new Response("authorization_denied", { status: 403 })
+      : Response.json({ text: "must not escape" }),
+  );
+  const client = new HindsightClient({ routerHarness: "codex", apiUrl: "https://router.test", bank: "A" });
+  const error = await client.reflect("query", { timeoutMs: 100 }).catch((e: unknown) => e);
+  expect(error).toMatchObject({
+    name: "ReflectError",
+    status: 403,
+    permanent: true,
+    message: "reflect authorization denied for bank A",
+  });
+  expect(() => client.assertAuthorized()).toThrow("memory access denied");
 });
 
 it("keeps successful partial reflection and does not trigger fallback for empty successful reads", async () => {
