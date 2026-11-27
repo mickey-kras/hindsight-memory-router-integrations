@@ -107,6 +107,12 @@ jobs:
           node .github/scripts/verify-package-inventory.cjs
           sha256sum --check PACKAGE_SHA256
           printf 'root_artifact=%s\n' "$artifact" >> "$GITHUB_OUTPUT"
+      - name: Require new versions for changed packages
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            const { checkPackageReuse, packageAssets } = require('./.github/scripts/release.cjs');
+            await checkPackageReuse(github, context.repo, packageAssets());
       - name: Verify packed coding-agent installer
         run: node --test .github/scripts/coding-installer-smoke.mjs
       - name: Use minimum supported Node.js
