@@ -44,6 +44,8 @@ Use plain `X.Y.Z`. Review version increases in a main PR. The button never guess
 After 1.0, use normal SemVer rules for major, minor and patch versions. Update package locks. Rebuild changed packages. Refresh checksums and Nix hashes.
 
 You can reuse published package versions only with the same bytes.
+The `build` job in CI checks this rule on each PR and on each push to main. It compares each built package with the assets of all published releases.
+If the bytes change and the version stays the same, the job fails and shows the package name. Increase that version in the same PR.
 
 Every preparation reserves its version while its branch or tag exists. Failed and
 canceled runs retain their candidate for exact retries. Changes to code, automation,
