@@ -13,6 +13,18 @@ export class RouterRequestError extends Error {
   }
 }
 
+/**
+ * A 403 for one bank's operation scope, such as `memory.reflect` missing on an additional read bank.
+ * Unlike `AccessDeniedError`, it does not block the credential for later requests.
+ */
+export class BankScopeDeniedError extends Error {
+  readonly statusCode = 403;
+  constructor() {
+    super("memory access denied");
+    this.name = "BankScopeDeniedError";
+  }
+}
+
 export function boundedRetryAfterMs(header: string | null | undefined): number {
   if (!header?.trim()) return 0;
   const value = header.trim();
@@ -183,7 +195,15 @@ export class RouterTransport {
     return `${this.baseUrl}/v1/default/banks/${encodeURIComponent(bank)}${suffix}`;
   }
 
-  async request(url: string, init: RequestInit = {}): Promise<Response> {
+  /**
+   * `bankScopedForbidden` treats a 403 as a missing scope on this bank only. A 401, and a 403
+   * without the flag, still block the credential.
+   */
+  async request(
+    url: string,
+    init: RequestInit = {},
+    options: { bankScopedForbidden?: boolean } = {},
+  ): Promise<Response> {
     // Only human sessions renew; application requests keep their synchronous start.
     const token = this.credential(this.#prepare ? await untilAborted(this.#prepare(), init.signal) : undefined);
     const method = init.method ?? "GET";
@@ -191,6 +211,10 @@ export class RouterTransport {
     assertSafeRequest(url, init.body);
     const listing = assertAuthorizedUrl(url, method, this.baseUrl, this.access);
     const response = await this.send(url, init, token);
+    if (response.status === 403 && options.bankScopedForbidden) {
+      response.body?.cancel().catch(() => undefined);
+      throw new BankScopeDeniedError();
+    }
     if (response.status === 401 || response.status === 403) {
       const error = response.status === 401 ? this.#unauthorizedError() : new AccessDeniedError();
       this.#deniedToken = token;

@@ -1,7 +1,7 @@
 import type { RouterClient } from "./authenticated-client-factory.js";
 import { formatRecallItem, type RecallItem, recallItemText } from "./recall-item.js";
 import { isAuthorizationError, isTransientRequestError } from "./request-error.js";
-import { RouterRequestError } from "./router-transport.js";
+import { BankScopeDeniedError, RouterRequestError } from "./router-transport.js";
 
 export type { RecallItem } from "./recall-item.js";
 
@@ -13,7 +13,11 @@ export interface CoordinatedRecallRequest {
   budget?: "low" | "mid" | "high";
   types?: string[];
   preferObservations?: boolean;
+  /** Names the operation in authorization errors. Defaults to recall. */
+  operation?: ReadOperation;
 }
+
+export type ReadOperation = "recall" | "reflect";
 
 export interface CoordinatedRecallResult {
   results: RecallItem[];
@@ -24,10 +28,12 @@ export interface CoordinatedRecallResult {
 export class RecallAuthorizationError extends Error {
   readonly statusCode = 403;
   readonly bank: string;
-  constructor(bank: string) {
-    super(`recall authorization denied for bank ${bank}`);
+  readonly operation: ReadOperation;
+  constructor(bank: string, operation: ReadOperation = "recall") {
+    super(`${operation} authorization denied for bank ${bank}`);
     this.name = "RecallAuthorizationError";
     this.bank = bank;
+    this.operation = operation;
   }
 }
 
@@ -81,16 +87,24 @@ function validateRecallResults(response: unknown): RecallItem[] {
   return results;
 }
 
+// A bank-scoped denial skips only that bank. Any other authorization failure discards every result.
 function mergeSettledResults(
   settled: PromiseSettledResult<BankRecallResult>[],
   banks: readonly string[],
+  operation: ReadOperation,
 ): { merged: BankItem[]; failedBanks: string[] } {
   const failedBanks: string[] = [];
+  const deniedBanks: string[] = [];
   const representatives = new Map<string, BankItem>();
   settled.forEach((outcome, index) => {
     const bank = banks[index];
     if (outcome.status === "rejected") {
-      if (isAuthorizationError(outcome.reason)) throw new RecallAuthorizationError(bank);
+      if (outcome.reason instanceof BankScopeDeniedError) {
+        deniedBanks.push(bank);
+        failedBanks.push(bank);
+        return;
+      }
+      if (isAuthorizationError(outcome.reason)) throw new RecallAuthorizationError(bank, operation);
       if (!isTransientRequestError(outcome.reason)) throw outcome.reason;
       failedBanks.push(bank);
       return;
@@ -104,6 +118,7 @@ function mergeSettledResults(
       }
     }
   });
+  if (deniedBanks.length === banks.length) throw new RecallAuthorizationError(deniedBanks[0], operation);
   return { merged: [...representatives.values()], failedBanks };
 }
 
@@ -171,7 +186,7 @@ export class RecallCoordinator {
       }),
     );
 
-    const { merged, failedBanks } = mergeSettledResults(settled, banks);
+    const { merged, failedBanks } = mergeSettledResults(settled, banks, request.operation ?? "recall");
 
     merged.sort(compareBankItems);
 

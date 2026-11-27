@@ -1,6 +1,7 @@
 import { AccessDeniedError, visibleBanks } from "@memory-router/shared/bank-access";
 import { harnessTransport } from "@memory-router/coding-agents/runtime";
 import { readAcrossBanks } from "@memory-router/shared/read-execution";
+import { RecallAuthorizationError } from "@memory-router/shared/recall-coordinator";
 import { RouterRequestError, boundedRetryAfterMs, type RouterTransport } from "@memory-router/shared/router-transport";
 /**
  * Harness-agnostic Hindsight HTTP client (raw fetch, no SDK dep).
@@ -717,7 +718,13 @@ export class HindsightClient {
    * tool's configured window and aborted every high-budget synthesis mid-flight (#3590).
    */
   async reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string> {
-    const result = await readAcrossBanks(this.transport, "reflect", { query, budget: opts.budget ?? "high" }, { timeoutMs: opts.timeoutMs, maxTokens: 4096 });
+    // A read bank without memory.reflect is skipped. A denied write bank, or every bank denied,
+    // fails as a permanent 403 so the hook neither retries nor falls back.
+    const result = await readAcrossBanks(this.transport, "reflect", { query, budget: opts.budget ?? "high" }, { timeoutMs: opts.timeoutMs, maxTokens: 4096 })
+      .catch((error: unknown) => {
+        if (error instanceof RecallAuthorizationError) throw new ReflectError(error.message, 403, false, { cause: error });
+        throw error;
+      });
     if (result.failedBanks.length === this.visibleBanks().length) {
       throw new ReflectError("reflection unavailable for all assigned banks", 503, false);
     }

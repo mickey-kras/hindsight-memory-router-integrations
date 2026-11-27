@@ -344,14 +344,65 @@ describe("multi-bank read execution", () => {
       failedBanks: ["B"],
     });
   });
-  it.each([401, 403])("discards all successes when any read returns %s", async (status) => {
+  it.each([
+    ["reflect", 401],
+    ["recall", 401],
+    ["recall", 403],
+  ] as const)("discards all %s successes when a read bank returns %s", async (operation, status) => {
     const send = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ text: "must not escape" }))
       .mockResolvedValueOnce(new Response("denied", { status }))
       .mockResolvedValueOnce(Response.json({ text: "also hidden" }));
     const { client } = transport(send);
-    await expect(readAcrossBanks(client, "reflect", {}, { timeoutMs: 100, maxTokens: 100 })).rejects.toThrow();
+    await expect(readAcrossBanks(client, operation, {}, { timeoutMs: 100, maxTokens: 100 })).rejects.toThrow(
+      `${operation} authorization denied for bank B`,
+    );
+    expect(client.hasCredentials()).toBe(false);
+  });
+  // A principal may hold memory.recall without memory.reflect on an additional read bank.
+  it("skips read banks that deny reflect and keeps the credential usable", async () => {
+    const send = vi.fn<typeof fetch>(async (input) => {
+      const target = String(input);
+      if (target.endsWith("/memories/recall")) return Response.json({ results: [] });
+      return target.includes("/banks/A/")
+        ? Response.json({ text: "write bank memory" })
+        : new Response("denied", { status: 403 });
+    });
+    const { client } = transport(send);
+    expect(await readAcrossBanks(client, "reflect", { query: "q" }, { timeoutMs: 100, maxTokens: 100 })).toEqual({
+      results: [{ text: "write bank memory" }],
+      partial: true,
+      failedBanks: ["B", "C"],
+    });
+    expect(client.hasCredentials()).toBe(true);
+    const recall = await readAcrossBanks(client, "recall", { query: "q" }, { timeoutMs: 100, maxTokens: 100 });
+    expect(recall.failedBanks).toEqual([]);
+  });
+  it("fails loudly and names reflect when the write bank denies reflect", async () => {
+    const send = vi.fn<typeof fetch>(async (input) =>
+      String(input).includes("/banks/A/")
+        ? new Response("denied", { status: 403 })
+        : Response.json({ text: "must not escape" }),
+    );
+    const { client } = transport(send);
+    await expect(readAcrossBanks(client, "reflect", {}, { timeoutMs: 100, maxTokens: 100 })).rejects.toThrow(
+      "reflect authorization denied for bank A",
+    );
+    expect(client.hasCredentials()).toBe(false);
+  });
+  it("fails when every bank of a read-only principal denies reflect", async () => {
+    const send = vi.fn<typeof fetch>(async () => new Response("denied", { status: 403 }));
+    const client = new RouterTransport({
+      routerUrl: url,
+      access: { additionalReadBanks: ["B", "C"] },
+      token: () => token("test"),
+      fetch: send,
+    });
+    await expect(readAcrossBanks(client, "reflect", {}, { timeoutMs: 100, maxTokens: 100 })).rejects.toThrow(
+      "reflect authorization denied for bank B",
+    );
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
 
