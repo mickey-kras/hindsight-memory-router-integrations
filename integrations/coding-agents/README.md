@@ -132,8 +132,8 @@ Generic requests without a caller signal default to 15 seconds.
 If you increase a hook deadline, also allow enough time in the host hook configuration.
 Transient failures return partial results with a diagnostic. Any 401/403 discards all results, with one exception for reflect.
 
-Additional read banks need `memory.recall`. They do not need `memory.reflect`.
-Reflect skips an additional read bank that returns 403 and uses the results from the other banks.
+Banks in `additionalReadBanks` need `memory.recall`. They do not need `memory.reflect`.
+Reflect skips a bank in `additionalReadBanks` that returns 403 and uses the results from the other banks.
 The write bank needs both scopes. A reflect 403 on the write bank fails the hook and the reflect tool.
 The error and the `reflect_failed` diagnostic record status 403 for reflect.
 

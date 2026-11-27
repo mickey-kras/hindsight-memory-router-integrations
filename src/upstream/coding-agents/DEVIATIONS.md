@@ -5,7 +5,7 @@
 - All HTTP requests use the shared guard for banks and operations. Bank listing intersects router-visible banks with configured IDs.
 - Recall and reflect use the shared coordinator to read multiple banks. Other reads need an explicit bank address.
 - A 401/403 response is terminal. Runtime environment resolution on each request replaces upstream credential retry.
-  Exception: a reflect 403 on an additional read bank skips only that bank. These banks need `memory.recall`, not `memory.reflect`.
+  Exception: a reflect 403 on a bank in `additionalReadBanks` skips only that bank. These banks need `memory.recall`, not `memory.reflect`.
 - Optional human mode resolves a short-lived session from native OS secure storage on every request.
   Browser login uses the router's loopback OIDC exchange with PKCE. Sign-out revokes and deletes the session.
   Persistent application credentials remain separate.

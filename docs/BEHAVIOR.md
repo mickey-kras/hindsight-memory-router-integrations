@@ -21,8 +21,8 @@ It does not support wildcards, dynamic banks, fallback identities or fallback cr
 - Transport uses HTTPS only. It rejects redirects, resolves secrets at runtime and sanitizes errors.
 - Recall and reflect share a deadline and token budget. They remove duplicate content and use a deterministic order.
 - Any 401/403 discards the entire read result, with one exception for reflect. Network failures and 408/429/5xx failures allow partial reads.
-- Additional read banks need `memory.recall`. They do not need `memory.reflect`.
-  A reflect 403 on an additional read bank skips that bank and reports it in `failedBanks`. The credential stays usable.
+- Banks in `additionalReadBanks` need `memory.recall`. They do not need `memory.reflect`.
+  A reflect 403 on a bank in `additionalReadBanks` skips that bank and reports it in `failedBanks`. The credential stays usable.
   The write bank needs both scopes. A reflect 403 on the write bank fails the read and blocks the credential.
   If all banks deny reflect, reflect fails with an authorization error that names reflect.
 
